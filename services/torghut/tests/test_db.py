@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
@@ -171,6 +172,100 @@ class TestDbSchemaCurrent(TestCase):
         )
         self.assertEqual(status["schema_graph_duplicate_revisions"], {})
         self.assertEqual(status["schema_graph_orphan_parents"], [])
+
+    def test_check_schema_current_reads_postgres_alembic_heads_directly(
+        self,
+    ) -> None:
+        class FakeScalarResult:
+            def __init__(self, values: list[str]) -> None:
+                self._values = values
+
+            def __iter__(self) -> Iterator[str]:
+                return iter(self._values)
+
+        class FakeResult:
+            def __init__(
+                self,
+                *,
+                scalar_value: object | None = None,
+                scalar_values: list[str] | None = None,
+            ) -> None:
+                self._scalar_value = scalar_value
+                self._scalar_values = scalar_values or []
+
+            def scalar_one(self) -> int:
+                return 1
+
+            def scalar(self) -> object | None:
+                return self._scalar_value
+
+            def scalars(self) -> FakeScalarResult:
+                return FakeScalarResult(self._scalar_values)
+
+        class FakeDialect:
+            name = "postgresql"
+
+        class FakeConnection:
+            dialect = FakeDialect()
+
+            def __init__(self) -> None:
+                self.statements: list[str] = []
+
+            def execute(self, statement: object) -> FakeResult:
+                sql = str(statement)
+                self.statements.append(sql)
+                if "SET LOCAL statement_timeout" in sql:
+                    return FakeResult()
+                if "to_regclass('alembic_version')" in sql:
+                    return FakeResult(scalar_value="alembic_version")
+                if "SELECT version_num FROM alembic_version" in sql:
+                    return FakeResult(
+                        scalar_values=["0012_demo_beta", "0011_demo_alpha"]
+                    )
+                raise AssertionError(f"unexpected SQL: {sql}")
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.connection_obj = FakeConnection()
+
+            def execute(self, statement: object) -> FakeResult:
+                sql = str(statement)
+                if sql == "SELECT 1":
+                    return FakeResult(scalar_value=1)
+                raise AssertionError(f"unexpected session SQL: {sql}")
+
+            def connection(self) -> FakeConnection:
+                return self.connection_obj
+
+        fake_session = FakeSession()
+        with (
+            patch(
+                "app.db._get_expected_schema_heads",
+                return_value=("0011_demo_alpha", "0012_demo_beta"),
+            ),
+            patch(
+                "app.db._get_expected_schema_graph",
+                return_value={
+                    "expected_schema_graph_signature": "graph-signature-demo",
+                    "expected_migration_roots": [],
+                    "expected_migration_branch_count": 1,
+                    "expected_migration_parent_forks": {},
+                    "expected_migration_duplicate_revisions": {},
+                    "expected_migration_orphan_parents": [],
+                },
+            ),
+            patch("app.db.MigrationContext") as mock_migration_context,
+        ):
+            status = app_db.check_schema_current(fake_session)  # type: ignore[arg-type]
+
+        self.assertTrue(status["schema_current"])
+        self.assertEqual(status["current_heads"], ["0011_demo_alpha", "0012_demo_beta"])
+        mock_migration_context.configure.assert_not_called()
+        joined_sql = "\n".join(fake_session.connection_obj.statements)
+        self.assertIn("SET LOCAL statement_timeout", joined_sql)
+        self.assertIn("SELECT to_regclass('alembic_version')", joined_sql)
+        self.assertIn("SELECT version_num FROM alembic_version", joined_sql)
+        self.assertNotIn("pg_catalog.pg_class", joined_sql)
 
     def test_expected_schema_heads_cached(self) -> None:
         app_db._get_expected_schema_heads.cache_clear()

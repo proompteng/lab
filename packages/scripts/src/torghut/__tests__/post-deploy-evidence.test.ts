@@ -170,6 +170,50 @@ describe('validatePostDeployEvidence', () => {
     expect(result.summaryLines.join('\n')).toContain('Sim target count: `1`')
   })
 
+  it('uses raw paper-route targets when source collection is the selected next plan', () => {
+    const rawLivePlan = buildPaperRouteEvidence([paperRouteTarget]).next_paper_route_runtime_window_targets
+    const rawSimPlan = buildPaperRouteEvidence([
+      { ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' },
+    ]).next_paper_route_runtime_window_targets
+    const selectedSourceCollectionPlan = {
+      schema_version: 'torghut.runtime-ledger-paper-probation-import-plan.v1',
+      source: 'paper_route_observed_strategy_source_collection',
+      promotion_allowed: false,
+      final_promotion_allowed: false,
+      final_promotion_authorized: false,
+      target_count: 1,
+      targets: [
+        {
+          hypothesis_id: 'H-MICRO-01',
+          candidate_id: 'candidate-source-collection',
+          strategy_name: 'microbar-volume-continuation-long-top2-chip-v1',
+          source_kind: 'runtime_ledger_source_collection_candidate',
+        },
+      ],
+    }
+
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '200',
+      readyz: { status: 'ok' },
+      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+      tradingStatus: baseTradingStatus,
+      paperRouteEvidence: {
+        schema_version: 'torghut.paper-route-evidence.v1',
+        next_paper_route_runtime_window_targets: selectedSourceCollectionPlan,
+        raw_next_paper_route_runtime_window_targets: rawLivePlan,
+      },
+      simPaperRouteEvidence: {
+        schema_version: 'torghut.paper-route-evidence.v1',
+        next_paper_route_runtime_window_targets: selectedSourceCollectionPlan,
+        raw_next_paper_route_runtime_window_targets: rawSimPlan,
+      },
+    })
+
+    expect(result.summaryLines.join('\n')).toContain('Torghut Paper Route Target Mirror')
+    expect(result.summaryLines.join('\n')).toContain('Live target count: `1`')
+    expect(result.summaryLines.join('\n')).toContain('Sim target count: `1`')
+  })
+
   it('rejects an empty sim paper-route plan when live torghut exposes a target', () => {
     expect(() =>
       validatePostDeployEvidence({

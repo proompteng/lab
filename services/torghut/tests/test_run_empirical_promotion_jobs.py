@@ -788,6 +788,124 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(top_level_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(fallback_plan["targets"][0]["hypothesis_id"], "H-FALLBACK-01")
 
+    def test_runtime_window_target_plan_payload_prefers_source_runtime_plan(
+        self,
+    ) -> None:
+        plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "targets": [
+                        {
+                            "candidate_id": "cand-empty-hpairs",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "strategy_family": "microbar_cross_sectional_pairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                        }
+                    ]
+                },
+                "source_runtime_window_import_plan": {
+                    "source": "live_submission_gate_runtime_ledger_source_collection",
+                    "purpose": "runtime_ledger_source_collection_import",
+                    "targets": [
+                        {
+                            "candidate_id": "cand-source-volume",
+                            "hypothesis_id": "H-MICRO-01",
+                            "strategy_family": "microstructure_breakout",
+                            "strategy_name": (
+                                "microbar-volume-continuation-long-top2-chip-v1"
+                            ),
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_SIM",
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                            "source_collection_authorized": True,
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-micro-01.json"
+                            ),
+                            "window_start": "2026-06-02T13:30:00+00:00",
+                            "window_end": "2026-06-02T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "targets": [
+                        {
+                            "candidate_id": "cand-next-hpairs",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "strategy_family": "microbar_cross_sectional_pairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        }
+                    ]
+                },
+                "runtime_window_import_audit": {
+                    "state": "import_due_source_activity_missing",
+                    "blockers": ["paper_route_source_activity_missing"],
+                },
+            }
+        )
+
+        self.assertEqual(
+            plan["source"], "live_submission_gate_runtime_ledger_source_collection"
+        )
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "cand-source-volume")
+        self.assertEqual(
+            target["source_kind"], "runtime_ledger_source_collection_candidate"
+        )
+        self.assertEqual(
+            target["runtime_window_import_audit_state"],
+            "import_due_source_activity_missing",
+        )
+        self.assertIn(
+            "paper_route_source_activity_missing",
+            target["runtime_window_import_audit_blockers"],
+        )
+
+        args = SimpleNamespace(
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_target_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+            runtime_window_delay_adjusted_depth_stress_report_ref="",
+            runtime_window_dependency_quorum_decision="",
+            runtime_window_continuity_ok="",
+            runtime_window_drift_ok="",
+            runtime_window_source_account_label="",
+        )
+        import_targets = renewal._runtime_window_targets_from_plan(
+            plan=plan,
+            ref="target-plan-payload",
+            args=args,
+        )
+
+        self.assertEqual(len(import_targets), 1)
+        self.assertEqual(import_targets[0].candidate_id, "cand-source-volume")
+        self.assertEqual(
+            import_targets[0].source_kind,
+            "runtime_ledger_source_collection_candidate",
+        )
+        self.assertIsNone(
+            renewal._runtime_window_target_plan_import_blocked_result(
+                target=import_targets[0],
+                candidate_id=import_targets[0].candidate_id,
+                manifest_path=Path("config/trading/hypotheses/h-micro-01.json"),
+                window_start=datetime(2026, 6, 2, 13, 30, tzinfo=timezone.utc),
+                window_end=datetime(2026, 6, 2, 20, tzinfo=timezone.utc),
+                window_selection="target-plan-payload",
+            )
+        )
+
     def test_runtime_window_target_plan_payload_marks_contaminated_import_audit(
         self,
     ) -> None:

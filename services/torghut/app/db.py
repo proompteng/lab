@@ -101,8 +101,7 @@ def _has_unique_index(inspector: Any, table: str, columns: list[str]) -> bool:
     constraints = inspector.get_unique_constraints(table)
     for constraint in constraints:
         constraint_columns = [
-            _normalize_name(column)
-            for column in constraint.get("column_names", [])
+            _normalize_name(column) for column in constraint.get("column_names", [])
         ]
         if set(constraint_columns) == expected:
             return True
@@ -113,7 +112,8 @@ def _named_unique_constraint_present(
     inspector: Any, table: str, names: set[str]
 ) -> bool:
     constraint_names = {
-        _normalize_name(constraint.get("name")) for constraint in inspector.get_unique_constraints(table)
+        _normalize_name(constraint.get("name"))
+        for constraint in inspector.get_unique_constraints(table)
     }
     return any(name in constraint_names for name in names)
 
@@ -186,9 +186,7 @@ def check_account_scope_invariants(session: Session) -> dict[str, object]:
         ["source", "account_label"],
     )
     if not checks["trade_cursor_has_account_scoped_source_index"]:
-        errors.append(
-            "trade_cursor missing unique index on (source, account_label)"
-        )
+        errors.append("trade_cursor missing unique index on (source, account_label)")
 
     checks["legacy_executions_single_account_order_id_index_detected"] = (
         _has_unique_index(
@@ -220,26 +218,23 @@ def check_account_scope_invariants(session: Session) -> dict[str, object]:
             "legacy unique constraint/index detected for executions.client_order_id"
         )
 
-    checks["legacy_trade_cursor_source_only_source_index_detected"] = (
-        _has_unique_index(inspector, "trade_cursor", ["source"])
-        or _named_unique_constraint_present(
-            inspector,
-            "trade_cursor",
-            {"trade_cursor_source_key"},
-        )
+    checks["legacy_trade_cursor_source_only_source_index_detected"] = _has_unique_index(
+        inspector, "trade_cursor", ["source"]
+    ) or _named_unique_constraint_present(
+        inspector,
+        "trade_cursor",
+        {"trade_cursor_source_key"},
     )
     if checks["legacy_trade_cursor_source_only_source_index_detected"]:
-        errors.append(
-            "legacy unique constraint/index detected for trade_cursor.source"
-        )
+        errors.append("legacy unique constraint/index detected for trade_cursor.source")
 
     checks["legacy_executions_single_account_indexes_present"] = (
         checks["legacy_executions_single_account_order_id_index_detected"]
         or checks["legacy_executions_single_account_client_order_id_index_detected"]
     )
-    checks["legacy_trade_cursor_source_only_index_present"] = (
-        checks["legacy_trade_cursor_source_only_source_index_detected"]
-    )
+    checks["legacy_trade_cursor_source_only_index_present"] = checks[
+        "legacy_trade_cursor_source_only_source_index_detected"
+    ]
     checks["account_scope_ready"] = not errors
     checks["account_scope_index_names"] = {
         "execution_indexes": sorted(_index_names(inspector, "executions")),
@@ -273,7 +268,9 @@ def _alembic_config() -> AlembicConfig:
     if not _ALEMBIC_INI_PATH.exists():
         raise RuntimeError(f"Alembic config not found at {_ALEMBIC_INI_PATH}")
     if not _ALEMBIC_MIGRATIONS_PATH.exists():
-        raise RuntimeError(f"Alembic migrations directory not found at {_ALEMBIC_MIGRATIONS_PATH}")
+        raise RuntimeError(
+            f"Alembic migrations directory not found at {_ALEMBIC_MIGRATIONS_PATH}"
+        )
     config = AlembicConfig(str(_ALEMBIC_INI_PATH))
     config.set_main_option("script_location", str(_ALEMBIC_MIGRATIONS_PATH))
     config.set_main_option("sqlalchemy.url", settings.sqlalchemy_dsn)
@@ -283,7 +280,10 @@ def _alembic_config() -> AlembicConfig:
 def _extract_assignment_literal(tree: ast.Module, *, name: str, path: Path) -> object:
     for node in tree.body:
         if isinstance(node, ast.Assign):
-            if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            if any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in node.targets
+            ):
                 try:
                     return ast.literal_eval(node.value)
                 except (ValueError, SyntaxError) as exc:
@@ -291,7 +291,11 @@ def _extract_assignment_literal(tree: ast.Module, *, name: str, path: Path) -> o
                         f"failed to parse '{name}' literal from migration file {path.name}"
                     ) from exc
         if isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name) and node.target.id == name and node.value is not None:
+            if (
+                isinstance(node.target, ast.Name)
+                and node.target.id == name
+                and node.value is not None
+            ):
                 try:
                     return ast.literal_eval(node.value)
                 except (ValueError, SyntaxError) as exc:
@@ -332,12 +336,18 @@ def _parse_migration_revision(path: Path) -> tuple[str, tuple[str, ...]]:
 
     revision_raw = _extract_assignment_literal(tree, name="revision", path=path)
     if not isinstance(revision_raw, str):
-        raise RuntimeError(f"migration file {path.name} missing string revision identifier")
+        raise RuntimeError(
+            f"migration file {path.name} missing string revision identifier"
+        )
     revision = revision_raw.strip()
     if not revision:
-        raise RuntimeError(f"migration file {path.name} has an empty revision identifier")
+        raise RuntimeError(
+            f"migration file {path.name} has an empty revision identifier"
+        )
 
-    down_revision_raw = _extract_assignment_literal(tree, name="down_revision", path=path)
+    down_revision_raw = _extract_assignment_literal(
+        tree, name="down_revision", path=path
+    )
     down_revisions = _normalize_down_revisions(down_revision_raw)
     return revision, down_revisions
 
@@ -366,13 +376,17 @@ def _parse_migration_graph(versions_dir: Path) -> dict[str, object]:
     if not versions_dir.exists():
         raise RuntimeError(f"migration versions directory not found at {versions_dir}")
     if not versions_dir.is_dir():
-        raise RuntimeError(f"migration versions path is not a directory: {versions_dir}")
+        raise RuntimeError(
+            f"migration versions path is not a directory: {versions_dir}"
+        )
 
     revision_to_files: dict[str, list[str]] = {}
     revision_to_parents: dict[str, tuple[str, ...]] = {}
     parsed_revisions: list[tuple[str, tuple[str, ...]]] = []
 
-    migration_files = sorted(path for path in versions_dir.glob("*.py") if path.is_file())
+    migration_files = sorted(
+        path for path in versions_dir.glob("*.py") if path.is_file()
+    )
     if not migration_files:
         raise RuntimeError(f"no migration files found in {versions_dir}")
 
@@ -392,9 +406,15 @@ def _parse_migration_graph(versions_dir: Path) -> dict[str, object]:
             parent_to_children.setdefault(parent, set()).add(child)
             edges.append((parent, child))
 
-    roots = sorted(revision for revision, parents in revision_to_parents.items() if not parents)
-    heads = sorted(revision for revision in revisions if revision not in parent_to_children)
-    orphan_parents = sorted(parent for parent in parent_to_children if parent not in revisions)
+    roots = sorted(
+        revision for revision, parents in revision_to_parents.items() if not parents
+    )
+    heads = sorted(
+        revision for revision in revisions if revision not in parent_to_children
+    )
+    orphan_parents = sorted(
+        parent for parent in parent_to_children if parent not in revisions
+    )
     duplicate_revisions = {
         revision: sorted(files)
         for revision, files in revision_to_files.items()
@@ -444,14 +464,41 @@ def _schema_heads_signature(heads: tuple[str, ...]) -> str:
     return hashlib.sha256(",".join(heads).encode("utf-8")).hexdigest()
 
 
+_POSTGRES_SCHEMA_HEAD_STATEMENT_TIMEOUT_MS = 150
+
+
+def _current_schema_heads(session: Session) -> list[str]:
+    connection = session.connection()
+    dialect_name = str(
+        getattr(getattr(connection, "dialect", None), "name", "")
+    ).lower()
+    if dialect_name == "postgresql":
+        connection.execute(
+            text(
+                f"SET LOCAL statement_timeout = {_POSTGRES_SCHEMA_HEAD_STATEMENT_TIMEOUT_MS}"
+            )
+        )
+        version_table = connection.execute(
+            text("SELECT to_regclass('alembic_version')")
+        ).scalar()
+        if version_table is None:
+            return []
+        raw_heads = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalars()
+        return sorted(str(head).strip() for head in raw_heads if str(head).strip())
+
+    context = MigrationContext.configure(connection=connection)
+    return sorted(str(head) for head in context.get_current_heads())
+
+
 def check_schema_current(session: Session) -> dict[str, object]:
     """Report Alembic head alignment for readiness and diagnostics."""
 
     ping(session)
     expected_heads = _get_expected_schema_heads()
     expected_graph = _get_expected_schema_graph()
-    context = MigrationContext.configure(connection=session.connection())
-    current_heads = sorted(context.get_current_heads())
+    current_heads = _current_schema_heads(session)
     expected_heads_set = set(expected_heads)
     current_heads_set = set(current_heads)
     return {
@@ -467,7 +514,9 @@ def check_schema_current(session: Session) -> dict[str, object]:
         + len(current_heads_set - expected_heads_set),
         "schema_graph_signature": expected_graph.get("expected_schema_graph_signature"),
         "schema_graph_roots": expected_graph.get("expected_migration_roots", []),
-        "schema_graph_branch_count": expected_graph.get("expected_migration_branch_count"),
+        "schema_graph_branch_count": expected_graph.get(
+            "expected_migration_branch_count"
+        ),
         "schema_graph_parent_forks": expected_graph.get(
             "expected_migration_parent_forks",
             {},
