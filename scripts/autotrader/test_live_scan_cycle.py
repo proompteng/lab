@@ -263,6 +263,99 @@ class LiveScanCycleTest(unittest.TestCase):
         )
         self.assertEqual(summary["openOrders"][0]["clientOrderId"], "agent-AAPL-protect")
 
+    def test_summarizes_account_gate_as_manage_state_when_entry_allowed_with_position(self) -> None:
+        summary = live_scan_cycle.summarize_account_gate(
+            raw_account={
+                "id": "paper-account",
+                "equity": "30000",
+                "buying_power": "120000",
+                "daytrading_buying_power": "120000",
+                "daytrade_count": 1,
+            },
+            raw_positions=[
+                {
+                    "symbol": "AVGO",
+                    "side": "long",
+                    "qty": "43",
+                    "market_value": "4300.00",
+                    "avg_entry_price": "100.00",
+                    "current_price": "102.00",
+                    "unrealized_pl": "86.00",
+                }
+            ],
+            raw_orders=[
+                {
+                    "id": "stop-1",
+                    "client_order_id": "agent-AVGO-stop",
+                    "symbol": "AVGO",
+                    "side": "sell",
+                    "type": "stop",
+                    "status": "held",
+                    "stop_price": "98.00",
+                },
+                {
+                    "id": "target-1",
+                    "client_order_id": "agent-AVGO-target",
+                    "symbol": "AVGO",
+                    "side": "sell",
+                    "type": "limit",
+                    "status": "new",
+                    "limit_price": "106.00",
+                },
+            ],
+        )
+
+        self.assertEqual(summary["action"], "manage_existing_broker_state")
+        self.assertTrue(summary["skipFullScan"])
+        management = summary["positionManagement"]
+        self.assertEqual(management["mode"], "serial_position_management")
+        self.assertEqual(management["primaryAction"], "tighten_stop_lock_profit")
+        self.assertEqual(management["primaryReason"], "open_profit_at_or_above_1r")
+        self.assertTrue(management["actionRequired"])
+        directive = management["positions"][0]
+        self.assertEqual(directive["symbol"], "AVGO")
+        self.assertEqual(directive["openR"], "1.0000")
+        self.assertEqual(directive["stopR"], "-1.0000")
+        self.assertEqual(directive["recommendedStopPrice"], "100.50")
+        self.assertEqual(directive["protection"]["stopClientOrderId"], "agent-AVGO-stop")
+        self.assertEqual(directive["protection"]["takeProfitClientOrderId"], "agent-AVGO-target")
+
+    def test_position_management_tightens_to_breakeven_after_half_r(self) -> None:
+        summary = live_scan_cycle.summarize_account_gate(
+            raw_account={
+                "id": "paper-account",
+                "equity": "30000",
+                "buying_power": "120000",
+                "daytrading_buying_power": "120000",
+            },
+            raw_positions=[
+                {
+                    "symbol": "NVDA",
+                    "side": "long",
+                    "qty": "10",
+                    "avg_entry_price": "100.00",
+                    "current_price": "101.00",
+                }
+            ],
+            raw_orders=[
+                {
+                    "id": "stop-1",
+                    "client_order_id": "agent-NVDA-stop",
+                    "symbol": "NVDA",
+                    "side": "sell",
+                    "type": "stop",
+                    "status": "held",
+                    "stop_price": "98.00",
+                }
+            ],
+        )
+
+        management = summary["positionManagement"]
+        self.assertEqual(management["primaryAction"], "tighten_stop_to_breakeven")
+        directive = management["positions"][0]
+        self.assertEqual(directive["openR"], "0.5000")
+        self.assertEqual(directive["recommendedStopPrice"], "100.00")
+
     def test_run_account_gate_fetches_only_broker_state(self) -> None:
         case = self
 
