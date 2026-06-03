@@ -32,6 +32,7 @@ LIVE_EXECUTION_SLICE_COUNT = 5
 LIVE_TCA_METRIC_BATCH_SIZE = 5
 LIVE_TCA_METRIC_MAX_BATCHES = 1
 LIVE_RECONCILE_LIMIT = 500
+RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class JournalCronCommand:
     commit_each_row: bool = False
     progress_interval: int | None = None
     repeat_count: int = 1
+    supervise_timeout_seconds: float | None = None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -107,6 +109,7 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             reconcile_limit=LIVE_RECONCILE_LIMIT,
             reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
+            supervise_timeout_seconds=RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
         ),
     ]
 
@@ -142,6 +145,7 @@ def _sim_commands() -> list[JournalCronCommand]:
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
+            supervise_timeout_seconds=RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
             **common,
         ),
     ]
@@ -197,7 +201,14 @@ def _argv_for_command(
         argv.append("--commit-each-row")
     if command.progress_interval is not None:
         argv.extend(["--progress-interval", str(max(0, command.progress_interval))])
-    argv.extend(["--supervise-timeout-seconds", str(supervise_timeout_seconds)])
+    effective_supervise_timeout_seconds = max(
+        float(supervise_timeout_seconds),
+        float(command.supervise_timeout_seconds or 0.0),
+        0.001,
+    )
+    argv.extend(
+        ["--supervise-timeout-seconds", str(effective_supervise_timeout_seconds)]
+    )
     if json_output:
         argv.append("--json")
     return argv
@@ -299,9 +310,7 @@ def main() -> int:
                 _argv_for_command(
                     command,
                     json_output=bool(args.json),
-                    supervise_timeout_seconds=max(
-                        float(args.supervise_timeout_seconds), 0.001
-                    ),
+                    supervise_timeout_seconds=float(args.supervise_timeout_seconds),
                 ),
                 source=command.source,
                 json_output=bool(args.json),
