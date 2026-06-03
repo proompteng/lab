@@ -895,6 +895,8 @@ def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> st
         return "missing_expected_r"
     if expected_r < MIN_ACTIONABLE_EXPECTED_R:
         return "expected_r_below_threshold"
+    if scorecard_sample_size <= 0 or scorecard_avg_r is None or scorecard_avg_r <= 0:
+        return "positive_scorecard_edge_required"
     return None
 
 

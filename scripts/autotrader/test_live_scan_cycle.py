@@ -390,6 +390,8 @@ class LiveScanCycleTest(unittest.TestCase):
                 "regime": "trend_up",
                 "instrument": "equity",
                 "side": "long",
+                "scorecard_sample_size": 1,
+                "scorecard_avg_realized_r": "0.75",
             },
         )
 
@@ -440,6 +442,7 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_grade": "B",
                         "expected_r": "2.5",
                         "scorecard_sample_size": 2,
+                        "scorecard_avg_realized_r": "0.2",
                     },
                     {
                         "symbol": "NVDA",
@@ -485,12 +488,16 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A+",
                         "expected_r": "2.1",
+                        "scorecard_sample_size": 1,
+                        "scorecard_avg_realized_r": "0.1",
                     },
                     {
                         "symbol": "AMD",
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A",
                         "expected_r": "4.0",
+                        "scorecard_sample_size": 1,
+                        "scorecard_avg_realized_r": "0.1",
                     },
                 ]
             },
@@ -551,7 +558,40 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["expectedR"], "3.0")
         self.assertEqual(summary["bestCandidate"]["scorecardAvgRealizedR"], "3.042857")
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-amd")
-        self.assertEqual(summary["candidateSymbols"], ["AMD", "AVGO"])
+        self.assertEqual(summary["candidateSymbols"], ["AMD"])
+
+    def test_decision_summary_blocks_unproven_raw_edge_without_positive_scorecard(self) -> None:
+        result = {
+            "symbol": "AVGO",
+            "setup_type": "vwap_reclaim",
+            "setup_grade": "A+",
+            "expected_r": "5.0",
+            "last": "280.00",
+        }
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=10,
+            index=1,
+            result=result,
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=10,
+            scan={"results": [result]},
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-10-1-AVGO-vwap_reclaim-A+",
+                    "ticketId": "ticket-avgo",
+                }
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "positive_scorecard_edge_required")
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["actionableCandidateCount"], 0)
+        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertIsNone(summary["bestCandidate"])
 
     def test_decision_summary_blocks_sub_two_r_candidates(self) -> None:
         result = {
