@@ -5891,6 +5891,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(diagnostics["counts"]["hpairs_target_count"], 1)
         self.assertEqual(diagnostics["counts"]["hpairs_symbol_count"], 2)
         self.assertEqual(diagnostics["counts"]["hpairs_decision_count"], 0)
+        self.assertIn("market_session_closed", diagnostics["blockers"])
+        self.assertNotIn("c88421d619759b2cfaa6f4d0", diagnostics["blockers"])
+        self.assertNotIn("H-PAIRS-01", diagnostics["blockers"])
+        self.assertNotIn("AAPL", diagnostics["blockers"])
+        self.assertNotIn("AMZN", diagnostics["blockers"])
+        self.assertNotIn("TORGHUT_SIM", diagnostics["blockers"])
         self.assertFalse(diagnostics["safe_to_promote"])
         self.assertFalse(diagnostics["proof_semantics"]["synthetic_orders_or_fills"])
         stage_diagnostics = diagnostics["source_activity_stage_diagnostics"]

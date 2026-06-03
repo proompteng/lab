@@ -6251,8 +6251,29 @@ def _collect_hpairs_zero_activity_texts(*values: object) -> list[str]:
     texts: list[str] = []
     for value in values:
         if isinstance(value, Mapping):
-            for item in cast(Mapping[object, object], value).values():
-                texts.extend(_collect_hpairs_zero_activity_texts(item))
+            mapping = cast(Mapping[object, object], value)
+            for key, item in mapping.items():
+                key_text = str(key).strip().lower()
+                if key_text in {
+                    "blocker",
+                    "blockers",
+                    "blocking_reason",
+                    "blocking_reasons",
+                    "missing_reason",
+                    "missing_reasons",
+                    "source_lifecycle_blockers",
+                    "source_reference_blockers",
+                    "source_window_blockers",
+                    "submitted_order_blockers",
+                    "runtime_ledger_blockers",
+                    "source_activity_missing_reasons",
+                    "rejected_signal_diagnostic_reasons",
+                    "source_activity_to_runtime_ledger_blockers",
+                    "account_contamination_blockers",
+                    "account_state_blockers",
+                    "account_close_blockers",
+                }:
+                    texts.extend(_collect_hpairs_zero_activity_texts(item))
             continue
         if isinstance(value, Sequence) and not isinstance(
             value, (str, bytes, bytearray)
