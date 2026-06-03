@@ -879,6 +879,7 @@ describe('autonomous trader provider', () => {
     const agentSpec = objectAt(agent, 'spec')
     const agentMetadata = objectAt(agent, 'metadata')
     const readbackSystemPromptRef = objectAt(objectAt(agentSpec, 'defaults'), 'systemPromptRef')
+    const agentAllowedSecrets = objectAt(objectAt(agentSpec, 'security'), 'allowedSecrets') as unknown[]
     const implementationMetadata = objectAt(implementationSpec, 'metadata')
     const adapter = objectAt(providerSpec, 'adapter')
     const execAdapter = objectAt(adapter, 'exec')
@@ -936,8 +937,10 @@ describe('autonomous trader provider', () => {
       'autonomous-trader-alpaca-mcp',
       'agents-artifacts',
       'codex-auth',
+      'github-token',
       'synthesis-env',
     ])
+    expect(agentAllowedSecrets).toEqual(secretBindingSecrets)
     expect(objectAt(providerSpec, 'binary')).toBe('/usr/local/bin/agent-runner')
     expect(objectAt(adapter, 'type')).toBe('exec')
     expect(objectAt(execAdapter, 'binary')).toBe('/usr/bin/env')
