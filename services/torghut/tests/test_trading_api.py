@@ -11682,8 +11682,20 @@ class TestTradingApi(TestCase):
         original_cache = main_module._paper_route_target_plan_success_cache
         main_module._paper_route_target_plan_success_cache = None
         try:
-            settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
-            with patch("app.main.HTTPConnection") as connection:
+            settings.trading_paper_route_target_plan_url = (
+                "http://torghut-sim.torghut.svc.cluster.local"
+                "/trading/paper-route-target-plan"
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "K_SERVICE": "torghut-sim",
+                        "POD_NAMESPACE": "torghut",
+                    },
+                ),
+                patch("app.main.HTTPConnection") as connection,
+            ):
                 plan = _load_external_paper_route_target_plan()
             connection.assert_not_called()
         finally:
@@ -11716,6 +11728,114 @@ class TestTradingApi(TestCase):
             self.assertTrue(
                 main_module._paper_route_target_plan_url_points_to_self(parsed)
             )
+
+    def test_paper_route_target_plan_self_reference_allows_peer_service(
+        self,
+    ) -> None:
+        parsed = urlsplit(
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "K_SERVICE": "torghut-sim",
+                "POD_NAMESPACE": "torghut",
+            },
+        ):
+            self.assertFalse(
+                main_module._paper_route_target_plan_url_points_to_self(parsed)
+            )
+
+        with patch.dict(
+            os.environ,
+            {
+                "K_SERVICE": "torghut",
+                "POD_NAMESPACE": "torghut",
+            },
+        ):
+            self.assertTrue(
+                main_module._paper_route_target_plan_url_points_to_self(parsed)
+            )
+
+    def test_fetch_paper_route_target_plan_fetches_peer_service_url(self) -> None:
+        class FakeResponse:
+            status = 200
+
+            def read(self, _limit: int) -> bytes:
+                return json.dumps(
+                    {
+                        "runtime_window_import_plan": {
+                            "targets": [
+                                {
+                                    "candidate_id": "candidate-peer-plan",
+                                    "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                }
+                            ]
+                        }
+                    }
+                ).encode("utf-8")
+
+        class FakeConnection:
+            instances: list["FakeConnection"] = []
+
+            def __init__(
+                self,
+                hostname: str,
+                port: int | None = None,
+                *,
+                timeout: float | None = None,
+            ) -> None:
+                self.hostname = hostname
+                self.port = port
+                self.timeout = timeout
+                self.request_path: str | None = None
+                self.request_headers: dict[str, str] = {}
+                self.closed = False
+                self.instances.append(self)
+
+            def request(
+                self,
+                _method: str,
+                path: str,
+                *,
+                headers: dict[str, str],
+            ) -> None:
+                self.request_path = path
+                self.request_headers = headers
+
+            def getresponse(self) -> FakeResponse:
+                return FakeResponse()
+
+            def close(self) -> None:
+                self.closed = True
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "K_SERVICE": "torghut-sim",
+                    "POD_NAMESPACE": "torghut",
+                },
+            ),
+            patch("app.main.HTTPConnection", FakeConnection),
+        ):
+            plan = _fetch_paper_route_target_plan_url(
+                "http://torghut.torghut.svc.cluster.local"
+                "/trading/paper-route-target-plan",
+                timeout_seconds=1,
+            )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "candidate-peer-plan")
+        self.assertEqual(
+            FakeConnection.instances[0].hostname,
+            "torghut.torghut.svc.cluster.local",
+        )
+        self.assertEqual(
+            FakeConnection.instances[0].request_path,
+            "/trading/paper-route-target-plan",
+        )
+        self.assertTrue(FakeConnection.instances[0].closed)
 
     def test_load_external_paper_route_target_plan_uses_recent_success_after_timeout(
         self,
