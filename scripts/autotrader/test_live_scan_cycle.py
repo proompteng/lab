@@ -445,7 +445,7 @@ class LiveScanCycleTest(unittest.TestCase):
                         "symbol": "NVDA",
                         "setup_type": "opening_range_breakout",
                         "setup_grade": "A",
-                        "expected_r": "1.6",
+                        "expected_r": "2.6",
                         "scorecard_sample_size": 7,
                         "scorecard_avg_realized_r": "0.9",
                         "scorecard_confidence": "0.75",
@@ -474,6 +474,39 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-nvda")
         self.assertEqual(summary["bestCandidate"]["scorecardSampleSize"], 7)
         self.assertEqual(summary["candidateSymbols"], ["NVDA", "AMD"])
+
+    def test_decision_summary_blocks_sub_two_r_candidates(self) -> None:
+        result = {
+            "symbol": "GOOGL",
+            "setup_type": "vwap_reclaim",
+            "setup_grade": "B",
+            "expected_r": "1.786",
+            "last": "364.10",
+        }
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=7,
+            index=1,
+            result=result,
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=7,
+            scan={"results": [result]},
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-7-1-GOOGL-vwap_reclaim-B",
+                    "ticketId": "ticket-googl",
+                }
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "expected_r_below_threshold")
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["actionableCandidateCount"], 0)
+        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertIsNone(summary["bestCandidate"])
 
     def test_decision_summary_reports_no_actionable_candidate(self) -> None:
         summary = live_scan_cycle.decision_summary_for_scan(
@@ -534,7 +567,8 @@ class LiveScanCycleTest(unittest.TestCase):
 
         self.assertEqual([path for path, _ in synthesis.posts], ["/api/autotrader/trade-tickets"] * 2)
         self.assertEqual(recorded[0]["ticketId"], "ticket-1")
-        self.assertEqual(recorded[0]["status"], "candidate")
+        self.assertEqual(recorded[0]["status"], "blocked")
+        self.assertEqual(recorded[0]["noTradeReason"], "expected_r_below_threshold")
         self.assertEqual(recorded[0]["scorecardSampleSize"], 3)
         self.assertEqual(recorded[0]["scorecardAvgRealizedR"], "0.75")
         self.assertEqual(recorded[0]["scorecardConfidence"], "0.6")

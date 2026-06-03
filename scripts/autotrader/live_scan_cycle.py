@@ -38,6 +38,7 @@ SYNTHESIS_SIDES = {
     "sell_to_close",
 }
 ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
+MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 
 
 class AlpacaRestClient:
@@ -885,6 +886,11 @@ def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> st
         return "scanner_blocked_grade"
     if type_ == "no_trade":
         return "scanner_no_trade"
+    expected_r = decimal_value(result.get("expected_r") or result.get("expectedR"))
+    if expected_r is None:
+        return "missing_expected_r"
+    if expected_r < MIN_ACTIONABLE_EXPECTED_R:
+        return "expected_r_below_threshold"
     return None
 
 
@@ -1014,7 +1020,7 @@ def actionable_candidate_for_result(
     expected_r = decimal_value(payload.get("expectedR"))
     if payload.get("status") != "candidate" or grade not in ACTIONABLE_SETUP_GRADES:
         return None
-    if expected_r is not None and expected_r <= 0:
+    if expected_r is None or expected_r < MIN_ACTIONABLE_EXPECTED_R:
         return None
     ticket = tickets_by_idempotency_key.get(str(payload["idempotencyKey"]), {})
     return {

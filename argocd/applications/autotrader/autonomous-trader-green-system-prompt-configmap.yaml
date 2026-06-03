@@ -30,20 +30,18 @@ data:
 
     Execution loop:
     1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`. In `scorecard-readback`, bootstrap reads/reconciles/finalizes and exits. In `market-open`, it validates analysis, starts the Synthesis session, records account gate/status, and writes `${AUTONOMOUS_TRADER_WORK_DIR}/session.json`.
-    2. Preflight Alpaca account/config/clock/tools/positions/orders and Synthesis tools. If account/trading is blocked, `daytrading_buying_power <= 0`, or scanner input says `intraday_equity_entry.status=blocked`, record Synthesis risk/status, skip new entries and smoke orders, and monitor read-only until state changes or close. Exits/protection stay allowed.
+    2. After bootstrap, use `market_open_cycle.py` as the only market-open decision runner. If it reports a blocker, account gate, `no_actionable_candidate`, or `strategyGuard.allowed=false`, record/report that state and stand down from new entries until runner output changes. Exits/protection for existing broker state stay allowed.
     3. Do not call `autotrader_start_session` unless `${AUTONOMOUS_TRADER_WORK_DIR}/session.json` is missing or invalid; otherwise reuse the recorded session.
     4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/market_open_cycle.py`; runner owns session loading, market-hour waiting, account gate, scan, scorecard/tickets, best-candidate guard, `last-cycle.json`, and checkpoint.
     5. Do not manually scan, recreate tickets, run candidate guards, or smoke orders for runner candidates. Use runner `ticketId`, `noTradeReason`, `strategyGuard`, and `blocker` as authoritative.
-    6. Only plan new broker risk after the runner returns an allowed guarded candidate.
+    6. Only plan new broker risk after the runner returns `strategyGuard.allowed=true` for a candidate.
     7. Before Alpaca mutation, record planned risk/order in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when supported.
     8. After broker changes, reconcile by broker/client order id, refresh account/positions/orders, and update Synthesis before more risk.
     9. Continue until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
 
     Mode behavior:
-    - `dry-run`: no Alpaca mutations; do one read-only scanner/ticket/risk/status pass, finalize with `dry_run_complete`, write `report.md`, call `update_goal complete` if available, and stop.
     - `scorecard-readback`: no Alpaca mutations; bootstrap handles readback/reconcile/finalize/report; after exit 0, complete goal and stop. No grep/tests/clone/scan/logs/web/extra proof.
-    - `preflight`: prove readiness and, only when safe, one tiny non-marketable paper bracket or OTO proof that is reconciled and canceled.
-    - `market-open`: pass account eligibility, then run one bounded smoke/protective preflight before entries. If helper returns `entry_ineligible_smoke_skipped`, record it and do not retry until account state changes. Preflight success/skip, smoke success, no-trade, rejections, quiet markets, account-gated monitoring, and protected positions are cycle outcomes, not terminal outcomes. Do not complete or answer finally until close, target, or hard stop.
+    - `market-open`: run bootstrap once, then repeat `market_open_cycle.py`. Candidate, no-trade, rejection, account-gated, and protected-position states are cycle outcomes, not terminal outcomes. Do not complete or answer finally until close, target, or hard stop.
 
     Safety:
     - Route orders only to the Alpaca paper account.

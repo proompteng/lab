@@ -24,7 +24,7 @@ spec:
   acceptanceCriteria:
     - Trade only the dedicated Alpaca paper account and record trader state in Synthesis autotrader tables.
     - Bootstrap the analysis repo, read scorecards before grading, and use the live scan-cycle helper for candidate ranking.
-    - Submit strategy broker mutations only after Synthesis risk/order records, protective preflight success, strategy guard approval, and deterministic client order ids; helper-proven entry-ineligible smoke skips must stand down from entries.
+    - Submit strategy broker mutations only after Synthesis risk/order records, runner strategy guard approval, and deterministic client order ids.
     - Keep market-open runs cycling until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
     - Finalize sessions with realized scorecard observations and write `report.md` as the only operator-facing artifact.
   text: |-
@@ -38,4 +38,4 @@ spec:
     - analysis repo: bootstrap `/workspace/analysis` and require commit `56be940b69bf1a56578040eda9bf2e3699c5220e` or newer
     - operator report: `/workspace/.agentrun/autonomous-trader/report.md`
 
-    Start with bootstrap/preflight, then run the mode-specific loop. Keep all live decisions, risk checks, broker actions, reconciliation results, and scorecard observations in Synthesis autotrader tables.
+    Start with bootstrap, then run the mode-specific runner loop. Keep all live decisions, risk checks, broker actions, reconciliation results, and scorecard observations in Synthesis autotrader tables.
