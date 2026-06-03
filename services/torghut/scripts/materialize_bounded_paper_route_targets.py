@@ -22,12 +22,16 @@ from sqlalchemy.pool import StaticPool
 from app.models import Base, Strategy
 from app.trading.paper_route_target_plan import (
     PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL,
+    PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID,
     materialize_bounded_paper_route_target_plan,
     paper_route_target_plan_targets,
 )
 
 SCHEMA_VERSION = "torghut.bounded-paper-route-target-materialization-cli.v1"
 OPERATOR_CONFIRMATION = "MATERIALIZE_BOUNDED_TORGHUT_SIM_PAPER_ROUTE_TARGETS"
+DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE = (
+    "live_submission_gate.runtime_ledger_paper_probation_import_plan"
+)
 PROMOTION_FLAG_FIELDS = (
     "promotion_allowed",
     "promotion_authorized",
@@ -181,7 +185,10 @@ def _nested_mapping(payload: Mapping[str, Any], *keys: str) -> dict[str, Any]:
 
 def _target_materialization_score(target: Mapping[str, Any]) -> tuple[int, int, int]:
     return (
-        int(_safe_text(target.get("hypothesis_id")) == "H-PAIRS-01"),
+        int(
+            _safe_text(target.get("hypothesis_id"))
+            == PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID
+        ),
         int(
             bool(_target_symbol_actions(target))
             and _target_notional(target) > 0
@@ -446,12 +453,14 @@ def _confirmation_blockers(
     *,
     args: argparse.Namespace,
     summaries: Sequence[Mapping[str, Any]],
+    plan_source: Mapping[str, Any],
     dsn_env: str,
 ) -> list[str]:
     if not bool(args.commit):
         return []
 
     blockers: list[str] = []
+    dynamic_target_plan = bool(args.allow_dynamic_target_plan)
     confirmations = {
         "account_label": (
             _safe_text(args.confirm_account_label),
@@ -462,20 +471,10 @@ def _confirmation_blockers(
             _safe_text(args.confirm_hypothesis_id),
             ",".join(_unique_texts([item.get("hypothesis_id") for item in summaries])),
         ),
-        "candidate_id": (
-            _safe_text(args.confirm_candidate_id),
-            ",".join(_unique_texts([item.get("candidate_id") for item in summaries])),
-        ),
         "runtime_strategy_name": (
             _safe_text(args.confirm_runtime_strategy_name),
             ",".join(
                 _unique_texts([item.get("runtime_strategy_name") for item in summaries])
-            ),
-        ),
-        "target_plan_ref": (
-            _safe_text(args.confirm_target_plan_ref),
-            ",".join(
-                _unique_texts([item.get("target_plan_ref") for item in summaries])
             ),
         ),
         "max_notional": (
@@ -489,6 +488,43 @@ def _confirmation_blockers(
                 f"paper_route_materialization_commit_confirm_{name}_missing"
             )
 
+    if not dynamic_target_plan:
+        exact_confirmations = {
+            "candidate_id": (
+                _safe_text(args.confirm_candidate_id),
+                ",".join(
+                    _unique_texts([item.get("candidate_id") for item in summaries])
+                ),
+            ),
+            "target_plan_ref": (
+                _safe_text(args.confirm_target_plan_ref),
+                ",".join(
+                    _unique_texts([item.get("target_plan_ref") for item in summaries])
+                ),
+            ),
+        }
+        for name, (observed, expected) in exact_confirmations.items():
+            if expected is None or not observed or observed != expected:
+                blockers.append(
+                    f"paper_route_materialization_commit_confirm_{name}_missing"
+                )
+    else:
+        selected_plan = _safe_text(plan_source.get("selected_plan"))
+        confirmed_selected_plan = _safe_text(args.confirm_selected_plan_source)
+        if (
+            not selected_plan
+            or not confirmed_selected_plan
+            or confirmed_selected_plan != selected_plan
+        ):
+            blockers.append(
+                "paper_route_materialization_commit_confirm_selected_plan_source_missing"
+            )
+        minimum_target_count = int(args.confirm_target_count_min or 0)
+        if minimum_target_count <= 0 or len(summaries) < minimum_target_count:
+            blockers.append(
+                "paper_route_materialization_commit_confirm_target_count_min_missing"
+            )
+
     if _safe_text(args.operator_confirmation) != OPERATOR_CONFIRMATION:
         blockers.append("paper_route_materialization_operator_confirmation_missing")
     return blockers
@@ -498,6 +534,7 @@ def _safety_blockers(
     *,
     args: argparse.Namespace,
     plan: Mapping[str, Any],
+    plan_source: Mapping[str, Any],
     summaries: Sequence[Mapping[str, Any]],
     dsn: str | None,
     dsn_env: str,
@@ -578,7 +615,12 @@ def _safety_blockers(
             )
 
     blockers.extend(
-        _confirmation_blockers(args=args, summaries=summaries, dsn_env=dsn_env)
+        _confirmation_blockers(
+            args=args,
+            summaries=summaries,
+            plan_source=plan_source,
+            dsn_env=dsn_env,
+        )
     )
     return sorted(dict.fromkeys(blockers))
 
@@ -717,6 +759,7 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     blockers = load_blockers + _safety_blockers(
         args=args,
         plan=plan,
+        plan_source=plan_source,
         summaries=summaries,
         dsn=dsn,
         dsn_env=dsn_env,
@@ -765,6 +808,8 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "final_promotion_allowed": False,
         "capital_promotion_allowed": False,
         "operator_confirmation_required": OPERATOR_CONFIRMATION if commit else None,
+        "dynamic_target_plan_confirmation": bool(args.allow_dynamic_target_plan),
+        "default_dynamic_selected_plan_source": DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
         "target_count": len(summaries),
         "hypothesis_ids": _unique_texts(
             [item.get("hypothesis_id") for item in summaries]
@@ -821,7 +866,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirm-candidate-id", default=None)
     parser.add_argument("--confirm-runtime-strategy-name", default=None)
     parser.add_argument("--confirm-target-plan-ref", default=None)
+    parser.add_argument("--confirm-selected-plan-source", default=None)
+    parser.add_argument("--confirm-target-count-min", type=int, default=None)
     parser.add_argument("--confirm-max-notional", default=None)
+    parser.add_argument("--allow-dynamic-target-plan", action="store_true")
     parser.add_argument("--operator-confirmation", default=None)
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args(argv)

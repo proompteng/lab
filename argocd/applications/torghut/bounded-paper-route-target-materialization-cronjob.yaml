@@ -1,0 +1,91 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-bounded-paper-route-target-materialization
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: bounded-paper-route-target-materialization
+spec:
+  schedule: "*/5 10-15 * * 1-5"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: materialize-targets
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:d88a1823257bb9e074ae5dcb2febf23ff67f3b160cc0c6fcc828aeeb40991738
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+                  ephemeral-storage: 512Mi
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  if ! /opt/venv/bin/python scripts/materialize_bounded_paper_route_targets.py --help | grep -q -- '--allow-dynamic-target-plan'; then
+                    echo "stage=bounded_paper_route_target_materialization skipped reason=old_image_missing_dynamic_target_plan_guard"
+                    exit 0
+                  fi
+                  /opt/venv/bin/python scripts/materialize_bounded_paper_route_targets.py \
+                    --plan-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan \
+                    --plan-url-timeout-seconds 45 \
+                    --plan-url-attempts 3 \
+                    --database-dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
+                    --max-notional 25 \
+                    --commit \
+                    --allow-dynamic-target-plan \
+                    --confirm-account-label TORGHUT_SIM \
+                    --confirm-dsn-env SIM_DB_DSN \
+                    --confirm-hypothesis-id H-PAIRS-01 \
+                    --confirm-runtime-strategy-name microbar-cross-sectional-pairs-v1 \
+                    --confirm-selected-plan-source live_submission_gate.runtime_ledger_paper_probation_import_plan \
+                    --confirm-target-count-min 1 \
+                    --confirm-max-notional 25 \
+                    --operator-confirmation MATERIALIZE_BOUNDED_TORGHUT_SIM_PAPER_ROUTE_TARGETS
+              env:
+                - name: TORGHUT_SIM_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: host
+                - name: TORGHUT_SIM_DB_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: port
+                - name: TORGHUT_SIM_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: username
+                - name: TORGHUT_SIM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: password
+                - name: SIM_DB_DSN
+                  value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+                - name: PYTHONUNBUFFERED
+                  value: "1"

@@ -912,6 +912,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("tigerbeetle-smoke-job.yaml", resources)
         self.assertIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
         self.assertIn(
+            "bounded-paper-route-target-materialization-cronjob.yaml",
+            resources,
+        )
+        self.assertIn(
             "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml",
             resources,
         )
@@ -1380,6 +1384,121 @@ class TestLiveConfigManifestContract(TestCase):
             security_context.get("seccompProfile", {}),
         )
         self.assertEqual(seccomp_profile.get("type"), "Unconfined")
+
+    def test_bounded_paper_route_target_materialization_cronjob_is_sim_only(
+        self,
+    ) -> None:
+        spec, container = _load_cronjob_container(
+            "argocd/applications/torghut/"
+            "bounded-paper-route-target-materialization-cronjob.yaml"
+        )
+
+        self.assertEqual(spec.get("schedule"), "*/5 10-15 * * 1-5")
+        self.assertEqual(spec.get("timeZone"), "America/New_York")
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
+        job_spec = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        )
+        template = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], job_spec.get("template", {})),
+        )
+        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
+        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
+        self.assertEqual(
+            pod_spec.get("nodeSelector"),
+            {"kubernetes.io/arch": "arm64"},
+        )
+        resources = cast(Mapping[str, object], container.get("resources", {}))
+        self.assertEqual(
+            resources,
+            {
+                "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi",
+                    "ephemeral-storage": "128Mi",
+                },
+                "limits": {
+                    "cpu": "500m",
+                    "memory": "512Mi",
+                    "ephemeral-storage": "512Mi",
+                },
+            },
+        )
+        self.assertIn(
+            "registry.ide-newton.ts.net/lab/torghut@sha256:",
+            str(container.get("image")),
+        )
+
+        env = {
+            item.get("name"): item
+            for item in cast(list[Mapping[str, object]], container.get("env", []))
+        }
+        self.assertEqual(
+            env["SIM_DB_DSN"].get("value"),
+            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
+            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
+        )
+        self.assertEqual(env["PYTHONUNBUFFERED"].get("value"), "1")
+        for name, key in {
+            "TORGHUT_SIM_DB_HOST": "host",
+            "TORGHUT_SIM_DB_PORT": "port",
+            "TORGHUT_SIM_DB_USER": "username",
+            "TORGHUT_SIM_DB_PASSWORD": "password",
+        }.items():
+            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
+            self.assertEqual(
+                value_from.get("secretKeyRef"),
+                {"name": "torghut-db-app", "key": key},
+            )
+
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/materialize_bounded_paper_route_targets.py", args)
+        self.assertIn("--help | grep -q -- '--allow-dynamic-target-plan'", args)
+        self.assertIn(
+            "old_image_missing_dynamic_target_plan_guard",
+            args,
+        )
+        self.assertIn(
+            "--plan-url "
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            args,
+        )
+        self.assertIn("--plan-url-timeout-seconds 45", args)
+        self.assertIn("--plan-url-attempts 3", args)
+        self.assertIn("--database-dsn-env SIM_DB_DSN", args)
+        self.assertIn("--account-label TORGHUT_SIM", args)
+        self.assertIn("--max-notional 25", args)
+        self.assertIn("--commit", args)
+        self.assertIn("--allow-dynamic-target-plan", args)
+        self.assertIn("--confirm-account-label TORGHUT_SIM", args)
+        self.assertIn("--confirm-dsn-env SIM_DB_DSN", args)
+        self.assertIn("--confirm-hypothesis-id H-PAIRS-01", args)
+        self.assertIn(
+            "--confirm-runtime-strategy-name microbar-cross-sectional-pairs-v1",
+            args,
+        )
+        self.assertIn(
+            "--confirm-selected-plan-source "
+            "live_submission_gate.runtime_ledger_paper_probation_import_plan",
+            args,
+        )
+        self.assertIn("--confirm-target-count-min 1", args)
+        self.assertIn("--confirm-max-notional 25", args)
+        self.assertIn(
+            "--operator-confirmation MATERIALIZE_BOUNDED_TORGHUT_SIM_PAPER_ROUTE_TARGETS",
+            args,
+        )
+        self.assertNotIn("--confirm-candidate-id", args)
+        self.assertNotIn("--confirm-target-plan-ref", args)
+        self.assertNotIn("--promotion-allowed", args)
+        self.assertNotIn("--final-promotion-allowed", args)
+        self.assertNotIn("--capital-promotion-allowed", args)
+        self.assertNotIn("--final-authority-ok", args)
+        self.assertNotIn("PA3SX7FYNUTF", args)
 
     def test_tigerbeetle_journal_order_events_cronjob_covers_live_and_sim(
         self,
