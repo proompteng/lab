@@ -668,18 +668,60 @@ class LiveScanCycleTest(unittest.TestCase):
             {
                 "source": "scorecard_realized_r",
                 "mode": "scale_positive_realized_edge",
-                "riskMultiplier": "2.0",
+                "riskMultiplier": "1.0",
                 "maxRiskMultiplier": "2.0",
+                "minimumScaleSampleSize": 2,
                 "scorecardSampleSize": 1,
                 "scorecardAvgRealizedR": "3.042857",
                 "scorecardConfidence": "0.0909",
-                "reason": "positive_scorecard_edge",
+                "reason": "positive_scorecard_edge_pending_repeat_sample",
                 "baseRiskDollars": "100",
-                "recommendedRiskDollars": "200.0",
+                "recommendedRiskDollars": "100.0",
             },
         )
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-amd")
         self.assertEqual(summary["candidateSymbols"], ["AMD"])
+
+    def test_decision_summary_prefers_repeated_positive_edge_over_one_off_boost(self) -> None:
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=11,
+            scan={
+                "results": [
+                    {
+                        "symbol": "AMD",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "3.0",
+                        "scorecard_sample_size": 1,
+                        "scorecard_avg_realized_r": "3.0",
+                        "scorecard_confidence": "0.0909",
+                    },
+                    {
+                        "symbol": "AVGO",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "3.0",
+                        "scorecard_sample_size": 2,
+                        "scorecard_avg_realized_r": "2.0",
+                        "scorecard_confidence": "0.1667",
+                    },
+                ]
+            },
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-11-1-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                },
+                {
+                    "idempotencyKey": "scan-cycle-11-2-AVGO-vwap_reclaim-A",
+                    "ticketId": "ticket-avgo",
+                },
+            ],
+        )
+
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["bestCandidate"]["symbol"], "AVGO")
+        self.assertEqual(summary["candidateSymbols"], ["AVGO", "AMD"])
 
     def test_ticket_payload_records_scorecard_risk_directive_for_positive_edge(self) -> None:
         payload = live_scan_cycle.ticket_payload_for_scan_result(
@@ -706,6 +748,7 @@ class LiveScanCycleTest(unittest.TestCase):
                 "mode": "scale_positive_realized_edge",
                 "riskMultiplier": "1.4",
                 "maxRiskMultiplier": "2.0",
+                "minimumScaleSampleSize": 2,
                 "scorecardSampleSize": 2,
                 "scorecardAvgRealizedR": "1.4",
                 "scorecardConfidence": "0.25",

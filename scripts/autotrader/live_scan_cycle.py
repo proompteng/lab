@@ -39,6 +39,7 @@ SYNTHESIS_SIDES = {
 }
 ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
 MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
+MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
 
 
@@ -1101,20 +1102,35 @@ def scorecard_edge_values(result: dict[str, Any]) -> tuple[int, Decimal | None, 
     return sample_size, avg_realized_r, confidence
 
 
+def scorecard_edge_weight(sample_size: int) -> Decimal:
+    if sample_size <= 0:
+        return Decimal("0")
+    return min(Decimal("1"), Decimal(sample_size) / Decimal(MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE))
+
+
 def scorecard_risk_directive(result: dict[str, Any]) -> dict[str, Any] | None:
     sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
     if sample_size <= 0 or avg_realized_r is None or avg_realized_r <= 0:
         return None
-    risk_multiplier = min(MAX_SCORECARD_RISK_MULTIPLIER, max(Decimal("1.0"), avg_realized_r))
+    risk_multiplier = (
+        min(MAX_SCORECARD_RISK_MULTIPLIER, max(Decimal("1.0"), avg_realized_r))
+        if sample_size >= MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE
+        else Decimal("1.0")
+    )
     directive: dict[str, Any] = {
         "source": "scorecard_realized_r",
         "mode": "scale_positive_realized_edge",
         "riskMultiplier": str(risk_multiplier),
         "maxRiskMultiplier": str(MAX_SCORECARD_RISK_MULTIPLIER),
+        "minimumScaleSampleSize": MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE,
         "scorecardSampleSize": sample_size,
         "scorecardAvgRealizedR": str(avg_realized_r),
         "scorecardConfidence": str(confidence),
-        "reason": "positive_scorecard_edge",
+        "reason": (
+            "positive_scorecard_edge"
+            if sample_size >= MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE
+            else "positive_scorecard_edge_pending_repeat_sample"
+        ),
     }
     risk_dollars = decimal_value(result.get("risk_dollars") or result.get("riskDollars"))
     if risk_dollars is not None and risk_dollars > 0:
@@ -1129,7 +1145,9 @@ def candidate_score(result: dict[str, Any]) -> tuple[Decimal, Decimal, int, int,
     expected_r = decimal_value(result.get("expected_r") or result.get("expectedR")) or Decimal("0")
     sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
     scorecard_edge = (
-        avg_realized_r if sample_size > 0 and avg_realized_r is not None and avg_realized_r > 0 else Decimal("0")
+        avg_realized_r * scorecard_edge_weight(sample_size)
+        if sample_size > 0 and avg_realized_r is not None and avg_realized_r > 0
+        else Decimal("0")
     )
     return expected_r + scorecard_edge, expected_r, grade_score, sample_size, confidence
 
