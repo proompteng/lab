@@ -6998,6 +6998,22 @@ def _latest_reconciliation_ref_counts(
         "runtime_ledger_missing_signed_ref_count",
         "runtime_ledger_missing_account_ref_count",
     )
+    trusted_top_level_keys: set[str] | None = None
+    raw_field_names = latest_reconciliation.get("ref_count_field_names")
+    if isinstance(raw_field_names, Sequence) and not isinstance(
+        raw_field_names,
+        (str, bytes, bytearray),
+    ):
+        trusted_top_level_keys = {
+            str(item) for item in cast(Sequence[object], raw_field_names)
+        }
+    for key in required_keys:
+        if key in ref_counts or key not in latest_reconciliation:
+            continue
+        if trusted_top_level_keys is not None and key not in trusted_top_level_keys:
+            continue
+        if key not in ref_counts and key in latest_reconciliation:
+            ref_counts[key] = latest_reconciliation[key]
     if not all(key in ref_counts for key in required_keys):
         return None
     ref_counts.setdefault("schema_version", "torghut.tigerbeetle-ref-counts.v1")

@@ -862,6 +862,23 @@ def _latest_run_payload(
         if isinstance(raw_ref_counts, Mapping)
         else cast(Mapping[str, object], {})
     )
+    ref_count_field_names = sorted(
+        {
+            key
+            for key in (
+                "account_ref_count",
+                "transfer_ref_count",
+                "runtime_ledger_ref_count",
+                "runtime_ledger_signed_ref_count",
+                "runtime_ledger_missing_signed_ref_count",
+                "runtime_ledger_missing_account_ref_count",
+                "stable_ref_count",
+                "stable_ref_missing_count",
+                "stable_ref_mismatch_count",
+            )
+            if key in payload or key in ref_counts
+        }
+    )
     account_ref_count = _payload_int(payload, "account_ref_count") or _payload_int(
         ref_counts,
         "account_ref_count",
@@ -996,6 +1013,7 @@ def _latest_run_payload(
         or [],
         "blocker_details": payload.get("blocker_details") or {},
         "ref_counts": payload.get("ref_counts") or {},
+        "ref_count_field_names": ref_count_field_names,
         "started_at": row.started_at.isoformat(),
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
         "blockers": blockers,
