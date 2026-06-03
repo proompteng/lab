@@ -375,6 +375,111 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["topScorecards"][0]["avgRealizedR"], "1.25")
         self.assertEqual(len(summary["payloadHash"]), 64)
 
+    def test_overlay_scorecards_on_scan_enables_positive_history_candidate(self) -> None:
+        scan = live_scan_cycle.overlay_scorecards_on_scan(
+            {
+                "results": [
+                    {
+                        "symbol": "amd",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "3.0",
+                        "last": "180.25",
+                    }
+                ]
+            },
+            {
+                "scorecards": [
+                    {
+                        "symbol": "AMD",
+                        "setupType": "vwap_reclaim",
+                        "setupGrade": "A",
+                        "sampleSize": 1,
+                        "avgRealizedR": "3.042857",
+                        "confidence": "0.0909",
+                    }
+                ]
+            },
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=11,
+            scan=scan,
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-11-1-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                }
+            ],
+        )
+
+        result = scan["results"][0]
+        self.assertEqual(scan["scorecardOverlay"]["appliedResultCount"], 1)
+        self.assertEqual(result["scorecard_sample_size"], "1")
+        self.assertEqual(result["scorecard_avg_realized_r"], "3.042857")
+        self.assertEqual(result["scorecard_overlay_source"], "synthesis_scorecards")
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
+        self.assertEqual(summary["candidateSymbols"], ["AMD"])
+
+    def test_overlay_scorecards_on_scan_preserves_negative_history_block(self) -> None:
+        scan = live_scan_cycle.overlay_scorecards_on_scan(
+            {
+                "results": [
+                    {
+                        "symbol": "F",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "5.0",
+                        "last": "12.34",
+                    }
+                ]
+            },
+            {
+                "scorecards": [
+                    {
+                        "symbol": "F",
+                        "setupType": "vwap_reclaim",
+                        "setupGrade": "A",
+                        "sampleSize": 2,
+                        "avgRealizedR": "-0.585",
+                        "confidence": "0.1667",
+                    },
+                    {
+                        "symbol": "F",
+                        "setupType": "vwap_reclaim",
+                        "setupGrade": "A",
+                        "sampleSize": 1,
+                        "avgRealizedR": "0",
+                        "confidence": "0.0909",
+                    },
+                ]
+            },
+        )
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=12,
+            index=1,
+            result=scan["results"][0],
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=12,
+            scan=scan,
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-12-1-F-vwap_reclaim-A",
+                    "ticketId": "ticket-f",
+                }
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(scan["scorecardOverlay"]["appliedResultCount"], 1)
+        self.assertEqual(scan["results"][0]["scorecard_sample_size"], "3")
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "scorecard_avg_realized_r_negative")
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["blockedResultCount"], 1)
+
     def test_builds_ticket_payload_from_scanner_candidate(self) -> None:
         payload = live_scan_cycle.ticket_payload_for_scan_result(
             session_id="session-1",
