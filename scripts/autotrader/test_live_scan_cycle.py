@@ -75,6 +75,32 @@ class LiveScanCycleTest(unittest.TestCase):
             },
         )
 
+    def test_fetch_broker_state_fetches_account_positions_and_orders_concurrently(self) -> None:
+        case = self
+        barrier = threading.Barrier(3)
+
+        class FakeAlpaca:
+            def trading_get(self, path: str, query: dict[str, str] | None = None) -> object:
+                case.assertIn(path, {"/v2/account", "/v2/positions", "/v2/orders"})
+                if path == "/v2/orders":
+                    case.assertEqual(query, {"status": "open", "nested": "true"})
+                else:
+                    case.assertIsNone(query)
+                barrier.wait(timeout=1)
+                if path == "/v2/account":
+                    return {"id": "paper-account", "equity": "30000"}
+                if path == "/v2/positions":
+                    return [{"symbol": "NVDA"}]
+                return [{"id": "order-1"}]
+
+        state, metrics = live_scan_cycle.fetch_broker_state_with_metrics(FakeAlpaca())  # type: ignore[arg-type]
+
+        self.assertEqual(state["account"]["id"], "paper-account")
+        self.assertEqual(state["positions"][0]["symbol"], "NVDA")
+        self.assertEqual(state["orders"][0]["id"], "order-1")
+        self.assertEqual(metrics["parallelFetchCount"], 3)
+        self.assertGreaterEqual(metrics["totalMs"], 0)
+
     def test_fetch_scan_inputs_fetches_market_data_and_scorecards_concurrently(self) -> None:
         case = self
         barrier = threading.Barrier(3)
@@ -267,6 +293,8 @@ class LiveScanCycleTest(unittest.TestCase):
 
         self.assertEqual(summary["action"], "monitor_only")
         self.assertTrue(summary["skipFullScan"])
+        self.assertEqual(summary["stageTimingsMs"]["brokerState"]["parallelFetchCount"], 3)
+        self.assertGreaterEqual(summary["stageTimingsMs"]["totalMs"], 0)
 
     def test_summarizes_scan_without_runtime_ledger(self) -> None:
         summary = live_scan_cycle.summarize_scan(
@@ -569,6 +597,7 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertEqual(summary["resultCount"], 0)
             self.assertEqual(summary["recordedTickets"], [])
             self.assertEqual(summary["recordedAccountGate"]["riskCheckId"], "risk-1")
+            self.assertEqual(summary["stageTimingsMs"]["brokerState"]["parallelFetchCount"], 3)
             self.assertTrue((Path(directory) / "cycle-1").exists())
 
     def test_run_cycle_respects_account_gate_and_skips_scan_when_managing_existing_state(self) -> None:
@@ -645,6 +674,7 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertEqual(summary["recordedTickets"], [])
             self.assertEqual(summary["accountGate"]["openPositions"][0]["symbol"], "NVDA")
             self.assertEqual(summary["accountGate"]["openOrders"][0]["clientOrderId"], "agent-NVDA-protect")
+            self.assertEqual(summary["stageTimingsMs"]["brokerState"]["parallelFetchCount"], 3)
 
     def test_run_cycle_returns_summary_without_summary_file(self) -> None:
         case = self
@@ -763,6 +793,7 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertGreaterEqual(summary["stageTimingsMs"]["totalMs"], 0)
             self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["parallelFetchCount"], 3)
             self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["brokerStateSource"], "fetched")
+            self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["brokerState"]["parallelFetchCount"], 3)
             self.assertGreaterEqual(summary["stageTimingsMs"]["stockAnalysisScanMs"], 0)
             self.assertEqual(summary["recordedTickets"][0]["ticketId"], "ticket-nvda")
             self.assertEqual(summary["recordedTickets"][0]["status"], "blocked")
