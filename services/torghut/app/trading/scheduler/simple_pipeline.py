@@ -4251,6 +4251,11 @@ class SimpleTradingPipeline(TradingPipeline):
         raw_probe_symbols: set[str],
         scoped_probe_symbols: set[str],
     ) -> dict[str, object]:
+        source = (
+            "local_strategy_universe_target_plan_fallback"
+            if bool(target.get("paper_route_probe_strategy_universe_fallback"))
+            else "local_target_plan_probe_symbols"
+        )
         lookup_names = [
             name for name in _target_lookup_names(target) if str(name).strip()
         ]
@@ -4281,6 +4286,7 @@ class SimpleTradingPipeline(TradingPipeline):
             blockers.append("source_strategy_universe_excludes_probe_symbols")
         return {
             "schema_version": "torghut.paper-route-source-decision-readiness.v1",
+            "source": source,
             "ready": not blockers,
             "blockers": blockers,
             "strategy_lookup_names": lookup_names,
