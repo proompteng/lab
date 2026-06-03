@@ -52,7 +52,7 @@ spec:
                     exit 0
                   fi
                   /opt/venv/bin/python scripts/materialize_bounded_paper_route_targets.py \
-                    --plan-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan \
+                    --plan-url http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan \
                     --plan-url-timeout-seconds 45 \
                     --plan-url-attempts 3 \
                     --database-dsn-env SIM_DB_DSN \

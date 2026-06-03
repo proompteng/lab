@@ -130,7 +130,7 @@ spec:
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
               value: "75000"
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_URL
-              value: http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan
+              value: http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS
               value: "10"
             - name: TRADING_KILL_SWITCH_ENABLED
