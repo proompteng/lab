@@ -3665,7 +3665,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 return json.dumps(self.body).encode("utf-8")
 
         def open_url(url: str, *, timeout: float) -> _Response:
-            self.assertEqual(timeout, 10.0)
+            self.assertEqual(timeout, packet.DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS)
             payloads = {
                 "http://torghut.local/trading/status": _status(),
                 "http://torghut.local/trading/paper-route-evidence": (
@@ -3729,7 +3729,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 return json.dumps(self.body).encode("utf-8")
 
         def open_url(url: str, *, timeout: float) -> _Response:
-            self.assertEqual(timeout, 10.0)
+            self.assertEqual(timeout, packet.DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS)
             payloads = {
                 "http://torghut-live.local/trading/status": _status(),
                 "http://torghut-sim.local/trading/paper-route-evidence": (
@@ -3802,7 +3802,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 return json.dumps(self.body).encode("utf-8")
 
         def open_url(url: str, *, timeout: float) -> _Response:
-            self.assertEqual(timeout, 10.0)
+            self.assertEqual(timeout, packet.DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS)
             if url == "http://torghut-live.local/trading/status":
                 return _Response(_status())
             if url == "http://torghut-sim.local/trading/paper-route-evidence":

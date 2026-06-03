@@ -86,6 +86,7 @@ spec:
                     --status-service-base-url http://torghut.torghut.svc.cluster.local \
                     --paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local \
                     --completion-service-base-url http://torghut.torghut.svc.cluster.local \
+                    --timeout-seconds 30 \
                     --proof-mode authority \
                     --runtime-window-import-file "${RENEWAL_OUTPUT}" \
                     --min-runtime-ledger-net-pnl 10000 \
