@@ -7,15 +7,17 @@ of mutating any live submission gate.
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 import logging
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select, text
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -1570,6 +1572,7 @@ def _target_identity(
         "runtime_strategy_name": runtime_strategy_name,
         "strategy_lookup_names": strategy_lookup_names,
         "account_label": _safe_text(target.get("account_label")),
+        "source_account_label": _safe_text(target.get("source_account_label")),
         "source_kind": _safe_text(target.get("source_kind")),
         "source_dsn_env": _safe_text(target.get("source_dsn_env")),
         "target_dsn_env": _safe_text(target.get("target_dsn_env")),
@@ -6765,6 +6768,131 @@ def _evidence_window_contract(
     }
 
 
+@contextmanager
+def _target_source_audit_session(
+    session: Session,
+    *,
+    target: Mapping[str, object],
+) -> Iterator[tuple[Session, dict[str, object]]]:
+    source_dsn_env = _safe_text(target.get("source_dsn_env"))
+    target_dsn_env = _safe_text(target.get("target_dsn_env"))
+    target_account_label = _safe_text(target.get("account_label"))
+    source_account_label = (
+        _safe_text(target.get("source_account_label")) or target_account_label
+    )
+    metadata: dict[str, object] = {
+        "source_session_used": False,
+        "source_session_expected": _target_is_runtime_ledger_source_collection(target)
+        and bool(source_dsn_env),
+        "source_dsn_env": source_dsn_env,
+        "target_dsn_env": target_dsn_env,
+        "source_account_label": source_account_label,
+        "target_account_label": target_account_label,
+    }
+    if not metadata["source_session_expected"]:
+        yield session, metadata
+        return
+    source_dsn = os.getenv(source_dsn_env or "", "").strip()
+    if not source_dsn:
+        yield session, {**metadata, "source_dsn_configured": False}
+        return
+    source_engine = create_engine(source_dsn, future=True, pool_pre_ping=True)
+    try:
+        with Session(source_engine) as source_session:
+            yield (
+                source_session,
+                {
+                    **metadata,
+                    "source_session_used": True,
+                    "source_dsn_configured": True,
+                },
+            )
+    finally:
+        source_engine.dispose()
+
+
+def _source_audit_account_label(
+    target: Mapping[str, object],
+    source_scope: Mapping[str, object],
+) -> str | None:
+    if bool(source_scope.get("source_session_used")):
+        return _safe_text(source_scope.get("source_account_label"))
+    return _safe_text(target.get("account_label"))
+
+
+def _annotate_source_audit_scope(
+    payload: Mapping[str, object],
+    source_scope: Mapping[str, object],
+) -> dict[str, object]:
+    return {**dict(payload), "source_audit_scope": dict(source_scope)}
+
+
+def _database_unavailable_runtime_ledger_summary(
+    *,
+    target: Mapping[str, object],
+    source_scope: Mapping[str, object],
+    strategy_name: str | None,
+    strategy_lookup_names: Sequence[str] | None,
+    account_label: str | None,
+    error_source: str,
+    error: BaseException,
+) -> dict[str, object]:
+    source_blocker = _paper_route_audit_error_source_blocker(error_source)
+    return {
+        "bucket_count": 0,
+        "evidence_grade_bucket_count": 0,
+        "non_evidence_grade_bucket_count": 0,
+        "returned_bucket_count": 0,
+        "query_limit": RUNTIME_LEDGER_SUMMARY_ROW_LIMIT,
+        "truncated": False,
+        "proof_scope": "evidence_grade_runtime_ledger_buckets_only",
+        "fill_count": 0,
+        "decision_count": 0,
+        "submitted_order_count": 0,
+        "closed_trade_count": 0,
+        "open_position_count": 0,
+        "filled_notional": "0",
+        "net_strategy_pnl_after_costs": "0",
+        "post_cost_expectancy_bps": "0",
+        "filters": {
+            "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+            "candidate_id": _safe_text(target.get("candidate_id")),
+            "observed_stage": _safe_text(target.get("observed_stage")),
+            "account_label": account_label,
+            "strategy_name": strategy_name,
+            "strategy_lookup_names": _strategy_lookup_names(
+                strategy_name, strategy_lookup_names
+            ),
+            "strategy_family": _safe_text(target.get("strategy_family")),
+        },
+        "latest_bucket_ended_at": None,
+        "db_row_refs": [],
+        "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+        "non_evidence_grade_diagnostic": {
+            "row_count": 0,
+            "blocker_counts": {},
+            "sample_refs": [],
+        },
+        "db_load_error": _paper_route_audit_error_payload(
+            error_source=error_source,
+            error=error,
+        ),
+        "source_audit_scope": dict(source_scope),
+    }
+
+
+def _target_source_audit_error_source(
+    *,
+    source_scope: Mapping[str, object],
+    fallback: str,
+) -> str:
+    return (
+        "target_source_dsn_audit"
+        if bool(source_scope.get("source_session_used"))
+        else fallback
+    )
+
+
 def _target_audit(
     session: Session,
     *,
@@ -6787,30 +6915,110 @@ def _target_audit(
         for item in _as_sequence(target.get("strategy_lookup_names"))
         if str(item).strip()
     ]
+    source_scope: dict[str, object] = {}
     try:
-        source_activity = _strategy_source_activity(
-            session,
-            strategy_name=cast(str | None, target.get("strategy_name")),
-            strategy_lookup_names=strategy_lookup_names,
-            account_label=cast(str | None, target.get("account_label")),
-            symbols=_target_probe_symbols(target, probe),
-            window_start=window_start,
-            window_end=window_end,
-            candidate_id=candidate_id,
-            hypothesis_id=hypothesis_id,
-            require_source_lineage=_target_requires_source_lineage(target),
-        )
+        with _target_source_audit_session(session, target=target) as (
+            source_session,
+            source_scope,
+        ):
+            source_account_label = _source_audit_account_label(target, source_scope)
+            try:
+                source_activity = _annotate_source_audit_scope(
+                    _strategy_source_activity(
+                        source_session,
+                        strategy_name=cast(str | None, target.get("strategy_name")),
+                        strategy_lookup_names=strategy_lookup_names,
+                        account_label=source_account_label,
+                        symbols=_target_probe_symbols(target, probe),
+                        window_start=window_start,
+                        window_end=window_end,
+                        candidate_id=candidate_id,
+                        hypothesis_id=hypothesis_id,
+                        require_source_lineage=_target_requires_source_lineage(target),
+                    ),
+                    source_scope,
+                )
+            except SQLAlchemyError as exc:
+                source_error = _target_source_audit_error_source(
+                    source_scope=source_scope,
+                    fallback=error_source,
+                )
+                logger.warning(
+                    "Paper-route source activity audit degraded source=%s error=%s",
+                    source_error,
+                    exc,
+                )
+                _rollback_paper_route_audit_session(source_session)
+                source_activity = _database_unavailable_source_activity(
+                    target=target,
+                    probe=probe,
+                    error_source=source_error,
+                    error=exc,
+                )
+                source_activity = _annotate_source_audit_scope(
+                    source_activity, source_scope
+                )
+            try:
+                runtime_ledger = _annotate_source_audit_scope(
+                    _runtime_ledger_summary(
+                        source_session,
+                        hypothesis_id=hypothesis_id,
+                        candidate_id=candidate_id,
+                        observed_stage=cast(str | None, target.get("observed_stage")),
+                        account_label=source_account_label,
+                        strategy_name=cast(str | None, target.get("strategy_name")),
+                        strategy_lookup_names=strategy_lookup_names,
+                        strategy_family=cast(str | None, target.get("strategy_family")),
+                        window_start=window_start,
+                        window_end=window_end,
+                    ),
+                    source_scope,
+                )
+            except SQLAlchemyError as exc:
+                source_error = _target_source_audit_error_source(
+                    source_scope=source_scope,
+                    fallback=error_source,
+                )
+                logger.warning(
+                    "Paper-route runtime-ledger audit degraded source=%s error=%s",
+                    source_error,
+                    exc,
+                )
+                _rollback_paper_route_audit_session(source_session)
+                runtime_ledger = _database_unavailable_runtime_ledger_summary(
+                    target=target,
+                    source_scope=source_scope,
+                    strategy_name=cast(str | None, target.get("strategy_name")),
+                    strategy_lookup_names=strategy_lookup_names,
+                    account_label=source_account_label,
+                    error_source=source_error,
+                    error=exc,
+                )
     except SQLAlchemyError as exc:
+        source_error = _target_source_audit_error_source(
+            source_scope=source_scope,
+            fallback=error_source,
+        )
         logger.warning(
-            "Paper-route source activity audit degraded source=%s error=%s",
-            error_source,
+            "Paper-route source audit session degraded source=%s error=%s",
+            source_error,
             exc,
         )
         _rollback_paper_route_audit_session(session)
         source_activity = _database_unavailable_source_activity(
             target=target,
             probe=probe,
-            error_source=error_source,
+            error_source=source_error,
+            error=exc,
+        )
+        source_activity = _annotate_source_audit_scope(source_activity, source_scope)
+        runtime_ledger = _database_unavailable_runtime_ledger_summary(
+            target=target,
+            source_scope=source_scope,
+            strategy_name=cast(str | None, target.get("strategy_name")),
+            strategy_lookup_names=strategy_lookup_names,
+            account_label=_source_audit_account_label(target, source_scope),
+            error_source=source_error,
             error=exc,
         )
     source_activity_account_diagnostics = _source_activity_account_diagnostics(
@@ -6850,18 +7058,6 @@ def _target_audit(
         session,
         account_label=cast(str | None, target.get("account_label")),
         symbols=_target_probe_symbols(target, probe),
-        window_start=window_start,
-        window_end=window_end,
-    )
-    runtime_ledger = _runtime_ledger_summary(
-        session,
-        hypothesis_id=hypothesis_id,
-        candidate_id=candidate_id,
-        observed_stage=cast(str | None, target.get("observed_stage")),
-        account_label=cast(str | None, target.get("account_label")),
-        strategy_name=cast(str | None, target.get("strategy_name")),
-        strategy_lookup_names=strategy_lookup_names,
-        strategy_family=cast(str | None, target.get("strategy_family")),
         window_start=window_start,
         window_end=window_end,
     )
@@ -8486,14 +8682,32 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
         return {}
     limit = max(0, target_limit)
     source_targets: list[dict[str, object]] = []
-    for target in _as_mapping_items(plan.get("targets")):
+    seen_target_keys: set[tuple[str, str, str, str, str]] = set()
+
+    def append_source_target(target: Mapping[str, Any]) -> None:
         if len(source_targets) >= limit:
-            break
+            return
         if not _target_is_runtime_ledger_source_collection(target):
-            continue
-        source_targets.append(
-            _sanitized_runtime_ledger_source_collection_target(target)
+            return
+        sanitized = _sanitized_runtime_ledger_source_collection_target(target)
+        key = (
+            _safe_text(sanitized.get("hypothesis_id")) or "",
+            _safe_text(sanitized.get("candidate_id")) or "",
+            _safe_text(sanitized.get("runtime_strategy_name")) or "",
+            _safe_text(sanitized.get("window_start")) or "",
+            _safe_text(sanitized.get("window_end")) or "",
         )
+        if key in seen_target_keys:
+            return
+        seen_target_keys.add(key)
+        source_targets.append(sanitized)
+
+    for target in _as_mapping_items(plan.get("targets")):
+        append_source_target(target)
+    for target in _as_mapping_items(
+        live_submission_gate.get("runtime_ledger_source_collection_candidates")
+    ):
+        append_source_target(target)
     if not source_targets:
         return {}
     return {
