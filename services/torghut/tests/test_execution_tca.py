@@ -4,8 +4,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 from unittest import TestCase
+from unittest.mock import MagicMock
 
 from sqlalchemy import create_engine, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
@@ -124,6 +126,199 @@ class TestExecutionTcaCostLineage(TestCase):
             "runtime_tca_cost_lineage_sample_truncated",
             runtime_lineage["blockers"],
         )
+
+    def test_build_tca_gate_inputs_keeps_tca_rows_when_coverage_times_out(
+        self,
+    ) -> None:
+        computed_at = datetime(2026, 6, 3, 13, 0, tzinfo=timezone.utc)
+        aggregate_result = MagicMock()
+        aggregate_result.one.return_value = (
+            3,
+            Decimal("1.1"),
+            Decimal("1.5"),
+            Decimal("0.03"),
+            Decimal("0.03"),
+            Decimal("0.02"),
+            Decimal("0.4"),
+            Decimal("0.4"),
+            3,
+            Decimal("2.0"),
+            Decimal("4.0"),
+            Decimal("0.7"),
+            Decimal("0.7"),
+            Decimal("1.3"),
+            computed_at,
+        )
+        symbol_result = MagicMock()
+        symbol_result.all.return_value = [
+            (
+                "AMZN",
+                3,
+                Decimal("1.5"),
+                Decimal("2.1"),
+                computed_at,
+                Decimal("0.7"),
+            )
+        ]
+        session = MagicMock()
+        session.execute.side_effect = [
+            aggregate_result,
+            symbol_result,
+            SQLAlchemyError("statement timeout"),
+        ]
+
+        summary = build_tca_gate_inputs(
+            session,
+            account_label="paper",
+            symbols=["AMZN"],
+        )
+
+        self.assertEqual(summary["order_count"], 3)
+        self.assertEqual(summary["scope_symbols"], ["AMZN"])
+        self.assertEqual(summary["read_model_status"], "degraded")
+        self.assertEqual(
+            summary["reason_codes"],
+            ["execution_tca_execution_coverage_query_unavailable"],
+        )
+        self.assertEqual(summary["filled_execution_count"], 0)
+        self.assertEqual(summary["unsettled_execution_count"], 0)
+        self.assertEqual(summary["last_computed_at"], computed_at)
+        symbol_breakdown = summary["symbol_breakdown"]
+        assert isinstance(symbol_breakdown, list)
+        self.assertEqual(symbol_breakdown[0]["symbol"], "AMZN")
+        self.assertEqual(symbol_breakdown[0]["order_count"], 3)
+        runtime_lineage = summary["runtime_ledger_lineage"]
+        assert isinstance(runtime_lineage, dict)
+        self.assertEqual(runtime_lineage["status"], "blocked")
+        self.assertTrue(runtime_lineage["read_model_unavailable"])
+        self.assertIn(
+            "execution_tca_execution_coverage_query_unavailable",
+            runtime_lineage["blockers"],
+        )
+        session.rollback.assert_called_once()
+
+    def test_build_tca_gate_inputs_marks_symbol_breakdown_timeout(self) -> None:
+        computed_at = datetime(2026, 6, 3, 13, 5, tzinfo=timezone.utc)
+        aggregate_result = MagicMock()
+        aggregate_result.one.return_value = (
+            2,
+            Decimal("1.1"),
+            Decimal("1.5"),
+            Decimal("0.03"),
+            Decimal("0.03"),
+            Decimal("0.02"),
+            Decimal("0.4"),
+            Decimal("0.4"),
+            2,
+            Decimal("2.0"),
+            Decimal("4.0"),
+            Decimal("0.7"),
+            Decimal("0.7"),
+            Decimal("1.3"),
+            computed_at,
+        )
+        execution_result = MagicMock()
+        execution_result.one.return_value = (0, None)
+        unsettled_result = MagicMock()
+        unsettled_result.scalar_one.return_value = 0
+        lineage_result = MagicMock()
+        lineage_result.scalars.return_value.all.return_value = []
+        session = MagicMock()
+        session.execute.side_effect = [
+            aggregate_result,
+            SQLAlchemyError("symbol timeout"),
+            execution_result,
+            unsettled_result,
+            lineage_result,
+        ]
+
+        summary = build_tca_gate_inputs(
+            session,
+            account_label="paper",
+            symbols=["AMZN"],
+        )
+
+        self.assertEqual(summary["read_model_status"], "degraded")
+        self.assertEqual(
+            summary["reason_codes"],
+            ["execution_tca_symbol_breakdown_query_unavailable"],
+        )
+        symbol_breakdown = summary["symbol_breakdown"]
+        assert isinstance(symbol_breakdown, list)
+        self.assertEqual(symbol_breakdown[0]["symbol"], "AMZN")
+        self.assertEqual(symbol_breakdown[0]["order_count"], 0)
+        self.assertTrue(symbol_breakdown[0]["read_model_unavailable"])
+        self.assertEqual(
+            symbol_breakdown[0]["reason_codes"],
+            ["execution_tca_symbol_breakdown_query_unavailable"],
+        )
+        session.rollback.assert_called_once()
+
+    def test_build_tca_gate_inputs_marks_lineage_timeout(self) -> None:
+        computed_at = datetime(2026, 6, 3, 13, 10, tzinfo=timezone.utc)
+        aggregate_result = MagicMock()
+        aggregate_result.one.return_value = (
+            2,
+            Decimal("1.1"),
+            Decimal("1.5"),
+            Decimal("0.03"),
+            Decimal("0.03"),
+            Decimal("0.02"),
+            Decimal("0.4"),
+            Decimal("0.4"),
+            2,
+            Decimal("2.0"),
+            Decimal("4.0"),
+            Decimal("0.7"),
+            Decimal("0.7"),
+            Decimal("1.3"),
+            computed_at,
+        )
+        symbol_result = MagicMock()
+        symbol_result.all.return_value = [
+            (
+                "AMZN",
+                2,
+                Decimal("1.5"),
+                Decimal("2.1"),
+                computed_at,
+                Decimal("0.7"),
+            )
+        ]
+        execution_result = MagicMock()
+        execution_result.one.return_value = (2, computed_at)
+        unsettled_result = MagicMock()
+        unsettled_result.scalar_one.return_value = 0
+        session = MagicMock()
+        session.execute.side_effect = [
+            aggregate_result,
+            symbol_result,
+            execution_result,
+            unsettled_result,
+            SQLAlchemyError("lineage timeout"),
+        ]
+
+        summary = build_tca_gate_inputs(
+            session,
+            account_label="paper",
+            symbols=["AMZN"],
+        )
+
+        self.assertEqual(summary["read_model_status"], "degraded")
+        self.assertEqual(
+            summary["reason_codes"],
+            ["runtime_tca_cost_lineage_query_unavailable"],
+        )
+        runtime_lineage = summary["runtime_ledger_lineage"]
+        assert isinstance(runtime_lineage, dict)
+        self.assertTrue(runtime_lineage["read_model_unavailable"])
+        self.assertTrue(runtime_lineage["truncated"])
+        self.assertEqual(runtime_lineage["total_filled_execution_count"], 2)
+        self.assertIn(
+            "runtime_tca_cost_lineage_query_unavailable",
+            runtime_lineage["blockers"],
+        )
+        session.rollback.assert_called_once()
 
     def test_upsert_blocks_missing_explicit_cost_without_inference(self) -> None:
         with self.session_local() as session:
