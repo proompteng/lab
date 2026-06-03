@@ -57,6 +57,121 @@ def paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, A
     return mapping_items(plan.get("targets"))
 
 
+def _target_probe_symbol_values(target: Mapping[str, Any]) -> set[str]:
+    symbols: set[str] = set()
+    for field in (
+        "paper_route_probe_symbols",
+        "paper_route_probe_raw_target_symbols",
+        "symbols",
+        "target_symbols",
+    ):
+        raw_symbols = target.get(field)
+        if isinstance(raw_symbols, str):
+            values: Sequence[object] = raw_symbols.split(",")
+        elif isinstance(raw_symbols, Sequence) and not isinstance(
+            raw_symbols, (bytes, bytearray)
+        ):
+            values = cast(Sequence[object], raw_symbols)
+        else:
+            values = ()
+        for raw_symbol in values:
+            symbol = str(raw_symbol).strip().upper()
+            if symbol:
+                symbols.add(symbol)
+
+    for field in (
+        "paper_route_probe_symbol_actions",
+        "symbol_actions",
+        "target_symbol_actions",
+    ):
+        raw_actions = target.get(field)
+        if not isinstance(raw_actions, Mapping):
+            continue
+        for raw_symbol in cast(Mapping[object, object], raw_actions):
+            symbol = str(raw_symbol).strip().upper()
+            if symbol:
+                symbols.add(symbol)
+    return symbols
+
+
+def _target_source_decision_ready(target: Mapping[str, Any]) -> bool:
+    readiness = target.get("source_decision_readiness")
+    if not isinstance(readiness, Mapping):
+        return False
+    value = cast(Mapping[object, object], readiness).get("ready")
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _target_identity_value(target: Mapping[str, Any], field: str) -> str:
+    return str(target.get(field) or "").strip()
+
+
+def _target_identity_keys(target: Mapping[str, Any]) -> set[tuple[str, str]]:
+    candidate_id = _target_identity_value(target, "candidate_id")
+    if candidate_id:
+        return {("candidate_id", candidate_id)}
+
+    source_plan_ref = _target_identity_value(target, "source_plan_ref")
+    if source_plan_ref:
+        return {("source_plan_ref", source_plan_ref)}
+
+    hypothesis_id = _target_identity_value(target, "hypothesis_id")
+    strategy_name = _target_identity_value(
+        target,
+        "runtime_strategy_name",
+    ) or _target_identity_value(target, "strategy_name")
+    if hypothesis_id and strategy_name:
+        return {("hypothesis_strategy", f"{hypothesis_id}:{strategy_name}")}
+    if hypothesis_id:
+        return {("hypothesis_id", hypothesis_id)}
+    if strategy_name:
+        return {("strategy_name", strategy_name)}
+    return set()
+
+
+def _target_plan_selected_identity_match(
+    plan: Mapping[str, Any],
+    *,
+    selected_identity_keys: set[tuple[str, str]],
+) -> bool:
+    if not selected_identity_keys:
+        return True
+    return any(
+        bool(_target_identity_keys(target) & selected_identity_keys)
+        for target in paper_route_target_plan_targets(plan)
+    )
+
+
+def _target_plan_selection_score(
+    plan: Mapping[str, Any],
+    *,
+    source_rank: int,
+    selected_identity_keys: set[tuple[str, str]],
+) -> tuple[int, int, int, int, int, int]:
+    targets = paper_route_target_plan_targets(plan)
+    if not targets:
+        return (-1, 0, 0, 0, 0, -source_rank)
+    probe_symbol_count = sum(
+        len(_target_probe_symbol_values(target)) for target in targets
+    )
+    ready_count = sum(1 for target in targets if _target_source_decision_ready(target))
+    return (
+        1
+        if _target_plan_selected_identity_match(
+            plan,
+            selected_identity_keys=selected_identity_keys,
+        )
+        else 0,
+        1 if probe_symbol_count else 0,
+        ready_count,
+        probe_symbol_count,
+        len(targets),
+        -source_rank,
+    )
+
+
 def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     live_gate = _to_str_map(payload.get("live_submission_gate"))
     top_level_target_plan = (
@@ -79,6 +194,11 @@ def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str
     next_paper_route_plan = _to_str_map(
         payload.get("next_paper_route_runtime_window_targets")
     )
+    selected_identity_keys = {
+        key
+        for target in paper_route_target_plan_targets(top_level_target_plan)
+        for key in _target_identity_keys(target)
+    }
     candidate_plans = [
         top_level_target_plan,
         next_clean_after_discard_plan,
@@ -90,10 +210,21 @@ def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str
         _to_str_map(payload.get("runtime_ledger_paper_probation_import_plan")),
         dict(payload) if paper_route_target_plan_targets(payload) else {},
     ]
-    for plan in candidate_plans:
-        if paper_route_target_plan_targets(plan):
-            return plan
-    return {}
+    scored_plans = [
+        (
+            _target_plan_selection_score(
+                plan,
+                source_rank=source_rank,
+                selected_identity_keys=selected_identity_keys,
+            ),
+            plan,
+        )
+        for source_rank, plan in enumerate(candidate_plans)
+        if paper_route_target_plan_targets(plan)
+    ]
+    if not scored_plans:
+        return {}
+    return dict(max(scored_plans, key=lambda item: item[0])[1])
 
 
 def fetch_paper_route_target_plan_url(
@@ -188,19 +319,7 @@ def _fetch_paper_route_target_plan_url_once(
 def paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> set[str]:
     symbols: set[str] = set()
     for target in paper_route_target_plan_targets(plan):
-        raw_symbols = target.get("paper_route_probe_symbols")
-        if isinstance(raw_symbols, str):
-            values: Sequence[object] = raw_symbols.split(",")
-        elif isinstance(raw_symbols, Sequence) and not isinstance(
-            raw_symbols, (bytes, bytearray)
-        ):
-            values = cast(Sequence[object], raw_symbols)
-        else:
-            values = ()
-        for raw_symbol in values:
-            symbol = str(raw_symbol).strip().upper()
-            if symbol:
-                symbols.add(symbol)
+        symbols.update(_target_probe_symbol_values(target))
     return symbols
 
 

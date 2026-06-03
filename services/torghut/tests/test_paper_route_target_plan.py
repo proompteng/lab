@@ -22,8 +22,13 @@ from app.trading.models import StrategyDecision, decision_hash
 from app.trading.paper_route_target_plan import (
     _paper_route_source_decision_needs_refresh,
     _paper_route_source_materialization_blockers,
+    _target_identity_keys,
+    _target_plan_selection_score,
+    _target_source_decision_ready,
     _truthy,
     materialize_bounded_paper_route_target_plan,
+    paper_route_target_plan_from_payload,
+    paper_route_target_plan_probe_symbols,
 )
 from app.trading.runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -131,6 +136,165 @@ def test_materialization_truthy_helper_accepts_numeric_and_text_readiness() -> N
     assert _truthy(0) is False
     assert _truthy("true") is True
     assert _truthy("false") is False
+
+
+def test_target_source_decision_readiness_accepts_text_truth() -> None:
+    assert _target_source_decision_ready(
+        {"source_decision_readiness": {"ready": "yes"}}
+    )
+    assert not _target_source_decision_ready(
+        {"source_decision_readiness": {"ready": "no"}}
+    )
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        (
+            {"source_plan_ref": "paper-route-plan:abc"},
+            {("source_plan_ref", "paper-route-plan:abc")},
+        ),
+        (
+            {
+                "hypothesis_id": "H-TSMOM-LIQ-01",
+                "runtime_strategy_name": "intraday-tsmom-profit-v3",
+            },
+            {("hypothesis_strategy", "H-TSMOM-LIQ-01:intraday-tsmom-profit-v3")},
+        ),
+        (
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "strategy_name": "microbar-cross-sectional-pairs-v1",
+            },
+            {("hypothesis_strategy", "H-PAIRS-01:microbar-cross-sectional-pairs-v1")},
+        ),
+        ({"hypothesis_id": "H-PAIRS-01"}, {("hypothesis_id", "H-PAIRS-01")}),
+        (
+            {"strategy_name": "microbar-cross-sectional-pairs-v1"},
+            {("strategy_name", "microbar-cross-sectional-pairs-v1")},
+        ),
+        ({}, set()),
+    ],
+)
+def test_target_identity_keys_fall_back_by_available_specificity(
+    target: dict[str, Any],
+    expected: set[tuple[str, str]],
+) -> None:
+    assert _target_identity_keys(target) == expected
+
+
+def test_target_plan_selection_score_rejects_empty_plans() -> None:
+    assert _target_plan_selection_score(
+        {},
+        source_rank=3,
+        selected_identity_keys=set(),
+    ) == (-1, 0, 0, 0, 0, -3)
+
+
+def test_target_plan_payload_prefers_nested_plan_with_probe_symbols() -> None:
+    payload = {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "target_count": 1,
+        "targets": [
+            {
+                "hypothesis_id": "H-TSMOM-LIQ-01",
+                "candidate_id": "ca4e6e3c7d639e3363dc5860",
+                "runtime_strategy_name": "intraday-tsmom-profit-v3",
+            }
+        ],
+        "next_paper_route_runtime_window_targets": {
+            "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+            "source": "paper_route_evidence_audit",
+            "target_count": 1,
+            "targets": [
+                {
+                    "hypothesis_id": "H-TSMOM-LIQ-01",
+                    "candidate_id": "ca4e6e3c7d639e3363dc5860",
+                    "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                    "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                    "paper_route_probe_symbol_actions": {},
+                    "source_decision_readiness": {"ready": True, "blockers": []},
+                }
+            ],
+        },
+    }
+
+    plan = paper_route_target_plan_from_payload(payload)
+
+    assert plan["source"] == "paper_route_evidence_audit"
+    assert plan["targets"][0]["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+    assert paper_route_target_plan_probe_symbols(plan) == {"AAPL", "AMZN"}
+
+
+def test_target_plan_payload_keeps_selected_target_over_unrelated_nested_plan() -> None:
+    payload = {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "target_count": 1,
+        "targets": [
+            {
+                "hypothesis_id": "H-TSMOM-LIQ-01",
+                "candidate_id": "ca4e6e3c7d639e3363dc5860",
+                "runtime_strategy_name": "intraday-tsmom-profit-v3",
+            }
+        ],
+        "next_paper_route_runtime_window_targets": {
+            "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+            "source": "paper_route_evidence_audit",
+            "target_count": 1,
+            "targets": [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                    "source_decision_readiness": {"ready": True, "blockers": []},
+                }
+            ],
+        },
+    }
+
+    plan = paper_route_target_plan_from_payload(payload)
+
+    assert plan["schema_version"] == "torghut.paper-route-target-plan.v1"
+    assert plan["targets"][0]["hypothesis_id"] == "H-TSMOM-LIQ-01"
+    assert plan["targets"][0]["candidate_id"] == "ca4e6e3c7d639e3363dc5860"
+    assert paper_route_target_plan_probe_symbols(plan) == set()
+
+
+def test_target_plan_payload_keeps_top_level_plan_when_it_has_probe_symbols() -> None:
+    payload = {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "target_count": 1,
+        "targets": [
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "paper_route_probe_symbol_actions": {
+                    "AAPL": "buy",
+                    "AMZN": "sell",
+                },
+            }
+        ],
+        "next_paper_route_runtime_window_targets": {
+            "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+            "source": "paper_route_evidence_audit",
+            "targets": [
+                {
+                    "hypothesis_id": "H-TSMOM-LIQ-01",
+                    "candidate_id": "ca4e6e3c7d639e3363dc5860",
+                    "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                    "paper_route_probe_symbols": ["NVDA"],
+                }
+            ],
+        },
+    }
+
+    plan = paper_route_target_plan_from_payload(payload)
+
+    assert plan["schema_version"] == "torghut.paper-route-target-plan.v1"
+    assert plan["targets"][0]["hypothesis_id"] == "H-PAIRS-01"
+    assert paper_route_target_plan_probe_symbols(plan) == {"AAPL", "AMZN"}
 
 
 def test_fresh_hpairs_target_materializes_bounded_collection_source_decisions(
