@@ -8493,6 +8493,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     "allowed": False,
                     "reason": "paper_route_probe_only",
                     "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": "true",
+                    "continuity_reason": "expected_market_closed_staleness",
+                    "drift_ok": "false",
+                    "drift_reason": "drift_live_promotion_ineligible",
                     "runtime_ledger_repair_candidates": [
                         {
                             "hypothesis_id": "H-TSMOM-LIQ-01",
@@ -8567,6 +8572,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
             runtime_plan["source"], "paper_route_observed_strategy_source_collection"
         )
         self.assertEqual(runtime_plan["target_count"], 1)
+        self.assertTrue(runtime_plan["session_readiness"]["import_ready"])
+        self.assertTrue(runtime_plan["runtime_window_import_handoff"]["import_ready"])
+        self.assertEqual(
+            runtime_plan["runtime_window_import_health_gate"]["blocked_target_count"],
+            0,
+        )
         target = runtime_plan["targets"][0]
         self.assertEqual(target["candidate_id"], "candidate-tsmom")
         self.assertEqual(target["hypothesis_id"], "H-TSMOM-LIQ-01")
@@ -8578,6 +8589,15 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertTrue(target["source_collection_authorized"])
         self.assertFalse(target["promotion_allowed"])
         self.assertNotIn("paper_route_probe_symbols", target)
+        self.assertEqual(target["dependency_quorum_decision"], "allow")
+        self.assertEqual(target["continuity_ok"], "true")
+        self.assertEqual(target["drift_ok"], "false")
+        self.assertTrue(target["runtime_window_import_health_gate"]["ready"])
+        self.assertEqual(target["runtime_window_import_health_gate_blockers"], [])
+        self.assertEqual(
+            target["runtime_window_import_promotion_blockers"],
+            ["drift_checks_not_ok"],
+        )
         self.assertEqual(
             target["observed_from_contaminated_target"]["strategy_name"],
             "intraday-tsmom-profit-v3",
@@ -8698,6 +8718,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     "allowed": False,
                     "reason": "paper_route_probe_only",
                     "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": "true",
+                    "continuity_reason": "expected_market_closed_staleness",
+                    "drift_ok": "false",
+                    "drift_reason": "drift_live_promotion_ineligible",
                     "runtime_ledger_repair_candidates": [
                         {
                             "hypothesis_id": "H-TSMOM-LIQ-01",
@@ -8783,10 +8808,28 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             runtime_plan["source"], "paper_route_observed_strategy_source_collection"
         )
+        self.assertTrue(runtime_plan["session_readiness"]["import_ready"])
+        self.assertTrue(runtime_plan["runtime_window_import_handoff"]["import_ready"])
+        self.assertEqual(
+            runtime_plan["runtime_window_import_health_gate"]["blocked_target_count"],
+            0,
+        )
         self.assertEqual(runtime_plan["targets"][0]["candidate_id"], "candidate-tsmom")
         self.assertEqual(
             runtime_plan["targets"][0]["selected_by"],
             "paper_route_observed_strategy_source_collection",
+        )
+        self.assertEqual(
+            runtime_plan["targets"][0]["dependency_quorum_decision"], "allow"
+        )
+        self.assertEqual(runtime_plan["targets"][0]["continuity_ok"], "true")
+        self.assertEqual(runtime_plan["targets"][0]["drift_ok"], "false")
+        self.assertTrue(
+            runtime_plan["targets"][0]["runtime_window_import_health_gate"]["ready"]
+        )
+        self.assertEqual(
+            runtime_plan["targets"][0]["runtime_window_import_health_gate_blockers"],
+            [],
         )
         self.assertFalse(runtime_plan["targets"][0]["promotion_allowed"])
         self.assertIn(

@@ -1051,6 +1051,52 @@ class TestRuntimeLedgerProofPacket(TestCase):
             "c88421d619759b2cfaa6f4d0",
         )
 
+    def test_packet_preserves_selected_import_plan_health_gate_readback(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence()
+        import_plan = json.loads(
+            json.dumps(evidence["next_paper_route_runtime_window_targets"])
+        )
+        import_plan["source"] = "paper_route_observed_strategy_source_collection"
+        import_plan["purpose"] = (
+            "observed_strategy_runtime_ledger_source_collection_import"
+        )
+        import_plan["targets"][0]["source_kind"] = (
+            "runtime_ledger_source_collection_candidate"
+        )
+        import_plan["targets"][0]["selected_by"] = (
+            "paper_route_observed_strategy_source_collection"
+        )
+        evidence["runtime_window_import_plan"] = import_plan
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(blockers=["runtime_ledger_source_collection_pending"]),
+            proof_mode="authority",
+            paper_route_evidence=evidence,
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("runtime_ledger_source_collection_pending", result["blockers"])
+        for blocker in (
+            "runtime_window_import_health_gate_missing",
+            "dependency_quorum_not_allow",
+            "continuity_not_ok",
+        ):
+            self.assertNotIn(blocker, result["blockers"])
+        health_gate = result["evidence"]["paper_route_target_plan"][
+            "runtime_window_import_health_gate"
+        ]
+        self.assertTrue(health_gate["ready"])
+        self.assertEqual(health_gate["ready_target_count"], 1)
+        self.assertEqual(health_gate["blockers"], [])
+
     def test_authority_packet_allows_reconciled_tigerbeetle_runtime_refs(
         self,
     ) -> None:

@@ -8261,6 +8261,43 @@ def _target_is_runtime_ledger_source_collection(
     )
 
 
+def _runtime_window_import_target_metadata(
+    target: Mapping[str, Any],
+) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    for key in (
+        "dependency_quorum_decision",
+        "continuity_ok",
+        "continuity_reason",
+        "drift_ok",
+        "drift_reason",
+        "paper_route_session_readiness_state",
+        "paper_route_runtime_window_import_not_before",
+    ):
+        value = _safe_text(target.get(key))
+        if value is not None:
+            metadata[key] = value
+    for key in (
+        "runtime_window_import_health_gate_blockers",
+        "runtime_window_import_promotion_blockers",
+        "paper_route_session_import_blockers",
+    ):
+        if key in target:
+            metadata[key] = _unique_text_items(target.get(key))
+    for key in (
+        "runtime_window_import_health_gate",
+        "paper_route_runtime_import_handoff",
+    ):
+        value = _as_mapping(target.get(key))
+        if value:
+            metadata[key] = dict(value)
+    if "paper_route_session_import_ready" in target:
+        metadata["paper_route_session_import_ready"] = bool(
+            target.get("paper_route_session_import_ready")
+        )
+    return metadata
+
+
 def _sanitized_runtime_ledger_source_collection_target(
     target: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -8365,6 +8402,7 @@ def _sanitized_runtime_ledger_source_collection_target(
             or target.get("final_promotion_authorized")
         ),
     }
+    sanitized.update(_runtime_window_import_target_metadata(target))
     if runtime_ledger_bucket_ref := _safe_text(target.get("runtime_ledger_bucket_ref")):
         sanitized["runtime_ledger_bucket_ref"] = runtime_ledger_bucket_ref
     observed_from_contaminated_target = _as_mapping(
@@ -8563,6 +8601,7 @@ def _observed_strategy_source_collection_target(
         "selected_by": "paper_route_observed_strategy_source_collection",
         "selection_reason": "foreign_strategy_source_activity_observed_in_paper_route_window",
         "max_notional": "0",
+        **_runtime_window_import_target_metadata(contaminated_target),
         "observed_from_contaminated_target": {
             "hypothesis_id": _safe_text(contaminated_target.get("hypothesis_id")),
             "candidate_id": _safe_text(contaminated_target.get("candidate_id")),
@@ -8572,6 +8611,21 @@ def _observed_strategy_source_collection_target(
         },
     }
     return _sanitized_runtime_ledger_source_collection_target(target)
+
+
+def _runtime_window_import_plan_metadata(plan: Mapping[str, Any]) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    for key in (
+        "session_window",
+        "session_readiness",
+        "runtime_window_import_handoff",
+        "runtime_window_import_health_gate",
+        "source_decision_readiness",
+    ):
+        value = _as_mapping(plan.get(key))
+        if value:
+            metadata[key] = dict(value)
+    return metadata
 
 
 def _observed_strategy_source_collection_import_plan(
@@ -8591,6 +8645,7 @@ def _observed_strategy_source_collection_import_plan(
     targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
     seen_keys: set[tuple[str, str, str, str, str]] = set()
+    selected_plan: Mapping[str, Any] | None = None
     for plan in candidate_plans:
         if len(targets) >= limit:
             break
@@ -8656,6 +8711,8 @@ def _observed_strategy_source_collection_import_plan(
                 if key in seen_keys:
                     continue
                 seen_keys.add(key)
+                if selected_plan is None:
+                    selected_plan = plan
                 targets.append(target)
     if not targets:
         return {}
@@ -8674,6 +8731,7 @@ def _observed_strategy_source_collection_import_plan(
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
         "target_count": len(targets),
+        **_runtime_window_import_plan_metadata(selected_plan or {}),
         "paper_probation_target_count": 0,
         "source_collection_target_count": len(targets),
         "skipped_target_count": len(skipped_targets),
