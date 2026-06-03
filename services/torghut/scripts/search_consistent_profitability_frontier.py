@@ -4602,8 +4602,7 @@ def _candidate_exact_replay_ledger_artifact_refs(item: Mapping[str, Any]) -> lis
         ref = str(raw_ref).strip()
         ref_lower = ref.lower()
         if ref and (
-            "exact-replay-ledger" in ref_lower
-            or "exact_replay_ledger" in ref_lower
+            "exact-replay-ledger" in ref_lower or "exact_replay_ledger" in ref_lower
         ):
             refs.append(ref)
     return list(dict.fromkeys(refs))
@@ -5018,28 +5017,11 @@ def _build_paper_probation_shortlist(
         )
         > Decimal("0")
     ]
-    visible_items.sort(
-        key=lambda item: (
-            -_safe_decimal(
-                _candidate_metric_value(
-                    item,
-                    scorecard_key="net_pnl_per_day",
-                    full_window_key="net_per_day",
-                )
-            ),
-            -_safe_decimal(
-                _candidate_metric_value(
-                    item,
-                    scorecard_key="net_pnl",
-                    full_window_key="net_pnl",
-                )
-            ),
-            str(item.get("candidate_id") or ""),
-        )
-    )
 
-    shortlist: list[dict[str, Any]] = []
-    for item in visible_items[: max(1, int(top_n))]:
+    shortlist_candidates: list[
+        tuple[bool, bool, Decimal, Decimal, str, dict[str, Any]]
+    ] = []
+    for item in visible_items:
         hard_vetoes = [
             str(reason) for reason in cast(Sequence[Any], item.get("hard_vetoes") or ())
         ]
@@ -5111,99 +5093,115 @@ def _build_paper_probation_shortlist(
             exact_replay_parity_ok=exact_replay_parity_ok,
             diagnostics=handoff_diagnostics,
         )
-        shortlist.append(
-            {
-                "candidate_id": str(item.get("candidate_id") or ""),
-                "strategy_name": str(item.get("strategy_name") or ""),
-                "family": str(item.get("family") or ""),
-                "stage": "paper_evidence_collection_only",
-                "paper_probation_allowed": paper_probation_allowed,
-                "evidence_collection_ok": bounded_sim_handoff["evidence_collection_ok"],
-                "promotion_allowed": False,
-                "final_promotion_allowed": False,
-                "final_promotion_authorized": False,
-                "probation_blockers": blockers,
-                "handoff_diagnostics": handoff_diagnostics,
-                "bounded_sim_handoff": bounded_sim_handoff,
-                "required_actions_before_or_during_probation": (
-                    _paper_probation_required_actions(hard_vetoes)
-                ),
-                "recommended_notional_scale": _paper_probation_notional_scale(
-                    item=item,
-                    objective_veto_policy=objective_veto_policy,
-                    hard_vetoes=hard_vetoes,
-                ),
-                "exact_replay_ledger_artifact_refs": artifact_refs,
-                "exact_replay_ledger_artifact_row_count": (
-                    exact_replay_ledger_row_count
-                ),
-                "exact_replay_ledger_artifact_fill_count": (
-                    exact_replay_ledger_fill_count
-                ),
-                "net_pnl_per_day": str(
-                    _candidate_metric_value(
-                        item,
-                        scorecard_key="net_pnl_per_day",
-                        full_window_key="net_per_day",
-                    )
-                ),
-                "net_pnl": str(
-                    _candidate_metric_value(
-                        item,
-                        scorecard_key="net_pnl",
-                        full_window_key="net_pnl",
-                    )
-                ),
-                "active_day_ratio": str(
-                    _candidate_metric_value(
-                        item,
-                        scorecard_key="active_day_ratio",
-                        full_window_key="active_ratio",
-                    )
-                ),
-                "positive_day_ratio": str(
-                    _candidate_metric_value(
-                        item,
-                        scorecard_key="positive_day_ratio",
-                        full_window_key="positive_day_ratio",
-                    )
-                ),
-                "max_drawdown": str(
-                    _candidate_metric_value(
-                        item,
-                        scorecard_key="max_drawdown",
-                        full_window_key="max_drawdown",
-                    )
-                ),
-                "worst_day_loss": str(
-                    _candidate_metric_value(
-                        item,
-                        scorecard_key="worst_day_loss",
-                        full_window_key="worst_day_loss",
-                    )
-                ),
-                "max_gross_exposure_pct_equity": str(
-                    _candidate_metric_value(
-                        item,
-                        scorecard_key="max_gross_exposure_pct_equity",
-                        full_window_key="max_gross_exposure_pct_equity",
-                    )
-                ),
-                "min_cash": str(
-                    _candidate_metric_value(
-                        item,
-                        scorecard_key="min_cash",
-                        full_window_key="min_cash",
-                    )
-                ),
-                "exact_replay_ledger_artifact_ref": str(
-                    item.get("exact_replay_ledger_artifact_ref") or ""
-                ),
-                "replay_artifact_refs": artifact_refs,
-                "hard_vetoes": hard_vetoes,
-            }
+        entry = {
+            "candidate_id": str(item.get("candidate_id") or ""),
+            "strategy_name": str(item.get("strategy_name") or ""),
+            "family": str(item.get("family") or ""),
+            "stage": "paper_evidence_collection_only",
+            "paper_probation_allowed": paper_probation_allowed,
+            "evidence_collection_ok": bounded_sim_handoff["evidence_collection_ok"],
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "probation_blockers": blockers,
+            "handoff_diagnostics": handoff_diagnostics,
+            "bounded_sim_handoff": bounded_sim_handoff,
+            "required_actions_before_or_during_probation": (
+                _paper_probation_required_actions(hard_vetoes)
+            ),
+            "recommended_notional_scale": _paper_probation_notional_scale(
+                item=item,
+                objective_veto_policy=objective_veto_policy,
+                hard_vetoes=hard_vetoes,
+            ),
+            "exact_replay_ledger_artifact_refs": artifact_refs,
+            "exact_replay_ledger_artifact_row_count": (exact_replay_ledger_row_count),
+            "exact_replay_ledger_artifact_fill_count": (exact_replay_ledger_fill_count),
+            "net_pnl_per_day": str(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="net_pnl_per_day",
+                    full_window_key="net_per_day",
+                )
+            ),
+            "net_pnl": str(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="net_pnl",
+                    full_window_key="net_pnl",
+                )
+            ),
+            "active_day_ratio": str(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="active_day_ratio",
+                    full_window_key="active_ratio",
+                )
+            ),
+            "positive_day_ratio": str(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="positive_day_ratio",
+                    full_window_key="positive_day_ratio",
+                )
+            ),
+            "max_drawdown": str(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="max_drawdown",
+                    full_window_key="max_drawdown",
+                )
+            ),
+            "worst_day_loss": str(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="worst_day_loss",
+                    full_window_key="worst_day_loss",
+                )
+            ),
+            "max_gross_exposure_pct_equity": str(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="max_gross_exposure_pct_equity",
+                    full_window_key="max_gross_exposure_pct_equity",
+                )
+            ),
+            "min_cash": str(
+                _candidate_metric_value(
+                    item,
+                    scorecard_key="min_cash",
+                    full_window_key="min_cash",
+                )
+            ),
+            "exact_replay_ledger_artifact_ref": str(
+                item.get("exact_replay_ledger_artifact_ref") or ""
+            ),
+            "replay_artifact_refs": artifact_refs,
+            "hard_vetoes": hard_vetoes,
+        }
+        net_pnl_per_day = _safe_decimal(entry["net_pnl_per_day"])
+        net_pnl = _safe_decimal(entry["net_pnl"])
+        shortlist_candidates.append(
+            (
+                paper_probation_allowed,
+                bool(bounded_sim_handoff["evidence_collection_ok"]),
+                net_pnl_per_day,
+                net_pnl,
+                entry["candidate_id"],
+                entry,
+            )
         )
-    return shortlist
+
+    shortlist_candidates.sort(
+        key=lambda candidate: (
+            0 if candidate[0] else 1,
+            0 if candidate[1] else 1,
+            -candidate[2],
+            -candidate[3],
+            candidate[4],
+        )
+    )
+    return [candidate[5] for candidate in shortlist_candidates[: max(1, int(top_n))]]
 
 
 def _frontier_state_item(item: Mapping[str, Any]) -> dict[str, Any]:

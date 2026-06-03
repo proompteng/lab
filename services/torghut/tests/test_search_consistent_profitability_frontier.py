@@ -2740,6 +2740,92 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             item["required_actions_before_or_during_probation"],
         )
 
+    def test_paper_probation_shortlist_prioritizes_handoff_ready_candidate(
+        self,
+    ) -> None:
+        items = [
+            {
+                "candidate_id": "higher-profit-unproved",
+                "strategy_name": "blocked",
+                "family": "microbar",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "900",
+                    "net_pnl": "1800",
+                    "max_gross_exposure_pct_equity": "0.5",
+                    "min_cash": "100",
+                },
+                "full_window": {"net_per_day": "900", "net_pnl": "1800"},
+                "hard_vetoes": [],
+            },
+            {
+                "candidate_id": "lower-profit-handoff-ready",
+                "strategy_name": "ready",
+                "family": "hpairs",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "275",
+                    "net_pnl": "550",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "max_drawdown": "50",
+                    "worst_day_loss": "25",
+                    "max_gross_exposure_pct_equity": "0.5",
+                    "min_cash": "100",
+                },
+                "full_window": {"net_per_day": "275", "net_pnl": "550"},
+                "exact_replay_ledger_artifact_ref": (
+                    "/tmp/lower-profit-handoff-ready-exact-replay-ledger.json"
+                ),
+                "exact_replay_ledger_artifact_row_count": 10,
+                "exact_replay_ledger_artifact_fill_count": 4,
+                "runtime_ledger_cost_basis_count": 4,
+                "runtime_ledger_post_cost_expectancy_bps": "18",
+                "runtime_ledger_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                "runtime_ledger_open_position_count": 0,
+                "replay_artifact_refs": [
+                    "/tmp/lower-profit-handoff-ready-exact-replay-ledger.json"
+                ],
+                "dataset_snapshot_id": "snapshot-handoff-ready",
+                "replay_lineage": {"lineage_hash": "lineage-handoff-ready"},
+                "candidate_evaluation_key": "eval-handoff-ready",
+                "candidate_evaluation_key_payload": {
+                    "candidate_evaluation_key": "eval-handoff-ready",
+                    "replay_tape": {
+                        "content_sha256": "tape-sha",
+                        "dataset_snapshot_ref": "snapshot-handoff-ready",
+                        "source_query_digest": "query-sha",
+                        "feature_schema_hash": "feature-sha",
+                        "cost_model_hash": "cost-sha",
+                        "strategy_family": "hpairs",
+                        "replay_cache_key": "cache-key",
+                        "selected_symbols": ["NVDA"],
+                        "selected_row_count": 10,
+                        "validation_status": "valid",
+                    },
+                },
+                "hard_vetoes": [],
+            },
+        ]
+
+        shortlist = frontier._build_paper_probation_shortlist(
+            items,
+            top_n=1,
+            objective_veto_policy=frontier.ObjectiveVetoPolicy(
+                required_max_gross_exposure_pct_equity=Decimal("1"),
+                required_min_cash=Decimal("0"),
+            ),
+        )
+
+        item = shortlist[0]
+        self.assertEqual(item["candidate_id"], "lower-profit-handoff-ready")
+        self.assertTrue(item["paper_probation_allowed"])
+        self.assertTrue(item["evidence_collection_ok"])
+        self.assertFalse(item["promotion_allowed"])
+        self.assertFalse(item["final_promotion_allowed"])
+        self.assertFalse(item["final_promotion_authorized"])
+        self.assertFalse(item["bounded_sim_handoff"]["promotion_allowed"])
+        self.assertFalse(item["bounded_sim_handoff"]["final_promotion_allowed"])
+        self.assertEqual(item["probation_blockers"], [])
+
     def test_paper_probation_shortlist_blocks_missing_ledger_artifact(self) -> None:
         shortlist = frontier._build_paper_probation_shortlist(
             [
