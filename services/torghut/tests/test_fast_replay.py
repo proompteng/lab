@@ -164,6 +164,10 @@ class TestFastReplayPreview(TestCase):
             "source_backed_runtime_ledger_proof_required", payload["blockers"]
         )
         self.assertIn("conformal_tail_risk", payload["implemented_mechanisms"])
+        self.assertIn(
+            "hawkes_event_time_excitation_replay_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",

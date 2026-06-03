@@ -5,8 +5,11 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.trading.discovery.cluster_lob_features import (
+    HPAIRS_CLUSTER_LOB_PRIMARY_SOURCES,
     build_cluster_lob_feature_schema_hash,
+    cluster_lob_feature_contract,
     extract_cluster_lob_features,
+    extract_hawkes_excitation_summary,
 )
 from app.trading.discovery.order_flow_features import (
     build_order_flow_feature_schema_hash,
@@ -134,6 +137,50 @@ class TestClusterLOBFeatures(TestCase):
         self.assertGreater(float(payload["cluster_entropy"]), 0.9)
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["final_promotion_allowed"])
+        self.assertIn("hawkes_excitation", payload)
+        self.assertIn("hawkes_excitation_stress_score", payload["ranking_features"])
+
+    def test_hawkes_excitation_summary_records_primary_sources_and_stress(self) -> None:
+        clustered_rows = [
+            self._row(offset=offset, event_type="trade", side="buy", ofi="0.4")
+            for offset in (1, 2, 3, 4, 5, 6)
+        ]
+        sparse_rows = [
+            self._row(offset=offset, event_type="trade", side="buy", ofi="0.4")
+            for offset in (1, 61, 121, 181, 241, 301)
+        ]
+
+        clustered = extract_hawkes_excitation_summary(clustered_rows).to_payload()
+        sparse = extract_hawkes_excitation_summary(sparse_rows).to_payload()
+
+        self.assertGreater(
+            float(clustered["replay_stress_score"]),
+            float(sparse["replay_stress_score"]),
+        )
+        self.assertGreater(float(clustered["hawkes_branching_proxy"]), 0)
+        self.assertEqual(clustered["observed_event_time_count"], 6)
+        self.assertTrue(
+            {"arxiv-2510.08085", "arxiv-2604.23961"}.issubset(
+                {item["source_id"] for item in clustered["source_papers"]}
+            )
+        )
+        self.assertFalse(clustered["promotion_authority"])
+        self.assertFalse(clustered["proof_authority"])
+
+    def test_cluster_contract_exposes_hawkes_sources_without_promotion_authority(
+        self,
+    ) -> None:
+        contract = cluster_lob_feature_contract()
+        policy = contract["hawkes_excitation_policy"]
+
+        self.assertEqual(
+            [item["source_id"] for item in policy["source_papers"]],
+            [item["source_id"] for item in HPAIRS_CLUSTER_LOB_PRIMARY_SOURCES],
+        )
+        self.assertEqual(policy["output_scope"], "preview_replay_stress_ranking_only")
+        self.assertTrue(contract["proof_neutrality"]["requires_exact_replay"])
+        self.assertTrue(contract["proof_neutrality"]["requires_runtime_ledger"])
+        self.assertFalse(contract["proof_neutrality"]["promotion_proof"])
 
     def test_missing_partial_data_is_marked_without_authority(self) -> None:
         payload = extract_cluster_lob_features(
