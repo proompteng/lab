@@ -69,6 +69,7 @@ class TestFastReplayPreview(TestCase):
         stress: bool = False,
         event_type: str = "trade",
         queue_ratio: str = "0.15",
+        feed_delay_ms: str = "40",
     ) -> SignalEnvelope:
         mid = Decimal(price)
         fill_qty = Decimal("100") if event_type == "trade" else Decimal("0")
@@ -89,6 +90,9 @@ class TestFastReplayPreview(TestCase):
                 "event_type": event_type,
                 "queue_ratio": Decimal(queue_ratio),
                 "fill_qty": fill_qty,
+                "feed_delay_ms": Decimal(feed_delay_ms),
+                "feed_trade_direction": "buy",
+                "authoritative_trade_direction": "buy",
                 "bid_size": Decimal("700"),
                 "ask_size": Decimal("300"),
                 "macro_event_window": stress,
@@ -191,6 +195,10 @@ class TestFastReplayPreview(TestCase):
             "queue_position_survival_fill_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "public_feed_lag_quoted_liquidity_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -245,6 +253,22 @@ class TestFastReplayPreview(TestCase):
             {
                 source["source_id"]
                 for source in row_payload["queue_survival_fill_stress"]["source_papers"]
+            },
+        )
+        self.assertIn("feed_lag_liquidity_stress", row_payload)
+        self.assertFalse(row_payload["feed_lag_liquidity_stress"]["proof_authority"])
+        self.assertFalse(
+            row_payload["feed_lag_liquidity_stress"]["promotion_authority"]
+        )
+        self.assertEqual(
+            row_payload["feed_lag_liquidity_stress"]["status"],
+            "preview_only_feed_lag_liquidity_stress_ranking",
+        )
+        self.assertIn(
+            "ssrn-6675338",
+            {
+                source["source_id"]
+                for source in row_payload["feed_lag_liquidity_stress"]["source_papers"]
             },
         )
         self.assertIn("cost_impact_lineage", row_payload)
