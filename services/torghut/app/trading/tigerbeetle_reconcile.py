@@ -759,6 +759,43 @@ def _runtime_ledger_ref_matches_expected_bucket(
     return direction_matches, metadata_matches
 
 
+def _reconciliation_transfer_refs(
+    session: Session,
+    *,
+    cluster_id: int,
+    limit: int,
+) -> list[TigerBeetleTransferRef]:
+    bounded_limit = max(1, limit)
+    recent_refs = (
+        session.execute(
+            select(TigerBeetleTransferRef)
+            .where(TigerBeetleTransferRef.cluster_id == cluster_id)
+            .order_by(TigerBeetleTransferRef.created_at.desc())
+            .limit(bounded_limit)
+        )
+        .scalars()
+        .all()
+    )
+    runtime_ledger_refs = (
+        session.execute(
+            select(TigerBeetleTransferRef)
+            .where(
+                TigerBeetleTransferRef.cluster_id == cluster_id,
+                TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
+            )
+            .order_by(TigerBeetleTransferRef.created_at.desc())
+            .limit(bounded_limit)
+        )
+        .scalars()
+        .all()
+    )
+    refs_by_id: dict[str, TigerBeetleTransferRef] = {}
+    for ref in (*recent_refs, *runtime_ledger_refs):
+        refs_by_id.setdefault(str(ref.id), ref)
+    return list(refs_by_id.values())
+
+
 def tigerbeetle_ref_counts(
     session: Session,
     *,
@@ -1047,17 +1084,10 @@ def reconcile_tigerbeetle_transfers(
     persist: bool = True,
 ) -> dict[str, object]:
     started_at = datetime.now(timezone.utc)
-    refs = (
-        session.execute(
-            select(TigerBeetleTransferRef)
-            .where(
-                TigerBeetleTransferRef.cluster_id == settings_obj.tigerbeetle_cluster_id
-            )
-            .order_by(TigerBeetleTransferRef.created_at.desc())
-            .limit(limit)
-        )
-        .scalars()
-        .all()
+    refs = _reconciliation_transfer_refs(
+        session,
+        cluster_id=settings_obj.tigerbeetle_cluster_id,
+        limit=limit,
     )
     checked_transfer_count = len(refs)
     missing_transfer_count = 0
