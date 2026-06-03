@@ -74,6 +74,7 @@ spec:
         set -euo pipefail
 
         report_path="/workspace/.agentrun/autonomous-trader/report.md"
+        repo_dir="${AUTONOMOUS_TRADER_REPO_DIR:-/workspace/lab}"
         work_dir="${AUTONOMOUS_TRADER_WORK_DIR:-/tmp/autonomous-trader-readback}"
         python_bin="${PYTHON_BIN:-python3}"
 
@@ -85,6 +86,35 @@ spec:
         if [ "${trader_mode}" != "scorecard-readback" ]; then
           printf 'autonomous-trader readback runner only accepts scorecard-readback mode, got %s\n' "${trader_mode}" >&2
           exit 64
+        fi
+
+        git_token="${GIT_ASKPASS_TOKEN:-${VCS_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}}"
+        if [ -n "${git_token}" ]; then
+          askpass_path="${work_dir}/git-askpass.sh"
+          cat > "${askpass_path}" <<'EOF'
+        #!/usr/bin/env sh
+        case "$1" in
+          *Username*) printf '%s\n' "${GIT_ASKPASS_USERNAME:-x-access-token}" ;;
+          *) printf '%s\n' "${GIT_ASKPASS_TOKEN:-${VCS_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}}" ;;
+        esac
+        EOF
+          chmod 700 "${askpass_path}"
+          export GIT_ASKPASS="${askpass_path}"
+          export GIT_ASKPASS_TOKEN="${git_token}"
+          export GIT_TERMINAL_PROMPT=0
+        fi
+
+        repo="${VCS_REPOSITORY:-proompteng/lab}"
+        base_branch="${VCS_BASE_BRANCH:-main}"
+        clone_base_url="${VCS_CLONE_BASE_URL:-https://github.com}"
+        clone_url="${clone_base_url%/}/${repo}.git"
+        mkdir -p "$(dirname "${repo_dir}")"
+        if [ ! -d "${repo_dir}/.git" ]; then
+          rm -rf "${repo_dir}"
+          git clone --filter=blob:none --depth=1 --branch "${base_branch}" "${clone_url}" "${repo_dir}"
+        else
+          git -C "${repo_dir}" fetch --prune --filter=blob:none --depth=1 origin "${base_branch}"
+          git -C "${repo_dir}" checkout --force FETCH_HEAD
         fi
 
         reconcile_enabled="$(printf '%s' "${AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
@@ -100,7 +130,7 @@ spec:
           readback_args+=(--backfill-finalized-flat)
         fi
 
-        exec "${python_bin}" /workspace/lab/scripts/autotrader/scorecard_readback.py "${readback_args[@]}"
+        exec "${python_bin}" "${repo_dir}/scripts/autotrader/scorecard_readback.py" "${readback_args[@]}"
   outputArtifacts:
     - name: autonomous-trader-report
       path: /workspace/.agentrun/autonomous-trader/report.md
