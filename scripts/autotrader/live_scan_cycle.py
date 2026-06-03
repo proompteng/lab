@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -411,6 +413,10 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(f"{json.dumps(payload, separators=(',', ':'), sort_keys=True)}\n", encoding="utf-8")
 
 
+def elapsed_ms(started_at: float) -> int:
+    return max(0, int(round((time.monotonic() - started_at) * 1000)))
+
+
 def market_open_start(now: datetime) -> str:
     market_day = now.astimezone(MARKET_TIMEZONE).date()
     market_open = datetime(market_day.year, market_day.month, market_day.day, 9, 30, tzinfo=MARKET_TIMEZONE)
@@ -480,30 +486,90 @@ def fetch_scan_inputs(
     scorecard_limit: int,
     broker_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    raw_broker_state = broker_state or fetch_broker_state(alpaca)
+    inputs, _ = fetch_scan_inputs_with_metrics(
+        alpaca=alpaca,
+        synthesis=synthesis,
+        symbols=symbols,
+        start=start,
+        end=end,
+        feed=feed,
+        scorecard_limit=scorecard_limit,
+        broker_state=broker_state,
+    )
+    return inputs
+
+
+def fetch_scan_inputs_with_metrics(
+    *,
+    alpaca: AlpacaRestClient,
+    synthesis: SynthesisClient,
+    symbols: list[str],
+    start: str,
+    end: str,
+    feed: str,
+    scorecard_limit: int,
+    broker_state: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    started_at = time.monotonic()
+    metrics: dict[str, Any] = {
+        "brokerStateSource": "provided" if broker_state is not None else "fetched",
+        "parallelFetchCount": 3,
+    }
+    if broker_state is None:
+        broker_started_at = time.monotonic()
+        raw_broker_state = fetch_broker_state(alpaca)
+        metrics["brokerStateMs"] = elapsed_ms(broker_started_at)
+    else:
+        raw_broker_state = broker_state
+        metrics["brokerStateMs"] = 0
+
     raw_account = raw_broker_state.get("account")
     if not isinstance(raw_account, dict):
         raise ValueError("broker account state must be an object")
     positions = raw_broker_state.get("positions")
     orders = raw_broker_state.get("orders")
     account = format_account(raw_account)
-    bars = alpaca.data_get(
-        "/stocks/bars",
-        {
-            "symbols": ",".join(symbols),
-            "timeframe": "1Min",
-            "start": start,
-            "end": end,
-            "limit": "1000",
-            "feed": feed,
-            "sort": "asc",
-        },
-    )
-    quotes = format_latest_quotes(
-        alpaca.data_get("/stocks/quotes/latest", {"symbols": ",".join(symbols), "feed": feed}),
-        symbols,
-    )
-    scorecards = synthesis.get("/api/autotrader/scorecards", {"limit": str(scorecard_limit)})
+
+    def timed_bars() -> tuple[Any, int]:
+        task_started_at = time.monotonic()
+        payload = alpaca.data_get(
+            "/stocks/bars",
+            {
+                "symbols": ",".join(symbols),
+                "timeframe": "1Min",
+                "start": start,
+                "end": end,
+                "limit": "1000",
+                "feed": feed,
+                "sort": "asc",
+            },
+        )
+        return payload, elapsed_ms(task_started_at)
+
+    def timed_quotes() -> tuple[Any, int]:
+        task_started_at = time.monotonic()
+        payload = format_latest_quotes(
+            alpaca.data_get("/stocks/quotes/latest", {"symbols": ",".join(symbols), "feed": feed}),
+            symbols,
+        )
+        return payload, elapsed_ms(task_started_at)
+
+    def timed_scorecards() -> tuple[Any, int]:
+        task_started_at = time.monotonic()
+        payload = synthesis.get("/api/autotrader/scorecards", {"limit": str(scorecard_limit)})
+        return payload, elapsed_ms(task_started_at)
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            "bars": executor.submit(timed_bars),
+            "quotes": executor.submit(timed_quotes),
+            "scorecards": executor.submit(timed_scorecards),
+        }
+        bars, metrics["barsMs"] = futures["bars"].result()
+        quotes, metrics["quotesMs"] = futures["quotes"].result()
+        scorecards, metrics["scorecardsMs"] = futures["scorecards"].result()
+
+    metrics["totalMs"] = elapsed_ms(started_at)
     return {
         "account.json": account,
         "positions.json": {"positions": positions if isinstance(positions, list) else []},
@@ -512,7 +578,7 @@ def fetch_scan_inputs(
         "quotes.json": quotes,
         "scorecards.json": scorecards,
         "watchlist.json": {"watchlist": symbols},
-    }
+    }, metrics
 
 
 def summarize_scan(
@@ -881,6 +947,8 @@ def record_scan_tickets(
 
 
 def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
+    cycle_started_at = time.monotonic()
+    stage_timings: dict[str, Any] = {}
     symbols = normalize_watchlist(args.watchlist)
     work_dir = Path(args.work_dir or os.environ.get("AUTONOMOUS_TRADER_WORK_DIR", "/tmp/autonomous-trader-work"))
     cycle = args.cycle if args.cycle is not None else next_cycle_number(work_dir)
@@ -895,6 +963,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     gate: dict[str, Any] | None = None
     recorded_account_gate: dict[str, Any] | None = None
     if args.respect_account_gate:
+        account_gate_started_at = time.monotonic()
         broker_state = fetch_broker_state(alpaca)
         gate = summarize_broker_state(broker_state)
         if args.session_id:
@@ -904,8 +973,12 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 cycle=cycle,
                 gate=gate,
             )
+        stage_timings["accountGateMs"] = elapsed_ms(account_gate_started_at)
         if gate.get("skipFullScan"):
+            prune_started_at = time.monotonic()
             removed_cycle_dirs = prune_old_cycle_dirs(work_dir, args.retain_cycles)
+            stage_timings["pruneOldCyclesMs"] = elapsed_ms(prune_started_at)
+            stage_timings["totalMs"] = elapsed_ms(cycle_started_at)
             return {
                 "ok": True,
                 "mode": "cycle",
@@ -920,8 +993,9 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 "topResults": [],
                 "action": gate.get("action"),
                 "skipFullScan": True,
+                "stageTimingsMs": stage_timings,
             }
-    inputs = fetch_scan_inputs(
+    inputs, input_fetch_metrics = fetch_scan_inputs_with_metrics(
         alpaca=alpaca,
         synthesis=synthesis,
         symbols=symbols,
@@ -931,25 +1005,35 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         scorecard_limit=args.scorecard_limit,
         broker_state=broker_state,
     )
+    stage_timings["inputFetchMs"] = input_fetch_metrics["totalMs"]
+    stage_timings["inputFetch"] = input_fetch_metrics
     for name, payload in inputs.items():
         write_json(cycle_dir / name, payload)
+    scorecard_started_at = time.monotonic()
     scorecard_readback = scorecard_readback_summary(inputs.get("scorecards.json"))
+    stage_timings["scorecardReadbackSummaryMs"] = elapsed_ms(scorecard_started_at)
     recorded_scorecard_readback = None
     if args.session_id:
+        record_scorecard_started_at = time.monotonic()
         recorded_scorecard_readback = record_scorecard_readback(
             synthesis=synthesis,
             session_id=args.session_id,
             cycle=cycle,
             scorecard_readback=scorecard_readback,
         )
+        stage_timings["recordScorecardReadbackMs"] = elapsed_ms(record_scorecard_started_at)
     analysis_context = Path(args.analysis_context or work_dir / "analysis-context.json")
+    scan_started_at = time.monotonic()
     scan = run_stock_analysis_scan(
         stock_analysis_cli=stock_analysis_cli_path(args.stock_analysis_cli),
         cycle_dir=cycle_dir,
         analysis_context_path=analysis_context,
         watchlist=symbols,
     )
+    stage_timings["stockAnalysisScanMs"] = elapsed_ms(scan_started_at)
+    prune_started_at = time.monotonic()
     removed_cycle_dirs = prune_old_cycle_dirs(work_dir, args.retain_cycles)
+    stage_timings["pruneOldCyclesMs"] = elapsed_ms(prune_started_at)
     summary = summarize_scan(
         cycle,
         cycle_dir,
@@ -961,6 +1045,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     summary["scorecardReadback"] = scorecard_readback
     summary["recordedScorecardReadback"] = recorded_scorecard_readback
     if args.record_tickets:
+        record_tickets_started_at = time.monotonic()
         summary["recordedTickets"] = record_scan_tickets(
             synthesis=synthesis,
             session_id=args.session_id or "",
@@ -968,11 +1053,14 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             scan=scan,
             limit=args.max_recorded_tickets,
         )
+        stage_timings["recordTicketsMs"] = elapsed_ms(record_tickets_started_at)
     if gate is not None:
         summary["accountGate"] = gate
         summary["recordedAccountGate"] = recorded_account_gate
         summary["action"] = gate.get("action")
         summary["skipFullScan"] = False
+    stage_timings["totalMs"] = elapsed_ms(cycle_started_at)
+    summary["stageTimingsMs"] = stage_timings
     return summary
 
 
