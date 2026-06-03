@@ -106,6 +106,14 @@ class TestFastReplayPreview(TestCase):
                 "bid_size": Decimal("700"),
                 "ask_size": Decimal("300"),
                 "macro_event_window": stress,
+                "net_dealer_gamma_exposure": Decimal("-9000000")
+                if stress
+                else Decimal("5000000"),
+                "zero_dte_option_volume": Decimal("80000")
+                if stress
+                else Decimal("1000"),
+                "weekly_option_availability": stress,
+                "option_days_to_expiry": Decimal("0") if stress else Decimal("21"),
             },
             ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
         )
@@ -223,6 +231,10 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "nonlinear_impact_execution_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
+            "option_gamma_flow_stress",
             payload["implemented_mechanisms"],
         )
         self.assertEqual(
@@ -370,6 +382,27 @@ class TestFastReplayPreview(TestCase):
                     "source_papers"
                 ]
             },
+        )
+        self.assertIn("option_gamma_flow_stress", row_payload)
+        self.assertFalse(row_payload["option_gamma_flow_stress"]["proof_authority"])
+        self.assertFalse(row_payload["option_gamma_flow_stress"]["promotion_authority"])
+        self.assertEqual(
+            row_payload["option_gamma_flow_stress"]["status"],
+            "preview_only_option_gamma_flow_stress_ranking",
+        )
+        self.assertIn(
+            "ssrn-4692190",
+            {
+                source["source_id"]
+                for source in row_payload["option_gamma_flow_stress"]["source_papers"]
+            },
+        )
+        self.assertIn(
+            "option_gamma_flow_stress_penalty_active", row_payload["risk_flags"]
+        )
+        self.assertIn(
+            "option_gamma_flow_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
         )
         self.assertIn("cost_impact_lineage", row_payload)
         self.assertIn("impact_capacity_lineage", row_payload)
