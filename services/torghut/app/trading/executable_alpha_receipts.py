@@ -571,11 +571,22 @@ def build_executable_alpha_repair_receipts(
     source_revenue_repair_ref = "torghut-revenue-repair-digest:" + _stable_hash(
         "torghut-revenue-repair-digest",
         {
-            "generated_at": generated.isoformat(),
-            "top_blocker": dict(top_blocker),
             "business_state": business_state,
+            "top_blocker": dict(top_blocker),
             "repair_bid_settlement_ledger_id": repair_bid_settlement_ledger.get(
                 "ledger_id"
+            ),
+            "selected_lot_ids": _string_list(
+                repair_bid_settlement_ledger.get("selected_lot_ids")
+            ),
+            "dispatchable_lot_ids": _string_list(
+                repair_bid_settlement_ledger.get("dispatchable_lot_ids")
+            ),
+            "held_lot_ids": _string_list(
+                repair_bid_settlement_ledger.get("held_lot_ids")
+            ),
+            "routeable_candidate_count": _int(
+                repair_bid_settlement_ledger.get("routeable_candidate_count")
             ),
         },
     )
