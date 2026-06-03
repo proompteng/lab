@@ -81,6 +81,7 @@ RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS = frozenset(
         "runtime_ledger_stage_not_live",
     }
 )
+DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS = 30.0
 
 
 class _ObjectStoreClient(Protocol):
@@ -3311,7 +3312,15 @@ def _parser() -> argparse.ArgumentParser:
         help="Maximum share of post-cost runtime-ledger PnL attributable to one symbol.",
     )
     parser.add_argument("--generated-at", default=None)
-    parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS,
+        help=(
+            "Timeout for service-backed status, paper-route, completion, and "
+            "runtime-window import JSON reads."
+        ),
+    )
     parser.add_argument("--output-file", type=Path, default=None)
     parser.add_argument(
         "--artifact-prefix",

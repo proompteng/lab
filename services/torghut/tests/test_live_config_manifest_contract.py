@@ -1904,6 +1904,7 @@ class TestLiveConfigManifestContract(TestCase):
             "--completion-service-base-url http://torghut.torghut.svc.cluster.local",
             args,
         )
+        self.assertIn("--timeout-seconds 30", args)
         self.assertIn("--proof-mode authority", args)
         self.assertIn('--runtime-window-import-file "${RENEWAL_OUTPUT}"', args)
         self.assertIn("--min-runtime-ledger-net-pnl 10000", args)
