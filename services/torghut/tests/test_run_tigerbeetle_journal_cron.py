@@ -119,6 +119,10 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertIn("--reconcile-empty-selection", argv)
         self.assertNotIn("--skip-reconcile", argv)
         self.assertEqual(
+            argv[argv.index("--supervise-timeout-seconds") + 1],
+            str(runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS),
+        )
+        self.assertEqual(
             argv[argv.index("--reconcile-limit") + 1],
             str(runner.LIVE_RECONCILE_LIMIT),
         )
@@ -136,6 +140,23 @@ class RunTigerBeetleJournalCronTest(TestCase):
 
         self.assertIn("--reconcile-empty-selection", argv)
         self.assertNotIn("--skip-reconcile", argv)
+        self.assertEqual(
+            argv[argv.index("--supervise-timeout-seconds") + 1],
+            str(runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS),
+        )
+
+    def test_runtime_ledger_reconcile_timeout_does_not_leak_to_other_slices(
+        self,
+    ) -> None:
+        commands = runner._live_commands(execution_batch_size=5)
+
+        self.assertIsNone(commands[0].supervise_timeout_seconds)
+        self.assertIsNone(commands[1].supervise_timeout_seconds)
+        self.assertIsNone(commands[2].supervise_timeout_seconds)
+        self.assertEqual(
+            commands[3].supervise_timeout_seconds,
+            runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+        )
 
     def test_live_order_event_argv_keeps_slice_bounded_under_watchdog(self) -> None:
         [command] = [
@@ -384,6 +405,11 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(
             [source for _, source, _ in observed[: runner.LIVE_EXECUTION_SLICE_COUNT]],
             [SOURCE_TYPE_EXECUTION] * runner.LIVE_EXECUTION_SLICE_COUNT,
+        )
+        runtime_argv = observed[-1][0]
+        self.assertEqual(
+            runtime_argv[runtime_argv.index("--supervise-timeout-seconds") + 1],
+            str(runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS),
         )
         self.assertTrue(all(json_output for _, _, json_output in observed))
 
