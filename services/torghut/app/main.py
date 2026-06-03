@@ -1618,6 +1618,13 @@ def _evaluate_trading_health_payload_bounded(
                 cached_result = (payload, status_code)
             else:
                 future = None
+        elif future is not None:
+            cache_entry = _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.get(cache_key)
+            if cache_entry is not None:
+                payload = deepcopy(cast(dict[str, object], cache_entry["payload"]))
+                status_value = cache_entry.get("status_code")
+                status_code = status_value if isinstance(status_value, int) else 503
+                cached_result = (payload, status_code)
         if future is None and cached_result is None:
             future = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
                 _evaluate_trading_health_payload,
