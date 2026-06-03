@@ -7333,13 +7333,39 @@ def _runtime_window_import_audit(
     )
     import_ready = bool(session_readiness.get("import_ready"))
     session_state = _safe_text(session_readiness.get("state")) or "unknown"
+    plan_source = _safe_text(next_targets.get("source")) or ""
+    # Observed source-backed runtime-window plans are assembled from already
+    # materialized source activity and may not carry the next-session
+    # ``session_readiness`` envelope.  Treat that absence as an observability
+    # gap, not as a reason to hide the concrete source/materialization blockers
+    # behind a generic "wait_for_runtime_window_import_readiness" state.  This
+    # does not grant import or promotion authority: the returned ``import_ready``
+    # remains the explicit session-readiness value and ``proof_allowed`` remains
+    # false.
+    observed_source_evidence_ready_for_diagnostics = (
+        not import_ready
+        and not import_blockers
+        and session_state == "unknown"
+        and plan_source == "paper_route_observed_strategy_source_collection"
+        and current_target_count > 0
+        and any(
+            count > 0
+            for count in (
+                targets_with_source_activity,
+                targets_with_rejected_signal_activity,
+                targets_with_runtime_ledger,
+                targets_with_evidence_grade_runtime_ledger,
+                targets_with_promotion_decision,
+            )
+        )
+    )
     blockers: list[str]
     evidence_window_state = "clean_window_collection_pending"
     if source_plan_target_count <= 0:
         state = "paper_probation_import_plan_missing"
         next_action = "repair_runtime_ledger_paper_probation_import_plan"
         blockers = ["paper_probation_import_plan_missing", "paper_route_target_missing"]
-    elif not import_ready:
+    elif not import_ready and not observed_source_evidence_ready_for_diagnostics:
         state = session_state
         next_action = {
             "waiting_for_session_open": "wait_for_regular_session_open",
@@ -7404,7 +7430,7 @@ def _runtime_window_import_audit(
         evidence_window_state = "clean_source_backed_window_ready_for_gate_review"
     if source_plan_target_count <= 0:
         evidence_window_state = "clean_window_required"
-    elif not import_ready:
+    elif not import_ready and not observed_source_evidence_ready_for_diagnostics:
         evidence_window_state = "clean_window_collection_pending"
     elif current_target_count <= 0:
         evidence_window_state = "clean_window_required"
@@ -7432,6 +7458,9 @@ def _runtime_window_import_audit(
             "source_lifecycle_blockers": source_lifecycle_blockers,
             "runtime_ledger_blockers": runtime_ledger_blockers,
             "target_blockers_effective_when": "runtime_window_import_ready",
+            "observed_source_evidence_ready_for_diagnostics": (
+                observed_source_evidence_ready_for_diagnostics
+            ),
         },
         "target_blockers": target_blockers,
         "counts": {
