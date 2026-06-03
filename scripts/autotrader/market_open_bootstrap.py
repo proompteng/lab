@@ -149,8 +149,7 @@ def run_bootstrap(
         "analysisHead": analysis_head,
         "analysisContextHash": analysis_context_hash,
         "nextCommand": (
-            'python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py '
-            f'--session-id "{session_id}" --record-tickets --respect-account-gate'
+            "python3 /workspace/lab/scripts/autotrader/market_open_cycle.py"
         ),
     }
     write_json(work_dir / "session.json", result)
