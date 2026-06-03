@@ -6685,22 +6685,12 @@ def _paper_route_target_plan_url_points_to_self(parsed: Any) -> bool:
     if not hostname:
         return False
 
-    self_hosts = {
-        "localhost",
-        "127.0.0.1",
-        "::1",
-        "torghut",
-        "torghut.torghut",
-        "torghut.torghut.svc",
-        "torghut.torghut.svc.cluster.local",
-        "torghut-sim",
-        "torghut-sim.torghut",
-        "torghut-sim.torghut.svc",
-        "torghut-sim.torghut.svc.cluster.local",
-    }
+    self_hosts = {"localhost", "127.0.0.1", "::1"}
     service_name = os.getenv("K_SERVICE", "").strip().lower()
     namespace = os.getenv("POD_NAMESPACE", os.getenv("NAMESPACE", "")).strip().lower()
     if service_name:
+        if not namespace and service_name in {"torghut", "torghut-sim"}:
+            namespace = "torghut"
         self_hosts.add(service_name)
         if namespace:
             self_hosts.update(
