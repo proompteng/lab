@@ -5216,6 +5216,135 @@ class TestTradingPipeline(TestCase):
                     [],
                 )
 
+    def test_simple_pipeline_scans_rejected_quote_routeability_retry_without_new_signal(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 2
+        config.settings.trading_simple_paper_route_probe_retry_batch_limit = 4
+        config.settings.trading_simple_paper_route_probe_retry_scan_limit = 16
+        config.settings.trading_paper_route_target_plan_url = ""
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        event_ts = datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc)
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-quote-routeability-retry-scan",
+                description="simple paper quote routeability retry scan",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=event_ts,
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                rationale="paper-route-target-source",
+                params={
+                    "paper_route_target_plan": {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "account_label": "paper",
+                        "observed_stage": "paper",
+                        "source_kind": "paper_route_probe_runtime_observed",
+                    },
+                    "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                    "profit_proof_eligible": True,
+                },
+            )
+            row = pipeline.executor.ensure_decision(
+                session, decision, strategy, "paper"
+            )
+            decision_json = dict(cast(Mapping[str, Any], row.decision_json))
+            params = dict(cast(Mapping[str, Any], decision_json.get("params")))
+            params["quote_routeability"] = {
+                "schema_version": "torghut.paper-route-quote-routeability.v1",
+                "status": "blocked",
+                "reason": "missing_executable_quote",
+                "bounded_evidence_collection_ready": False,
+                "promotion_allowed": False,
+                "final_authority_ok": False,
+                "final_promotion_allowed": False,
+            }
+            decision_json["params"] = params
+            decision_json["submission_stage"] = "rejected_quote_routeability"
+            decision_json["reject_reason_atomic"] = ["missing_executable_quote"]
+            row.status = "rejected"
+            row.decision_json = decision_json
+            session.add(row)
+            session.commit()
+
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 14, 5, tzinfo=timezone.utc),
+            ):
+                retries = pipeline._paper_route_probe_retry_decisions(session=session)
+                self.assertEqual([retry.symbol for retry in retries], ["AAPL"])
+                reopened = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=retries[0],
+                    strategy=strategy,
+                )
+
+            self.assertIsNotNone(reopened)
+            session.refresh(row)
+            reopened_json = cast(dict[str, Any], row.decision_json)
+            reopened_params = cast(dict[str, Any], reopened_json.get("params"))
+            retry_metadata = cast(
+                dict[str, Any],
+                reopened_json.get("paper_route_quote_routeability_retry"),
+            )
+
+            self.assertEqual(row.status, "planned")
+            self.assertEqual(
+                reopened_json.get("submission_stage"),
+                "paper_route_quote_routeability_retry_pending",
+            )
+            self.assertNotIn("quote_routeability", reopened_params)
+            self.assertEqual(
+                reopened_json.get("paper_route_quote_routeability_retry_attempts"),
+                1,
+            )
+            self.assertEqual(
+                retry_metadata.get("previous_quote_routeability_reason"),
+                "missing_executable_quote",
+            )
+
     def test_simple_pipeline_reopens_profit_floor_block_for_bounded_paper_route_retry(
         self,
     ) -> None:

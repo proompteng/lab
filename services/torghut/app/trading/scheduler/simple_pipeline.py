@@ -1924,7 +1924,7 @@ class SimpleTradingPipeline(TradingPipeline):
             session.execute(
                 select(TradeDecision)
                 .where(
-                    TradeDecision.status == "blocked",
+                    TradeDecision.status.in_(("blocked", "rejected")),
                     TradeDecision.alpaca_account_label == self.account_label,
                 )
                 .order_by(TradeDecision.created_at.desc())
@@ -1937,7 +1937,11 @@ class SimpleTradingPipeline(TradingPipeline):
         for decision_row in rows:
             if len(decisions) >= batch_limit:
                 break
-            if self._paper_route_probe_retry_metadata(decision_row) is None:
+            if (
+                self._paper_route_probe_retry_metadata(decision_row) is None
+                and self._paper_route_quote_routeability_retry_metadata(decision_row)
+                is None
+            ):
                 continue
             if self.executor.execution_exists(session, decision_row):
                 continue
