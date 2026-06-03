@@ -34,7 +34,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/synthesis-autonomous-trader-scorecard-readback
+    head: main
     mode: scorecard-readback
     synthesisSessionMode: scorecard_readback
     brokerMutationEnabled: "false"

@@ -34,7 +34,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/synthesis-autonomous-trader-session-green
+    head: main
     mode: market-open
     synthesisSessionMode: market_open
     brokerMutationEnabled: "false"
