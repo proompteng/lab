@@ -512,6 +512,47 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-amd")
         self.assertEqual(summary["candidateSymbols"], ["AMD", "AVGO"])
 
+    def test_decision_summary_boosts_positive_scorecard_edge(self) -> None:
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=9,
+            scan={
+                "results": [
+                    {
+                        "symbol": "AVGO",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A+",
+                        "expected_r": "5.0",
+                    },
+                    {
+                        "symbol": "AMD",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "3.0",
+                        "scorecard_sample_size": 1,
+                        "scorecard_avg_realized_r": "3.042857",
+                        "scorecard_confidence": "0.0909",
+                    },
+                ]
+            },
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-9-1-AVGO-vwap_reclaim-A+",
+                    "ticketId": "ticket-avgo",
+                },
+                {
+                    "idempotencyKey": "scan-cycle-9-2-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                },
+            ],
+        )
+
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
+        self.assertEqual(summary["bestCandidate"]["expectedR"], "3.0")
+        self.assertEqual(summary["bestCandidate"]["scorecardAvgRealizedR"], "3.042857")
+        self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-amd")
+        self.assertEqual(summary["candidateSymbols"], ["AMD", "AVGO"])
+
     def test_decision_summary_blocks_sub_two_r_candidates(self) -> None:
         result = {
             "symbol": "GOOGL",
