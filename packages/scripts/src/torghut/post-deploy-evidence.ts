@@ -237,6 +237,30 @@ const requireRuntimeWindowImportHealthGate = (
   return { dependencyQuorumDecision, continuityOk, driftOk }
 }
 
+const selectPaperRouteMirrorPlan = (payload: JsonObject, label: string): JsonObject => {
+  const selectedPlan = requireObject(
+    payload.next_paper_route_runtime_window_targets,
+    `${label} next_paper_route_runtime_window_targets`,
+  )
+  const selectedSchemaVersion = formatScalar(selectedPlan.schema_version, 'missing')
+  if (selectedSchemaVersion === PAPER_ROUTE_TARGETS_SCHEMA_VERSION) {
+    return selectedPlan
+  }
+
+  const rawPlanValue = payload.raw_next_paper_route_runtime_window_targets
+  if (rawPlanValue && typeof rawPlanValue === 'object' && !Array.isArray(rawPlanValue)) {
+    const rawPlan = rawPlanValue as JsonObject
+    const rawSchemaVersion = formatScalar(rawPlan.schema_version, 'missing')
+    if (rawSchemaVersion === PAPER_ROUTE_TARGETS_SCHEMA_VERSION) {
+      return rawPlan
+    }
+  }
+
+  throw new Error(
+    `${label} target plan schema mismatch: expected ${PAPER_ROUTE_TARGETS_SCHEMA_VERSION}, got ${selectedSchemaVersion}`,
+  )
+}
+
 const parsePaperRouteTargets = (
   evidence: unknown,
   label: string,
@@ -246,10 +270,7 @@ const parsePaperRouteTargets = (
   if (schemaVersion !== PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION) {
     throw new Error(`${label} schema mismatch: expected ${PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION}, got ${schemaVersion}`)
   }
-  const plan = requireObject(
-    payload.next_paper_route_runtime_window_targets,
-    `${label} next_paper_route_runtime_window_targets`,
-  )
+  const plan = selectPaperRouteMirrorPlan(payload, label)
   const planSchemaVersion = formatScalar(plan.schema_version, 'missing')
   if (planSchemaVersion !== PAPER_ROUTE_TARGETS_SCHEMA_VERSION) {
     throw new Error(
