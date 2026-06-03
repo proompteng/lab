@@ -526,20 +526,6 @@ def _source_row_is_paper_route_probe_exit(row: Mapping[str, object]) -> bool:
     return False
 
 
-def _source_decision_mode_counts(
-    rows: Sequence[Mapping[str, object]],
-) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for row in rows:
-        if _source_row_is_paper_route_probe_exit(row):
-            continue
-        mode = _source_decision_mode(row)
-        if mode is None:
-            continue
-        counts[mode] = counts.get(mode, 0) + 1
-    return dict(sorted(counts.items()))
-
-
 def _source_decision_identifier_values(row: Mapping[str, object]) -> set[str]:
     return _text_values(
         row,
@@ -547,6 +533,46 @@ def _source_decision_identifier_values(row: Mapping[str, object]) -> set[str]:
         "decision_id",
         "decision_hash",
     )
+
+
+def _paper_route_probe_exit_identifiers(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    identifiers: set[str] = set()
+    for row in rows:
+        if _source_row_is_paper_route_probe_exit(row):
+            identifiers.update(_source_decision_identifier_values(row))
+    return identifiers
+
+
+def _source_row_is_paper_route_probe_exit_or_linked(
+    row: Mapping[str, object],
+    *,
+    paper_route_probe_exit_identifiers: set[str],
+) -> bool:
+    if _source_row_is_paper_route_probe_exit(row):
+        return True
+    return bool(
+        _source_decision_identifier_values(row) & paper_route_probe_exit_identifiers
+    )
+
+
+def _source_decision_mode_counts(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    paper_route_probe_exit_identifiers = _paper_route_probe_exit_identifiers(rows)
+    for row in rows:
+        if _source_row_is_paper_route_probe_exit_or_linked(
+            row,
+            paper_route_probe_exit_identifiers=paper_route_probe_exit_identifiers,
+        ):
+            continue
+        mode = _source_decision_mode(row)
+        if mode is None:
+            continue
+        counts[mode] = counts.get(mode, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _source_decision_mode_lookup(
@@ -623,8 +649,16 @@ def _partition_runtime_source_rows_by_decision_mode(
     if not source_rows:
         return None
     modes_by_identifier = _source_decision_mode_lookup(source_rows)
+    paper_route_probe_exit_identifiers = _paper_route_probe_exit_identifiers(
+        source_rows
+    )
     partition_relevant_source_rows = [
-        row for row in source_rows if not _source_row_is_paper_route_probe_exit(row)
+        row
+        for row in source_rows
+        if not _source_row_is_paper_route_probe_exit_or_linked(
+            row,
+            paper_route_probe_exit_identifiers=paper_route_probe_exit_identifiers,
+        )
     ]
     relevant_mode_keys = {
         _source_decision_mode_partition_key(
@@ -743,8 +777,12 @@ def _source_decision_rows_profit_proof_eligible(
     if source_decision_mode_counts_have_non_profit_proof_modes(modes):
         return False
     explicit: list[bool] = []
+    paper_route_probe_exit_identifiers = _paper_route_probe_exit_identifiers(rows)
     for row in rows:
-        if _source_row_is_paper_route_probe_exit(row):
+        if _source_row_is_paper_route_probe_exit_or_linked(
+            row,
+            paper_route_probe_exit_identifiers=paper_route_probe_exit_identifiers,
+        ):
             continue
         value = _source_decision_profit_proof_flag(row)
         if value is not None:

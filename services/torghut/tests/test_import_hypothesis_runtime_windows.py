@@ -6532,6 +6532,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 },
             }
         }
+        linked_exit_lifecycle_json = {
+            "params": {
+                "source_decision_mode": "route_acquisition_probe",
+                "profit_proof_eligible": False,
+            }
+        }
 
         rows = _build_realized_strategy_pnl_rows(
             [
@@ -6575,7 +6581,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "account_label": "TORGHUT_SIM",
                     "strategy_id": "intraday-tsmom-profit-v3",
                     "decision_hash": "exit-hash",
-                    "decision_json": exit_decision_json,
+                    "decision_json": linked_exit_lifecycle_json,
                     "alpaca_order_id": "exit-order",
                     "execution_policy_hash": "exit-policy",
                     "cost_model_hash": "cost-sha",
@@ -6676,7 +6682,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "account_label": "TORGHUT_SIM",
                     "strategy_id": "intraday-tsmom-profit-v3",
                     "decision_hash": "exit-hash",
-                    "decision_json": exit_decision_json,
+                    "decision_json": linked_exit_lifecycle_json,
                     "alpaca_order_id": "exit-order",
                     "event_type": "new",
                     "source_topic": "alpaca-trade-updates",
@@ -6699,7 +6705,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "account_label": "TORGHUT_SIM",
                     "strategy_id": "intraday-tsmom-profit-v3",
                     "decision_hash": "exit-hash",
-                    "decision_json": exit_decision_json,
+                    "decision_json": linked_exit_lifecycle_json,
                     "alpaca_order_id": "exit-order",
                     "event_type": "fill",
                     "filled_qty": Decimal("1"),
