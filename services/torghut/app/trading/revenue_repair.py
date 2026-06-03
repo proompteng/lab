@@ -40,6 +40,13 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
         70,
         6,
     ),
+    "runtime_ledger_source_collection_pending": (
+        "repair_source_runtime_window_import",
+        "runtime_window_import",
+        "import_source_collection_runtime_ledger_window_before_alpha_promotion",
+        74,
+        7,
+    ),
     "execution_tca_stale": (
         "repair_execution_tca",
         "execution_tca",
@@ -127,6 +134,15 @@ _REPAIR_METADATA: dict[str, dict[str, object]] = {
             "alpha_readiness_receipt",
             "hypothesis_promotion_receipt",
             "capital_replay_board",
+        ],
+    },
+    "runtime_ledger_source_collection_pending": {
+        "value_gate": "routeable_candidate_count",
+        "required_output_receipt": "torghut.runtime-window-import-readback.v1",
+        "required_receipts": [
+            "runtime_ledger_paper_probation_import_plan",
+            "source_runtime_window_import_plan",
+            "runtime_window_import_readback",
         ],
     },
     "execution_tca_stale": {
@@ -764,6 +780,153 @@ def _summarize_route_reacquisition(
     }
 
 
+def _mapping_items(value: object) -> list[dict[str, Any]]:
+    return [
+        item for item in (_mapping(raw_item) for raw_item in _sequence(value)) if item
+    ]
+
+
+def _is_source_collection_target(target: Mapping[str, Any]) -> bool:
+    return _bool(target.get("source_collection_authorized")) or (
+        _text(target.get("source_kind")) == "runtime_ledger_source_collection_candidate"
+    )
+
+
+def _summarize_runtime_window_import_target(
+    target: Mapping[str, Any],
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "hypothesis_id": _text(target.get("hypothesis_id")),
+        "candidate_id": _text(target.get("candidate_id")),
+        "strategy_family": _text(target.get("strategy_family")),
+        "strategy_name": _text(
+            target.get("strategy_name"), _text(target.get("runtime_strategy_name"))
+        ),
+        "account_label": _text(target.get("account_label")),
+        "source_account_label": _text(target.get("source_account_label")),
+        "source_kind": _text(target.get("source_kind")),
+        "source_dsn_env": _text(target.get("source_dsn_env")),
+        "target_dsn_env": _text(target.get("target_dsn_env")),
+        "window_start": _text(target.get("window_start")),
+        "window_end": _text(target.get("window_end")),
+        "source_collection_authorized": _is_source_collection_target(target),
+        "paper_probation_authorized": _bool(target.get("paper_probation_authorized")),
+        "evidence_collection_ok": _bool(target.get("evidence_collection_ok")),
+        "handoff": _text(target.get("handoff")),
+        "probation_reason": _text(target.get("probation_reason")),
+        "max_notional": _text(target.get("max_notional"), "0"),
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_authority_ok": False,
+        "final_promotion_blockers": _string_items(
+            target.get("final_promotion_blockers")
+        ),
+        "candidate_blockers": _string_items(target.get("candidate_blockers")),
+        "source_collection_reason_codes": _string_items(
+            target.get("source_collection_reason_codes")
+        ),
+    }
+    for key in (
+        "dataset_snapshot_ref",
+        "source_manifest_ref",
+        "runtime_ledger_bucket_ref",
+    ):
+        value = _text(target.get(key))
+        if value:
+            payload[key] = value
+    return payload
+
+
+def _summarize_runtime_window_import_repair(
+    live_submission_gate: Mapping[str, Any],
+) -> dict[str, object]:
+    plan = _mapping(
+        live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
+    )
+    blocked_reasons = _string_items(live_submission_gate.get("blocked_reasons"))
+    if not plan:
+        return {
+            "schema_version": None,
+            "status": "missing",
+            "next_action": "wait_for_runtime_ledger_source_collection_plan",
+            "target_count": 0,
+            "paper_probation_target_count": 0,
+            "source_collection_target_count": 0,
+            "skipped_target_count": 0,
+            "blocked_reasons": blocked_reasons,
+            "top_targets": [],
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "final_authority_ok": False,
+        }
+
+    raw_targets = _mapping_items(plan.get("targets"))
+    source_targets = [
+        target for target in raw_targets if _is_source_collection_target(target)
+    ]
+    paper_targets = [
+        target
+        for target in raw_targets
+        if _bool(target.get("paper_probation_authorized"))
+        and not _is_source_collection_target(target)
+    ]
+    skipped_targets = _mapping_items(plan.get("skipped_targets"))
+    if source_targets:
+        status = "source_collection_pending"
+        next_action = "run_runtime_window_import_for_source_collection_targets"
+    elif paper_targets:
+        status = "paper_probation_import_pending"
+        next_action = "run_runtime_window_import_for_paper_probation_targets"
+    elif skipped_targets:
+        status = "target_plan_repair_required"
+        next_action = "repair_runtime_window_import_target_fields"
+    else:
+        status = "empty"
+        next_action = "wait_for_runtime_window_import_candidates"
+
+    prioritized_targets = [*source_targets, *paper_targets]
+    if not prioritized_targets:
+        prioritized_targets = raw_targets
+    return {
+        "schema_version": _text(plan.get("schema_version")) or None,
+        "status": status,
+        "next_action": next_action,
+        "source": _text(plan.get("source")),
+        "purpose": _text(plan.get("purpose")),
+        "target_count": _int(plan.get("target_count"), len(raw_targets)),
+        "paper_probation_target_count": _int(
+            plan.get("paper_probation_target_count"), len(paper_targets)
+        ),
+        "source_collection_target_count": _int(
+            plan.get("source_collection_target_count"), len(source_targets)
+        ),
+        "skipped_target_count": _int(
+            plan.get("skipped_target_count"), len(skipped_targets)
+        ),
+        "blocked_reasons": blocked_reasons,
+        "top_targets": [
+            _summarize_runtime_window_import_target(target)
+            for target in prioritized_targets[:5]
+        ],
+        "skipped_targets": [
+            {
+                "hypothesis_id": _text(target.get("hypothesis_id")),
+                "candidate_id": _text(target.get("candidate_id")),
+                "reason": _text(target.get("reason")),
+                "missing_fields": _string_items(target.get("missing_fields")),
+                "blockers": _string_items(target.get("blockers")),
+            }
+            for target in skipped_targets[:5]
+        ],
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_authority_ok": False,
+    }
+
+
 def _summarize_routeability_acceptance(
     routeability_ledger: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -1066,6 +1229,9 @@ def _build_topline_contract(
         top_item.get("required_output_receipt"),
         no_delta_repair_reentry_auction.get("required_output_receipt"),
     )
+    runtime_window_import_repair = _mapping(
+        evidence.get("runtime_window_import_repair")
+    )
     top_line: dict[str, object] = {
         "capital_state": _text(capital.get("capital_state"), "unknown"),
         "capital_stage": _text(capital.get("capital_stage"), "unknown"),
@@ -1106,6 +1272,22 @@ def _build_topline_contract(
         ),
         "repair_bid_settlement_held_lot_ids": _repair_bid_settlement_held_lot_ids(
             repair_bid_settlement
+        ),
+        "runtime_window_import_repair_status": _text(
+            runtime_window_import_repair.get("status"), "missing"
+        ),
+        "runtime_window_import_next_action": _text(
+            runtime_window_import_repair.get("next_action"),
+            "wait_for_runtime_ledger_source_collection_plan",
+        ),
+        "runtime_window_import_target_count": _int(
+            runtime_window_import_repair.get("target_count")
+        ),
+        "runtime_window_import_source_collection_target_count": _int(
+            runtime_window_import_repair.get("source_collection_target_count")
+        ),
+        "runtime_window_import_paper_probation_target_count": _int(
+            runtime_window_import_repair.get("paper_probation_target_count")
         ),
         "evidence_clock_state": _state_from_mapping(
             evidence_clock, "capital_decision", "state", "status"
@@ -1258,6 +1440,9 @@ def build_revenue_repair_digest(
         "capital_state": capital_state,
         "max_notional": max_notional,
     }
+    runtime_window_import_repair = _summarize_runtime_window_import_repair(
+        live_submission_gate
+    )
     evidence = {
         "alpha_readiness": alpha,
         "quant_evidence": {
@@ -1283,6 +1468,7 @@ def build_revenue_repair_digest(
         "repair_outcome_dividend": _summarize_repair_outcome_dividend(
             repair_outcome_dividend
         ),
+        "runtime_window_import_repair": runtime_window_import_repair,
         "simple_lane_reject_reason_totals": _collect_reason_counts(status_payload),
     }
     business_state = _business_state(
