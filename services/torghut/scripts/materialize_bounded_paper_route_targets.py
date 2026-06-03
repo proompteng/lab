@@ -44,6 +44,12 @@ PROMOTION_FLAG_FIELDS = (
 )
 LIVE_LABEL_MARKERS = ("LIVE", "PROD", "REAL")
 TARGET_PLAN_RESPONSE_LIMIT_BYTES = 5_000_000
+ACTIVE_TARGET_WINDOW_SKIP_REASON = (
+    "paper_route_materialization_active_target_window_not_open"
+)
+ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER = (
+    "paper_route_materialization_active_target_window_required"
+)
 
 
 def _json_default(value: object) -> str:
@@ -164,6 +170,46 @@ def _target_plan_ref(target: Mapping[str, Any]) -> str | None:
         or _safe_text(target.get("source_manifest_ref"))
         or _safe_text(target.get("paper_route_target_plan_source"))
     )
+
+
+def _target_window_start(target: Mapping[str, Any]) -> str | None:
+    return (
+        _safe_text(target.get("window_start"))
+        or _safe_text(target.get("paper_route_probe_window_start"))
+        or _safe_text(target.get("source_window_start"))
+        or _safe_text(target.get("runtime_window_start"))
+    )
+
+
+def _target_window_end(target: Mapping[str, Any]) -> str | None:
+    return (
+        _safe_text(target.get("window_end"))
+        or _safe_text(target.get("paper_route_probe_window_end"))
+        or _safe_text(target.get("source_window_end"))
+        or _safe_text(target.get("runtime_window_end"))
+    )
+
+
+def _parse_utc_datetime(value: object) -> datetime | None:
+    text = _safe_text(value)
+    if text is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _resolve_now_utc(args: argparse.Namespace) -> datetime:
+    configured_now = _safe_text(getattr(args, "now_utc", None))
+    if configured_now:
+        parsed = _parse_utc_datetime(configured_now)
+        if parsed is not None:
+            return parsed
+    return datetime.now(timezone.utc)
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
@@ -413,6 +459,8 @@ def _target_summaries(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "account_label": _safe_text(target.get("account_label")),
                 "target_plan_ref": _target_plan_ref(target),
                 "source_manifest_ref": _safe_text(target.get("source_manifest_ref")),
+                "window_start": _target_window_start(target),
+                "window_end": _target_window_end(target),
                 "bounded_collection_stage": _safe_text(
                     target.get("bounded_collection_stage")
                 )
@@ -429,6 +477,50 @@ def _target_summaries(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return summaries
+
+
+def _active_target_window_check(
+    summaries: Sequence[Mapping[str, Any]],
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    normalized_now = now.astimezone(timezone.utc)
+    targets: list[dict[str, Any]] = []
+    active_count = 0
+    missing_count = 0
+    inactive_count = 0
+    for summary in summaries:
+        target_index = int(summary.get("target_index", 0))
+        window_start = _parse_utc_datetime(summary.get("window_start"))
+        window_end = _parse_utc_datetime(summary.get("window_end"))
+        if window_start is None or window_end is None:
+            state = "missing_window"
+            missing_count += 1
+        elif window_start <= normalized_now < window_end:
+            state = "open"
+            active_count += 1
+        else:
+            state = "not_open"
+            inactive_count += 1
+        targets.append(
+            {
+                "target_index": target_index,
+                "state": state,
+                "window_start": summary.get("window_start"),
+                "window_end": summary.get("window_end"),
+            }
+        )
+    return {
+        "schema_version": "torghut.bounded-paper-route-target-window-check.v1",
+        "now_utc": normalized_now.isoformat(),
+        "required": bool(summaries),
+        "active": bool(summaries) and active_count == len(summaries),
+        "active_count": active_count,
+        "missing_count": missing_count,
+        "inactive_count": inactive_count,
+        "target_count": len(summaries),
+        "targets": targets,
+    }
 
 
 def _unique_texts(values: Sequence[object]) -> list[str]:
@@ -764,9 +856,23 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         dsn=dsn,
         dsn_env=dsn_env,
     )
+    target_window_check: dict[str, Any] | None = None
+    skip_reason: str | None = None
+    if bool(args.skip_unless_active_target_window) or bool(
+        args.require_active_target_window
+    ):
+        target_window_check = _active_target_window_check(
+            summaries,
+            now=_resolve_now_utc(args),
+        )
+        if not bool(target_window_check["active"]):
+            if bool(args.skip_unless_active_target_window) and not blockers:
+                skip_reason = ACTIVE_TARGET_WINDOW_SKIP_REASON
+            else:
+                blockers.append(ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER)
 
     materialization: dict[str, Any] = {}
-    if not blockers and dsn is not None:
+    if not blockers and skip_reason is None and dsn is not None:
         try:
             factory = _session_factory(dsn)
             with factory() as session:
@@ -795,7 +901,9 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "mode": "commit" if commit else "dry_run",
         "dry_run": dry_run,
         "commit": commit,
-        "materialized": commit and not blockers,
+        "skipped": skip_reason is not None,
+        "skip_reason": skip_reason,
+        "materialized": commit and not blockers and skip_reason is None,
         "account_label": _safe_text(args.account_label),
         "required_account_label": PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL,
         "database_dsn_env": dsn_env,
@@ -810,6 +918,7 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "operator_confirmation_required": OPERATOR_CONFIRMATION if commit else None,
         "dynamic_target_plan_confirmation": bool(args.allow_dynamic_target_plan),
         "default_dynamic_selected_plan_source": DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+        "target_window_check": target_window_check,
         "target_count": len(summaries),
         "hypothesis_ids": _unique_texts(
             [item.get("hypothesis_id") for item in summaries]
@@ -870,6 +979,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirm-target-count-min", type=int, default=None)
     parser.add_argument("--confirm-max-notional", default=None)
     parser.add_argument("--allow-dynamic-target-plan", action="store_true")
+    target_window = parser.add_mutually_exclusive_group()
+    target_window.add_argument("--skip-unless-active-target-window", action="store_true")
+    target_window.add_argument("--require-active-target-window", action="store_true")
+    parser.add_argument("--now-utc", default=None)
     parser.add_argument("--operator-confirmation", default=None)
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args(argv)

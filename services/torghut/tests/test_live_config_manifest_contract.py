@@ -1393,7 +1393,7 @@ class TestLiveConfigManifestContract(TestCase):
             "bounded-paper-route-target-materialization-cronjob.yaml"
         )
 
-        self.assertEqual(spec.get("schedule"), "*/5 10-15 * * 1-5")
+        self.assertEqual(spec.get("schedule"), "*/5 9-15 * * 1-5")
         self.assertEqual(spec.get("timeZone"), "America/New_York")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
@@ -1463,6 +1463,14 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn(
+            "--help | grep -q -- '--skip-unless-active-target-window'",
+            args,
+        )
+        self.assertIn(
+            "old_image_missing_target_window_guard",
+            args,
+        )
+        self.assertIn(
             "--plan-url "
             "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
             args,
@@ -1474,6 +1482,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--max-notional 25", args)
         self.assertIn("--commit", args)
         self.assertIn("--allow-dynamic-target-plan", args)
+        self.assertIn("--skip-unless-active-target-window", args)
         self.assertIn("--confirm-account-label TORGHUT_SIM", args)
         self.assertIn("--confirm-dsn-env SIM_DB_DSN", args)
         self.assertIn("--confirm-hypothesis-id H-PAIRS-01", args)
