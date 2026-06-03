@@ -8234,9 +8234,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self,
     ) -> None:
         cursor = _FakeCursor()
-        cursor._results[2] = [
-            tuple("PA3SX7FYNUTF" if item == "TORGHUT_SIM" else item for item in row)
-            for row in cursor._results[2]
+        cursor._results = [
+            [
+                tuple("PA3SX7FYNUTF" if item == "TORGHUT_SIM" else item for item in row)
+                for row in rows
+            ]
+            for rows in cursor._results
         ]
         connection = _FakeConnection(cursor)
         window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
@@ -8260,18 +8263,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         decision_params = cursor.executed[0][1]
         execution_params = cursor.executed[1][1]
         order_event_query, order_event_params = cursor.executed[2]
-        self.assertEqual(decision_params[1], "TORGHUT_SIM")
-        self.assertEqual(execution_params[1], "TORGHUT_SIM")
-        self.assertEqual(execution_params[2], "TORGHUT_SIM")
+        self.assertEqual(decision_params[1], "PA3SX7FYNUTF")
+        self.assertEqual(execution_params[1], "PA3SX7FYNUTF")
+        self.assertEqual(execution_params[2], "PA3SX7FYNUTF")
         self.assertIn("e_match.alpaca_account_label = %s", order_event_query)
         self.assertIn("d_match.alpaca_account_label = %s", order_event_query)
         self.assertEqual(
             order_event_params[:5],
             (
-                "TORGHUT_SIM",
-                "TORGHUT_SIM",
+                "PA3SX7FYNUTF",
+                "PA3SX7FYNUTF",
                 ["intraday_tsmom_v1@paper"],
-                "TORGHUT_SIM",
+                "PA3SX7FYNUTF",
                 "PA3SX7FYNUTF",
             ),
         )

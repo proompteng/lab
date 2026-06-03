@@ -5616,7 +5616,11 @@ def _query_timestamps(
     materialized_account_label = (
         str(target_account_label or "").strip() or source_account_label
     )
-    canonical_account_label = materialized_account_label
+    # Source DB queries must stay on the account that produced the real activity.
+    # Rows are retargeted below when the governance bucket should be materialized
+    # under a distinct account label (for example a paper/live-paper source account
+    # feeding the TORGHUT_SIM proof ledger).
+    source_query_account_label = source_account_label
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
@@ -5700,7 +5704,7 @@ def _query_timestamps(
                 """,
                 (
                     strategy_names,
-                    canonical_account_label,
+                    source_query_account_label,
                     list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
                     window_start,
                     window_end,
@@ -5797,8 +5801,8 @@ def _query_timestamps(
                 """,
                 (
                     strategy_names,
-                    canonical_account_label,
-                    canonical_account_label,
+                    source_query_account_label,
+                    source_query_account_label,
                     window_start,
                     window_end,
                     *execution_symbol_params,
@@ -5953,10 +5957,10 @@ def _query_timestamps(
                 order by coalesce(oe.event_ts, oe.created_at), oe.created_at
                 """,
                 (
-                    canonical_account_label,
-                    canonical_account_label,
+                    source_query_account_label,
+                    source_query_account_label,
                     strategy_names,
-                    canonical_account_label,
+                    source_query_account_label,
                     source_account_label,
                     window_start,
                     window_end,
@@ -6028,7 +6032,7 @@ def _query_timestamps(
                     """,
                     (
                         strategy_names,
-                        canonical_account_label,
+                        source_query_account_label,
                         list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
                         carry_in_window_start,
                         window_start,
@@ -6120,8 +6124,8 @@ def _query_timestamps(
                     """,
                     (
                         strategy_names,
-                        canonical_account_label,
-                        canonical_account_label,
+                        source_query_account_label,
+                        source_query_account_label,
                         carry_in_window_start,
                         window_start,
                         *execution_symbol_params,
@@ -6283,10 +6287,10 @@ def _query_timestamps(
                     order by coalesce(oe.event_ts, oe.created_at), oe.created_at
                     """,
                     (
-                        canonical_account_label,
-                        canonical_account_label,
+                        source_query_account_label,
+                        source_query_account_label,
                         strategy_names,
-                        canonical_account_label,
+                        source_query_account_label,
                         source_account_label,
                         carry_in_window_start,
                         window_start,
@@ -6443,8 +6447,8 @@ def _query_timestamps(
                     order by coalesce(oe.event_ts, oe.created_at), oe.created_at
                     """,
                     (
-                        canonical_account_label,
-                        canonical_account_label,
+                        source_query_account_label,
+                        source_query_account_label,
                         source_account_label,
                         window_start,
                         window_end,
@@ -6532,7 +6536,7 @@ def _query_timestamps(
                     flat_start_position_snapshot = (
                         _flat_start_position_snapshot_from_cursor(
                             cur,
-                            account_label=canonical_account_label,
+                            account_label=source_query_account_label,
                             window_start=window_start,
                         )
                     )
