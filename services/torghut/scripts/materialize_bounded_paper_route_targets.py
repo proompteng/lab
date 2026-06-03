@@ -956,21 +956,26 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             summaries = _target_summaries(materialization_plan)
             active_target_window_filter_applied = True
 
-    blockers = load_blockers + _safety_blockers(
-        args=args,
-        plan=materialization_plan,
-        plan_source=plan_source,
-        summaries=summaries,
-        dsn=dsn,
-        dsn_env=dsn_env,
-    )
     if target_window_check is not None and not _target_window_check_active_indexes(
         target_window_check
     ):
-        if bool(args.skip_unless_active_target_window) and not blockers:
+        if bool(args.skip_unless_active_target_window) and source_summaries:
             skip_reason = ACTIVE_TARGET_WINDOW_SKIP_REASON
         else:
-            blockers.append(ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER)
+            load_blockers.append(ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER)
+
+    blockers = list(load_blockers)
+    if skip_reason is None:
+        blockers.extend(
+            _safety_blockers(
+                args=args,
+                plan=materialization_plan,
+                plan_source=plan_source,
+                summaries=summaries,
+                dsn=dsn,
+                dsn_env=dsn_env,
+            )
+        )
 
     materialization: dict[str, Any] = {}
     if not blockers and skip_reason is None and dsn is not None:
