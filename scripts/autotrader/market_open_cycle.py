@@ -135,6 +135,10 @@ def cycle_action(summary: dict[str, Any]) -> str:
             return f"market_open_cycle_waiting_for_open; marketOpenAt={window.get('marketOpenAt')}"
         if action == "market_closed" and isinstance(window, dict):
             return f"market_open_cycle_market_closed; marketCloseAt={window.get('marketCloseAt')}"
+        gate = summary.get("accountGate")
+        management = gate.get("positionManagement") if isinstance(gate, dict) else None
+        if action == "manage_existing_broker_state" and isinstance(management, dict) and management.get("primaryAction"):
+            return f"market_open_cycle_manage_existing; action={management.get('primaryAction')}; reason={management.get('primaryReason')}"
         return f"market_open_cycle_account_gated; action={action}"
     top_results = summary.get("topResults")
     decision = summary.get("decisionSummary")
@@ -301,6 +305,7 @@ def record_cycle_complete(
         "topResults": summary.get("topResults"),
         "decisionSummary": summary.get("decisionSummary"),
         "strategyGuard": summary.get("strategyGuard"),
+        "accountGate": summary.get("accountGate"),
         "marketWindow": summary.get("marketWindow"),
         "windowGate": summary.get("windowGate"),
         "stageTimingsMs": summary.get("stageTimingsMs"),
@@ -387,6 +392,8 @@ def write_report(path: Path, result: dict[str, Any]) -> None:
     if not isinstance(summary, dict):
         summary = {}
     path.parent.mkdir(parents=True, exist_ok=True)
+    gate = summary.get("accountGate")
+    management = gate.get("positionManagement") if isinstance(gate, dict) else None
     lines = [
         "# Autonomous Trader Report",
         "",
@@ -403,10 +410,33 @@ def write_report(path: Path, result: dict[str, Any]) -> None:
         f"recorded_ticket_count: {recorded_ticket_count(summary)}",
         f"scorecard_count: {scorecard_count(summary)}",
         f"strategy_guard: {strategy_guard_report_value(summary)}",
-        "",
-        "Next: continue bounded market-open cycles until close, target, or hard stop.",
-        "",
     ]
+    if isinstance(management, dict) and management.get("primaryAction"):
+        lines.extend(
+            [
+                f"position_management: {management.get('primaryAction')}",
+                f"position_management_reason: {management.get('primaryReason')}",
+                f"position_management_action_required: {str(bool(management.get('actionRequired'))).lower()}",
+            ]
+        )
+        positions = management.get("positions")
+        first_position = positions[0] if isinstance(positions, list) and positions else None
+        if isinstance(first_position, dict):
+            lines.extend(
+                [
+                    f"managed_symbol: {first_position.get('symbol')}",
+                    f"managed_open_r: {first_position.get('openR')}",
+                    f"managed_stop_r: {first_position.get('stopR')}",
+                    f"recommended_stop: {first_position.get('recommendedStopPrice')}",
+                ]
+            )
+    lines.extend(
+        [
+            "",
+            "Next: continue bounded market-open cycles until close, target, or hard stop.",
+            "",
+        ]
+    )
     path.write_text("\n".join(lines), encoding="utf-8")
 
 

@@ -37,9 +37,10 @@ data:
     5. Do not manually scan, recreate tickets, run candidate guards, or smoke orders for runner candidates. Use runner `ticketId`, `noTradeReason`, `strategyGuard`, and `blocker` as authoritative.
     6. Only plan new broker risk after the runner returns `strategyGuard.allowed=true` for a candidate.
     7. Size new broker risk from runner `decisionSummary.bestCandidate.riskDirective`: use `recommendedRiskDollars` when present, otherwise honor `riskMultiplier` inside account/day-trade limits. Positive scorecard edge should be acted on aggressively; unproven or negative history must not be enlarged or bypass gates.
-    8. Before Alpaca mutation, record planned risk/order in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when supported.
-    9. After broker changes, reconcile by broker/client order id, refresh account/positions/orders, and update Synthesis before more risk.
-    10. Continue until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
+    8. If runner `accountGate.positionManagement.actionRequired=true`, manage the existing broker state before any new entry: repair or flatten unprotected/invalid stops, tighten stops to the runner `recommendedStopPrice` when provided, record the replacement order in Synthesis, then refresh broker state.
+    9. Before Alpaca mutation, record planned risk/order in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when supported.
+    10. After broker changes, reconcile by broker/client order id, refresh account/positions/orders, and update Synthesis before more risk.
+    11. Continue until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
 
     Mode behavior:
     - `scorecard-readback`: no Alpaca mutations; bootstrap handles readback/reconcile/finalize/report; after exit 0, complete goal and stop. No grep/tests/clone/scan/logs/web/extra proof.

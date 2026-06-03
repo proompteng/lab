@@ -300,6 +300,77 @@ class MarketOpenCycleTest(unittest.TestCase):
         self.assertEqual(status_payload["blocker"], "daytrading_buying_power_not_positive")
         self.assertEqual(status_payload["currentAction"], "market_open_cycle_account_gated; action=monitor_only")
 
+    def test_reports_position_management_directive_without_new_scan(self) -> None:
+        synthesis = FakeSynthesis()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "session.json").write_text('{"sessionId":"session-market-open"}\n', encoding="utf-8")
+            report_path = root / "report.md"
+
+            def fake_run_cycle(args: Any) -> dict[str, Any]:
+                return {
+                    "ok": True,
+                    "mode": "cycle",
+                    "cycle": 5,
+                    "cycleDir": str(root / "cycle-5"),
+                    "skipFullScan": True,
+                    "action": "manage_existing_broker_state",
+                    "resultCount": 0,
+                    "topResults": [],
+                    "recordedTickets": [],
+                    "accountGate": {
+                        "action": "manage_existing_broker_state",
+                        "skipFullScan": True,
+                        "account": {
+                            "equity": "30000",
+                            "buying_power": "120000",
+                            "daytrading_buying_power": "120000",
+                        },
+                        "positionManagement": {
+                            "mode": "serial_position_management",
+                            "actionRequired": True,
+                            "primaryAction": "tighten_stop_to_breakeven",
+                            "primaryReason": "open_profit_at_or_above_0_5r",
+                            "positions": [
+                                {
+                                    "symbol": "AVGO",
+                                    "openR": "0.7500",
+                                    "stopR": "-1.0000",
+                                    "recommendedStopPrice": "486.14",
+                                }
+                            ],
+                        },
+                    },
+                }
+
+            args = market_open_cycle.build_parser().parse_args(
+                [
+                    "--work-dir",
+                    str(root),
+                    "--report-path",
+                    str(report_path),
+                    "--now",
+                    "2026-06-03T14:00:00Z",
+                ]
+            )
+            with patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle):
+                result = market_open_cycle.run_market_open_cycle(args=args, synthesis=synthesis)  # type: ignore[arg-type]
+
+            self.assertTrue(result["summary"]["skipFullScan"])
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("phase: manage", report)
+            self.assertIn("position_management: tighten_stop_to_breakeven", report)
+            self.assertIn("recommended_stop: 486.14", report)
+
+        status_payload = synthesis.posts[0][1]
+        self.assertEqual(status_payload["phase"], "manage")
+        self.assertEqual(
+            status_payload["currentAction"],
+            "market_open_cycle_manage_existing; action=tighten_stop_to_breakeven; reason=open_profit_at_or_above_0_5r",
+        )
+        self.assertEqual(status_payload["payload"]["accountGate"]["positionManagement"]["primaryAction"], "tighten_stop_to_breakeven")
+
     def test_waits_before_regular_market_open_without_scanning(self) -> None:
         synthesis = FakeSynthesis()
 

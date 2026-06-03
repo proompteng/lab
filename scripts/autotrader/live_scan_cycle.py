@@ -41,6 +41,9 @@ ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
 MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
+PROFIT_PROTECT_BREAKEVEN_TRIGGER_R = Decimal("0.5")
+PROFIT_PROTECT_LOCK_TRIGGER_R = Decimal("1.0")
+PROFIT_LOCK_R = Decimal("0.25")
 
 
 class AlpacaRestClient:
@@ -267,17 +270,214 @@ def summarized_order(value: Any) -> dict[str, Any]:
     }
 
 
+def order_children(value: Any) -> list[Any]:
+    if not isinstance(value, dict):
+        return []
+    children: list[Any] = []
+    legs = value.get("legs")
+    if isinstance(legs, list):
+        for leg in legs:
+            children.append(leg)
+            children.extend(order_children(leg))
+    return children
+
+
+def flat_orders(values: list[Any]) -> list[dict[str, Any]]:
+    flattened: list[dict[str, Any]] = []
+    for value in values:
+        if isinstance(value, dict):
+            flattened.append(value)
+            flattened.extend(child for child in order_children(value) if isinstance(child, dict))
+    return flattened
+
+
+def position_side(value: dict[str, Any]) -> str:
+    side = optional_text(value.get("side"), max_length=32)
+    if side in {"long", "short"}:
+        return side
+    qty = decimal_value(value.get("qty"))
+    if qty is not None and qty < 0:
+        return "short"
+    return "long"
+
+
+def order_is_active(value: dict[str, Any]) -> bool:
+    status = optional_text(value.get("status"), max_length=64)
+    return status not in {"filled", "canceled", "expired", "rejected", "replaced"}
+
+
+def matching_symbol_order(value: dict[str, Any], symbol: str) -> bool:
+    order_symbol = optional_text(value.get("symbol"), max_length=32)
+    return bool(order_symbol and order_symbol.upper() == symbol.upper())
+
+
+def stop_price_for_order(value: dict[str, Any]) -> Decimal | None:
+    return decimal_value(value.get("stop_price") or value.get("stopPrice"))
+
+
+def limit_price_for_order(value: dict[str, Any]) -> Decimal | None:
+    return decimal_value(value.get("limit_price") or value.get("limitPrice"))
+
+
+def protective_orders_for_position(position: dict[str, Any], orders: list[Any]) -> dict[str, Any]:
+    symbol = optional_text(position.get("symbol"), max_length=32)
+    if not symbol:
+        return {"hasStop": False, "hasTakeProfit": False}
+    side = position_side(position)
+    stop_candidates: list[tuple[Decimal, dict[str, Any]]] = []
+    target_candidates: list[tuple[Decimal, dict[str, Any]]] = []
+    for order in flat_orders(orders):
+        if not matching_symbol_order(order, symbol) or not order_is_active(order):
+            continue
+        order_side = optional_text(order.get("side"), max_length=32)
+        if side == "long" and order_side not in {"sell", "sell_to_close"}:
+            continue
+        if side == "short" and order_side not in {"buy", "buy_to_cover", "buy_to_close"}:
+            continue
+        stop_price = stop_price_for_order(order)
+        limit_price = limit_price_for_order(order)
+        if stop_price is not None:
+            stop_candidates.append((stop_price, order))
+        if limit_price is not None and stop_price is None:
+            target_candidates.append((limit_price, order))
+    if side == "long":
+        stop_candidates.sort(key=lambda item: item[0], reverse=True)
+        target_candidates.sort(key=lambda item: item[0])
+    else:
+        stop_candidates.sort(key=lambda item: item[0])
+        target_candidates.sort(key=lambda item: item[0], reverse=True)
+    stop = stop_candidates[0] if stop_candidates else None
+    target = target_candidates[0] if target_candidates else None
+    return {
+        "hasStop": stop is not None,
+        "hasTakeProfit": target is not None,
+        "stopPrice": str(stop[0]) if stop else None,
+        "stopOrderId": stop[1].get("id") if stop else None,
+        "stopClientOrderId": stop[1].get("client_order_id") or stop[1].get("clientOrderId") if stop else None,
+        "takeProfitPrice": str(target[0]) if target else None,
+        "takeProfitOrderId": target[1].get("id") if target else None,
+        "takeProfitClientOrderId": target[1].get("client_order_id") or target[1].get("clientOrderId") if target else None,
+    }
+
+
+def rounded_price(value: Decimal) -> str:
+    return str(value.quantize(Decimal("0.01")))
+
+
+def position_management_for_position(position: dict[str, Any], orders: list[Any]) -> dict[str, Any]:
+    symbol = optional_text(position.get("symbol"), max_length=32) or "UNKNOWN"
+    side = position_side(position)
+    entry = decimal_value(position.get("avg_entry_price") or position.get("avgEntryPrice"))
+    current = decimal_value(position.get("current_price") or position.get("currentPrice"))
+    qty = decimal_value(position.get("qty"))
+    if current is None:
+        market_value = decimal_value(position.get("market_value") or position.get("marketValue"))
+        if market_value is not None and qty is not None and qty != 0:
+            current = abs(market_value / qty)
+    protection = protective_orders_for_position(position, orders)
+    stop = decimal_value(protection.get("stopPrice"))
+    if entry is None or current is None:
+        return {
+            "symbol": symbol.upper(),
+            "side": side,
+            "action": "refresh_broker_state",
+            "reason": "missing_entry_or_current_price",
+            "protection": protection,
+        }
+    if stop is None:
+        return {
+            "symbol": symbol.upper(),
+            "side": side,
+            "action": "repair_or_flatten_unprotected_position",
+            "reason": "missing_protective_stop",
+            "entryPrice": str(entry),
+            "currentPrice": str(current),
+            "protection": protection,
+        }
+    initial_r = abs(entry - stop)
+    if initial_r <= 0:
+        return {
+            "symbol": symbol.upper(),
+            "side": side,
+            "action": "repair_or_flatten_invalid_stop",
+            "reason": "invalid_stop_distance",
+            "entryPrice": str(entry),
+            "currentPrice": str(current),
+            "stopPrice": str(stop),
+            "protection": protection,
+        }
+    if side == "short":
+        open_r = (entry - current) / initial_r
+        stop_r = (entry - stop) / initial_r
+        breakeven_stop = entry
+        locked_stop = entry - (initial_r * PROFIT_LOCK_R)
+    else:
+        open_r = (current - entry) / initial_r
+        stop_r = (stop - entry) / initial_r
+        breakeven_stop = entry
+        locked_stop = entry + (initial_r * PROFIT_LOCK_R)
+    action = "hold_existing_protection"
+    reason = "protected_position_inside_profit_lock_thresholds"
+    recommended_stop: Decimal | None = None
+    if open_r >= PROFIT_PROTECT_LOCK_TRIGGER_R and stop_r < PROFIT_LOCK_R:
+        action = "tighten_stop_lock_profit"
+        reason = "open_profit_at_or_above_1r"
+        recommended_stop = locked_stop
+    elif open_r >= PROFIT_PROTECT_BREAKEVEN_TRIGGER_R and stop_r < 0:
+        action = "tighten_stop_to_breakeven"
+        reason = "open_profit_at_or_above_0_5r"
+        recommended_stop = breakeven_stop
+    return {
+        "symbol": symbol.upper(),
+        "side": side,
+        "action": action,
+        "reason": reason,
+        "entryPrice": str(entry),
+        "currentPrice": str(current),
+        "stopPrice": str(stop),
+        "openR": str(open_r.quantize(Decimal("0.0001"))),
+        "stopR": str(stop_r.quantize(Decimal("0.0001"))),
+        "recommendedStopPrice": rounded_price(recommended_stop) if recommended_stop is not None else None,
+        "protection": protection,
+    }
+
+
+def position_management_summary(positions: list[Any], orders: list[Any]) -> dict[str, Any]:
+    directives = [
+        position_management_for_position(position, orders)
+        for position in positions
+        if isinstance(position, dict)
+    ]
+    action_priority = {
+        "repair_or_flatten_unprotected_position": 5,
+        "repair_or_flatten_invalid_stop": 5,
+        "tighten_stop_lock_profit": 4,
+        "tighten_stop_to_breakeven": 3,
+        "refresh_broker_state": 2,
+        "hold_existing_protection": 1,
+    }
+    primary = max(directives, key=lambda item: action_priority.get(str(item.get("action")), 0), default=None)
+    return {
+        "mode": "serial_position_management",
+        "directiveCount": len(directives),
+        "actionRequired": bool(primary and action_priority.get(str(primary.get("action")), 0) >= 2),
+        "primaryAction": primary.get("action") if isinstance(primary, dict) else None,
+        "primaryReason": primary.get("reason") if isinstance(primary, dict) else None,
+        "positions": directives,
+    }
+
+
 def summarize_records(values: list[Any], summarize: Callable[[Any], dict[str, Any]], limit: int = 20) -> list[dict[str, Any]]:
     return [summarize(value) for value in values[:limit]]
 
 
 def account_gate_action(account: dict[str, Any], positions: list[Any], orders: list[Any]) -> str:
+    if positions or orders:
+        return "manage_existing_broker_state"
     eligibility = account.get("intraday_equity_entry")
     entry_allowed = isinstance(eligibility, dict) and eligibility.get("status") == "allowed"
     if entry_allowed:
         return "scan"
-    if positions or orders:
-        return "manage_existing_broker_state"
     return "monitor_only"
 
 
@@ -299,6 +499,7 @@ def summarize_account_gate(
         "openOrderCount": len(orders),
         "openPositions": summarize_records(positions, summarized_position),
         "openOrders": summarize_records(orders, summarized_order),
+        "positionManagement": position_management_summary(positions, orders) if positions else None,
         "hasOpenBrokerState": bool(positions or orders),
         "action": action,
         "skipFullScan": action != "scan",
@@ -389,7 +590,10 @@ def account_gate_current_action(gate: dict[str, Any]) -> str:
     if action == "scan":
         return "account gate passed; scanning live candidates"
     if action == "manage_existing_broker_state":
-        return "account gate blocked new entries; managing existing broker state"
+        management = gate.get("positionManagement")
+        if isinstance(management, dict) and management.get("primaryAction"):
+            return f"account gate managing existing broker state; {management.get('primaryAction')}"
+        return "account gate managing existing broker state"
     return "account gate blocked new entries; monitoring only"
 
 
