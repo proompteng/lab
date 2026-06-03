@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -4841,6 +4842,56 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target_limit=10,
         )
         self.assertEqual(empty_plan, {})
+
+    def test_source_collection_import_plan_uses_direct_gate_candidates(
+        self,
+    ) -> None:
+        live_gate = {
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+            "runtime_ledger_source_collection_candidates": [
+                {
+                    "hypothesis_id": "H-DIRECT",
+                    "candidate_id": "direct-source-collection",
+                    "observed_stage": "paper",
+                    "strategy_family": "intraday_tsmom_consistent",
+                    "strategy_name": "intraday-tsmom-profit-v3",
+                    "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                    "account": "TORGHUT_SIM",
+                    "source_account_label": "TORGHUT_SIM",
+                    "source_dsn_env": "SIM_DB_DSN",
+                    "target_dsn_env": "SIM_DB_DSN",
+                    "window_start": "2026-06-02T13:30:00+00:00",
+                    "window_end": "2026-06-02T20:00:00+00:00",
+                    "source_collection_authorized": True,
+                    "source_collection_reason_codes": [
+                        "runtime_ledger_source_collection_pending"
+                    ],
+                    "fill_count": 1,
+                    "submitted_order_count": 1,
+                    "filled_notional": "100",
+                    "promotion_allowed": True,
+                    "final_promotion_allowed": True,
+                    "max_notional": "25000",
+                }
+            ],
+        }
+
+        plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan={"targets": []},
+            live_submission_gate=live_gate,
+            target_limit=5,
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["source_collection_target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "direct-source-collection")
+        self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
+        self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["max_notional"], "0")
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertTrue(target["stripped_source_promotion_authority"])
 
     def test_builder_exports_missing_runtime_window_health_gate_as_blockers(
         self,
@@ -10719,3 +10770,261 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "runtime_ledger_evidence_grade_bucket_missing",
             payload["targets"][0]["readiness"]["blockers"],
         )
+
+    def test_source_collection_target_audit_reads_source_dsn_activity(
+        self,
+    ) -> None:
+        source_db = tempfile.NamedTemporaryFile(suffix=".db")
+        self.addCleanup(source_db.close)
+        source_dsn = f"sqlite+pysqlite:///{source_db.name}"
+        source_engine = create_engine(source_dsn, future=True)
+        self.addCleanup(source_engine.dispose)
+        Base.metadata.create_all(source_engine)
+
+        now = datetime(2026, 6, 2, 21, 5, tzinfo=timezone.utc)
+        window_start = datetime(2026, 6, 2, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 2, 20, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(minutes=30)
+        strategy_name = "intraday-tsmom-profit-v3"
+
+        with Session(source_engine) as source_session:
+            strategy = Strategy(
+                name=strategy_name,
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            source_session.add(strategy)
+            source_session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SOURCE",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-source-dsn",
+                    "hypothesis_id": "H-SOURCE-DSN",
+                },
+                rationale="source dsn paper activity fixture",
+                status="executed",
+                created_at=event_at,
+                executed_at=event_at,
+            )
+            source_session.add(decision)
+            source_session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SOURCE",
+                alpaca_order_id="source-dsn-order",
+                client_order_id="source-dsn-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at,
+                updated_at=event_at,
+                last_update_at=event_at,
+            )
+            source_session.add(execution)
+            source_session.flush()
+            source_session.add_all(
+                [
+                    ExecutionOrderEvent(
+                        event_fingerprint="source-dsn-order-event",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=202,
+                        alpaca_account_label="TORGHUT_SOURCE",
+                        event_ts=event_at,
+                        symbol="AAPL",
+                        alpaca_order_id="source-dsn-order",
+                        client_order_id="source-dsn-client",
+                        event_type="fill",
+                        status="filled",
+                        raw_event={},
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        created_at=event_at,
+                    ),
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SOURCE",
+                        symbol="AAPL",
+                        side="buy",
+                        arrival_price=Decimal("99"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("1"),
+                        slippage_bps=Decimal("10"),
+                        shortfall_notional=Decimal("1"),
+                        realized_shortfall_bps=Decimal("10"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=event_at,
+                        created_at=event_at,
+                        updated_at=event_at,
+                    ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="source-dsn-runtime-bucket",
+                        candidate_id="candidate-source-dsn",
+                        hypothesis_id="H-SOURCE-DSN",
+                        observed_stage="paper",
+                        bucket_started_at=window_start,
+                        bucket_ended_at=window_end,
+                        account_label="TORGHUT_SOURCE",
+                        runtime_strategy_name=strategy_name,
+                        strategy_family="intraday_tsmom_consistent",
+                        fill_count=1,
+                        decision_count=1,
+                        submitted_order_count=1,
+                        closed_trade_count=1,
+                        open_position_count=0,
+                        filled_notional=Decimal("100"),
+                        gross_strategy_pnl=Decimal("8"),
+                        cost_amount=Decimal("1"),
+                        net_strategy_pnl_after_costs=Decimal("7"),
+                        post_cost_expectancy_bps=Decimal("700"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy-a": 1},
+                        cost_model_hash_counts={"cost-a": 1},
+                        lineage_hash_counts={"lineage-a": 1},
+                        blockers_json=[],
+                        payload_json={
+                            "source_window_start": window_start.isoformat(),
+                            "source_window_end": window_end.isoformat(),
+                            "source_refs": [
+                                "trade_decisions",
+                                "executions",
+                                "execution_order_events",
+                                "order_feed_source_windows",
+                            ],
+                            "source_row_counts": {
+                                "trade_decisions": 1,
+                                "executions": 1,
+                                "execution_order_events": 1,
+                                "order_feed_source_windows": 1,
+                            },
+                            "source_window_ids": ["source-dsn-window"],
+                            "trade_decision_ids": [str(decision.id)],
+                            "execution_ids": [str(execution.id)],
+                            "execution_order_event_ids": ["source-dsn-order-event"],
+                            "source_offsets": [
+                                {
+                                    "topic": "trade_updates",
+                                    "partition": 0,
+                                    "offset": 202,
+                                }
+                            ],
+                            "order_feed_lifecycle_complete": True,
+                            "execution_economics_complete": True,
+                            "execution_economics_required": True,
+                            "cost_basis": "broker_statement_fee",
+                            "cost_basis_counts": {"broker_statement_fee": 1},
+                            "source_materialization": "execution_order_events",
+                            "authority_class": (
+                                "event_sourced_runtime_ledger_profit_proof"
+                            ),
+                            "authority_reason": (
+                                "event_sourced_runtime_ledger_profit_proof"
+                            ),
+                            "promotion_authority": True,
+                        },
+                    ),
+                ]
+            )
+            source_session.commit()
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"TORGHUT_SOURCE_TEST_DSN": source_dsn},
+                clear=False,
+            ),
+            Session(self.engine) as session,
+        ):
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "source_collection_pending",
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-SOURCE-DSN",
+                                "candidate_id": "candidate-source-dsn",
+                                "observed_stage": "paper",
+                                "strategy_family": "intraday_tsmom_consistent",
+                                "strategy_name": strategy_name,
+                                "runtime_strategy_name": strategy_name,
+                                "account_label": "TORGHUT_SIM",
+                                "source_account_label": "TORGHUT_SOURCE",
+                                "source_dsn_env": "TORGHUT_SOURCE_TEST_DSN",
+                                "target_dsn_env": "SIM_DB_DSN",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "source_collection_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_allowed": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": [],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=now,
+            )
+
+        target_audit = payload["targets"][0]
+        source_activity = target_audit["source_activity"]
+        runtime_ledger = target_audit["runtime_ledger"]
+        readback = target_audit["evidence_readback"]
+        self.assertTrue(source_activity["source_audit_scope"]["source_session_used"])
+        self.assertEqual(source_activity["account_label"], "TORGHUT_SOURCE")
+        self.assertEqual(source_activity["decision_count"], 1)
+        self.assertEqual(source_activity["execution_count"], 1)
+        self.assertEqual(source_activity["filled_execution_count"], 1)
+        self.assertEqual(source_activity["tca_sample_count"], 1)
+        self.assertTrue(runtime_ledger["source_audit_scope"]["source_session_used"])
+        self.assertEqual(runtime_ledger["filters"]["account_label"], "TORGHUT_SOURCE")
+        self.assertEqual(runtime_ledger["bucket_count"], 1)
+        self.assertEqual(runtime_ledger["evidence_grade_bucket_count"], 1)
+        self.assertEqual(readback["state"], "evidence_grade_runtime_buckets_present")
+        self.assertTrue(readback["source_decisions_present"])
+        self.assertTrue(readback["submitted_lifecycle_present"])
+        self.assertTrue(readback["fills_or_executions_present"])
+        self.assertTrue(readback["source_refs_present"])
+        self.assertTrue(readback["runtime_buckets_present"])
+        self.assertTrue(readback["evidence_grade_runtime_buckets_present"])
+        self.assertFalse(target_audit["readiness"]["promotion_authority"]["allowed"])
