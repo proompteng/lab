@@ -7,6 +7,7 @@ import {
   handleAutotraderGetScorecard,
   handleAutotraderGetSession,
   handleAutotraderListSessions,
+  handleAutotraderRecordFill,
   handleAutotraderRecordOrder,
   handleAutotraderRecordPositionSnapshot,
   handleAutotraderStartSession,
@@ -650,6 +651,130 @@ describe('synthesis REST auth', () => {
     })
     expect(detailPayload.performance).toEqual(listPayload.sessions[0].performance)
     expect(detailPayload.session.finalizedAt).toBeNull()
+  })
+
+  test('reports running-session realized R from completed fills when ticket risk dollars are missing', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-running-r-api-test',
+          mode: 'market_open',
+          tradingDate: '2026-06-03',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          openingEquity: '30000',
+          marketOpenAt: '2026-06-03T13:30:00Z',
+          marketCloseAt: '2026-06-03T20:00:00Z',
+        }),
+      }),
+    )
+    const startPayload = await startResponse.json()
+    const sessionId = startPayload.session.id
+
+    const ticketResponse = await handleAutotraderCreateTradeTicket(
+      new Request('http://synthesis.test/api/autotrader/trade-tickets', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          idempotencyKey: 'amd-running-r',
+          symbol: 'AMD',
+          instrument: 'stock',
+          side: 'buy',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A',
+          regime: 'intraday_live_scan',
+          timeBucket: 'market_session',
+          thesis: 'Running R regression fixture.',
+          entryTrigger: 'entry filled',
+          invalidation: 'stop loss',
+          entryLimitPrice: '100',
+          stopPrice: '99',
+          targetPrice: '103',
+          expectedR: '3',
+          protectionType: 'bracket',
+          status: 'candidate',
+        }),
+      }),
+    )
+    const ticketPayload = await ticketResponse.json()
+    expect(ticketResponse.status).toBe(201)
+    const ticketId = ticketPayload.ticket.id
+
+    for (const order of [
+      { clientOrderId: 'amd-entry', side: 'buy', brokerOrderId: 'broker-entry' },
+      { clientOrderId: 'amd-stop', side: 'sell', brokerOrderId: 'broker-stop' },
+    ] as const) {
+      const orderResponse = await handleAutotraderRecordOrder(
+        new Request('http://synthesis.test/api/autotrader/orders', {
+          method: 'POST',
+          headers: authedHeaders,
+          body: JSON.stringify({
+            sessionId,
+            ticketId,
+            clientOrderId: order.clientOrderId,
+            brokerOrderId: order.brokerOrderId,
+            symbol: 'AMD',
+            instrument: 'stock',
+            side: order.side,
+            quantity: '10',
+            orderType: 'limit',
+            orderClass: 'bracket',
+            status: 'filled',
+            brokerPayload: {},
+          }),
+        }),
+      )
+      expect(orderResponse.status).toBe(201)
+    }
+
+    for (const fill of [
+      { clientOrderId: 'amd-entry', brokerFillId: 'fill-entry', side: 'buy', price: '100' },
+      { clientOrderId: 'amd-stop', brokerFillId: 'fill-stop', side: 'sell', price: '99.5' },
+    ] as const) {
+      const fillResponse = await handleAutotraderRecordFill(
+        new Request('http://synthesis.test/api/autotrader/fills', {
+          method: 'POST',
+          headers: authedHeaders,
+          body: JSON.stringify({
+            sessionId,
+            clientOrderId: fill.clientOrderId,
+            brokerFillId: fill.brokerFillId,
+            symbol: 'AMD',
+            side: fill.side,
+            quantity: '10',
+            price: fill.price,
+            filledAt: '2026-06-03T15:30:00Z',
+            brokerPayload: {},
+          }),
+        }),
+      )
+      expect(fillResponse.status).toBe(201)
+    }
+
+    const listResponse = await handleAutotraderListSessions(
+      new Request('http://synthesis.test/api/autotrader/sessions?limit=5'),
+    )
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${sessionId}`),
+      sessionId,
+    )
+    const listPayload = await listResponse.json()
+    const detailPayload = await detailResponse.json()
+
+    expect(listPayload.sessions[0].performance).toMatchObject({
+      totalRealizedR: '-0.5',
+      avgRealizedR: '-0.5',
+      realizedRObservationCount: 1,
+      filledOrderCount: 2,
+    })
+    expect(detailPayload.performance).toEqual(listPayload.sessions[0].performance)
   })
 
   test('clamps future autotrader position snapshot timestamps at ingestion', async () => {
