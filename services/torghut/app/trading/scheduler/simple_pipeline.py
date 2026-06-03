@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Literal, Optional, cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import desc, select  # pyright: ignore[reportUnknownVariableType]
@@ -24,6 +26,7 @@ from ..ingest import SignalBatch
 from ..models import SignalEnvelope, StrategyDecision
 from ..paper_route_target_plan import (
     fetch_paper_route_target_plan_url,
+    paper_route_target_plan_from_payload,
     paper_route_target_plan_probe_symbols,
     paper_route_target_plan_targets,
 )
@@ -1287,7 +1290,10 @@ class SimpleTradingPipeline(TradingPipeline):
             self._capture_runtime_window_account_snapshot_if_due(session)
             self._warm_session_context_from_open(session, strategies=strategies)
 
-            signal_scope = self._bounded_paper_route_signal_scope(strategies)
+            signal_scope = self._bounded_paper_route_signal_scope(
+                strategies,
+                session=session,
+            )
             batch = self._fetch_signal_batch(session, signal_scope=signal_scope)
             self._record_ingest_window(batch)
             if self._signal_ingest_unavailable(batch):
@@ -1494,6 +1500,8 @@ class SimpleTradingPipeline(TradingPipeline):
     def _bounded_paper_route_signal_scope(
         self,
         strategies: Sequence[Strategy],
+        *,
+        session: Session | None = None,
     ) -> tuple[set[str], set[str]] | None:
         if settings.trading_mode != "paper":
             return None
@@ -1503,7 +1511,10 @@ class SimpleTradingPipeline(TradingPipeline):
         if not self._is_market_session_open(now):
             return None
         target_symbols, target_plan_error, targets = (
-            self._external_paper_route_target_probe_symbols_cached()
+            self._external_paper_route_target_probe_symbols_cached(
+                session=session,
+                strategies=strategies,
+            )
         )
         if target_plan_error:
             self._record_bounded_target_plan_blocker(
@@ -3465,6 +3476,8 @@ class SimpleTradingPipeline(TradingPipeline):
                 proof_floor=proof_floor,
                 decision=decision,
                 strategy=strategy,
+                session=session,
+                strategies=[strategy],
             )
             capped_decision = self._paper_route_probe_capped_decision(
                 decision=decision,
@@ -3923,7 +3936,86 @@ class SimpleTradingPipeline(TradingPipeline):
         return True
 
     @staticmethod
-    def _external_paper_route_target_probe_symbols() -> tuple[
+    def _paper_route_target_plan_url_points_to_current_service(url: str) -> bool:
+        parsed = urlsplit(url)
+        path = (parsed.path or "").rstrip("/")
+        if path != "/trading/paper-route-target-plan":
+            return False
+        hostname = (parsed.hostname or "").strip().lower()
+        service_name = os.getenv("K_SERVICE", "").strip().lower()
+        if not hostname or not service_name:
+            return False
+        namespace = (
+            os.getenv("POD_NAMESPACE", os.getenv("NAMESPACE", "")).strip().lower()
+        )
+        service_hosts = {service_name}
+        if namespace:
+            service_hosts.update(
+                {
+                    f"{service_name}.{namespace}",
+                    f"{service_name}.{namespace}.svc",
+                    f"{service_name}.{namespace}.svc.cluster.local",
+                }
+            )
+        return hostname in service_hosts or hostname.startswith(f"{service_name}.")
+
+    def _local_paper_route_target_probe_symbols(
+        self,
+        *,
+        session: Session | None,
+        strategies: Sequence[Strategy] | None = None,
+    ) -> tuple[set[str], str | None, list[dict[str, Any]]]:
+        try:
+            gate = self._live_submission_gate(session=session)
+        except Exception as exc:  # pragma: no cover - defensive runtime fallback
+            logger.exception(
+                "Local paper-route target plan unavailable for bounded probe"
+            )
+            return (
+                set(),
+                f"paper_route_target_plan_local_gate_failed:{type(exc).__name__}",
+                [],
+            )
+
+        plan = paper_route_target_plan_from_payload(gate)
+        targets = paper_route_target_plan_targets(plan)
+        if not targets:
+            return set(), "paper_route_target_plan_missing", []
+
+        symbols = set(paper_route_target_plan_probe_symbols(plan))
+        if not symbols:
+            for target in targets:
+                symbols.update(_target_symbols(target))
+                if strategies is None:
+                    continue
+                strategy = self._paper_route_target_strategy(target, strategies)
+                if strategy is not None:
+                    symbols.update(self._paper_route_target_strategy_symbols(strategy))
+
+        resolved_targets = [
+            {
+                **dict(target),
+                "paper_route_target_plan_source": _safe_text(
+                    target.get("paper_route_target_plan_source")
+                )
+                or "local_live_submission_gate",
+            }
+            for target in targets
+        ]
+        if not symbols:
+            return (
+                set(),
+                "paper_route_target_plan_probe_symbols_missing",
+                resolved_targets,
+            )
+        return symbols, None, resolved_targets
+
+    def _external_paper_route_target_probe_symbols(
+        self,
+        *,
+        session: Session | None = None,
+        strategies: Sequence[Strategy] | None = None,
+    ) -> tuple[
         set[str],
         str | None,
         list[dict[str, Any]],
@@ -3931,6 +4023,11 @@ class SimpleTradingPipeline(TradingPipeline):
         url = str(settings.trading_paper_route_target_plan_url or "").strip()
         if not url:
             return set(), None, []
+        if self._paper_route_target_plan_url_points_to_current_service(url):
+            return self._local_paper_route_target_probe_symbols(
+                session=session,
+                strategies=strategies,
+            )
         plan = fetch_paper_route_target_plan_url(
             url,
             timeout_seconds=settings.trading_paper_route_target_plan_timeout_seconds,
@@ -3953,6 +4050,9 @@ class SimpleTradingPipeline(TradingPipeline):
 
     def _external_paper_route_target_probe_symbols_cached(
         self,
+        *,
+        session: Session | None = None,
+        strategies: Sequence[Strategy] | None = None,
     ) -> tuple[set[str], str | None, list[dict[str, Any]]]:
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
         cached = self._paper_route_target_plan_cache
@@ -3962,7 +4062,10 @@ class SimpleTradingPipeline(TradingPipeline):
                 now - cached_at.astimezone(timezone.utc)
             ).total_seconds() < _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS:
                 return set(symbols), load_error, [dict(target) for target in targets]
-        symbols, load_error, targets = self._external_paper_route_target_probe_symbols()
+        symbols, load_error, targets = self._external_paper_route_target_probe_symbols(
+            session=session,
+            strategies=strategies,
+        )
         used_stale_success = False
         if load_error:
             success_cached = self._paper_route_target_plan_success_cache
@@ -4318,7 +4421,10 @@ class SimpleTradingPipeline(TradingPipeline):
             )
             return []
         target_symbols, target_plan_error, target_plan_targets = (
-            self._external_paper_route_target_probe_symbols_cached()
+            self._external_paper_route_target_probe_symbols_cached(
+                session=session,
+                strategies=strategies,
+            )
         )
         if target_plan_error:
             self._record_bounded_target_plan_blocker(
@@ -5183,6 +5289,8 @@ class SimpleTradingPipeline(TradingPipeline):
         proof_floor: Mapping[str, object],
         decision: StrategyDecision,
         strategy: Strategy | None = None,
+        session: Session | None = None,
+        strategies: Sequence[Strategy] | None = None,
     ) -> dict[str, object] | None:
         if settings.trading_mode != "paper":
             return None
@@ -5196,10 +5304,13 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         if decision.action not in {"buy", "sell"}:
             return None
-        cap = _min_optional_decimal(
-            _optional_decimal(settings.trading_simple_paper_route_probe_max_notional),
-            self._paper_route_target_source_cap(decision.params),
-        )
+        target_source_cap = self._paper_route_target_source_cap(decision.params)
+        if target_source_cap is not None:
+            cap = target_source_cap
+        else:
+            cap = _optional_decimal(
+                settings.trading_simple_paper_route_probe_max_notional
+            )
         if cap is None or cap <= 0:
             return None
         if not self._proof_floor_market_session_open(proof_floor):
@@ -5230,7 +5341,10 @@ class SimpleTradingPipeline(TradingPipeline):
         }
         symbol = decision.symbol.strip().upper()
         target_plan_symbols, target_plan_error, target_plan_targets = (
-            self._external_paper_route_target_probe_symbols()
+            self._external_paper_route_target_probe_symbols_cached(
+                session=session,
+                strategies=strategies,
+            )
         )
         if target_plan_error:
             return None
@@ -5486,6 +5600,8 @@ class SimpleTradingPipeline(TradingPipeline):
             proof_floor=proof_floor,
             decision=decision,
             strategy=strategy,
+            session=session,
+            strategies=[strategy],
         )
         if probe_context is None:
             return None

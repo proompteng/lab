@@ -328,7 +328,7 @@ class TestTradingSchedulerSafety(TestCase):
         setattr(
             pipeline,
             "_external_paper_route_target_probe_symbols_cached",
-            lambda: ({"AAPL", "AMZN", "MSFT"}, None, [target]),
+            lambda **_kwargs: ({"AAPL", "AMZN", "MSFT"}, None, [target]),
         )
         setattr(
             pipeline,
@@ -382,7 +382,7 @@ class TestTradingSchedulerSafety(TestCase):
         setattr(
             pipeline,
             "_external_paper_route_target_probe_symbols_cached",
-            lambda: ({"AAPL", "AMZN"}, None, [target]),
+            lambda **_kwargs: ({"AAPL", "AMZN"}, None, [target]),
         )
         setattr(
             pipeline,
@@ -455,7 +455,7 @@ class TestTradingSchedulerSafety(TestCase):
         setattr(
             pipeline,
             "_external_paper_route_target_probe_symbols_cached",
-            lambda: ({"AAPL", "AMZN"}, None, [target]),
+            lambda **_kwargs: ({"AAPL", "AMZN"}, None, [target]),
         )
         config.settings.trading_mode = "paper"
         config.settings.trading_simple_paper_route_probe_enabled = True
