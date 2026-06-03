@@ -560,6 +560,43 @@ def _plan_with_target_indexes(
     }
 
 
+def _dynamic_confirmation_filter_requested(args: argparse.Namespace) -> bool:
+    return any(
+        _safe_text(getattr(args, name, None)) is not None
+        for name in (
+            "confirm_hypothesis_id",
+            "confirm_runtime_strategy_name",
+            "confirm_candidate_id",
+            "confirm_target_plan_ref",
+        )
+    )
+
+
+def _dynamic_confirmation_target_indexes(
+    *,
+    args: argparse.Namespace,
+    summaries: Sequence[Mapping[str, Any]],
+) -> list[int]:
+    filters = {
+        "hypothesis_id": _safe_text(args.confirm_hypothesis_id),
+        "runtime_strategy_name": _safe_text(args.confirm_runtime_strategy_name),
+        "candidate_id": _safe_text(args.confirm_candidate_id),
+        "target_plan_ref": _safe_text(args.confirm_target_plan_ref),
+    }
+    active_filters = {key: value for key, value in filters.items() if value is not None}
+    if not active_filters:
+        return list(range(len(summaries)))
+
+    indexes: list[int] = []
+    for index, summary in enumerate(summaries):
+        if all(
+            _safe_text(summary.get(key)) == value
+            for key, value in active_filters.items()
+        ):
+            indexes.append(index)
+    return indexes
+
+
 def _unique_texts(values: Sequence[object]) -> list[str]:
     return sorted({text for value in values if (text := _safe_text(value))})
 
@@ -898,8 +935,23 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     materialization_plan = source_plan
     summaries = source_summaries
     active_target_window_filter_applied = False
+    dynamic_target_confirmation_filter_applied = False
     target_window_check: dict[str, Any] | None = None
     skip_reason: str | None = None
+    if bool(args.allow_dynamic_target_plan) and _dynamic_confirmation_filter_requested(
+        args
+    ):
+        dynamic_target_indexes = _dynamic_confirmation_target_indexes(
+            args=args,
+            summaries=summaries,
+        )
+        if len(dynamic_target_indexes) != len(summaries):
+            materialization_plan = _plan_with_target_indexes(
+                materialization_plan,
+                dynamic_target_indexes,
+            )
+            summaries = _target_summaries(materialization_plan)
+            dynamic_target_confirmation_filter_applied = True
     if bool(args.skip_unless_active_target_window) or bool(
         args.require_active_target_window
     ):
@@ -981,6 +1033,9 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "default_dynamic_selected_plan_source": DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
         "target_window_check": target_window_check,
         "active_target_window_filter_applied": active_target_window_filter_applied,
+        "dynamic_target_confirmation_filter_applied": (
+            dynamic_target_confirmation_filter_applied
+        ),
         "source_target_count": len(source_summaries),
         "target_count": len(summaries),
         "hypothesis_ids": _unique_texts(
@@ -998,6 +1053,7 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "targets": summaries,
         "source_targets": source_summaries
         if active_target_window_filter_applied
+        or dynamic_target_confirmation_filter_applied
         else None,
         "materialization": materialization,
         "materialized_decision_count": int(

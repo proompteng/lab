@@ -931,6 +931,105 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_writes_when_open
     assert _count_decisions(sqlite_dsn) == 2
 
 
+def test_commit_dynamic_plan_filters_to_confirmed_hpairs_target_before_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    malformed_tsmom_target = {
+        "hypothesis_id": "H-TSMOM-LIQ-01",
+        "candidate_id": "ca4e6e3c7d639e3363dc5860",
+        "runtime_strategy_name": "intraday-tsmom-profit-v3",
+        "strategy_name": "intraday-tsmom-profit-v3",
+        "account_label": "TORGHUT_SIM",
+        "source_manifest_ref": "config/trading/hypotheses/h-tsmom-liq-01.json",
+        "source_plan_ref": "config/trading/hypotheses/h-tsmom-liq-01.json",
+        "target_notional": "75000",
+        "target_quantity": "8",
+        "bounded_collection_stage": "paper",
+        "evidence_collection_stage": "paper",
+        "window_start": "2026-06-01T13:30:00+00:00",
+        "window_end": "2026-06-01T20:00:00+00:00",
+        "paper_route_probe_symbol_actions": {},
+        "paper_route_probe_symbol_quantities": {
+            "AAPL": "1",
+            "AMD": "1",
+            "AMZN": "1",
+            "AVGO": "1",
+            "GOOGL": "1",
+            "INTC": "1",
+            "NVDA": "1",
+            "ORCL": "1",
+        },
+        "evidence_collection_ok": True,
+        "bounded_evidence_collection_authorized": True,
+        "capital_promotion_allowed": False,
+        "promotion_allowed": False,
+        "final_authority_ok": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "live_capital_routing_enabled": False,
+    }
+    payload = {
+        "next_paper_route_runtime_window_targets": _plan(
+            malformed_tsmom_target,
+            _hpairs_target(target_notional="75000"),
+        ),
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "75000",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--require-active-target-window",
+            "--now-utc",
+            "2026-06-01T14:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            HPAIRS_DYNAMIC_SELECTED_PLAN_SOURCE_CONFIRMATION,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "75000",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["materialized"] is True
+    assert report["blocked"] is False
+    assert report["source_target_count"] == 2
+    assert report["target_count"] == 1
+    assert report["dynamic_target_confirmation_filter_applied"] is True
+    assert report["hypothesis_ids"] == ["H-PAIRS-01"]
+    assert report["runtime_strategy_names"] == ["microbar-cross-sectional-pairs-v1"]
+    assert report["source_targets"][0]["hypothesis_id"] == "H-TSMOM-LIQ-01"
+    assert report["source_targets"][0]["symbol_actions"] == {}
+    assert (
+        "paper_route_materialization_target_0_symbol_actions_missing"
+        not in report["blockers"]
+    )
+    assert report["materialized_decision_count"] == 2
+    assert report["route_submission_count"] == 2
+    assert _count_decisions(sqlite_dsn) == 2
+
+
 def test_commit_dynamic_plan_filters_to_active_target_window_subset(
     monkeypatch: pytest.MonkeyPatch,
     sqlite_dsn: str,
