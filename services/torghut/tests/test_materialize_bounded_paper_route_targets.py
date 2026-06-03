@@ -955,6 +955,11 @@ def test_commit_dynamic_plan_confirms_strategy_lookup_alias_before_skip(
                 _hpairs_target(
                     runtime_strategy_name="69cf50e3-4815-47c2-b802-1efbaac09ecb",
                     strategy_name="69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                    strategy_lookup_names=[
+                        "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                        "microbar-cross-sectional-pairs-v1",
+                    ],
+                    source_decision_readiness=None,
                 )
             )
         },

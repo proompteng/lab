@@ -459,6 +459,11 @@ def _target_runtime_strategy_confirmation_names(
         target.get("runtime_strategy_name"),
         target.get("strategy_name"),
     ]
+    target_lookup_names = target.get("strategy_lookup_names")
+    if isinstance(target_lookup_names, Sequence) and not isinstance(
+        target_lookup_names, (str, bytes)
+    ):
+        names.extend(target_lookup_names)
     readiness = target.get("source_decision_readiness")
     if isinstance(readiness, Mapping):
         lookup_names = readiness.get("strategy_lookup_names")
