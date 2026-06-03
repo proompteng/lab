@@ -518,11 +518,21 @@ def _source_decision_profit_proof_flag(row: Mapping[str, object]) -> bool | None
     return _first_bool(row, "profit_proof_eligible", "post_cost_promotion_eligible")
 
 
+def _source_row_is_paper_route_probe_exit(row: Mapping[str, object]) -> bool:
+    for payload in _source_decision_priority_payloads(row):
+        metadata = _as_mapping(payload.get("paper_route_probe_exit"))
+        if _direct_text(metadata, "mode") == "paper_route_exit":
+            return True
+    return False
+
+
 def _source_decision_mode_counts(
     rows: Sequence[Mapping[str, object]],
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in rows:
+        if _source_row_is_paper_route_probe_exit(row):
+            continue
         mode = _source_decision_mode(row)
         if mode is None:
             continue
@@ -613,6 +623,18 @@ def _partition_runtime_source_rows_by_decision_mode(
     if not source_rows:
         return None
     modes_by_identifier = _source_decision_mode_lookup(source_rows)
+    partition_relevant_source_rows = [
+        row for row in source_rows if not _source_row_is_paper_route_probe_exit(row)
+    ]
+    relevant_mode_keys = {
+        _source_decision_mode_partition_key(
+            row,
+            modes_by_identifier=modes_by_identifier,
+        )
+        for row in partition_relevant_source_rows
+    }
+    if len(relevant_mode_keys) <= 1:
+        return None
     mode_keys = {
         _source_decision_mode_partition_key(
             row,
@@ -620,8 +642,6 @@ def _partition_runtime_source_rows_by_decision_mode(
         )
         for row in source_rows
     }
-    if len(mode_keys) <= 1:
-        return None
 
     partitions: list[
         tuple[
@@ -724,6 +744,8 @@ def _source_decision_rows_profit_proof_eligible(
         return False
     explicit: list[bool] = []
     for row in rows:
+        if _source_row_is_paper_route_probe_exit(row):
+            continue
         value = _source_decision_profit_proof_flag(row)
         if value is not None:
             explicit.append(value)
