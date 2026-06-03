@@ -10699,6 +10699,71 @@ class TestTradingApi(TestCase):
 
         self.assertEqual(plan["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
 
+    def test_paper_route_target_plan_payload_prefers_selected_top_level_targets(
+        self,
+    ) -> None:
+        selected_tsmom_target = {
+            "hypothesis_id": "H-TSMOM-LIQ-01",
+            "candidate_id": "ca4e6e3c7d639e3363dc5860",
+            "strategy_name": "intraday-tsmom-profit-v3",
+            "runtime_strategy_name": "intraday-tsmom-profit-v3",
+            "source_kind": "runtime_ledger_source_collection_candidate",
+            "selected_by": "paper_route_observed_strategy_source_collection",
+        }
+        raw_contaminated_hpairs_target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "selected_by": "paper_route_evidence_audit",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_account_contamination_state": {
+                "foreign_strategy_counts": {"intraday-tsmom-profit-v3": 26}
+            },
+        }
+
+        plan = _paper_route_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "source": "paper_route_target_plan_endpoint",
+                "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+                "target_count": 1,
+                "targets": [selected_tsmom_target],
+                "runtime_window_import_plan": {
+                    "schema_version": (
+                        "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                    ),
+                    "source": "paper_route_observed_strategy_source_collection",
+                    "target_count": 1,
+                    "targets": [selected_tsmom_target],
+                },
+                "source_runtime_window_import_plan": {
+                    "schema_version": (
+                        "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                    ),
+                    "source": "paper_route_observed_strategy_source_collection",
+                    "target_count": 1,
+                    "targets": [selected_tsmom_target],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": (
+                        "torghut.next-paper-route-runtime-window-targets.v1"
+                    ),
+                    "source": "paper_route_evidence_audit",
+                    "target_count": 1,
+                    "targets": [raw_contaminated_hpairs_target],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "ca4e6e3c7d639e3363dc5860")
+        self.assertEqual(
+            plan["targets"][0]["selected_by"],
+            "paper_route_observed_strategy_source_collection",
+        )
+        self.assertNotIn("paper_route_probe_symbols", plan["targets"][0])
+
     def test_paper_route_target_plan_payload_prefers_next_window_over_closed_import(
         self,
     ) -> None:
