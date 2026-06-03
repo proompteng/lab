@@ -4,11 +4,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import Any
 
 import live_scan_cycle
 from synthesis_autotrader_client import SynthesisClient
+
+
+def parse_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(UTC)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -31,6 +41,74 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(f"{json.dumps(payload, separators=(',', ':'), sort_keys=True)}\n", encoding="utf-8")
 
 
+def market_window(now: datetime) -> dict[str, Any]:
+    local_now = now.astimezone(live_scan_cycle.MARKET_TIMEZONE)
+    trading_date = local_now.date()
+    market_open = datetime.combine(trading_date, time(9, 30), tzinfo=live_scan_cycle.MARKET_TIMEZONE)
+    market_close = datetime.combine(trading_date, time(16, 0), tzinfo=live_scan_cycle.MARKET_TIMEZONE)
+    window = {
+        "tradingDate": trading_date.isoformat(),
+        "now": now.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "localNow": local_now.isoformat(),
+        "marketOpenAt": market_open.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "marketCloseAt": market_close.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "regularSession": local_now.weekday() < 5 and market_open <= local_now < market_close,
+    }
+    if local_now.weekday() >= 5:
+        return {
+            **window,
+            "state": "market_closed",
+            "action": "market_closed",
+            "blocker": "market_closed_weekend",
+        }
+    if local_now < market_open:
+        return {
+            **window,
+            "state": "pre_open",
+            "action": "waiting_for_market_open",
+            "blocker": "market_not_open",
+            "secondsUntilOpen": int((market_open - local_now).total_seconds()),
+        }
+    if local_now >= market_close:
+        return {
+            **window,
+            "state": "post_close",
+            "action": "market_closed",
+            "blocker": "market_closed",
+        }
+    return {
+        **window,
+        "state": "regular_session",
+        "action": "scan",
+        "blocker": None,
+    }
+
+
+def next_cycle(args: argparse.Namespace, work_dir: Path) -> int:
+    return args.cycle if args.cycle is not None else live_scan_cycle.next_cycle_number(work_dir)
+
+
+def market_window_skip_summary(*, args: argparse.Namespace, work_dir: Path, window: dict[str, Any]) -> dict[str, Any]:
+    cycle = next_cycle(args, work_dir)
+    cycle_dir = work_dir / f"cycle-{cycle}"
+    cycle_dir.mkdir(parents=True, exist_ok=True)
+    write_json(cycle_dir / "market-window.json", window)
+    return {
+        "ok": True,
+        "mode": "cycle",
+        "cycle": cycle,
+        "cycleDir": str(cycle_dir),
+        "skipFullScan": True,
+        "action": window["action"],
+        "blocker": window["blocker"],
+        "resultCount": 0,
+        "topResults": [],
+        "recordedTickets": [],
+        "marketWindow": window,
+        "windowGate": True,
+    }
+
+
 def account_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     gate = summary.get("accountGate")
     if not isinstance(gate, dict):
@@ -51,6 +129,11 @@ def cycle_phase(summary: dict[str, Any]) -> str:
 def cycle_action(summary: dict[str, Any]) -> str:
     if summary.get("skipFullScan"):
         action = summary.get("action") or "unknown"
+        window = summary.get("marketWindow")
+        if action == "waiting_for_market_open" and isinstance(window, dict):
+            return f"market_open_cycle_waiting_for_open; marketOpenAt={window.get('marketOpenAt')}"
+        if action == "market_closed" and isinstance(window, dict):
+            return f"market_open_cycle_market_closed; marketCloseAt={window.get('marketCloseAt')}"
         return f"market_open_cycle_account_gated; action={action}"
     top_results = summary.get("topResults")
     if isinstance(top_results, list) and top_results:
@@ -63,10 +146,22 @@ def cycle_action(summary: dict[str, Any]) -> str:
 
 
 def cycle_blocker(summary: dict[str, Any]) -> str | None:
+    blocker = summary.get("blocker")
+    if isinstance(blocker, str) and blocker.strip():
+        return blocker.strip()
     gate = summary.get("accountGate")
     if isinstance(gate, dict):
         return live_scan_cycle.account_gate_blocker(gate)
     return None
+
+
+def cycle_event_type(summary: dict[str, Any]) -> str:
+    action = summary.get("action")
+    if summary.get("windowGate") and action == "waiting_for_market_open":
+        return "market_open_cycle_waiting_for_open"
+    if summary.get("windowGate") and action == "market_closed":
+        return "market_open_cycle_market_closed"
+    return "market_open_cycle_complete"
 
 
 def recorded_ticket_count(summary: dict[str, Any]) -> int:
@@ -100,6 +195,8 @@ def record_cycle_complete(
         "scorecardReadback": summary.get("scorecardReadback"),
         "recordedScorecardReadback": summary.get("recordedScorecardReadback"),
         "topResults": summary.get("topResults"),
+        "marketWindow": summary.get("marketWindow"),
+        "windowGate": summary.get("windowGate"),
     }
     status = synthesis.post(
         "/api/autotrader/status",
@@ -120,7 +217,7 @@ def record_cycle_complete(
         {
             "sessionId": session_id,
             "seq": cycle,
-            "eventType": "market_open_cycle_complete",
+            "eventType": cycle_event_type(summary),
             "severity": "info",
             "payload": payload,
         },
@@ -185,6 +282,7 @@ def write_report(path: Path, result: dict[str, Any]) -> None:
         f"phase: {cycle_phase(summary)}",
         f"action: {cycle_action(summary)}",
         f"skip_full_scan: {str(bool(summary.get('skipFullScan'))).lower()}",
+        f"blocker: {cycle_blocker(summary) or 'none'}",
         f"result_count: {live_scan_cycle.int_text_value(summary.get('resultCount'))}",
         f"recorded_ticket_count: {recorded_ticket_count(summary)}",
         f"scorecard_count: {scorecard_count(summary)}",
@@ -203,8 +301,12 @@ def run_market_open_cycle(
     work_dir = Path(args.work_dir)
     session_path = Path(args.session_path) if args.session_path else work_dir / "session.json"
     session_id = args.session_id.strip() if args.session_id else session_id_from_file(session_path)
-    scan_args = scan_args_for(args, session_id=session_id, work_dir=work_dir)
-    summary = live_scan_cycle.run_cycle(scan_args)
+    window = market_window(parse_datetime(args.now))
+    if window["regularSession"]:
+        scan_args = scan_args_for(args, session_id=session_id, work_dir=work_dir)
+        summary = live_scan_cycle.run_cycle(scan_args)
+    else:
+        summary = market_window_skip_summary(args=args, work_dir=work_dir, window=window)
     output = {
         "ok": True,
         "mode": "market-open-cycle",
@@ -235,6 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retain-cycles", type=int, default=5)
     parser.add_argument("--max-recorded-tickets", type=int, default=10)
     parser.add_argument("--report-path", default="/workspace/.agentrun/autonomous-trader/report.md")
+    parser.add_argument("--now")
     parser.add_argument("--self-test", action="store_true")
     return parser
 
@@ -250,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
                     "sessionSource": "session.json",
                     "recordTickets": True,
                     "respectAccountGate": True,
+                    "marketWindowGate": True,
                 },
                 sort_keys=True,
                 indent=2,

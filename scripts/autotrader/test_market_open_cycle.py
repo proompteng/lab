@@ -86,6 +86,8 @@ class MarketOpenCycleTest(unittest.TestCase):
                     str(report_path),
                     "--watchlist",
                     "NVDA",
+                    "--now",
+                    "2026-06-03T14:00:00Z",
                 ]
             )
             with patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle):
@@ -146,7 +148,14 @@ class MarketOpenCycleTest(unittest.TestCase):
                 }
 
             args = market_open_cycle.build_parser().parse_args(
-                ["--work-dir", str(root), "--report-path", str(report_path)]
+                [
+                    "--work-dir",
+                    str(root),
+                    "--report-path",
+                    str(report_path),
+                    "--now",
+                    "2026-06-03T14:00:00Z",
+                ]
             )
             with patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle):
                 result = market_open_cycle.run_market_open_cycle(args=args, synthesis=synthesis)  # type: ignore[arg-type]
@@ -160,6 +169,108 @@ class MarketOpenCycleTest(unittest.TestCase):
         self.assertEqual(status_payload["phase"], "idle")
         self.assertEqual(status_payload["blocker"], "daytrading_buying_power_not_positive")
         self.assertEqual(status_payload["currentAction"], "market_open_cycle_account_gated; action=monitor_only")
+
+    def test_waits_before_regular_market_open_without_scanning(self) -> None:
+        synthesis = FakeSynthesis()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "session.json").write_text('{"sessionId":"session-market-open"}\n', encoding="utf-8")
+            report_path = root / "report.md"
+
+            def fake_run_cycle(args: Any) -> dict[str, Any]:
+                raise AssertionError("pre-open cycle must not call live scan")
+
+            args = market_open_cycle.build_parser().parse_args(
+                [
+                    "--work-dir",
+                    str(root),
+                    "--report-path",
+                    str(report_path),
+                    "--now",
+                    "2026-06-03T13:15:00Z",
+                ]
+            )
+            with patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle):
+                result = market_open_cycle.run_market_open_cycle(args=args, synthesis=synthesis)  # type: ignore[arg-type]
+
+            self.assertEqual(result["summary"]["action"], "waiting_for_market_open")
+            self.assertTrue(result["summary"]["skipFullScan"])
+            self.assertTrue((root / "cycle-1" / "market-window.json").exists())
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("action: market_open_cycle_waiting_for_open", report)
+            self.assertIn("blocker: market_not_open", report)
+
+        status_payload = synthesis.posts[0][1]
+        event_payload = synthesis.posts[1][1]
+        self.assertEqual(status_payload["phase"], "idle")
+        self.assertEqual(status_payload["blocker"], "market_not_open")
+        self.assertIn("marketOpenAt=2026-06-03T13:30:00Z", status_payload["currentAction"])
+        self.assertEqual(event_payload["eventType"], "market_open_cycle_waiting_for_open")
+
+    def test_stops_scanning_after_regular_market_close(self) -> None:
+        synthesis = FakeSynthesis()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "session.json").write_text('{"sessionId":"session-market-open"}\n', encoding="utf-8")
+            report_path = root / "report.md"
+
+            def fake_run_cycle(args: Any) -> dict[str, Any]:
+                raise AssertionError("post-close cycle must not call live scan")
+
+            args = market_open_cycle.build_parser().parse_args(
+                [
+                    "--work-dir",
+                    str(root),
+                    "--report-path",
+                    str(report_path),
+                    "--now",
+                    "2026-06-03T20:05:00Z",
+                ]
+            )
+            with patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle):
+                result = market_open_cycle.run_market_open_cycle(args=args, synthesis=synthesis)  # type: ignore[arg-type]
+
+            self.assertEqual(result["summary"]["action"], "market_closed")
+            self.assertTrue(result["summary"]["skipFullScan"])
+            self.assertIn("blocker: market_closed", report_path.read_text(encoding="utf-8"))
+
+        status_payload = synthesis.posts[0][1]
+        event_payload = synthesis.posts[1][1]
+        self.assertEqual(status_payload["phase"], "idle")
+        self.assertEqual(status_payload["blocker"], "market_closed")
+        self.assertIn("marketCloseAt=2026-06-03T20:00:00Z", status_payload["currentAction"])
+        self.assertEqual(event_payload["eventType"], "market_open_cycle_market_closed")
+
+    def test_stops_scanning_on_weekend_clock_hours(self) -> None:
+        synthesis = FakeSynthesis()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "session.json").write_text('{"sessionId":"session-market-open"}\n', encoding="utf-8")
+
+            def fake_run_cycle(args: Any) -> dict[str, Any]:
+                raise AssertionError("weekend cycle must not call live scan")
+
+            args = market_open_cycle.build_parser().parse_args(
+                [
+                    "--work-dir",
+                    str(root),
+                    "--report-path",
+                    str(root / "report.md"),
+                    "--now",
+                    "2026-06-06T14:00:00Z",
+                ]
+            )
+            with patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle):
+                result = market_open_cycle.run_market_open_cycle(args=args, synthesis=synthesis)  # type: ignore[arg-type]
+
+            self.assertEqual(result["summary"]["marketWindow"]["state"], "market_closed")
+            self.assertFalse(result["summary"]["marketWindow"]["regularSession"])
+
+        status_payload = synthesis.posts[0][1]
+        self.assertEqual(status_payload["blocker"], "market_closed_weekend")
 
 
 if __name__ == "__main__":
