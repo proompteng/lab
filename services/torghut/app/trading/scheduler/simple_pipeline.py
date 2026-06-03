@@ -4251,6 +4251,11 @@ class SimpleTradingPipeline(TradingPipeline):
         raw_probe_symbols: set[str],
         scoped_probe_symbols: set[str],
     ) -> dict[str, object]:
+        source = (
+            "local_strategy_universe_target_plan_fallback"
+            if bool(target.get("paper_route_probe_strategy_universe_fallback"))
+            else "local_target_plan_probe_symbols"
+        )
         lookup_names = [
             name for name in _target_lookup_names(target) if str(name).strip()
         ]
