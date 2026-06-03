@@ -640,6 +640,7 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A",
                         "expected_r": "3.0",
+                        "risk_dollars": "100",
                         "scorecard_sample_size": 1,
                         "scorecard_avg_realized_r": "3.042857",
                         "scorecard_confidence": "0.0909",
@@ -662,8 +663,57 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
         self.assertEqual(summary["bestCandidate"]["expectedR"], "3.0")
         self.assertEqual(summary["bestCandidate"]["scorecardAvgRealizedR"], "3.042857")
+        self.assertEqual(
+            summary["bestCandidate"]["riskDirective"],
+            {
+                "source": "scorecard_realized_r",
+                "mode": "scale_positive_realized_edge",
+                "riskMultiplier": "2.0",
+                "maxRiskMultiplier": "2.0",
+                "scorecardSampleSize": 1,
+                "scorecardAvgRealizedR": "3.042857",
+                "scorecardConfidence": "0.0909",
+                "reason": "positive_scorecard_edge",
+                "baseRiskDollars": "100",
+                "recommendedRiskDollars": "200.0",
+            },
+        )
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-amd")
         self.assertEqual(summary["candidateSymbols"], ["AMD"])
+
+    def test_ticket_payload_records_scorecard_risk_directive_for_positive_edge(self) -> None:
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=9,
+            index=2,
+            result={
+                "symbol": "AMD",
+                "setup_type": "vwap_reclaim",
+                "setup_grade": "A",
+                "expected_r": "3.0",
+                "risk_dollars": "125",
+                "scorecard_sample_size": 2,
+                "scorecard_avg_realized_r": "1.4",
+                "scorecard_confidence": "0.25",
+            },
+        )
+
+        assert payload is not None
+        self.assertEqual(
+            payload["brokerOrderPlan"]["riskDirective"],
+            {
+                "source": "scorecard_realized_r",
+                "mode": "scale_positive_realized_edge",
+                "riskMultiplier": "1.4",
+                "maxRiskMultiplier": "2.0",
+                "scorecardSampleSize": 2,
+                "scorecardAvgRealizedR": "1.4",
+                "scorecardConfidence": "0.25",
+                "reason": "positive_scorecard_edge",
+                "baseRiskDollars": "125",
+                "recommendedRiskDollars": "175.0",
+            },
+        )
 
     def test_decision_summary_blocks_unproven_raw_edge_without_positive_scorecard(self) -> None:
         result = {
