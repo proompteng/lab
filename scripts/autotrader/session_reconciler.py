@@ -94,6 +94,41 @@ def as_list(value: Any) -> list[dict[str, Any]]:
     return [entry for entry in value if isinstance(entry, dict)]
 
 
+def fill_side(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def derived_round_trip_risk_dollars(ticket: dict[str, Any], ticket_fills: list[dict[str, Any]]) -> Decimal | None:
+    entry_side = fill_side(ticket.get("side"))
+    entry_is_buy = entry_side in BUY_SIDES
+    entry_is_sell = entry_side in SELL_SIDES
+    if not entry_is_buy and not entry_is_sell:
+        return None
+    stop_price = decimal_value(ticket.get("stopPrice") or ticket.get("stop_price"))
+    if stop_price is None:
+        return None
+    entry_quantity = Decimal("0")
+    entry_cost = Decimal("0")
+    for fill in ticket_fills:
+        side = fill_side(fill.get("side"))
+        quantity = decimal_value(fill.get("quantity"))
+        price = decimal_value(fill.get("price"))
+        if quantity is None or price is None or quantity <= 0 or price <= 0:
+            return None
+        if entry_is_buy and side in BUY_SIDES:
+            entry_quantity += quantity
+            entry_cost += quantity * price
+        elif entry_is_sell and side in SELL_SIDES:
+            entry_quantity += quantity
+            entry_cost += quantity * price
+    if entry_quantity <= 0:
+        return None
+    per_share_risk = abs((entry_cost / entry_quantity) - stop_price)
+    if per_share_risk <= 0:
+        return None
+    return per_share_risk * entry_quantity
+
+
 def is_stale_market_session(
     session: dict[str, Any], *, now: datetime, grace: timedelta, current_agent_run: str
 ) -> bool:
@@ -222,7 +257,7 @@ def scorecard_observations(detail: dict[str, Any]) -> tuple[list[dict[str, Any]]
         fill_times: list[datetime] = []
         client_order_ids: list[str] = []
         for fill in ticket_fills:
-            side = str(fill.get("side") or "").strip().lower()
+            side = fill_side(fill.get("side"))
             quantity = decimal_value(fill.get("quantity"))
             price = decimal_value(fill.get("price"))
             if quantity is None or price is None or quantity <= 0:
@@ -256,7 +291,17 @@ def scorecard_observations(detail: dict[str, Any]) -> tuple[list[dict[str, Any]]
             skipped["incompleteRoundTrips"] += 1
             continue
 
-        risk_dollars = decimal_value(ticket.get("riskDollars"))
+        explicit_risk_dollars = decimal_value(ticket.get("riskDollars"))
+        derived_risk_dollars = derived_round_trip_risk_dollars(ticket, ticket_fills)
+        risk_dollars_source = None
+        if explicit_risk_dollars is not None and explicit_risk_dollars > 0:
+            risk_dollars = explicit_risk_dollars
+            risk_dollars_source = "ticket_risk_dollars"
+        elif derived_risk_dollars is not None and derived_risk_dollars > 0:
+            risk_dollars = derived_risk_dollars
+            risk_dollars_source = "entry_stop_fill_risk"
+        else:
+            risk_dollars = None
         realized_r = pnl / risk_dollars if risk_dollars and risk_dollars > 0 else None
         if realized_r is not None:
             if realized_r > SCRATCH_R_THRESHOLD:
@@ -300,6 +345,7 @@ def scorecard_observations(detail: dict[str, Any]) -> tuple[list[dict[str, Any]]
                 "pnlDollars": format_decimal(pnl),
                 "netQuantity": format_decimal(net_quantity),
                 "riskDollars": format_decimal(risk_dollars) if risk_dollars is not None else None,
+                "riskDollarsSource": risk_dollars_source,
                 "clientOrderIds": client_order_ids,
             },
         }

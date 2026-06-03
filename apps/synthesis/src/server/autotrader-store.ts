@@ -302,6 +302,101 @@ const sumLatestPositionSnapshotRealizedPnl = (snapshots: AutotraderPositionSnaps
   return String(realizedValues.reduce((total, value) => total + value, 0))
 }
 
+const BUY_FILL_SIDES = new Set(['buy', 'buy_to_cover', 'buy_to_open', 'buy_to_close'])
+const SELL_FILL_SIDES = new Set(['sell', 'sell_short', 'sell_to_open', 'sell_to_close'])
+const ROUND_TRIP_EPSILON = 0.000001
+
+const completedRoundTripRealizedRValues = ({
+  tickets,
+  orders,
+  fills,
+  excludedTicketIds,
+}: {
+  tickets: AutotraderTradeTicket[]
+  orders: AutotraderOrder[]
+  fills: AutotraderFill[]
+  excludedTicketIds: Set<string>
+}) => {
+  const ticketById = new Map(tickets.map((ticket) => [ticket.id, ticket]))
+  const orderByClientId = new Map(orders.map((order) => [order.clientOrderId, order]))
+  const fillsByTicketId = new Map<string, AutotraderFill[]>()
+
+  for (const fill of fills) {
+    const order = orderByClientId.get(fill.clientOrderId)
+    const ticketId = order?.ticketId
+    if (!ticketId || excludedTicketIds.has(ticketId) || !ticketById.has(ticketId)) continue
+    const ticketFills = fillsByTicketId.get(ticketId) ?? []
+    ticketFills.push(fill)
+    fillsByTicketId.set(ticketId, ticketFills)
+  }
+
+  const realizedRValues: number[] = []
+  for (const [ticketId, ticketFills] of fillsByTicketId) {
+    const ticket = ticketById.get(ticketId)
+    if (!ticket) continue
+    const entrySide = String(ticket.side).trim().toLowerCase()
+    const entryIsBuy = BUY_FILL_SIDES.has(entrySide)
+    const entryIsSell = SELL_FILL_SIDES.has(entrySide)
+    if (!entryIsBuy && !entryIsSell) continue
+
+    let pnl = 0
+    let netQuantity = 0
+    let buyQuantity = 0
+    let sellQuantity = 0
+    let entryQuantity = 0
+    let entryCost = 0
+    let invalid = false
+
+    for (const fill of ticketFills) {
+      const side = String(fill.side).trim().toLowerCase()
+      const quantity = finiteNumber(fill.quantity)
+      const price = finiteNumber(fill.price)
+      if (quantity == null || price == null || quantity <= 0 || price <= 0) {
+        invalid = true
+        break
+      }
+      if (BUY_FILL_SIDES.has(side)) {
+        buyQuantity += quantity
+        netQuantity += quantity
+        pnl -= quantity * price
+        if (entryIsBuy) {
+          entryQuantity += quantity
+          entryCost += quantity * price
+        }
+      } else if (SELL_FILL_SIDES.has(side)) {
+        sellQuantity += quantity
+        netQuantity -= quantity
+        pnl += quantity * price
+        if (entryIsSell) {
+          entryQuantity += quantity
+          entryCost += quantity * price
+        }
+      } else {
+        invalid = true
+        break
+      }
+    }
+
+    if (invalid || buyQuantity <= 0 || sellQuantity <= 0 || Math.abs(netQuantity) > ROUND_TRIP_EPSILON) continue
+
+    const explicitRiskDollars = finiteNumber(ticket.riskDollars)
+    const stopPrice = finiteNumber(ticket.stopPrice)
+    const entryAveragePrice = entryQuantity > 0 ? entryCost / entryQuantity : null
+    const derivedRiskDollars =
+      stopPrice == null || entryAveragePrice == null ? null : Math.abs(entryAveragePrice - stopPrice) * entryQuantity
+    let riskDollars: number | null = null
+    if (explicitRiskDollars != null && explicitRiskDollars > 0) {
+      riskDollars = explicitRiskDollars
+    } else if (derivedRiskDollars != null && derivedRiskDollars > 0) {
+      riskDollars = derivedRiskDollars
+    }
+    if (riskDollars == null) continue
+    realizedRValues.push(pnl / riskDollars)
+  }
+
+  return realizedRValues
+}
+
 const sessionPerformanceCountsForRecords = ({
   tickets,
   orders,
@@ -317,9 +412,15 @@ const sessionPerformanceCountsForRecords = ({
   status?: AutotraderStatus | null
   positions?: AutotraderPositionSnapshot[]
 }): AutotraderSessionPerformanceCounts => {
+  const exampleTicketIds = new Set(
+    examples.map((example) => example.ticketId).filter((ticketId): ticketId is string => Boolean(ticketId)),
+  )
   const realizedRValues = examples
     .map((example) => (example.realizedR == null ? null : Number(example.realizedR)))
     .filter((value): value is number => value != null && Number.isFinite(value))
+  realizedRValues.push(
+    ...completedRoundTripRealizedRValues({ tickets, orders, fills, excludedTicketIds: exampleTicketIds }),
+  )
   const currentRealizedPnl = status?.realizedPnl ?? sumLatestPositionSnapshotRealizedPnl(positions ?? [])
   return {
     tradeTicketCount: tickets.length,
@@ -863,6 +964,12 @@ type SessionSummaryRow = SessionRow & {
   current_equity: number | string | null
   current_status_realized_pnl: number | string | null
   current_snapshot_realized_pnl: number | string | null
+}
+
+type RealizedRCountRow = {
+  session_id: string
+  realized_r_observation_count: number | string | null
+  total_realized_r: number | string | null
 }
 
 type StatusRow = {
@@ -1742,6 +1849,112 @@ class PostgresAutotraderStore implements AutotraderStore {
     return { scorecards, setupExamples }
   }
 
+  private async realizedRCountsBySessionIds(sessionIds: string[]) {
+    if (!sessionIds.length) return new Map<string, RealizedRCountRow>()
+    const result = await this.pool.query<RealizedRCountRow>(
+      `WITH linked_fills AS (
+         SELECT
+           t.session_id,
+           t.id AS ticket_id,
+           t.risk_dollars,
+           t.stop_price,
+           lower(t.side) AS ticket_side,
+           lower(f.side) AS fill_side,
+           f.quantity,
+           f.price
+         FROM autotrader.fills f
+         JOIN autotrader.orders o
+           ON o.session_id = f.session_id AND o.client_order_id = f.client_order_id
+         JOIN autotrader.trade_tickets t
+           ON t.session_id = f.session_id AND t.id = o.ticket_id
+         WHERE t.session_id = ANY($1::text[])
+           AND NOT EXISTS (
+             SELECT 1
+             FROM autotrader.setup_examples se
+             WHERE se.session_id = t.session_id AND se.ticket_id = t.id
+           )
+       ),
+       round_trips AS (
+         SELECT
+           session_id,
+           ticket_id,
+           bool_or(fill_side IN ('buy', 'buy_to_cover', 'buy_to_open', 'buy_to_close')) AS saw_buy,
+           bool_or(fill_side IN ('sell', 'sell_short', 'sell_to_open', 'sell_to_close')) AS saw_sell,
+           sum(
+             CASE
+               WHEN fill_side IN ('buy', 'buy_to_cover', 'buy_to_open', 'buy_to_close') THEN quantity
+               WHEN fill_side IN ('sell', 'sell_short', 'sell_to_open', 'sell_to_close') THEN -quantity
+               ELSE 0
+             END
+           ) AS net_quantity,
+           sum(
+             CASE
+               WHEN fill_side IN ('buy', 'buy_to_cover', 'buy_to_open', 'buy_to_close') THEN -quantity * price
+               WHEN fill_side IN ('sell', 'sell_short', 'sell_to_open', 'sell_to_close') THEN quantity * price
+               ELSE 0
+             END
+           ) AS pnl,
+           max(risk_dollars) AS risk_dollars,
+           max(stop_price) AS stop_price,
+           sum(
+             CASE
+               WHEN ticket_side IN ('buy', 'buy_to_cover', 'buy_to_open', 'buy_to_close')
+                 AND fill_side IN ('buy', 'buy_to_cover', 'buy_to_open', 'buy_to_close') THEN quantity
+               WHEN ticket_side IN ('sell', 'sell_short', 'sell_to_open', 'sell_to_close')
+                 AND fill_side IN ('sell', 'sell_short', 'sell_to_open', 'sell_to_close') THEN quantity
+               ELSE 0
+             END
+           ) AS entry_quantity,
+           sum(
+             CASE
+               WHEN ticket_side IN ('buy', 'buy_to_cover', 'buy_to_open', 'buy_to_close')
+                 AND fill_side IN ('buy', 'buy_to_cover', 'buy_to_open', 'buy_to_close') THEN quantity * price
+               WHEN ticket_side IN ('sell', 'sell_short', 'sell_to_open', 'sell_to_close')
+                 AND fill_side IN ('sell', 'sell_short', 'sell_to_open', 'sell_to_close') THEN quantity * price
+               ELSE 0
+             END
+           ) AS entry_cost
+         FROM linked_fills
+         GROUP BY session_id, ticket_id
+       ),
+       completed_round_trips AS (
+         SELECT
+           session_id,
+           pnl / COALESCE(
+             NULLIF(risk_dollars, 0),
+             CASE
+               WHEN stop_price IS NOT NULL
+                 AND entry_quantity > 0
+                 AND abs((entry_cost / entry_quantity) - stop_price) > 0
+                 THEN abs((entry_cost / entry_quantity) - stop_price) * entry_quantity
+               ELSE NULL
+             END
+           ) AS realized_r
+         FROM round_trips
+         WHERE saw_buy IS TRUE
+           AND saw_sell IS TRUE
+           AND abs(net_quantity) < 0.000001
+       ),
+       realized_values AS (
+         SELECT se.session_id, se.realized_r
+         FROM autotrader.setup_examples se
+         WHERE se.session_id = ANY($1::text[]) AND se.realized_r IS NOT NULL
+         UNION ALL
+         SELECT session_id, realized_r
+         FROM completed_round_trips
+         WHERE realized_r IS NOT NULL
+       )
+       SELECT
+         session_id,
+         COUNT(*)::int AS realized_r_observation_count,
+         SUM(realized_r) AS total_realized_r
+       FROM realized_values
+       GROUP BY session_id`,
+      [sessionIds],
+    )
+    return new Map(result.rows.map((row) => [row.session_id, row]))
+  }
+
   async listSessions(limit: number): Promise<AutotraderSessionSummary[]> {
     await this.ensureSchema()
     const result = await this.pool.query<SessionSummaryRow>(
@@ -1813,10 +2026,18 @@ class PostgresAutotraderStore implements AutotraderStore {
          ) AS current_snapshot_realized_pnl
        FROM autotrader.sessions s
        ORDER BY s.started_at DESC
-       LIMIT $1`,
+      LIMIT $1`,
       [limit],
     )
-    return result.rows.map(mapSessionSummary)
+    const realizedRCounts = await this.realizedRCountsBySessionIds(result.rows.map((row) => row.id))
+    return result.rows.map((row) => {
+      const realizedRCount = realizedRCounts.get(row.id)
+      return mapSessionSummary({
+        ...row,
+        realized_r_observation_count: realizedRCount?.realized_r_observation_count ?? row.realized_r_observation_count,
+        total_realized_r: realizedRCount?.total_realized_r ?? row.total_realized_r,
+      })
+    })
   }
 
   async getSessionDetail(sessionId: string): Promise<AutotraderSessionDetail | null> {

@@ -132,6 +132,20 @@ def completed_round_trip_detail() -> dict[str, Any]:
     }
 
 
+def completed_round_trip_detail_without_ticket_risk() -> dict[str, Any]:
+    detail = completed_round_trip_detail()
+    ticket = detail["tradeTickets"][0]
+    ticket["side"] = "buy"
+    ticket["entryLimitPrice"] = "100"
+    ticket["stopPrice"] = "99"
+    ticket["targetPrice"] = "103"
+    ticket["riskDollars"] = None
+    detail["fills"][1]["price"] = "99.5"
+    detail["session"]["realizedPnl"] = "-5"
+    detail["status"]["realizedPnl"] = "-5"
+    return detail
+
+
 class SessionReconcilerTest(unittest.TestCase):
     def test_finalizes_stale_market_session_when_broker_is_flat(self) -> None:
         synthesis = FakeSynthesis(
@@ -286,6 +300,27 @@ class SessionReconcilerTest(unittest.TestCase):
         summary = payload["summary"]["scorecardObservationSummary"]
         self.assertEqual(summary["generated"], 1)
         self.assertEqual(summary["skipped"]["missingRoundTripSides"], 1)
+
+    def test_derives_scorecard_realized_r_from_entry_stop_risk_when_ticket_risk_is_missing(self) -> None:
+        synthesis = FakeSynthesis([stale_session()], {"session-1": completed_round_trip_detail_without_ticket_risk()})
+
+        session_reconciler.reconcile_sessions(
+            synthesis=synthesis,  # type: ignore[arg-type]
+            alpaca=FakeAlpaca(account={"equity": "29995.00"}),  # type: ignore[arg-type]
+            now=datetime(2026, 6, 2, 20, 10, tzinfo=UTC),
+            limit=50,
+            grace_minutes=5,
+            finalize_stale_flat=True,
+            backfill_finalized_flat=False,
+            current_agent_run="",
+        )
+
+        observation = synthesis.finalized[0]["scorecardObservations"][0]
+        self.assertEqual(observation["outcome"], "loss")
+        self.assertEqual(observation["realizedR"], "-0.5")
+        self.assertEqual(observation["payload"]["pnlDollars"], "-5")
+        self.assertEqual(observation["payload"]["riskDollars"], "10")
+        self.assertEqual(observation["payload"]["riskDollarsSource"], "entry_stop_fill_risk")
 
     def test_backfills_finalized_flat_market_session_without_examples(self) -> None:
         session = stale_session(
