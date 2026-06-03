@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -73,6 +74,48 @@ class LiveScanCycleTest(unittest.TestCase):
                 }
             },
         )
+
+    def test_fetch_scan_inputs_fetches_market_data_and_scorecards_concurrently(self) -> None:
+        case = self
+        barrier = threading.Barrier(3)
+
+        class FakeAlpaca:
+            def data_get(self, path: str, query: dict[str, str]) -> object:
+                case.assertIn(path, {"/stocks/bars", "/stocks/quotes/latest"})
+                barrier.wait(timeout=1)
+                if path == "/stocks/bars":
+                    return {"bars": {"NVDA": []}}
+                return {"quotes": {"NVDA": {"bp": 100.0, "ap": 100.1}}}
+
+        class FakeSynthesis:
+            def get(self, path: str, query: dict[str, str]) -> object:
+                case.assertEqual(path, "/api/autotrader/scorecards")
+                case.assertEqual(query, {"limit": "20"})
+                barrier.wait(timeout=1)
+                return {"scorecards": [{"symbol": "NVDA", "sampleSize": 5}], "setupExamples": []}
+
+        inputs, metrics = live_scan_cycle.fetch_scan_inputs_with_metrics(
+            alpaca=FakeAlpaca(),  # type: ignore[arg-type]
+            synthesis=FakeSynthesis(),  # type: ignore[arg-type]
+            symbols=["NVDA"],
+            start="2026-06-03T13:30:00Z",
+            end="2026-06-03T14:00:00Z",
+            feed="iex",
+            scorecard_limit=20,
+            broker_state={
+                "account": {"id": "paper-account", "equity": "30000", "buying_power": "60000"},
+                "positions": [],
+                "orders": [],
+            },
+        )
+
+        self.assertEqual(inputs["bars.json"], {"bars": {"NVDA": []}})
+        self.assertEqual(inputs["quotes.json"]["quotes"]["NVDA"]["bid"], 100.0)
+        self.assertEqual(inputs["scorecards.json"]["scorecards"][0]["symbol"], "NVDA")
+        self.assertEqual(metrics["brokerStateSource"], "provided")
+        self.assertEqual(metrics["brokerStateMs"], 0)
+        self.assertEqual(metrics["parallelFetchCount"], 3)
+        self.assertGreaterEqual(metrics["totalMs"], 0)
 
     def test_market_open_start_uses_new_york_timezone(self) -> None:
         self.assertEqual(
@@ -717,6 +760,10 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertEqual(summary["recordedScorecardReadback"]["riskCheckId"], "risk-scorecard")
             self.assertTrue(summary["recordedScorecardReadback"]["passed"])
             self.assertEqual(summary["scorecardInfluence"]["scorecardInfluencedResultCount"], 1)
+            self.assertGreaterEqual(summary["stageTimingsMs"]["totalMs"], 0)
+            self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["parallelFetchCount"], 3)
+            self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["brokerStateSource"], "fetched")
+            self.assertGreaterEqual(summary["stageTimingsMs"]["stockAnalysisScanMs"], 0)
             self.assertEqual(summary["recordedTickets"][0]["ticketId"], "ticket-nvda")
             self.assertEqual(summary["recordedTickets"][0]["status"], "blocked")
             self.assertEqual(summary["recordedTickets"][0]["scorecardSampleSize"], 5)

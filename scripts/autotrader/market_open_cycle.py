@@ -197,6 +197,7 @@ def record_cycle_complete(
         "topResults": summary.get("topResults"),
         "marketWindow": summary.get("marketWindow"),
         "windowGate": summary.get("windowGate"),
+        "stageTimingsMs": summary.get("stageTimingsMs"),
     }
     status = synthesis.post(
         "/api/autotrader/status",

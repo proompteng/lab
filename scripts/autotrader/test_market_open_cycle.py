@@ -74,6 +74,11 @@ class MarketOpenCycleTest(unittest.TestCase):
                     },
                     "skipFullScan": False,
                     "action": "scan",
+                    "stageTimingsMs": {
+                        "inputFetchMs": 41,
+                        "stockAnalysisScanMs": 22,
+                        "totalMs": 88,
+                    },
                 }
 
             args = market_open_cycle.build_parser().parse_args(
@@ -111,6 +116,7 @@ class MarketOpenCycleTest(unittest.TestCase):
         self.assertEqual(status_payload["phase"], "scan")
         self.assertEqual(status_payload["currentAction"], "market_open_cycle_complete; top=NVDA A vwap_reclaim")
         self.assertEqual(status_payload["payload"]["recordedTicketCount"], 1)
+        self.assertEqual(status_payload["payload"]["stageTimingsMs"]["totalMs"], 88)
         self.assertEqual(event_payload["eventType"], "market_open_cycle_complete")
 
     def test_reports_account_gated_cycle_without_scan(self) -> None:
