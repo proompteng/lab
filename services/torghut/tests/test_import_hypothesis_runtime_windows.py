@@ -2898,6 +2898,37 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ["runtime_ledger_artifact_candidate_id_mismatch"],
         )
 
+    def test_runtime_ledger_target_metadata_does_not_require_artifact_candidate_for_source_dsn(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 13, 17, 30, tzinfo=timezone.utc)
+
+        self.assertEqual(
+            _runtime_ledger_target_metadata_blockers(
+                target_metadata={
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "source_collection_authorized": True,
+                    "source_collection_authorization_scope": (
+                        "source_window_evidence_collection_only"
+                    ),
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                    "window_start": "2026-05-13T17:00:00+00:00",
+                    "window_end": "2026-05-13T17:30:00+00:00",
+                },
+                runtime_ledger_artifact_metadata={
+                    "runtime_ledger_artifact_refs": [],
+                    "runtime_ledger_ignored_artifact_refs": [],
+                    "runtime_ledger_artifact_row_count": 0,
+                    "runtime_ledger_artifact_fill_count": 0,
+                    "runtime_ledger_artifact_tca_row_count": 0,
+                },
+                window_start=window_start,
+                window_end=window_end,
+            ),
+            [],
+        )
+
     def test_runtime_window_proof_hygiene_blocks_missing_authoritative_gates(
         self,
     ) -> None:
