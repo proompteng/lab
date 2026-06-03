@@ -1049,6 +1049,19 @@ def _order_event_linkage_blockers(event: ExecutionOrderEvent) -> list[str]:
     )
 
 
+def _missing_linkage_blockers(
+    *,
+    execution_missing: bool,
+    decision_missing: bool,
+) -> tuple[str, ...]:
+    blockers: list[str] = []
+    if execution_missing:
+        blockers.append("missing_execution_link")
+    if decision_missing:
+        blockers.append("missing_trade_decision_link")
+    return tuple(blockers)
+
+
 def _order_event_account_label_alias(
     event: ExecutionOrderEvent,
 ) -> dict[str, str] | None:
@@ -1215,6 +1228,13 @@ def _source_window_event_status_reason(event: ExecutionOrderEvent) -> str:
         return "linked_execution_and_decision"
     linkage_blockers = _order_event_linkage_blockers(event)
     if linkage_blockers:
+        if (
+            event.execution_id is None
+            and event.trade_decision_id is None
+            and "missing_execution_link" in linkage_blockers
+            and "missing_trade_decision_link" in linkage_blockers
+        ):
+            return "missing_execution_and_decision_links"
         return linkage_blockers[0]
     if event.execution_id is None and event.trade_decision_id is None:
         return "missing_execution_and_decision_links"
@@ -1513,9 +1533,17 @@ def persist_order_event(
         )
         if decision_linkage.trade_decision is not None:
             trade_decision_id = decision_linkage.trade_decision.id
+        linkage_blockers = list(
+            _missing_linkage_blockers(
+                execution_missing=True,
+                decision_missing=decision_linkage.trade_decision is None
+                and not decision_linkage.blockers,
+            )
+        )
+        linkage_blockers.extend(decision_linkage.blockers)
         raw_event = _raw_event_with_linkage_blockers(
             event.raw_event,
-            decision_linkage.blockers,
+            linkage_blockers,
         )
     else:
         raw_event = _raw_event_with_linkage_blockers(
@@ -1931,6 +1959,10 @@ def repair_order_feed_execution_links(
             ),
         )
         .order_by(
+            ExecutionOrderEvent.raw_event["_torghut_linkage"]
+            .as_string()
+            .is_(None)
+            .desc(),
             ExecutionOrderEvent.event_ts.asc().nullsfirst(),
             ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
             ExecutionOrderEvent.created_at.asc(),
@@ -2027,10 +2059,27 @@ def repair_order_feed_execution_links(
                     _refresh_source_window_linkage_counts(session, event)
                     counters["events_without_decision"] += 1
                 elif decision_linkage.trade_decision is None:
+                    event.raw_event = _raw_event_with_linkage_blockers(
+                        event.raw_event,
+                        _missing_linkage_blockers(
+                            execution_missing=True,
+                            decision_missing=True,
+                        ),
+                    )
+                    _ensure_source_window_for_event(session, event)
+                    session.add(event)
+                    _refresh_source_window_linkage_counts(session, event)
                     counters["events_without_decision"] += 1
                 else:
                     decision = decision_linkage.trade_decision
                     event.trade_decision_id = decision.id
+                    event.raw_event = _raw_event_with_linkage_blockers(
+                        event.raw_event,
+                        _missing_linkage_blockers(
+                            execution_missing=True,
+                            decision_missing=False,
+                        ),
+                    )
                     decision_key = (decision.id, decision_source_account_label or "")
                     if decision_key not in processed_decision_ids:
                         processed_decision_ids.add(decision_key)
@@ -2047,6 +2096,17 @@ def repair_order_feed_execution_links(
                     session.add(event)
                     _refresh_source_window_linkage_counts(session, event)
                     counters["decision_events_linked"] += 1
+            else:
+                event.raw_event = _raw_event_with_linkage_blockers(
+                    event.raw_event,
+                    _missing_linkage_blockers(
+                        execution_missing=True,
+                        decision_missing=False,
+                    ),
+                )
+                _ensure_source_window_for_event(session, event)
+                session.add(event)
+                _refresh_source_window_linkage_counts(session, event)
             counters["events_without_execution"] += 1
             continue
         execution_key = (execution.id, source_account_label or "")
