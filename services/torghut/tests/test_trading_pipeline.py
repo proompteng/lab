@@ -7076,6 +7076,12 @@ class TestTradingPipeline(TestCase):
                 source_decision["paper_route_probe_effective_max_notional"], "250"
             )
             self.assertEqual(params["exit_minute_after_open"], 120)
+            self.assertEqual(params["candidate_id"], "cand-tsmom-liq")
+            self.assertEqual(params["hypothesis_id"], "H-TSMOM-LIQ")
+            self.assertEqual(
+                params["runtime_strategy_name"],
+                "intraday-tsmom-profit-v3",
+            )
             self.assertEqual(params["source_candidate_ids"], ["cand-tsmom-liq"])
             self.assertEqual(params["source_hypothesis_ids"], ["H-TSMOM-LIQ"])
             self.assertEqual(

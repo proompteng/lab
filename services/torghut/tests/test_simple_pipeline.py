@@ -400,6 +400,47 @@ def _routeability_decision(
     )
 
 
+def test_paper_route_probe_cap_promotes_single_target_lineage_to_top_level() -> None:
+    pipeline = object.__new__(SimpleTradingPipeline)
+    decision = _routeability_decision(
+        params={
+            "price": Decimal("100"),
+            "paper_route_target_plan_source_decision": _bounded_hpairs_target(
+                candidate_id="cand-runtime-lineage",
+                hypothesis_id="H-RUNTIME-LINEAGE",
+                runtime_strategy_name="intraday-tsmom-profit-v3",
+                source_decision_mode="bounded_paper_route_collection",
+                profit_proof_eligible=True,
+                source_manifest_ref="runtime-ledger-source-window",
+            ),
+        }
+    )
+
+    capped = pipeline._paper_route_probe_capped_decision(
+        decision=decision,
+        proof_floor={"capital_state": "shadow"},
+        context={
+            "max_notional": "250",
+            "source_decision_mode": "bounded_paper_route_collection",
+            "profit_proof_eligible": True,
+            "target_source_authorized": True,
+        },
+    )
+
+    assert capped is not None
+    assert capped.qty == Decimal("2.5000")
+    params = capped.params
+    assert params["candidate_id"] == "cand-runtime-lineage"
+    assert params["hypothesis_id"] == "H-RUNTIME-LINEAGE"
+    assert params["runtime_strategy_name"] == "intraday-tsmom-profit-v3"
+    assert params["source_candidate_ids"] == ["cand-runtime-lineage"]
+    assert params["source_hypothesis_ids"] == ["H-RUNTIME-LINEAGE"]
+    assert "intraday-tsmom-profit-v3" in params["source_strategy_names"]
+    assert params["source_decision_mode"] == "bounded_paper_route_collection"
+    assert params["profit_proof_eligible"] is True
+    assert params["source_manifest_ref"] == "runtime-ledger-source-window"
+
+
 def test_paper_route_quote_routeability_uses_target_metadata_quote_snapshot() -> None:
     pipeline = object.__new__(SimpleTradingPipeline)
     target = _bounded_hpairs_target(

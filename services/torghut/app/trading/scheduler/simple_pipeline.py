@@ -948,6 +948,13 @@ def _merge_unique_texts(target: list[str], values: Sequence[str]) -> None:
             target.append(value)
 
 
+def _single_lineage_text(value: object) -> str | None:
+    values = _lineage_text_values(value)
+    if len(values) != 1:
+        return None
+    return values[0]
+
+
 def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[str, Any]:
     payloads: list[Mapping[str, Any]] = [params]
     for key in (
@@ -973,16 +980,25 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
     collection_lineage: dict[str, Any] = {}
     for payload in payloads:
         _merge_unique_texts(
+            candidate_ids, _lineage_text_values(payload.get("candidate_id"))
+        )
+        _merge_unique_texts(
             candidate_ids, _lineage_text_values(payload.get("source_candidate_id"))
         )
         _merge_unique_texts(
             candidate_ids, _lineage_text_values(payload.get("source_candidate_ids"))
         )
         _merge_unique_texts(
+            hypothesis_ids, _lineage_text_values(payload.get("hypothesis_id"))
+        )
+        _merge_unique_texts(
             hypothesis_ids, _lineage_text_values(payload.get("source_hypothesis_id"))
         )
         _merge_unique_texts(
             hypothesis_ids, _lineage_text_values(payload.get("source_hypothesis_ids"))
+        )
+        _merge_unique_texts(
+            strategy_names, _lineage_text_values(payload.get("runtime_strategy_name"))
         )
         _merge_unique_texts(
             strategy_names, _lineage_text_values(payload.get("source_strategy_name"))
@@ -1035,10 +1051,19 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
     lineage: dict[str, Any] = {}
     if candidate_ids:
         lineage["source_candidate_ids"] = candidate_ids
+    single_candidate_id = _single_lineage_text(candidate_ids)
+    if single_candidate_id is not None:
+        lineage["candidate_id"] = single_candidate_id
     if hypothesis_ids:
         lineage["source_hypothesis_ids"] = hypothesis_ids
+    single_hypothesis_id = _single_lineage_text(hypothesis_ids)
+    if single_hypothesis_id is not None:
+        lineage["hypothesis_id"] = single_hypothesis_id
     if strategy_names:
         lineage["source_strategy_names"] = strategy_names
+    single_strategy_name = _single_lineage_text(strategy_names)
+    if single_strategy_name is not None:
+        lineage.setdefault("runtime_strategy_name", single_strategy_name)
     if lineage_targets:
         lineage["paper_route_probe_lineage_targets"] = lineage_targets
     if source_decision_mode:
@@ -1172,6 +1197,20 @@ def _merge_paper_route_probe_lineage(
         current = target.setdefault(key, [])
         if isinstance(current, list):
             _merge_unique_texts(cast(list[str], current), values)
+
+    identity_fallbacks = {
+        "candidate_id": "source_candidate_ids",
+        "hypothesis_id": "source_hypothesis_ids",
+        "runtime_strategy_name": "source_strategy_names",
+    }
+    for key, source_key in identity_fallbacks.items():
+        if _safe_text(target.get(key)) is not None:
+            continue
+        value = _safe_text(lineage.get(key)) or _single_lineage_text(
+            lineage.get(source_key)
+        )
+        if value is not None:
+            target[key] = value
 
     for key in ("source_decision_mode", "profit_proof_eligible"):
         if key in lineage and key not in target:
@@ -4554,6 +4593,10 @@ class SimpleTradingPipeline(TradingPipeline):
                     params["exit_minute_after_open"] = metadata[
                         "exit_minute_after_open"
                     ]
+                _merge_paper_route_probe_lineage(
+                    params,
+                    _paper_route_probe_lineage_from_params(params),
+                )
                 timeframe = (
                     _safe_text(target.get("timeframe"))
                     or _safe_text(target.get("base_timeframe"))
@@ -5517,6 +5560,10 @@ class SimpleTradingPipeline(TradingPipeline):
             "capital_stage": str(proof_floor.get("capital_state") or "zero_notional"),
             "target_source_notional_sized": target_source_authorized,
         }
+        _merge_paper_route_probe_lineage(
+            params,
+            _paper_route_probe_lineage_from_params(params),
+        )
         return decision.model_copy(update={"qty": capped_qty, "params": params})
 
     def _align_prechecked_paper_route_probe_cap(
@@ -5546,6 +5593,10 @@ class SimpleTradingPipeline(TradingPipeline):
 
         params["simple_lane"] = simple_lane
         params["paper_route_probe"] = probe_metadata
+        _merge_paper_route_probe_lineage(
+            params,
+            _paper_route_probe_lineage_from_params(params),
+        )
         return decision.model_copy(update={"params": params})
 
     @staticmethod
