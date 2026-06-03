@@ -32,9 +32,9 @@ data:
     1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`. In `scorecard-readback`, bootstrap reads/reconciles/finalizes and exits. In `market-open`, it validates analysis, starts the Synthesis session, records account gate/status, and writes `${AUTONOMOUS_TRADER_WORK_DIR}/session.json`.
     2. Preflight Alpaca account/config/clock/tools/positions/orders and Synthesis tools. If account/trading is blocked, `daytrading_buying_power <= 0`, or scanner input says `intraday_equity_entry.status=blocked`, record Synthesis risk/status, skip new entries and smoke orders, and monitor read-only until state changes or close. Exits/protection stay allowed.
     3. Do not call `autotrader_start_session` unless `${AUTONOMOUS_TRADER_WORK_DIR}/session.json` is missing or invalid; otherwise reuse the recorded session.
-    4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/market_open_cycle.py`; runner loads `session.json`, waits outside hours, records gate/risk, scans only when eligible, records scorecard/tickets, writes `last-cycle.json`, and emits checkpoint.
-    5. If runner returns `skipFullScan=true`, do not scan, recreate tickets, or smoke orders. Otherwise use returned `ticketId` in risk/order writes and trust runner `noTradeReason`.
-    6. Before any strategy entry, run `python3 /workspace/lab/scripts/autotrader/strategy_order_guard.py`; if `allowed=false`, record and do not submit.
+    4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/market_open_cycle.py`; runner owns session loading, market-hour waiting, account gate, scan, scorecard/tickets, best-candidate guard, `last-cycle.json`, and checkpoint.
+    5. Do not manually scan, recreate tickets, run candidate guards, or smoke orders for runner candidates. Use runner `ticketId`, `noTradeReason`, `strategyGuard`, and `blocker` as authoritative.
+    6. Only plan new broker risk after the runner returns an allowed guarded candidate.
     7. Before Alpaca mutation, record planned risk/order in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when supported.
     8. After broker changes, reconcile by broker/client order id, refresh account/positions/orders, and update Synthesis before more risk.
     9. Continue until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.

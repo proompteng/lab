@@ -66,9 +66,13 @@ class MarketOpenCycleTest(unittest.TestCase):
                         "actionableCandidateCount": 1,
                         "bestCandidate": {
                             "symbol": "NVDA",
+                            "side": "buy",
                             "setupType": "vwap_reclaim",
                             "setupGrade": "A",
                             "expectedR": "2.1",
+                            "entryLimitPrice": "100.25",
+                            "targetPrice": "103.00",
+                            "stopPrice": "99.00",
                             "ticketId": "ticket-1",
                         },
                     },
@@ -108,18 +112,47 @@ class MarketOpenCycleTest(unittest.TestCase):
                     "2026-06-03T14:00:00Z",
                 ]
             )
-            with patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle):
+            guard_calls = []
+
+            def fake_evaluate_order(args: Any) -> dict[str, Any]:
+                guard_calls.append(args)
+                return {
+                    "ok": True,
+                    "symbol": args.symbol,
+                    "side": args.side,
+                    "entryLimit": args.entry_limit,
+                    "takeProfitLimit": args.take_profit_limit,
+                    "stopLossStop": args.stop_loss_stop,
+                    "allowed": True,
+                    "reason": "fresh_strategy_order",
+                    "latestBid": 100.20,
+                    "latestAsk": 100.25,
+                    "latestTrade": 100.22,
+                }
+
+            with (
+                patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle),
+                patch.object(market_open_cycle.strategy_order_guard, "evaluate_order", fake_evaluate_order),
+            ):
                 result = market_open_cycle.run_market_open_cycle(args=args, synthesis=synthesis)  # type: ignore[arg-type]
 
             self.assertTrue(result["ok"])
+            self.assertEqual(result["summary"]["strategyGuard"]["allowed"], True)
             self.assertEqual(result["sessionId"], "session-market-open")
             self.assertEqual(captured_args[0].session_id, "session-market-open")
+            self.assertEqual(guard_calls[0].symbol, "NVDA")
+            self.assertEqual(guard_calls[0].side, "buy")
+            self.assertEqual(guard_calls[0].entry_limit, "100.25")
+            self.assertEqual(guard_calls[0].take_profit_limit, "103.00")
+            self.assertEqual(guard_calls[0].stop_loss_stop, "99.00")
             self.assertTrue(captured_args[0].record_tickets)
             self.assertTrue(captured_args[0].respect_account_gate)
             self.assertEqual(captured_args[0].watchlist, ["NVDA"])
             self.assertEqual(captured_args[0].analysis_context, str(root / "analysis-context.json"))
             self.assertTrue((root / "last-cycle.json").exists())
-            self.assertIn("cycle_runner: deterministic_market_open_cycle", report_path.read_text(encoding="utf-8"))
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("cycle_runner: deterministic_market_open_cycle", report)
+            self.assertIn("strategy_guard: allowed:fresh_strategy_order", report)
 
         paths = [path for path, _ in synthesis.posts]
         self.assertEqual(paths, ["/api/autotrader/status", "/api/autotrader/events"])
@@ -129,12 +162,86 @@ class MarketOpenCycleTest(unittest.TestCase):
         self.assertEqual(status_payload["phase"], "scan")
         self.assertEqual(
             status_payload["currentAction"],
-            "market_open_cycle_candidate; ticketId=ticket-1; symbol=NVDA A vwap_reclaim; expectedR=2.1",
+            "market_open_cycle_guard_allowed; ticketId=ticket-1; symbol=NVDA; reason=fresh_strategy_order",
         )
         self.assertEqual(status_payload["payload"]["recordedTicketCount"], 1)
         self.assertEqual(status_payload["payload"]["stageTimingsMs"]["totalMs"], 88)
         self.assertEqual(status_payload["payload"]["decisionSummary"]["action"], "run_strategy_order_guard")
+        self.assertEqual(status_payload["payload"]["strategyGuard"]["result"]["allowed"], True)
         self.assertEqual(event_payload["eventType"], "market_open_cycle_complete")
+
+    def test_records_missing_strategy_guard_inputs_without_calling_guard(self) -> None:
+        synthesis = FakeSynthesis()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "session.json").write_text('{"sessionId":"session-market-open"}\n', encoding="utf-8")
+            report_path = root / "report.md"
+
+            def fake_run_cycle(args: Any) -> dict[str, Any]:
+                return {
+                    "ok": True,
+                    "mode": "cycle",
+                    "cycle": 2,
+                    "cycleDir": str(root / "cycle-2"),
+                    "resultCount": 1,
+                    "topResults": [],
+                    "recordedTickets": [],
+                    "decisionSummary": {
+                        "action": "run_strategy_order_guard",
+                        "bestCandidate": {
+                            "symbol": "NVDA",
+                            "side": "buy",
+                            "setupType": "vwap_reclaim",
+                            "setupGrade": "A",
+                            "ticketId": "ticket-1",
+                        },
+                    },
+                    "accountGate": {
+                        "action": "scan",
+                        "skipFullScan": False,
+                        "account": {
+                            "equity": "30000",
+                            "buying_power": "60000",
+                            "daytrading_buying_power": "60000",
+                        },
+                    },
+                    "skipFullScan": False,
+                    "action": "scan",
+                }
+
+            def fake_evaluate_order(args: Any) -> dict[str, Any]:
+                raise AssertionError("guard must not run without complete candidate prices")
+
+            args = market_open_cycle.build_parser().parse_args(
+                [
+                    "--work-dir",
+                    str(root),
+                    "--report-path",
+                    str(report_path),
+                    "--now",
+                    "2026-06-03T14:00:00Z",
+                ]
+            )
+            with (
+                patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle),
+                patch.object(market_open_cycle.strategy_order_guard, "evaluate_order", fake_evaluate_order),
+            ):
+                result = market_open_cycle.run_market_open_cycle(args=args, synthesis=synthesis)  # type: ignore[arg-type]
+
+            self.assertEqual(result["summary"]["strategyGuard"]["reason"], "strategy_guard_missing_inputs")
+            self.assertEqual(
+                result["summary"]["strategyGuard"]["missingFields"],
+                ["entryLimitPrice", "targetPrice", "stopPrice"],
+            )
+
+        status_payload = synthesis.posts[0][1]
+        self.assertEqual(status_payload["blocker"], "strategy_guard_missing_inputs")
+        self.assertEqual(
+            status_payload["currentAction"],
+            "market_open_cycle_guard_blocked; ticketId=ticket-1; symbol=NVDA; reason=strategy_guard_missing_inputs",
+        )
+        self.assertEqual(status_payload["payload"]["strategyGuard"]["allowed"], False)
 
     def test_reports_account_gated_cycle_without_scan(self) -> None:
         synthesis = FakeSynthesis()
