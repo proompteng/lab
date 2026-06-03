@@ -6,11 +6,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -19,9 +22,7 @@ from sqlalchemy.pool import StaticPool
 from app.models import Base, Strategy
 from app.trading.paper_route_target_plan import (
     PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL,
-    fetch_paper_route_target_plan_url,
     materialize_bounded_paper_route_target_plan,
-    paper_route_target_plan_from_payload,
     paper_route_target_plan_targets,
 )
 
@@ -38,6 +39,7 @@ PROMOTION_FLAG_FIELDS = (
     "live_capital_routing_enabled",
 )
 LIVE_LABEL_MARKERS = ("LIVE", "PROD", "REAL")
+TARGET_PLAN_RESPONSE_LIMIT_BYTES = 5_000_000
 
 
 def _json_default(value: object) -> str:
@@ -168,6 +170,180 @@ def _load_json_file(path: Path) -> dict[str, Any]:
     return dict(cast(Mapping[str, Any], payload))
 
 
+def _nested_mapping(payload: Mapping[str, Any], *keys: str) -> dict[str, Any]:
+    current: object = payload
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return {}
+        current = cast(Mapping[str, Any], current).get(key)
+    return _to_str_map(current)
+
+
+def _target_materialization_score(target: Mapping[str, Any]) -> tuple[int, int, int]:
+    return (
+        int(_safe_text(target.get("hypothesis_id")) == "H-PAIRS-01"),
+        int(
+            bool(_target_symbol_actions(target))
+            and _target_notional(target) > 0
+            and _target_quantity(target) > 0
+        ),
+        int(_truthy(target.get("bounded_evidence_collection_authorized"))),
+    )
+
+
+def _plan_materialization_score(plan: Mapping[str, Any]) -> tuple[int, int, int, int]:
+    hpairs = 0
+    materializable_shape = 0
+    bounded_authorized = 0
+    targets = paper_route_target_plan_targets(plan)
+    for target in targets:
+        target_hpairs, target_shape, target_authorized = _target_materialization_score(
+            target
+        )
+        hpairs += target_hpairs
+        materializable_shape += target_shape
+        bounded_authorized += target_authorized
+    return (hpairs, materializable_shape, bounded_authorized, len(targets))
+
+
+def _candidate_materialization_plans(
+    payload: Mapping[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    return [
+        (
+            "live_submission_gate.runtime_ledger_paper_probation_import_plan",
+            _nested_mapping(
+                payload,
+                "live_submission_gate",
+                "runtime_ledger_paper_probation_import_plan",
+            ),
+        ),
+        (
+            "runtime_ledger_paper_probation_import_plan",
+            _to_str_map(payload.get("runtime_ledger_paper_probation_import_plan")),
+        ),
+        (
+            "next_paper_route_runtime_window_targets",
+            _to_str_map(payload.get("next_paper_route_runtime_window_targets")),
+        ),
+        (
+            "next_clean_paper_route_runtime_window_targets_after_discard",
+            _to_str_map(
+                payload.get(
+                    "next_clean_paper_route_runtime_window_targets_after_discard"
+                )
+            ),
+        ),
+        (
+            "source_runtime_window_import_plan",
+            _to_str_map(payload.get("source_runtime_window_import_plan")),
+        ),
+        (
+            "runtime_window_import_plan",
+            _to_str_map(payload.get("runtime_window_import_plan")),
+        ),
+        (
+            "observed_strategy_source_runtime_window_import_plan",
+            _to_str_map(
+                payload.get("observed_strategy_source_runtime_window_import_plan")
+            ),
+        ),
+        ("payload", dict(payload) if paper_route_target_plan_targets(payload) else {}),
+    ]
+
+
+def _materialization_plan_from_payload(
+    payload: Mapping[str, Any],
+) -> tuple[dict[str, Any], str | None]:
+    best_plan: dict[str, Any] = {}
+    best_source: str | None = None
+    best_score = (0, 0, 0, 0)
+    for source, plan in _candidate_materialization_plans(payload):
+        if not paper_route_target_plan_targets(plan):
+            continue
+        score = _plan_materialization_score(plan)
+        if score > best_score:
+            best_plan = dict(plan)
+            best_source = source
+            best_score = score
+    return best_plan, best_source
+
+
+def _fetch_plan_url_payload_once(url: str, *, timeout_seconds: float) -> dict[str, Any]:
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        return {
+            "load_error": f"paper_route_target_plan_invalid_scheme:{scheme or 'missing'}"
+        }
+    if not parsed.hostname:
+        return {"load_error": "paper_route_target_plan_invalid_host"}
+
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
+    connection = connection_class(
+        parsed.hostname,
+        parsed.port,
+        timeout=max(float(timeout_seconds), 0.1),
+    )
+    try:
+        connection.request(
+            "GET",
+            path,
+            headers={
+                "Accept": "application/json",
+                "Connection": "close",
+                "Host": parsed.netloc or parsed.hostname,
+            },
+        )
+        response = connection.getresponse()
+        if response.status < 200 or response.status >= 300:
+            return {
+                "load_error": f"paper_route_target_plan_http_status:{response.status}"
+            }
+        raw = response.read(TARGET_PLAN_RESPONSE_LIMIT_BYTES + 1)
+    except Exception as exc:
+        return {"load_error": f"paper_route_target_plan_fetch_failed:{exc}"}
+    finally:
+        connection.close()
+
+    if len(raw) > TARGET_PLAN_RESPONSE_LIMIT_BYTES:
+        return {"load_error": "paper_route_target_plan_response_too_large"}
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        return {"load_error": f"paper_route_target_plan_invalid_json:{exc}"}
+    if not isinstance(payload, Mapping):
+        return {"load_error": "paper_route_target_plan_invalid_payload"}
+    return dict(cast(Mapping[str, Any], payload))
+
+
+def _fetch_plan_url_payload(
+    url: str,
+    *,
+    timeout_seconds: float,
+    attempts: int,
+    retry_backoff_seconds: float = 0.25,
+) -> dict[str, Any]:
+    max_attempts = max(int(attempts), 1)
+    payload: dict[str, Any] = {}
+    for attempt in range(1, max_attempts + 1):
+        payload = _fetch_plan_url_payload_once(url, timeout_seconds=timeout_seconds)
+        if not _safe_text(payload.get("load_error")):
+            if attempt > 1:
+                payload = dict(payload)
+                payload["fetch_attempts"] = attempt
+            return payload
+        if attempt < max_attempts:
+            time.sleep(max(float(retry_backoff_seconds), 0.0))
+    if max_attempts > 1:
+        payload = dict(payload)
+        payload["fetch_attempts"] = max_attempts
+    return payload
+
+
 def _load_plan(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
     plan_file = cast(Path | None, args.plan_json)
     plan_url = _safe_text(args.plan_url)
@@ -178,29 +354,37 @@ def _load_plan(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]
 
     if plan_file is not None:
         payload = _load_json_file(plan_file)
-        plan = paper_route_target_plan_from_payload(payload) or payload
+        plan, selected_plan = _materialization_plan_from_payload(payload)
+        if not plan:
+            plan = payload
         return (
             dict(plan),
             {
                 "kind": "file",
                 "path": str(plan_file),
+                "selected_plan": selected_plan,
             },
         )
 
     assert plan_url is not None
-    plan = fetch_paper_route_target_plan_url(
+    payload = _fetch_plan_url_payload(
         plan_url,
         timeout_seconds=float(args.plan_url_timeout_seconds),
         attempts=max(int(args.plan_url_attempts), 1),
     )
-    load_error = _safe_text(plan.get("load_error"))
+    load_error = _safe_text(payload.get("load_error"))
     if load_error:
         raise ValueError(load_error)
+    plan, selected_plan = _materialization_plan_from_payload(payload)
+    if not plan:
+        raise ValueError("paper_route_target_plan_missing")
     return (
         dict(plan),
         {
             "kind": "url",
             "url": plan_url,
+            "selected_plan": selected_plan,
+            "fetch_attempts": payload.get("fetch_attempts"),
         },
     )
 
