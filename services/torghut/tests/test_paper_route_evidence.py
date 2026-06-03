@@ -11173,3 +11173,31 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertTrue(readback["runtime_buckets_present"])
         self.assertTrue(readback["evidence_grade_runtime_buckets_present"])
         self.assertFalse(target_audit["readiness"]["promotion_authority"]["allowed"])
+
+    def test_source_audit_sqlalchemy_dsn_uses_installed_psycopg_driver(
+        self,
+    ) -> None:
+        self.assertEqual(
+            paper_route_evidence._source_audit_sqlalchemy_dsn(
+                "postgres://user:pass@postgres/torghut"
+            ),
+            "postgresql+psycopg://user:pass@postgres/torghut",
+        )
+        self.assertEqual(
+            paper_route_evidence._source_audit_sqlalchemy_dsn(
+                "postgresql://user:pass@postgres/torghut"
+            ),
+            "postgresql+psycopg://user:pass@postgres/torghut",
+        )
+        self.assertEqual(
+            paper_route_evidence._source_audit_sqlalchemy_dsn(
+                "postgresql+psycopg://user:pass@postgres/torghut"
+            ),
+            "postgresql+psycopg://user:pass@postgres/torghut",
+        )
+        self.assertEqual(
+            paper_route_evidence._source_audit_sqlalchemy_dsn(
+                "sqlite+pysqlite:///:memory:"
+            ),
+            "sqlite+pysqlite:///:memory:",
+        )

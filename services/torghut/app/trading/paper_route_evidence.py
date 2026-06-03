@@ -6850,6 +6850,17 @@ def _evidence_window_contract(
     }
 
 
+def _source_audit_sqlalchemy_dsn(dsn: str) -> str:
+    text = dsn.strip()
+    if text.startswith("postgresql+psycopg://"):
+        return text
+    if text.startswith("postgres://"):
+        return text.replace("postgres://", "postgresql+psycopg://", 1)
+    if text.startswith("postgresql://"):
+        return text.replace("postgresql://", "postgresql+psycopg://", 1)
+    return text
+
+
 @contextmanager
 def _target_source_audit_session(
     session: Session,
@@ -6878,7 +6889,11 @@ def _target_source_audit_session(
     if not source_dsn:
         yield session, {**metadata, "source_dsn_configured": False}
         return
-    source_engine = create_engine(source_dsn, future=True, pool_pre_ping=True)
+    source_engine = create_engine(
+        _source_audit_sqlalchemy_dsn(source_dsn),
+        future=True,
+        pool_pre_ping=True,
+    )
     try:
         with Session(source_engine) as source_session:
             yield (
