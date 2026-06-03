@@ -93,6 +93,12 @@ class TestFastReplayPreview(TestCase):
                 "feed_delay_ms": Decimal(feed_delay_ms),
                 "feed_trade_direction": "buy",
                 "authoritative_trade_direction": "buy",
+                "trade_direction": "buy",
+                "trade_size": Decimal("100"),
+                "round_trip_latency_ms": Decimal("2.0"),
+                "odd_lot_bid_size": Decimal("20"),
+                "odd_lot_ask_size": Decimal("18"),
+                "off_exchange_trade": stress,
                 "bid_size": Decimal("700"),
                 "ask_size": Decimal("300"),
                 "macro_event_window": stress,
@@ -199,6 +205,10 @@ class TestFastReplayPreview(TestCase):
             "public_feed_lag_quoted_liquidity_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "lob_simulation_reality_gap_execution_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -269,6 +279,20 @@ class TestFastReplayPreview(TestCase):
             {
                 source["source_id"]
                 for source in row_payload["feed_lag_liquidity_stress"]["source_papers"]
+            },
+        )
+        self.assertIn("lob_reality_gap_stress", row_payload)
+        self.assertFalse(row_payload["lob_reality_gap_stress"]["proof_authority"])
+        self.assertFalse(row_payload["lob_reality_gap_stress"]["promotion_authority"])
+        self.assertEqual(
+            row_payload["lob_reality_gap_stress"]["status"],
+            "preview_only_lob_reality_gap_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2603.24137",
+            {
+                source["source_id"]
+                for source in row_payload["lob_reality_gap_stress"]["source_papers"]
             },
         )
         self.assertIn("cost_impact_lineage", row_payload)
