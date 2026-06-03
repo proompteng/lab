@@ -42,6 +42,7 @@ MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_ACTIONABLE_BRACKET_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MIN_SCORECARD_ACTIONABLE_AVG_REALIZED_R = Decimal("0.5")
+LOSSY_SCORECARD_EDGE_DISCOUNT = Decimal("0.5")
 MIN_POST_LOSS_EXPECTED_R = Decimal("3.0")
 MIN_POST_LOSS_BRACKET_R = Decimal("3.0")
 MIN_POST_LOSS_SCORECARD_AVG_REALIZED_R = Decimal("1.0")
@@ -934,7 +935,13 @@ def summarize_scan(
                     "momentum_score",
                     "risk_notes",
                     "scorecard_sample_size",
+                    "scorecard_wins",
+                    "scorecard_losses",
+                    "scorecard_win_rate",
+                    "scorecard_loss_rate",
                     "scorecard_avg_realized_r",
+                    "scorecard_avg_mae_r",
+                    "scorecard_last_outcome",
                     "scorecard_confidence",
                     "current_session_loss_lockout",
                     "current_session_loss_limit",
@@ -976,6 +983,12 @@ def numeric_text(value: Any) -> str | None:
         return str(Decimal(text))
     except InvalidOperation:
         return None
+
+
+def normalized_rate_text(numerator: int, denominator: int) -> str | None:
+    if denominator <= 0:
+        return None
+    return normalized_quantized_decimal_text(Decimal(numerator) / Decimal(denominator), ACCOUNT_RATIO_QUANT)
 
 
 def scorecard_collection(payload: Any, key: str) -> list[Any]:
@@ -1044,6 +1057,8 @@ def scorecard_readback_summary(payload: Any) -> dict[str, Any]:
             symbols.append(symbol.upper())
 
         if len(top_scorecards) < 10:
+            wins = int_text_value(item.get("wins"))
+            losses = int_text_value(item.get("losses"))
             top_scorecards.append(
                 {
                     "key": optional_text(item.get("key"), max_length=240),
@@ -1053,7 +1068,13 @@ def scorecard_readback_summary(payload: Any) -> dict[str, Any]:
                     "regime": optional_text(item.get("regime"), max_length=120),
                     "timeBucket": optional_text(item.get("timeBucket") or item.get("time_bucket"), max_length=80),
                     "sampleSize": sample_size,
+                    "wins": wins,
+                    "losses": losses,
+                    "winRate": normalized_rate_text(wins, wins + losses),
+                    "lossRate": normalized_rate_text(losses, wins + losses),
                     "avgRealizedR": numeric_text(item.get("avgRealizedR") or item.get("avg_realized_r")),
+                    "avgMaeR": numeric_text(item.get("avgMaeR") or item.get("avg_mae_r")),
+                    "lastOutcome": optional_text(item.get("lastOutcome") or item.get("last_outcome"), max_length=80),
                     "confidence": numeric_text(item.get("confidence")),
                 }
             )
@@ -1092,8 +1113,19 @@ def scorecard_usage_summary(scan: dict[str, Any]) -> dict[str, Any]:
                     "setupType": setup_type(result.get("setup_type") or result.get("setupType")),
                     "setupGrade": setup_grade(result.get("setup_grade") or result.get("setupGrade")),
                     "scorecardSampleSize": sample_size,
+                    "scorecardWins": int_text_value(result.get("scorecard_wins") or result.get("scorecardWins")),
+                    "scorecardLosses": int_text_value(result.get("scorecard_losses") or result.get("scorecardLosses")),
+                    "scorecardWinRate": numeric_text(result.get("scorecard_win_rate") or result.get("scorecardWinRate")),
+                    "scorecardLossRate": numeric_text(
+                        result.get("scorecard_loss_rate") or result.get("scorecardLossRate")
+                    ),
                     "scorecardAvgRealizedR": numeric_text(
                         result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR")
+                    ),
+                    "scorecardAvgMaeR": numeric_text(result.get("scorecard_avg_mae_r") or result.get("scorecardAvgMaeR")),
+                    "scorecardLastOutcome": optional_text(
+                        result.get("scorecard_last_outcome") or result.get("scorecardLastOutcome"),
+                        max_length=80,
                     ),
                     "scorecardConfidence": numeric_text(
                         result.get("scorecard_confidence") or result.get("scorecardConfidence")
@@ -1143,7 +1175,14 @@ def scorecard_overlay_for_result(result: dict[str, Any], scorecards: list[Any]) 
     selected = contextual_matches or matches
     weighted_sum = Decimal("0")
     sample_total = 0
+    wins_total = 0
+    losses_total = 0
+    scratches_total = 0
+    avg_mae_weighted_sum = Decimal("0")
+    avg_mae_sample_total = 0
     confidence = Decimal("0")
+    last_updated_at = ""
+    last_outcome: str | None = None
     for scorecard in selected:
         sample_size = int_text_value(scorecard.get("sampleSize") or scorecard.get("sample_size"))
         avg_r = decimal_value(scorecard.get("avgRealizedR") or scorecard.get("avg_realized_r"))
@@ -1151,12 +1190,33 @@ def scorecard_overlay_for_result(result: dict[str, Any], scorecards: list[Any]) 
             continue
         weighted_sum += avg_r * Decimal(sample_size)
         sample_total += sample_size
+        wins_total += int_text_value(scorecard.get("wins"))
+        losses_total += int_text_value(scorecard.get("losses"))
+        scratches_total += int_text_value(scorecard.get("scratches"))
+        avg_mae = decimal_value(scorecard.get("avgMaeR") or scorecard.get("avg_mae_r"))
+        if avg_mae is not None:
+            avg_mae_weighted_sum += avg_mae * Decimal(sample_size)
+            avg_mae_sample_total += sample_size
         confidence = max(confidence, decimal_value(scorecard.get("confidence")) or Decimal("0"))
+        updated_at = optional_text(scorecard.get("updatedAt") or scorecard.get("updated_at"), max_length=80) or ""
+        if updated_at >= last_updated_at:
+            last_updated_at = updated_at
+            last_outcome = optional_text(scorecard.get("lastOutcome") or scorecard.get("last_outcome"), max_length=80)
     if sample_total <= 0:
         return None
+    decisive_total = wins_total + losses_total
     return {
         "scorecard_sample_size": str(sample_total),
+        "scorecard_wins": str(wins_total),
+        "scorecard_losses": str(losses_total),
+        "scorecard_scratches": str(scratches_total),
+        "scorecard_win_rate": normalized_rate_text(wins_total, decisive_total),
+        "scorecard_loss_rate": normalized_rate_text(losses_total, decisive_total),
         "scorecard_avg_realized_r": str(weighted_sum / Decimal(sample_total)),
+        "scorecard_avg_mae_r": (
+            str(avg_mae_weighted_sum / Decimal(avg_mae_sample_total)) if avg_mae_sample_total > 0 else None
+        ),
+        "scorecard_last_outcome": last_outcome,
         "scorecard_confidence": str(confidence),
     }
 
@@ -1817,8 +1877,17 @@ def record_scan_tickets(
                 "scorecardSampleSize": int_text_value(
                     result.get("scorecard_sample_size") or result.get("scorecardSampleSize")
                 ),
+                "scorecardWins": int_text_value(result.get("scorecard_wins") or result.get("scorecardWins")),
+                "scorecardLosses": int_text_value(result.get("scorecard_losses") or result.get("scorecardLosses")),
+                "scorecardWinRate": numeric_text(result.get("scorecard_win_rate") or result.get("scorecardWinRate")),
+                "scorecardLossRate": numeric_text(result.get("scorecard_loss_rate") or result.get("scorecardLossRate")),
                 "scorecardAvgRealizedR": numeric_text(
                     result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR")
+                ),
+                "scorecardAvgMaeR": numeric_text(result.get("scorecard_avg_mae_r") or result.get("scorecardAvgMaeR")),
+                "scorecardLastOutcome": optional_text(
+                    result.get("scorecard_last_outcome") or result.get("scorecardLastOutcome"),
+                    max_length=80,
                 ),
                 "scorecardConfidence": numeric_text(
                     result.get("scorecard_confidence") or result.get("scorecardConfidence")
@@ -1833,6 +1902,36 @@ def scorecard_edge_values(result: dict[str, Any]) -> tuple[int, Decimal | None, 
     avg_realized_r = decimal_value(result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR"))
     confidence = decimal_value(result.get("scorecard_confidence") or result.get("scorecardConfidence")) or Decimal("0")
     return sample_size, avg_realized_r, confidence
+
+
+def scorecard_outcome_counts(result: dict[str, Any]) -> tuple[int, int, int]:
+    return (
+        int_text_value(result.get("scorecard_wins") or result.get("scorecardWins")),
+        int_text_value(result.get("scorecard_losses") or result.get("scorecardLosses")),
+        int_text_value(result.get("scorecard_scratches") or result.get("scorecardScratches")),
+    )
+
+
+def scorecard_last_outcome(result: dict[str, Any]) -> str | None:
+    return optional_text(result.get("scorecard_last_outcome") or result.get("scorecardLastOutcome"), max_length=80)
+
+
+def scorecard_edge_quality_factor(result: dict[str, Any]) -> Decimal:
+    wins, losses, _scratches = scorecard_outcome_counts(result)
+    decisive = wins + losses
+    quality = Decimal(wins) / Decimal(decisive) if decisive > 0 else Decimal("1")
+    if scorecard_last_outcome(result) == "loss":
+        quality *= LOSSY_SCORECARD_EDGE_DISCOUNT
+    return quality
+
+
+def scorecard_scale_suppression_reason(result: dict[str, Any]) -> str | None:
+    if scorecard_last_outcome(result) == "loss":
+        return "scorecard_last_outcome_loss"
+    wins, losses, _scratches = scorecard_outcome_counts(result)
+    if losses > 0 and wins <= losses:
+        return "scorecard_wins_not_above_losses"
+    return None
 
 
 def scorecard_edge_weight(sample_size: int) -> Decimal:
@@ -1852,9 +1951,20 @@ def scorecard_risk_directive(result: dict[str, Any], account: dict[str, Any] | N
         if sample_size >= MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE
         else Decimal("1.0")
     )
+    scale_suppression_reason = scorecard_scale_suppression_reason(result)
+    if scale_suppression_reason is not None:
+        risk_multiplier = Decimal("1.0")
+    else:
+        risk_multiplier = min(
+            risk_multiplier,
+            max(Decimal("1.0"), avg_realized_r * scorecard_edge_quality_factor(result)),
+        )
+    wins, losses, scratches = scorecard_outcome_counts(result)
+    last_outcome = scorecard_last_outcome(result)
+    has_quality_data = wins + losses + scratches > 0 or last_outcome is not None
     directive: dict[str, Any] = {
         "source": "scorecard_realized_r",
-        "mode": "scale_positive_realized_edge",
+        "mode": "scale_positive_quality_adjusted_realized_edge" if has_quality_data else "scale_positive_realized_edge",
         "riskMultiplier": str(risk_multiplier),
         "maxRiskMultiplier": str(MAX_SCORECARD_RISK_MULTIPLIER),
         "minimumScaleSampleSize": MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE,
@@ -1867,6 +1977,22 @@ def scorecard_risk_directive(result: dict[str, Any], account: dict[str, Any] | N
             else "positive_scorecard_edge_pending_repeat_sample"
         ),
     }
+    if has_quality_data:
+        directive.update(
+            {
+                "scorecardWins": wins,
+                "scorecardLosses": losses,
+                "scorecardScratches": scratches,
+                "scorecardWinRate": normalized_rate_text(wins, wins + losses),
+                "scorecardLossRate": normalized_rate_text(losses, wins + losses),
+                "scorecardLastOutcome": last_outcome,
+                **(
+                    {"riskScaleSuppressedReason": scale_suppression_reason}
+                    if scale_suppression_reason is not None
+                    else {}
+                ),
+            }
+        )
     risk_dollars = decimal_value(result.get("risk_dollars") or result.get("riskDollars"))
     risk_budget = risk_budget_for_account(account)
     if risk_dollars is not None and risk_dollars > 0:
@@ -1910,7 +2036,7 @@ def candidate_score(result: dict[str, Any]) -> tuple[Decimal, Decimal, int, int,
     executable_r = min(expected_r, bracket_r) if bracket_r is not None else expected_r
     sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
     scorecard_edge = (
-        avg_realized_r * scorecard_edge_weight(sample_size)
+        avg_realized_r * scorecard_edge_weight(sample_size) * scorecard_edge_quality_factor(result)
         if sample_size > 0 and avg_realized_r is not None and avg_realized_r > 0
         else Decimal("0")
     )
