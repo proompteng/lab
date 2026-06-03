@@ -115,6 +115,33 @@ ORDER_FEED_LIFECYCLE_MISSING_BLOCKER = "order_feed_lifecycle_missing"
 EXECUTION_ECONOMICS_MISSING_BLOCKER = "execution_economics_missing"
 ORDER_FEED_FILL_DELTA_BASIS_MISSING_BLOCKER = "order_feed_fill_delta_basis_missing"
 ORDER_FEED_FILL_DELTA_MISSING_BLOCKER = "order_feed_fill_delta_missing"
+_EXECUTION_TCA_REF_KEYS = (
+    "execution_tca_metric_ids",
+    "execution_tca_metric_refs",
+    "execution_tca_metric_id",
+    "execution_tca_metric_ref",
+    "execution_tca_metrics",
+    "execution_tca_ids",
+    "execution_tca_refs",
+    "execution_tca_id",
+    "execution_tca_ref",
+    "runtime_ledger_execution_tca_metric_ids",
+    "runtime_ledger_execution_tca_metric_refs",
+    "runtime_ledger_execution_tca_metric_id",
+    "runtime_ledger_execution_tca_metric_ref",
+    "runtime_ledger_execution_tca_ids",
+    "runtime_ledger_execution_tca_refs",
+    "runtime_ledger_execution_tca_id",
+    "runtime_ledger_execution_tca_ref",
+    "tca_metric_ids",
+    "tca_metric_refs",
+    "tca_metric_id",
+    "tca_metric_ref",
+    "tca_ids",
+    "tca_refs",
+    "tca_id",
+    "tca_ref",
+)
 _RUNTIME_LIFECYCLE_IDENTIFIER_KEYS = (
     "execution_id",
     "trade_decision_id",
@@ -1097,11 +1124,7 @@ def _runtime_ledger_bucket_profit_proof_blockers(
     tca_count = _nonnegative_int(
         _as_mapping(bucket.get("source_row_counts")).get("execution_tca_metrics")
     )
-    execution_tca_ref_count = len(
-        _metadata_text_list(bucket.get("execution_tca_metric_ids"))
-        or _metadata_text_list(bucket.get("execution_tca_metric_refs"))
-        or _metadata_text_list(bucket.get("execution_tca_metrics"))
-    )
+    execution_tca_ref_count = len(_runtime_ledger_execution_tca_metric_refs(bucket))
     execution_tca_required = (
         _first_bool(bucket, "execution_tca_required", "requires_execution_tca") is True
         or tca_count > 0
@@ -1828,6 +1851,35 @@ def _metadata_text_list(value: Any) -> list[str]:
     return [
         text for item in cast(Sequence[Any], value) if (text := str(item or "").strip())
     ]
+
+
+def _runtime_ledger_tca_ref_texts(value: Any) -> list[str]:
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, object], value)
+        for key in _EXECUTION_TCA_REF_KEYS + ("id", "ref"):
+            if (text := _text_or_none(mapping.get(key))) is not None:
+                return [text]
+        return []
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        refs: list[str] = []
+        for item in cast(Sequence[object], value):
+            if isinstance(item, Mapping):
+                refs.extend(_runtime_ledger_tca_ref_texts(item))
+                continue
+            if (text := _text_or_none(item)) is not None:
+                refs.append(text)
+        return refs
+    text = _text_or_none(value)
+    return [text] if text is not None else []
+
+
+def _runtime_ledger_execution_tca_metric_refs(
+    bucket: Mapping[str, object],
+) -> list[str]:
+    refs: list[str] = []
+    for key in _EXECUTION_TCA_REF_KEYS:
+        refs.extend(_runtime_ledger_tca_ref_texts(bucket.get(key)))
+    return list(dict.fromkeys(refs))
 
 
 def _metadata_symbol_list(value: Any) -> list[str]:

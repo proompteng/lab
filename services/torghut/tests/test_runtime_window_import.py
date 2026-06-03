@@ -2583,6 +2583,53 @@ class TestRuntimeWindowImport(TestCase):
             "runtime_ledger_execution_order_event_refs_missing", alias_blockers
         )
 
+    def test_runtime_ledger_bucket_tca_refs_accept_readback_aliases(
+        self,
+    ) -> None:
+        readback_alias_bucket = _runtime_ledger_bucket(
+            execution_tca_metric_ids=[],
+            runtime_ledger_execution_tca_metric_ids=["tca-buy", "tca-sell"],
+        )
+        readback_alias_blockers = _runtime_ledger_bucket_blockers(readback_alias_bucket)
+        self.assertNotIn("execution_tca_missing", readback_alias_blockers)
+        self.assertNotIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            readback_alias_blockers,
+        )
+
+        split_alias_bucket = _runtime_ledger_bucket(
+            execution_tca_metric_ids=["tca-buy"],
+            runtime_ledger_execution_tca_metric_ids=["tca-sell"],
+        )
+        split_alias_blockers = _runtime_ledger_bucket_blockers(split_alias_bucket)
+        self.assertNotIn("execution_tca_missing", split_alias_blockers)
+        self.assertNotIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            split_alias_blockers,
+        )
+
+        mapping_alias_bucket = _runtime_ledger_bucket(
+            execution_tca_metric_ids={"id": "tca-buy"},
+            runtime_ledger_execution_tca_metric_ids=[{"ref": "tca-sell"}],
+        )
+        mapping_alias_blockers = _runtime_ledger_bucket_blockers(mapping_alias_bucket)
+        self.assertNotIn("execution_tca_missing", mapping_alias_blockers)
+        self.assertNotIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            mapping_alias_blockers,
+        )
+
+        missing_ref_bucket = _runtime_ledger_bucket(
+            execution_tca_metric_ids={"ignored": "not-a-ref"},
+            execution_tca_metric_refs=["tca-buy"],
+        )
+        missing_ref_blockers = _runtime_ledger_bucket_blockers(missing_ref_bucket)
+        self.assertIn("execution_tca_missing", missing_ref_blockers)
+        self.assertIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            missing_ref_blockers,
+        )
+
     def test_runtime_ledger_bucket_requires_structured_source_offsets(self) -> None:
         for malformed_offsets in (
             ["alpaca.trade_updates:0:100"],
