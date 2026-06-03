@@ -415,7 +415,48 @@ jobs:
           export TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"
           export TORGHUT_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-paper-route-evidence.json"
           export TORGHUT_SIM_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json"
-          bun run packages/scripts/src/torghut/post-deploy-evidence.ts
+
+          validate_post_deploy_evidence() {
+            local attempt
+            local status
+            local output_path="${EVIDENCE_DIR}/post-deploy-evidence-validator.out"
+
+            for attempt in $(seq 1 48); do
+              set +e
+              bun run packages/scripts/src/torghut/post-deploy-evidence.ts > "${output_path}" 2>&1
+              status=$?
+              set -e
+
+              if [ "${status}" -eq 0 ]; then
+                cat "${output_path}"
+                return 0
+              fi
+
+              if ! grep -Eq 'torghut-sim paper-route target plan (is empty while live torghut exposes targets|missing live target)' "${output_path}"; then
+                cat "${output_path}" >&2
+                return "${status}"
+              fi
+
+              if [ "${attempt}" -eq 48 ]; then
+                echo "Torghut sim paper-route target mirror did not materialize after bounded retry window" >&2
+                cat "${output_path}" >&2
+                return "${status}"
+              fi
+
+              echo "Attempt ${attempt}: Torghut sim paper-route target mirror not materialized yet; refreshing evidence payloads" >&2
+              fetch_json_2xx \
+                http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
+                "${EVIDENCE_DIR}/torghut-paper-route-evidence.json" \
+                "Torghut /trading/paper-route-evidence"
+              fetch_json_2xx \
+                http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
+                "${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json" \
+                "Torghut sim /trading/paper-route-evidence"
+              sleep 10
+            done
+          }
+
+          validate_post_deploy_evidence
 
       - name: Close superseded Torghut rollback pull requests
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
