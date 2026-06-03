@@ -194,16 +194,43 @@ def _safe_text(value: object) -> str | None:
 
 
 def _target_symbols(target: Mapping[str, Any]) -> set[str]:
-    raw_symbols = target.get("paper_route_probe_symbols")
-    if isinstance(raw_symbols, str):
-        values = raw_symbols.split(",")
-    elif isinstance(raw_symbols, Sequence) and not isinstance(
-        raw_symbols, (str, bytes, bytearray)
+    symbols: set[str] = set()
+    for field in (
+        "paper_route_probe_symbols",
+        "paper_route_probe_raw_target_symbols",
+        "symbols",
+        "target_symbols",
     ):
-        values = cast(Sequence[object], raw_symbols)
-    else:
-        values = ()
-    return {symbol for raw in values if (symbol := str(raw).strip().upper())}
+        raw_symbols = target.get(field)
+        if isinstance(raw_symbols, str):
+            values = raw_symbols.split(",")
+        elif isinstance(raw_symbols, Sequence) and not isinstance(
+            raw_symbols, (str, bytes, bytearray)
+        ):
+            values = cast(Sequence[object], raw_symbols)
+        else:
+            values = ()
+        for raw in values:
+            if symbol := str(raw).strip().upper():
+                symbols.add(symbol)
+
+    for field in (
+        "paper_route_probe_symbol_actions",
+        "symbol_actions",
+        "target_symbol_actions",
+    ):
+        raw_actions = target.get(field)
+        if not isinstance(raw_actions, Mapping):
+            continue
+        for raw_symbol in cast(Mapping[object, object], raw_actions):
+            if symbol := str(raw_symbol).strip().upper():
+                symbols.add(symbol)
+
+    execution_source_key = target.get("paper_route_execution_source_key")
+    if isinstance(execution_source_key, Mapping):
+        symbols.update(_target_symbols(cast(Mapping[str, Any], execution_source_key)))
+
+    return symbols
 
 
 def _target_plan_lineage(
@@ -3994,77 +4021,17 @@ class SimpleTradingPipeline(TradingPipeline):
 
         resolved_targets: list[dict[str, Any]] = []
         for target in targets:
-            resolved_target = {
-                **dict(target),
-                "paper_route_target_plan_source": _safe_text(
-                    target.get("paper_route_target_plan_source")
-                )
-                or "local_live_submission_gate",
-            }
-            target_symbols = _target_symbols(resolved_target)
-            strategy = (
-                self._paper_route_target_strategy(resolved_target, strategies)
-                if strategies is not None
-                else None
+            resolved_target = self._paper_route_target_with_local_probe_contract(
+                {
+                    **dict(target),
+                    "paper_route_target_plan_source": _safe_text(
+                        target.get("paper_route_target_plan_source")
+                    )
+                    or "local_live_submission_gate",
+                },
+                strategies=strategies,
             )
-            strategy_symbols = (
-                sorted(self._paper_route_target_strategy_symbols(strategy))
-                if strategy is not None
-                else []
-            )
-            if not target_symbols and strategy_symbols:
-                resolved_target["paper_route_probe_symbols"] = strategy_symbols
-                resolved_target["paper_route_probe_raw_target_symbols"] = []
-                resolved_target["paper_route_probe_strategy_scope_applied"] = True
-                resolved_target["paper_route_probe_strategy_universe_fallback"] = True
-                resolved_target["paper_route_probe_strategy_universe_symbols"] = (
-                    strategy_symbols
-                )
-                target_symbols = set(strategy_symbols)
-            if (
-                target_symbols
-                and strategy is not None
-                and not isinstance(
-                    resolved_target.get("source_decision_readiness"), Mapping
-                )
-            ):
-                readiness_blockers = (
-                    [] if bool(strategy.enabled) else ["source_strategy_disabled"]
-                )
-                resolved_target["source_decision_readiness"] = {
-                    "schema_version": (
-                        "torghut.paper-route-source-decision-readiness.v1"
-                    ),
-                    "ready": not readiness_blockers,
-                    "blockers": readiness_blockers,
-                    "strategy_lookup_names": [
-                        item
-                        for item in (
-                            _safe_text(strategy.name),
-                            _safe_text(resolved_target.get("strategy_name")),
-                            _safe_text(resolved_target.get("runtime_strategy_name")),
-                            _safe_text(resolved_target.get("strategy_id")),
-                        )
-                        if item
-                    ],
-                    "matched_strategy": {
-                        "strategy_id": str(strategy.id or ""),
-                        "strategy_name": strategy.name,
-                        "enabled": bool(strategy.enabled),
-                        "base_timeframe": strategy.base_timeframe,
-                        "universe_symbols": strategy_symbols,
-                        "max_notional_per_trade": (
-                            str(strategy.max_notional_per_trade)
-                            if strategy.max_notional_per_trade is not None
-                            else "0"
-                        ),
-                    },
-                    "raw_probe_symbols": sorted(target_symbols),
-                    "scoped_probe_symbols": sorted(target_symbols),
-                    "source": "local_strategy_universe_target_plan_fallback",
-                }
             resolved_targets.append(resolved_target)
-
         symbols = set(
             paper_route_target_plan_probe_symbols({"targets": resolved_targets})
         )
@@ -4109,10 +4076,17 @@ class SimpleTradingPipeline(TradingPipeline):
                 plan.get("fetch_attempts") or 1,
             )
             return set(), load_error, []
-        symbols = paper_route_target_plan_probe_symbols(plan)
+        targets = [
+            self._paper_route_target_with_local_probe_contract(
+                target,
+                strategies=strategies,
+            )
+            for target in paper_route_target_plan_targets(plan)
+        ]
+        symbols = set(paper_route_target_plan_probe_symbols({"targets": targets}))
         if not symbols:
             return set(), "paper_route_target_plan_probe_symbols_missing", []
-        return symbols, None, paper_route_target_plan_targets(plan)
+        return symbols, None, targets
 
     def _external_paper_route_target_probe_symbols_cached(
         self,
@@ -4268,6 +4242,105 @@ class SimpleTradingPipeline(TradingPipeline):
         else:
             values = ()
         return {symbol for raw in values if (symbol := str(raw).strip().upper())}
+
+    @staticmethod
+    def _paper_route_target_source_readiness_from_strategy(
+        target: Mapping[str, Any],
+        *,
+        strategy: Strategy | None,
+        raw_probe_symbols: set[str],
+        scoped_probe_symbols: set[str],
+    ) -> dict[str, object]:
+        lookup_names = [
+            name for name in _target_lookup_names(target) if str(name).strip()
+        ]
+        blockers: list[str] = []
+        matched: dict[str, object] | None = None
+        if strategy is None:
+            if not lookup_names:
+                blockers.append("source_strategy_lookup_missing")
+            blockers.append("source_strategy_missing")
+        else:
+            if not lookup_names:
+                lookup_names = _strategy_lookup_names(strategy)
+            matched = {
+                "strategy_id": str(strategy.id or ""),
+                "strategy_name": str(strategy.name or ""),
+                "enabled": bool(strategy.enabled),
+                "base_timeframe": str(strategy.base_timeframe or ""),
+                "universe_symbols": sorted(
+                    SimpleTradingPipeline._paper_route_target_strategy_symbols(strategy)
+                ),
+                "max_notional_per_trade": str(strategy.max_notional_per_trade or ""),
+            }
+            if not bool(strategy.enabled):
+                blockers.append("source_strategy_disabled")
+        if not raw_probe_symbols:
+            blockers.append("paper_route_probe_symbol_missing")
+        elif not scoped_probe_symbols:
+            blockers.append("source_strategy_universe_excludes_probe_symbols")
+        return {
+            "schema_version": "torghut.paper-route-source-decision-readiness.v1",
+            "ready": not blockers,
+            "blockers": blockers,
+            "strategy_lookup_names": lookup_names,
+            "matched_strategy": matched,
+            "raw_probe_symbols": sorted(raw_probe_symbols),
+            "scoped_probe_symbols": sorted(scoped_probe_symbols),
+        }
+
+    def _paper_route_target_with_local_probe_contract(
+        self,
+        target: Mapping[str, Any],
+        *,
+        strategies: Sequence[Strategy] | None,
+    ) -> dict[str, Any]:
+        normalized = dict(target)
+        strategy = (
+            self._paper_route_target_strategy(normalized, strategies)
+            if strategies is not None
+            else None
+        )
+        raw_symbols = _target_symbols(normalized)
+        scoped_symbols = set(raw_symbols)
+        strategy_symbols: set[str] = set()
+        if strategy is not None:
+            strategy_symbols = self._paper_route_target_strategy_symbols(strategy)
+            if not raw_symbols and strategy_symbols:
+                raw_symbols = set(strategy_symbols)
+                scoped_symbols = set(strategy_symbols)
+                normalized.setdefault("paper_route_probe_raw_target_symbols", [])
+                normalized.setdefault("paper_route_probe_strategy_scope_applied", True)
+                normalized.setdefault(
+                    "paper_route_probe_strategy_universe_fallback",
+                    True,
+                )
+                normalized.setdefault(
+                    "paper_route_probe_strategy_universe_symbols",
+                    sorted(strategy_symbols),
+                )
+                normalized.setdefault(
+                    "paper_route_probe_scope_authority",
+                    "strategy_universe",
+                )
+            elif strategy_symbols:
+                scoped_symbols = raw_symbols & strategy_symbols
+
+        if raw_symbols and not _target_symbols(normalized):
+            normalized["paper_route_probe_symbols"] = sorted(raw_symbols)
+        elif raw_symbols and "paper_route_probe_symbols" not in normalized:
+            normalized["paper_route_probe_symbols"] = sorted(raw_symbols)
+
+        if not isinstance(normalized.get("source_decision_readiness"), Mapping):
+            normalized["source_decision_readiness"] = (
+                self._paper_route_target_source_readiness_from_strategy(
+                    normalized,
+                    strategy=strategy,
+                    raw_probe_symbols=raw_symbols,
+                    scoped_probe_symbols=scoped_symbols,
+                )
+            )
+        return normalized
 
     @staticmethod
     def _paper_route_target_source_decision_metadata(
