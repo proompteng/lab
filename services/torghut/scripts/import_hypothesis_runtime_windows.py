@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -664,11 +665,14 @@ def _partition_runtime_source_rows_by_decision_mode(
     ]
     | None
 ):
-    source_rows: list[dict[str, object]] = [
+    current_source_rows: list[dict[str, object]] = [
         *execution_rows,
         *(decision_lifecycle_rows or []),
         *(order_lifecycle_rows or []),
         *(unlinked_order_lifecycle_rows or []),
+    ]
+    source_rows: list[dict[str, object]] = [
+        *current_source_rows,
         *(carry_in_execution_rows or []),
         *(carry_in_decision_lifecycle_rows or []),
         *(carry_in_order_lifecycle_rows or []),
@@ -681,7 +685,7 @@ def _partition_runtime_source_rows_by_decision_mode(
     )
     partition_relevant_source_rows = [
         row
-        for row in source_rows
+        for row in current_source_rows
         if not _source_row_is_paper_route_probe_exit_or_linked(
             row,
             paper_route_probe_exit_identifiers=paper_route_probe_exit_identifiers,
@@ -2772,19 +2776,44 @@ def _execution_id_by_order_id(
     }
 
 
+def _execution_side_by_order_id(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, str]:
+    sides_by_order_id: dict[str, set[str]] = {}
+    for row in rows:
+        order_id = _runtime_order_id(row)
+        side = _first_text(row, "side", "order_side")
+        if order_id is None or side is None:
+            continue
+        sides_by_order_id.setdefault(order_id, set()).add(side)
+    return {
+        order_id: next(iter(sides))
+        for order_id, sides in sides_by_order_id.items()
+        if len(sides) == 1
+    }
+
+
 def _with_linked_execution_id(
     row: Mapping[str, object],
     *,
     execution_id_by_order_id: Mapping[str, str],
+    execution_side_by_order_id: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     payload = dict(row)
-    if _first_text(payload, "execution_id") is not None:
-        return payload
     order_id = _runtime_order_id(payload)
-    if order_id is not None and (
-        execution_id := execution_id_by_order_id.get(order_id)
+    if (
+        _first_text(payload, "execution_id") is None
+        and order_id is not None
+        and (execution_id := execution_id_by_order_id.get(order_id))
     ):
         payload["execution_id"] = execution_id
+    if (
+        _first_text(payload, "side", "order_side") is None
+        and order_id is not None
+        and execution_side_by_order_id is not None
+        and (side := execution_side_by_order_id.get(order_id))
+    ):
+        payload["side"] = side
     return payload
 
 
@@ -3054,6 +3083,256 @@ def _runtime_source_decision_ids(rows: Sequence[Mapping[str, object]]) -> set[st
             if value is not None:
                 identifiers.add(value)
     return identifiers
+
+
+def _ledger_row_value(
+    row: RuntimeLedgerFill | Mapping[str, object],
+    *keys: str,
+) -> object | None:
+    if isinstance(row, Mapping):
+        for key in keys:
+            if key in row:
+                return row.get(key)
+        return None
+    for key in keys:
+        value = getattr(row, key, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _ledger_row_text(
+    row: RuntimeLedgerFill | Mapping[str, object],
+    *keys: str,
+) -> str | None:
+    for key in keys:
+        value = _ledger_row_value(row, key)
+        if (text := _text_or_none(value)) is not None:
+            return text
+    return None
+
+
+def _ledger_row_decimal(
+    row: RuntimeLedgerFill | Mapping[str, object],
+    *keys: str,
+) -> Decimal | None:
+    for key in keys:
+        value = _ledger_row_value(row, key)
+        if (parsed := _decimal_or_none(value)) is not None:
+            return parsed
+    return None
+
+
+def _ledger_row_time(row: RuntimeLedgerFill | Mapping[str, object]) -> datetime | None:
+    if isinstance(row, Mapping):
+        return _runtime_ledger_row_time({str(key): value for key, value in row.items()})
+    value = getattr(row, "executed_at", None)
+    return value if isinstance(value, datetime) else None
+
+
+def _ledger_row_event_type(row: RuntimeLedgerFill | Mapping[str, object]) -> str:
+    if isinstance(row, Mapping):
+        return _runtime_ledger_event_type(
+            {str(key): value for key, value in row.items()}
+        )
+    return str(getattr(row, "event_type", "") or "").strip().lower()
+
+
+def _ledger_row_order_id(row: RuntimeLedgerFill | Mapping[str, object]) -> str | None:
+    return _ledger_row_text(
+        row,
+        "order_id",
+        "alpaca_order_id",
+        "client_order_id",
+        "execution_correlation_id",
+    )
+
+
+def _ledger_row_decision_id(
+    row: RuntimeLedgerFill | Mapping[str, object],
+) -> str | None:
+    return _ledger_row_text(row, "decision_id", "trade_decision_id", "decision_hash")
+
+
+def _ledger_row_symbol(row: RuntimeLedgerFill | Mapping[str, object]) -> str | None:
+    symbol = _ledger_row_text(row, "symbol", "ticker")
+    return symbol.upper() if symbol is not None else None
+
+
+def _ledger_row_position_key(
+    row: RuntimeLedgerFill | Mapping[str, object],
+) -> tuple[str | None, str | None, str | None]:
+    return (
+        _ledger_row_text(row, "account_label", "alpaca_account_label"),
+        _ledger_row_text(row, "strategy_id", "strategy_name"),
+        _ledger_row_symbol(row),
+    )
+
+
+def _ledger_row_side_sign(row: RuntimeLedgerFill | Mapping[str, object]) -> Decimal:
+    side = (_ledger_row_text(row, "side", "order_side") or "").strip().lower()
+    if side in {"buy", "long", "b"}:
+        return Decimal("1")
+    if side in {"sell", "short", "s"}:
+        return Decimal("-1")
+    return Decimal("0")
+
+
+def _adjust_carry_in_lot_row(
+    row: RuntimeLedgerFill | Mapping[str, object],
+    *,
+    remaining_qty: Decimal,
+    original_qty: Decimal,
+) -> RuntimeLedgerFill | dict[str, object]:
+    ratio = remaining_qty / original_qty if original_qty > 0 else Decimal("1")
+    price = _ledger_row_decimal(
+        row,
+        "avg_fill_price",
+        "filled_avg_price",
+        "filled_average_price",
+        "average_fill_price",
+        "fill_price",
+        "filled_price",
+    )
+    filled_notional = remaining_qty * price if price is not None else None
+    cost_amount = _ledger_row_decimal(row, "cost_amount")
+    adjusted_cost = cost_amount * ratio if cost_amount is not None else None
+    if isinstance(row, RuntimeLedgerFill):
+        return replace(
+            row,
+            filled_qty=remaining_qty,
+            filled_notional=filled_notional,
+            cost_amount=adjusted_cost,
+        )
+    adjusted = dict(row)
+    adjusted["filled_qty"] = remaining_qty
+    if "filled_qty_delta" in adjusted:
+        adjusted["filled_qty_delta"] = remaining_qty
+    if filled_notional is not None:
+        adjusted["filled_notional"] = filled_notional
+        if "filled_notional_delta" in adjusted:
+            adjusted["filled_notional_delta"] = filled_notional
+    if adjusted_cost is not None:
+        adjusted["cost_amount"] = adjusted_cost
+    return adjusted
+
+
+def _active_carry_in_ledger_rows(
+    rows: Sequence[RuntimeLedgerFill | Mapping[str, object]],
+    *,
+    bucket_start: datetime,
+) -> tuple[list[RuntimeLedgerFill | dict[str, object]], set[str], set[str]]:
+    lots_by_key: dict[
+        tuple[str | None, str | None, str | None],
+        list[dict[str, object]],
+    ] = {}
+    for row in sorted(
+        rows,
+        key=lambda item: (
+            _ledger_row_time(item) or bucket_start,
+            _ledger_row_order_id(item) or "",
+        ),
+    ):
+        event_time = _ledger_row_time(row)
+        if event_time is None or event_time >= bucket_start:
+            continue
+        if _ledger_row_event_type(row) not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        side_sign = _ledger_row_side_sign(row)
+        if side_sign == 0:
+            continue
+        qty = _ledger_row_decimal(
+            row, "filled_qty", "filled_quantity", "qty", "quantity"
+        )
+        price = _ledger_row_decimal(
+            row,
+            "avg_fill_price",
+            "filled_avg_price",
+            "filled_average_price",
+            "average_fill_price",
+            "fill_price",
+            "filled_price",
+        )
+        if qty is None or qty <= 0 or price is None or price <= 0:
+            continue
+        key = _ledger_row_position_key(row)
+        lots = lots_by_key.setdefault(key, [])
+        remaining_qty = qty
+        for lot in list(lots):
+            if remaining_qty <= 0:
+                break
+            if cast(Decimal, lot["side_sign"]) == side_sign:
+                continue
+            lot_qty = cast(Decimal, lot["remaining_qty"])
+            close_qty = min(remaining_qty, lot_qty)
+            lot["remaining_qty"] = lot_qty - close_qty
+            remaining_qty -= close_qty
+            if cast(Decimal, lot["remaining_qty"]) <= 0:
+                lots.remove(lot)
+        if remaining_qty > 0:
+            lots.append(
+                {
+                    "row": row,
+                    "side_sign": side_sign,
+                    "remaining_qty": remaining_qty,
+                    "original_qty": qty,
+                }
+            )
+
+    active_rows: list[RuntimeLedgerFill | dict[str, object]] = []
+    active_order_ids: set[str] = set()
+    active_decision_ids: set[str] = set()
+    for lots in lots_by_key.values():
+        for lot in lots:
+            remaining_qty = cast(Decimal, lot["remaining_qty"])
+            original_qty = cast(Decimal, lot["original_qty"])
+            if remaining_qty <= 0 or original_qty <= 0:
+                continue
+            row = cast(RuntimeLedgerFill | Mapping[str, object], lot["row"])
+            adjusted = _adjust_carry_in_lot_row(
+                row,
+                remaining_qty=remaining_qty,
+                original_qty=original_qty,
+            )
+            active_rows.append(adjusted)
+            if (order_id := _ledger_row_order_id(adjusted)) is not None:
+                active_order_ids.add(order_id)
+            if (decision_id := _ledger_row_decision_id(adjusted)) is not None:
+                active_decision_ids.add(decision_id)
+    linked_lifecycle_rows: list[RuntimeLedgerFill | dict[str, object]] = []
+    for row in rows:
+        event_time = _ledger_row_time(row)
+        if event_time is None or event_time >= bucket_start:
+            continue
+        if _ledger_row_event_type(row) in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        order_id = _ledger_row_order_id(row)
+        decision_id = _ledger_row_decision_id(row)
+        if (order_id is not None and order_id in active_order_ids) or (
+            decision_id is not None and decision_id in active_decision_ids
+        ):
+            linked_lifecycle_rows.append(dict(row) if isinstance(row, Mapping) else row)
+    return [*linked_lifecycle_rows, *active_rows], active_order_ids, active_decision_ids
+
+
+def _filter_carry_in_source_rows_for_active_lots(
+    rows: list[dict[str, object]] | None,
+    *,
+    active_order_ids: set[str],
+    active_decision_ids: set[str],
+) -> list[dict[str, object]] | None:
+    if not rows or (not active_order_ids and not active_decision_ids):
+        return None
+    filtered = [
+        row
+        for row in rows
+        if (
+            (order_id := _runtime_order_id(row)) is not None
+            and order_id in active_order_ids
+        )
+        or bool(_runtime_source_decision_ids([row]) & active_decision_ids)
+    ]
+    return filtered or None
 
 
 def _runtime_order_rows_for_bucket(
@@ -3955,10 +4234,15 @@ def _build_realized_strategy_pnl_rows(
     carry_in_execution_id_by_order_id = _execution_id_by_order_id(
         carry_in_execution_rows or []
     )
+    execution_side_by_order_id = _execution_side_by_order_id(execution_rows)
+    carry_in_execution_side_by_order_id = _execution_side_by_order_id(
+        carry_in_execution_rows or []
+    )
     order_lifecycle_rows = [
         _with_linked_execution_id(
             row,
             execution_id_by_order_id=execution_id_by_order_id,
+            execution_side_by_order_id=execution_side_by_order_id,
         )
         for row in order_lifecycle_rows or []
     ]
@@ -3966,6 +4250,7 @@ def _build_realized_strategy_pnl_rows(
         _with_linked_execution_id(
             row,
             execution_id_by_order_id=carry_in_execution_id_by_order_id,
+            execution_side_by_order_id=carry_in_execution_side_by_order_id,
         )
         for row in carry_in_order_lifecycle_rows or []
     ]
@@ -4136,6 +4421,29 @@ def _build_realized_strategy_pnl_rows(
     if not event_times:
         return []
     unique_times = sorted(set(event_times))
+    (
+        carry_in_ledger_rows,
+        active_carry_in_order_ids,
+        active_carry_in_decision_ids,
+    ) = _active_carry_in_ledger_rows(
+        carry_in_ledger_rows,
+        bucket_start=unique_times[0],
+    )
+    carry_in_execution_rows = _filter_carry_in_source_rows_for_active_lots(
+        carry_in_execution_rows,
+        active_order_ids=active_carry_in_order_ids,
+        active_decision_ids=active_carry_in_decision_ids,
+    )
+    carry_in_decision_lifecycle_rows = _filter_carry_in_source_rows_for_active_lots(
+        carry_in_decision_lifecycle_rows,
+        active_order_ids=active_carry_in_order_ids,
+        active_decision_ids=active_carry_in_decision_ids,
+    )
+    carry_in_order_lifecycle_rows = _filter_carry_in_source_rows_for_active_lots(
+        carry_in_order_lifecycle_rows,
+        active_order_ids=active_carry_in_order_ids,
+        active_decision_ids=active_carry_in_decision_ids,
+    )
     bucket_ranges = [(unique_times[0], unique_times[-1] + timedelta(microseconds=1))]
     realized_rows: list[dict[str, object]] = []
     for bucket in build_runtime_ledger_buckets(

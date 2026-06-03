@@ -21,8 +21,10 @@ from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
     POST_COST_BASIS_RUNTIME_LEDGER,
     _alpaca_2026_equity_fee_schedule_hash,
+    _active_carry_in_ledger_rows,
     _build_realized_strategy_pnl_rows,
     _execution_signed_qty,
+    _filter_carry_in_source_rows_for_active_lots,
     _fill_quantity_basis,
     _first_bool,
     _first_lineage_digest,
@@ -1244,6 +1246,46 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             bucket["cost_basis_counts"], {"broker_reported_commission_and_fees": 2}
         )
 
+    def test_side_less_order_feed_fills_use_linked_execution_side_for_authority(
+        self,
+    ) -> None:
+        decision_rows, order_rows, execution_rows = _source_backed_runtime_split_rows()
+        for row in order_rows:
+            row.pop("side", None)
+            if row["event_type"] != "fill":
+                continue
+            if row["alpaca_order_id"] == "order-buy":
+                row["filled_qty"] = Decimal("1")
+                row["filled_qty_delta"] = Decimal("1")
+                row["avg_fill_price"] = Decimal("100")
+                row["filled_notional_delta"] = Decimal("100")
+            else:
+                row["filled_qty"] = Decimal("1")
+                row["filled_qty_delta"] = Decimal("1")
+                row["avg_fill_price"] = Decimal("101")
+                row["filled_notional_delta"] = Decimal("101")
+            row["fill_quantity_basis"] = "cumulative_to_delta"
+            row["cost_amount"] = Decimal("0.01")
+            row["cost_basis"] = "broker_reported_commission_and_fees"
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=order_rows,
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row["authoritative"])
+        self.assertEqual(row["runtime_ledger_blockers"], [])
+        bucket = row["runtime_ledger_bucket"]
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["source_materialization"], "execution_order_events")
+        self.assertEqual(bucket["closed_trade_count"], 1)
+        self.assertEqual(bucket["open_position_count"], 0)
+        self.assertNotIn("unclosed_position", bucket["blockers"])
+
     def test_source_backed_lifecycle_only_blocks_missing_execution_economics(
         self,
     ) -> None:
@@ -1471,6 +1513,54 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "lineage_hash": "lineage",
                 },
             ],
+            carry_in_execution_rows=[
+                {
+                    "execution_id": "old-route-buy-exec",
+                    "trade_decision_id": "old-route-buy-decision",
+                    "computed_at": datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 6, 1, 14, 0, 2, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("2"),
+                    "avg_fill_price": Decimal("90"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "old-route-buy-hash",
+                    "alpaca_order_id": "old-route-buy-order",
+                    "execution_policy_hash": "old-route-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                },
+                {
+                    "execution_id": "old-route-sell-exec",
+                    "trade_decision_id": "old-route-sell-decision",
+                    "computed_at": datetime(2026, 6, 1, 14, 5, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 6, 1, 14, 5, 2, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("2"),
+                    "avg_fill_price": Decimal("91"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "old-route-sell-hash",
+                    "alpaca_order_id": "old-route-sell-order",
+                    "execution_policy_hash": "old-route-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                },
+            ],
             allow_authoritative_runtime_ledger_materialization=True,
         )
 
@@ -1478,6 +1568,145 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         bucket = rows[0]["runtime_ledger_bucket"]
         assert isinstance(bucket, dict)
         self.assertNotIn("window-carry-unrelated-order", bucket["source_window_ids"])
+        self.assertNotIn(
+            "route_acquisition_probe",
+            bucket["source_decision_mode_counts"],
+        )
+
+    def test_active_carry_in_rows_keep_only_open_residual_lots_and_refs(
+        self,
+    ) -> None:
+        bucket_start = datetime(2026, 6, 2, 14, 10, tzinfo=timezone.utc)
+        rows: list[dict[str, object]] = [
+            {
+                "event_ts": datetime(2026, 6, 2, 13, 58, tzinfo=timezone.utc),
+                "event_type": "new",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "intraday-tsmom-profit-v3",
+                "symbol": "AAPL",
+                "alpaca_order_id": "stale-buy-order",
+                "trade_decision_id": "stale-buy-decision",
+            },
+            {
+                "event_ts": datetime(2026, 6, 2, 13, 59, tzinfo=timezone.utc),
+                "event_type": "new",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "intraday-tsmom-profit-v3",
+                "symbol": "AAPL",
+                "alpaca_order_id": "active-buy-order",
+                "trade_decision_id": "active-buy-decision",
+            },
+            {
+                "executed_at": datetime(2026, 6, 2, 14, 0, tzinfo=timezone.utc),
+                "event_type": "fill",
+                "side": "buy",
+                "filled_qty": Decimal("2"),
+                "avg_fill_price": Decimal("90"),
+                "cost_amount": Decimal("0.20"),
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "intraday-tsmom-profit-v3",
+                "symbol": "AAPL",
+                "alpaca_order_id": "stale-buy-order",
+                "trade_decision_id": "stale-buy-decision",
+            },
+            {
+                "executed_at": datetime(2026, 6, 2, 14, 1, tzinfo=timezone.utc),
+                "event_type": "fill",
+                "side": "sell",
+                "filled_qty": Decimal("2"),
+                "avg_fill_price": Decimal("91"),
+                "cost_amount": Decimal("0.20"),
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "intraday-tsmom-profit-v3",
+                "symbol": "AAPL",
+                "alpaca_order_id": "stale-sell-order",
+                "trade_decision_id": "stale-sell-decision",
+            },
+            {
+                "executed_at": datetime(2026, 6, 2, 14, 2, tzinfo=timezone.utc),
+                "event_type": "fill",
+                "side": "buy",
+                "filled_qty": Decimal("5"),
+                "avg_fill_price": Decimal("100"),
+                "cost_amount": Decimal("0.50"),
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "intraday-tsmom-profit-v3",
+                "symbol": "AAPL",
+                "alpaca_order_id": "active-buy-order",
+                "trade_decision_id": "active-buy-decision",
+            },
+            {
+                "executed_at": datetime(2026, 6, 2, 14, 3, tzinfo=timezone.utc),
+                "event_type": "fill",
+                "side": "sell",
+                "filled_qty": Decimal("2"),
+                "avg_fill_price": Decimal("101"),
+                "cost_amount": Decimal("0.20"),
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "intraday-tsmom-profit-v3",
+                "symbol": "AAPL",
+                "alpaca_order_id": "partial-sell-order",
+                "trade_decision_id": "partial-sell-decision",
+            },
+        ]
+
+        active_rows, order_ids, decision_ids = _active_carry_in_ledger_rows(
+            rows,
+            bucket_start=bucket_start,
+        )
+
+        self.assertEqual(order_ids, {"active-buy-order"})
+        self.assertEqual(decision_ids, {"active-buy-decision"})
+        self.assertEqual(len(active_rows), 2)
+        active_fill = next(
+            row
+            for row in active_rows
+            if isinstance(row, dict) and row.get("event_type") == "fill"
+        )
+        self.assertEqual(active_fill["filled_qty"], Decimal("3"))
+        self.assertEqual(active_fill["filled_notional"], Decimal("300"))
+        self.assertEqual(active_fill["cost_amount"], Decimal("0.30"))
+        self.assertEqual(
+            [
+                row.get("alpaca_order_id")
+                for row in active_rows
+                if isinstance(row, dict)
+            ],
+            ["active-buy-order", "active-buy-order"],
+        )
+
+    def test_filter_carry_in_source_rows_keeps_active_lot_lineage_only(
+        self,
+    ) -> None:
+        rows = [
+            {
+                "alpaca_order_id": "active-buy-order",
+                "trade_decision_id": "active-buy-decision",
+                "source_window_id": "active-window",
+            },
+            {
+                "alpaca_order_id": "stale-buy-order",
+                "trade_decision_id": "stale-buy-decision",
+                "source_window_id": "stale-window",
+            },
+            {
+                "trade_decision_id": "active-buy-decision",
+                "source_window_id": "active-decision-window",
+            },
+        ]
+
+        filtered = _filter_carry_in_source_rows_for_active_lots(
+            rows,
+            active_order_ids={"active-buy-order"},
+            active_decision_ids={"active-buy-decision"},
+        )
+
+        self.assertIsNotNone(filtered)
+        assert filtered is not None
+        self.assertEqual(
+            [row["source_window_id"] for row in filtered],
+            ["active-window", "active-decision-window"],
+        )
 
     def test_runtime_ledger_source_context_merges_gap_metadata(self) -> None:
         bucket = _with_runtime_ledger_source_authority_context(

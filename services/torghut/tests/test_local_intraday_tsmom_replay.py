@@ -2516,7 +2516,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(ledger_bucket.closed_trade_count, 1)
         self.assertNotIn("unclosed_position", ledger_bucket.blockers)
         self.assertNotIn("cost_model_hash_missing", ledger_bucket.blockers)
-        self.assertIn("unfilled_order_present", ledger_bucket.blockers)
+        self.assertNotIn("unfilled_order_present", ledger_bucket.blockers)
 
     def test_run_replay_enriches_day_two_open_with_prev_day_open45_ranks(self) -> None:
         strategy = Strategy(
