@@ -267,6 +267,80 @@ class TestDbSchemaCurrent(TestCase):
         self.assertIn("SELECT version_num FROM alembic_version", joined_sql)
         self.assertNotIn("pg_catalog.pg_class", joined_sql)
 
+    def test_check_schema_current_treats_missing_postgres_alembic_table_as_empty(
+        self,
+    ) -> None:
+        class FakeResult:
+            def __init__(self, *, scalar_value: object | None = None) -> None:
+                self._scalar_value = scalar_value
+
+            def scalar_one(self) -> int:
+                return 1
+
+            def scalar(self) -> object | None:
+                return self._scalar_value
+
+        class FakeDialect:
+            name = "postgresql"
+
+        class FakeConnection:
+            dialect = FakeDialect()
+
+            def execute(self, statement: object) -> FakeResult:
+                sql = str(statement)
+                if "SET LOCAL statement_timeout" in sql:
+                    return FakeResult()
+                if "to_regclass('alembic_version')" in sql:
+                    return FakeResult(scalar_value=None)
+                raise AssertionError(f"unexpected SQL: {sql}")
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.connection_obj = FakeConnection()
+
+            def execute(self, statement: object) -> FakeResult:
+                sql = str(statement)
+                if sql == "SELECT 1":
+                    return FakeResult(scalar_value=1)
+                raise AssertionError(f"unexpected session SQL: {sql}")
+
+            def connection(self) -> FakeConnection:
+                return self.connection_obj
+
+        with (
+            patch("app.db._get_expected_schema_heads", return_value=("0011_demo",)),
+            patch(
+                "app.db._get_expected_schema_graph",
+                return_value={
+                    "expected_schema_graph_signature": "graph-signature-demo",
+                    "expected_migration_roots": [],
+                    "expected_migration_branch_count": 1,
+                    "expected_migration_parent_forks": {},
+                    "expected_migration_duplicate_revisions": {},
+                    "expected_migration_orphan_parents": [],
+                },
+            ),
+            patch("app.db.MigrationContext") as mock_migration_context,
+        ):
+            status = app_db.check_schema_current(FakeSession())  # type: ignore[arg-type]
+
+        self.assertEqual(status["current_heads"], [])
+        self.assertEqual(status["schema_missing_heads"], ["0011_demo"])
+        mock_migration_context.configure.assert_not_called()
+
+    def test_alembic_config_requires_migrations_directory(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            ini_path = base_dir / "alembic.ini"
+            ini_path.write_text("[alembic]\n", encoding="utf-8")
+
+            with (
+                patch("app.db._ALEMBIC_INI_PATH", ini_path),
+                patch("app.db._ALEMBIC_MIGRATIONS_PATH", base_dir / "missing"),
+                self.assertRaisesRegex(RuntimeError, "Alembic migrations directory"),
+            ):
+                app_db._alembic_config()
+
     def test_expected_schema_heads_cached(self) -> None:
         app_db._get_expected_schema_heads.cache_clear()
         with patch("app.db.ScriptDirectory.from_config") as mock_from_config:
@@ -292,7 +366,7 @@ class TestDbMigrationGraphParsing(TestCase):
         with TemporaryDirectory() as tmpdir:
             versions_dir = Path(tmpdir)
             (versions_dir / "0001_root.py").write_text(
-                "revision = '0001_root'\ndown_revision = None\n",
+                "revision: str = '0001_root'\ndown_revision = None\n",
                 encoding="utf-8",
             )
             (versions_dir / "0002_alpha.py").write_text(
@@ -345,3 +419,26 @@ class TestDbMigrationGraphParsing(TestCase):
             {"0001_first": ["0001_duplicate.py", "0001_first.py"]},
         )
         self.assertEqual(summary["expected_migration_orphan_parents"], ["0000_missing"])
+
+    def test_parse_migration_revision_rejects_missing_and_empty_revision(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            versions_dir = Path(tmpdir)
+            missing_revision = versions_dir / "missing_revision.py"
+            missing_revision.write_text("down_revision = None\n", encoding="utf-8")
+            empty_revision = versions_dir / "empty_revision.py"
+            empty_revision.write_text(
+                "revision = '   '\ndown_revision = None\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "missing string revision"):
+                app_db._parse_migration_revision(missing_revision)
+            with self.assertRaisesRegex(RuntimeError, "empty revision"):
+                app_db._parse_migration_revision(empty_revision)
+
+    def test_parse_migration_graph_rejects_versions_path_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            versions_path = Path(tmpdir) / "versions.py"
+            versions_path.write_text("", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "not a directory"):
+                app_db._parse_migration_graph(versions_path)
