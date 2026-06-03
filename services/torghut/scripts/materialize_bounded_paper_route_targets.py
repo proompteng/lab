@@ -448,6 +448,31 @@ def _load_plan(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]
     )
 
 
+def _unique_texts(values: Sequence[object]) -> list[str]:
+    return sorted({text for value in values if (text := _safe_text(value))})
+
+
+def _target_runtime_strategy_confirmation_names(
+    target: Mapping[str, Any],
+) -> list[str]:
+    names: list[object] = [
+        target.get("runtime_strategy_name"),
+        target.get("strategy_name"),
+    ]
+    readiness = target.get("source_decision_readiness")
+    if isinstance(readiness, Mapping):
+        lookup_names = readiness.get("strategy_lookup_names")
+        if isinstance(lookup_names, Sequence) and not isinstance(
+            lookup_names, (str, bytes)
+        ):
+            names.extend(lookup_names)
+        matched_strategy = readiness.get("matched_strategy")
+        if isinstance(matched_strategy, Mapping):
+            names.append(matched_strategy.get("strategy_name"))
+            names.append(matched_strategy.get("name"))
+    return _unique_texts(names)
+
+
 def _target_summaries(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for index, target in enumerate(paper_route_target_plan_targets(plan)):
@@ -461,6 +486,9 @@ def _target_summaries(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "candidate_id": _safe_text(target.get("candidate_id")),
                 "runtime_strategy_name": _safe_text(target.get("runtime_strategy_name"))
                 or _safe_text(target.get("strategy_name")),
+                "runtime_strategy_confirmation_names": (
+                    _target_runtime_strategy_confirmation_names(target)
+                ),
                 "strategy_name": _safe_text(target.get("strategy_name")),
                 "account_label": _safe_text(target.get("account_label")),
                 "target_plan_ref": _target_plan_ref(target),
@@ -560,10 +588,6 @@ def _plan_with_target_indexes(
     }
 
 
-def _unique_texts(values: Sequence[object]) -> list[str]:
-    return sorted({text for value in values if (text := _safe_text(value))})
-
-
 def _confirmed_selected_plan_sources(value: object) -> set[str]:
     text = _safe_text(value)
     if text is None:
@@ -591,10 +615,23 @@ def _confirmed_dynamic_target_indexes(
         return []
     indexes: list[int] = []
     for summary in summaries:
-        if all(
-            _safe_text(summary.get(field)) == expected
-            for field, expected in filters.items()
-        ):
+        matched = True
+        for field, expected in filters.items():
+            if field == "runtime_strategy_name":
+                confirmation_names = summary.get("runtime_strategy_confirmation_names")
+                if not isinstance(confirmation_names, Sequence) or isinstance(
+                    confirmation_names, (str, bytes)
+                ):
+                    confirmation_names = []
+                allowed_names = {_safe_text(summary.get(field))}
+                allowed_names.update(_safe_text(value) for value in confirmation_names)
+                if expected not in {value for value in allowed_names if value}:
+                    matched = False
+                    break
+            elif _safe_text(summary.get(field)) != expected:
+                matched = False
+                break
+        if matched:
             indexes.append(int(summary.get("target_index", 0)))
     return indexes
 
@@ -635,12 +672,6 @@ def _confirmation_blockers(
             _safe_text(args.confirm_hypothesis_id),
             ",".join(_unique_texts([item.get("hypothesis_id") for item in summaries])),
         ),
-        "runtime_strategy_name": (
-            _safe_text(args.confirm_runtime_strategy_name),
-            ",".join(
-                _unique_texts([item.get("runtime_strategy_name") for item in summaries])
-            ),
-        ),
         "max_notional": (
             _safe_text(args.confirm_max_notional),
             _safe_text(args.max_notional),
@@ -651,6 +682,25 @@ def _confirmation_blockers(
             blockers.append(
                 f"paper_route_materialization_commit_confirm_{name}_missing"
             )
+    runtime_strategy_confirmation = _safe_text(args.confirm_runtime_strategy_name)
+    runtime_strategy_confirmed = bool(summaries) and bool(runtime_strategy_confirmation)
+    for item in summaries:
+        confirmation_names = item.get("runtime_strategy_confirmation_names")
+        if not isinstance(confirmation_names, Sequence) or isinstance(
+            confirmation_names, (str, bytes)
+        ):
+            confirmation_names = []
+        allowed_names = {_safe_text(item.get("runtime_strategy_name"))}
+        allowed_names.update(_safe_text(value) for value in confirmation_names)
+        if runtime_strategy_confirmation not in {
+            value for value in allowed_names if value
+        }:
+            runtime_strategy_confirmed = False
+            break
+    if not runtime_strategy_confirmed:
+        blockers.append(
+            "paper_route_materialization_commit_confirm_runtime_strategy_name_missing"
+        )
 
     if not dynamic_target_plan:
         exact_confirmations = {
