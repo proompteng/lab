@@ -6394,15 +6394,13 @@ def _hpairs_zero_activity_reason_flags(
         "import_due_runtime_ledger_missing",
         "import_due_runtime_ledger_not_materialized",
     }
-    source_decisions_missing = (
-        hpairs_target_count > 0 and hpairs_decision_count <= 0
-    ) or "source_decisions_missing" in normalized
-    source_executions_missing = (
-        hpairs_decision_count > 0 and hpairs_submitted_order_count <= 0
-    ) or "source_executions_missing" in normalized
-    source_tca_missing = (
-        hpairs_submitted_order_count > 0 and hpairs_tca_sample_count <= 0
-    ) or "source_tca_missing" in normalized
+    source_decisions_missing = hpairs_target_count > 0 and hpairs_decision_count <= 0
+    source_executions_missing = hpairs_decision_count > 0 and (
+        hpairs_submitted_order_count <= 0 or "source_executions_missing" in normalized
+    )
+    source_tca_missing = hpairs_submitted_order_count > 0 and (
+        hpairs_tca_sample_count <= 0 or "source_tca_missing" in normalized
+    )
     runtime_ledger_bucket_missing = (
         hpairs_decision_count > 0 and hpairs_runtime_bucket_count <= 0
     ) or bool(

@@ -5906,8 +5906,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(stage_diagnostics["source_tca_present"])
         self.assertFalse(stage_diagnostics["runtime_ledger_buckets_present"])
         self.assertIn("source_decisions_missing", stage_diagnostics["blockers"])
-        self.assertIn("source_executions_missing", stage_diagnostics["blockers"])
-        self.assertIn("source_tca_missing", stage_diagnostics["blockers"])
+        self.assertNotIn("source_executions_missing", stage_diagnostics["blockers"])
+        self.assertNotIn("source_tca_missing", stage_diagnostics["blockers"])
         self.assertIn("runtime_ledger_bucket_missing", stage_diagnostics["blockers"])
 
     def test_hpairs_zero_activity_reason_flags_distinguish_source_stages(
@@ -5973,6 +5973,31 @@ class TestPaperRouteEvidenceAudit(TestCase):
             _hpairs_zero_activity_state(closed_import_ready_window),
             "source_ledger_import_not_running",
         )
+
+        stale_stage_blockers_with_decisions = _hpairs_zero_activity_reason_flags(
+            blockers=[
+                "source_decisions_missing",
+                "source_executions_missing",
+                "source_tca_missing",
+                "runtime_ledger_bucket_missing",
+            ],
+            probe={"configured_enabled": True},
+            runtime_window_import_audit={"import_ready": True},
+            hpairs_target_count=1,
+            hpairs_symbol_count=2,
+            hpairs_source_decision_ready_count=1,
+            hpairs_decision_count=2,
+            hpairs_submitted_order_count=0,
+            hpairs_tca_sample_count=0,
+            hpairs_runtime_bucket_count=0,
+        )
+        self.assertFalse(
+            stale_stage_blockers_with_decisions["source_decisions_missing"]
+        )
+        self.assertTrue(
+            stale_stage_blockers_with_decisions["source_executions_missing"]
+        )
+        self.assertFalse(stale_stage_blockers_with_decisions["source_tca_missing"])
 
         executions_without_tca = _hpairs_zero_activity_reason_flags(
             blockers=[],
