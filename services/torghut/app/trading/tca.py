@@ -12,6 +12,7 @@ from decimal import ROUND_CEILING, Decimal
 from typing import Any, Optional, cast
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, load_only
 
 from ..config import settings
@@ -862,21 +863,48 @@ def build_tca_gate_inputs(
         stmt = stmt.where(ExecutionTCAMetric.symbol.in_(normalized_symbols))
 
     row = session.execute(stmt).one()
-    execution_stmt = _tca_execution_coverage_stmt(
-        strategy_id=strategy_id,
-        account_label=normalized_account_label,
-        symbols=normalized_symbols,
-    )
-    unsettled_execution_stmt = _tca_execution_coverage_stmt(
-        strategy_id=strategy_id,
-        account_label=normalized_account_label,
-        symbols=normalized_symbols,
-        only_unsettled=True,
-    )
-    execution_count, latest_execution_created_at = session.execute(execution_stmt).one()
-    unsettled_execution_count = int(
-        session.execute(unsettled_execution_stmt).scalar_one() or 0
-    )
+    symbol_breakdown_reason: str | None = None
+    try:
+        symbol_breakdown = _build_tca_symbol_breakdown(
+            session,
+            strategy_id=strategy_id,
+            account_label=normalized_account_label,
+            symbols=normalized_symbols,
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("TCA symbol breakdown unavailable: %s", exc)
+        session.rollback()
+        symbol_breakdown_reason = "execution_tca_symbol_breakdown_query_unavailable"
+        symbol_breakdown = _unavailable_tca_symbol_breakdown(
+            symbols=normalized_symbols,
+            reason=symbol_breakdown_reason,
+        )
+    execution_coverage_reason: str | None = None
+    try:
+        execution_stmt = _tca_execution_coverage_stmt(
+            strategy_id=strategy_id,
+            account_label=normalized_account_label,
+            symbols=normalized_symbols,
+        )
+        unsettled_execution_stmt = _tca_execution_coverage_stmt(
+            strategy_id=strategy_id,
+            account_label=normalized_account_label,
+            symbols=normalized_symbols,
+            only_unsettled=True,
+        )
+        execution_count, latest_execution_created_at = session.execute(
+            execution_stmt
+        ).one()
+        unsettled_execution_count = int(
+            session.execute(unsettled_execution_stmt).scalar_one() or 0
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("TCA execution coverage unavailable: %s", exc)
+        session.rollback()
+        execution_coverage_reason = "execution_tca_execution_coverage_query_unavailable"
+        execution_count = 0
+        latest_execution_created_at = None
+        unsettled_execution_count = 0
     order_count = int(row[0] or 0)
     avg_slippage = _decimal_or_none(row[1])
     avg_abs_slippage = _decimal_or_none(row[2])
@@ -895,20 +923,41 @@ def build_tca_gate_inputs(
     expected_shortfall_coverage = (
         Decimal(expected_count) / Decimal(order_count) if order_count > 0 else None
     )
-    symbol_breakdown = _build_tca_symbol_breakdown(
-        session,
-        strategy_id=strategy_id,
-        account_label=normalized_account_label,
-        symbols=normalized_symbols,
-    )
     filled_execution_count = int(execution_count or 0)
-    runtime_ledger_lineage = _build_tca_runtime_ledger_lineage_summary(
-        session,
-        strategy_id=strategy_id,
-        account_label=normalized_account_label,
-        symbols=normalized_symbols,
-        total_filled_execution_count=filled_execution_count,
-    )
+    lineage_unavailable_reason = execution_coverage_reason
+    if lineage_unavailable_reason is None:
+        try:
+            runtime_ledger_lineage = _build_tca_runtime_ledger_lineage_summary(
+                session,
+                strategy_id=strategy_id,
+                account_label=normalized_account_label,
+                symbols=normalized_symbols,
+                total_filled_execution_count=filled_execution_count,
+            )
+        except SQLAlchemyError as exc:
+            logger.warning("TCA runtime ledger lineage unavailable: %s", exc)
+            session.rollback()
+            lineage_unavailable_reason = "runtime_tca_cost_lineage_query_unavailable"
+            runtime_ledger_lineage = _unavailable_tca_runtime_ledger_lineage_summary(
+                reason=lineage_unavailable_reason,
+                total_filled_execution_count=filled_execution_count,
+            )
+    else:
+        runtime_ledger_lineage = _unavailable_tca_runtime_ledger_lineage_summary(
+            reason=lineage_unavailable_reason,
+            total_filled_execution_count=None,
+        )
+    reason_codes = [
+        reason
+        for reason in (
+            symbol_breakdown_reason,
+            execution_coverage_reason,
+            lineage_unavailable_reason
+            if lineage_unavailable_reason != execution_coverage_reason
+            else None,
+        )
+        if reason is not None
+    ]
     return {
         "account_label": normalized_account_label or None,
         "scope_symbols": list(normalized_symbols),
@@ -952,6 +1001,8 @@ def build_tca_gate_inputs(
         "unsettled_execution_count": unsettled_execution_count,
         "symbol_breakdown": symbol_breakdown,
         "runtime_ledger_lineage": runtime_ledger_lineage,
+        "read_model_status": "degraded" if reason_codes else "ok",
+        "reason_codes": reason_codes,
     }
 
 
@@ -1095,6 +1146,43 @@ def _mark_tca_lineage_summary_fail_closed(
     summary["promotion_authority"] = False
 
 
+def _unavailable_tca_runtime_ledger_lineage_summary(
+    *,
+    reason: str,
+    total_filled_execution_count: int | None,
+) -> dict[str, object]:
+    summary = _execution_lineage_summary([])
+    sample_limit = _tca_status_lineage_sample_limit()
+    missing_count = max(
+        1,
+        int(total_filled_execution_count)
+        if total_filled_execution_count is not None
+        else 1,
+    )
+    summary.update(
+        {
+            "bounded": True,
+            "coverage_exact": False,
+            "query_limit": sample_limit,
+            "sampled_execution_count": 0,
+            "truncated": total_filled_execution_count is not None
+            and total_filled_execution_count > 0,
+            "read_model_unavailable": True,
+            "read_model_status": "timeout",
+        }
+    )
+    if total_filled_execution_count is not None:
+        summary["total_filled_execution_count"] = max(
+            0, int(total_filled_execution_count)
+        )
+    _mark_tca_lineage_summary_fail_closed(
+        summary,
+        reason=reason,
+        missing_count=missing_count,
+    )
+    return summary
+
+
 def _execution_lineage_summary(executions: Collection[Execution]) -> dict[str, object]:
     blocker_counts: dict[str, int] = {}
     source_backed_count = 0
@@ -1176,6 +1264,27 @@ def _normalize_tca_symbols(symbols: Collection[str] | None) -> tuple[str, ...]:
             {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
         )
     )
+
+
+def _unavailable_tca_symbol_breakdown(
+    *,
+    symbols: tuple[str, ...],
+    reason: str,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "symbol": symbol,
+            "order_count": 0,
+            "avg_abs_slippage_bps": None,
+            "max_abs_slippage_bps": None,
+            "avg_realized_shortfall_bps": None,
+            "last_computed_at": None,
+            "read_model_unavailable": True,
+            "read_model_status": "timeout",
+            "reason_codes": [reason],
+        }
+        for symbol in symbols
+    ]
 
 
 def _build_tca_symbol_breakdown(
