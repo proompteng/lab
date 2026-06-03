@@ -9196,8 +9196,6 @@ def build_paper_route_evidence_audit(
             )
             for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
         ]
-        next_targets = observed_strategy_source_targets
-        next_target_audits = runtime_window_import_target_audits
     runtime_window_import_audit = _runtime_window_import_audit(
         next_targets=runtime_window_import_plan,
         target_audits=target_audits,
