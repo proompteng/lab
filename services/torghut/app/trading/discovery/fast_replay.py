@@ -19,6 +19,9 @@ from app.trading.discovery.cluster_lob_features import (
     extract_cluster_lob_features,
     extract_hawkes_excitation_summary,
 )
+from app.trading.discovery.execution_schedule_stress import (
+    extract_execution_schedule_stress,
+)
 from app.trading.discovery.microstructure_prefilter import (
     HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
     HPAIRS_PREFILTER_PROOF_SOURCE,
@@ -41,6 +44,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "bounded_hpairs_clusterlob_ofi_candidate_prefilter",
     "offline_clusterlob_order_flow_feature_lane",
     "hawkes_event_time_excitation_replay_stress",
+    "mpc_market_limit_execution_schedule_stress",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -104,6 +108,9 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     clusterlob_order_flow_features: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    execution_schedule_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
@@ -193,6 +200,7 @@ class FastReplayPreviewRow:
             ),
             "exploration_score": str(self.exploration_score),
             "frontier_bucket": self.frontier_bucket,
+            "execution_schedule_stress": dict(self.execution_schedule_stress),
             "ranking_only_reasons": list(ranking_only_reasons),
             "risk_veto_reasons": list(risk_veto_reasons),
             "exact_replay_required": True,
@@ -373,6 +381,7 @@ class FastReplayPreviewResult:
                 "hpairs_clusterlob_ofi_prefilter": "deterministic bounded H-PAIRS candidate prefilter metadata only; never promotion authority",
                 "clusterlob_order_flow_feature_lane": "offline replay-tape/fixture ClusterLOB and horizon OFI features for preview ranking only",
                 "hawkes_event_time_excitation_replay_stress": "deterministic Hawkes-style event-time burst/self-excitation proxy from arXiv:2510.08085 and arXiv:2604.23961; preview ranking only",
+                "mpc_market_limit_execution_schedule_stress": "deterministic MPC-style schedule deviation/opportunity-cost/market-limit-mix stress from arXiv:2603.28898 and arXiv:2507.06345; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -560,6 +569,7 @@ class _SymbolTapeStats:
     cluster_lob_activity_score: float
     liquidity_regime_score: float
     macro_stress_veto_score: float
+    source_rows: tuple[SignalEnvelope, ...]
 
 
 def build_fast_replay_preview(
@@ -778,6 +788,7 @@ def _build_symbol_stats(rows: Sequence[SignalEnvelope]) -> dict[str, _SymbolTape
                 row_count=len(ordered),
             ),
             macro_stress_veto_score=_macro_stress_veto_score(ordered),
+            source_rows=tuple(ordered),
         )
     return stats
 
@@ -1020,6 +1031,7 @@ def _score_candidate_spec(
             frontier_bucket="not_selected",
             microstructure_prefilter=dict(microstructure_prefilter),
             clusterlob_order_flow_features=dict(clusterlob_order_flow_features),
+            execution_schedule_stress={},
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
             candidate_lineage=_candidate_lineage(spec),
@@ -1065,6 +1077,20 @@ def _score_candidate_spec(
     macro_stress_veto_score = _weighted_average(
         [(stat.macro_stress_veto_score, stat.row_count) for stat in matched]
     )
+    matched_source_rows = tuple(row for stat in matched for row in stat.source_rows)
+    execution_schedule_stress = extract_execution_schedule_stress(
+        matched_source_rows,
+        direction=direction,
+        max_notional=_candidate_notional(spec),
+    ).to_payload()
+    execution_schedule_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(execution_schedule_stress.get("ranking_features")).get(
+                "replay_rank_penalty_bps"
+            )
+        )
+        or 0.0
+    )
     impact_liquidity_penalty_bps = _impact_liquidity_penalty_bps(
         median_spread_bps=median_spread_bps,
         spread_tail_bps=spread_tail_bps,
@@ -1109,6 +1135,7 @@ def _score_candidate_spec(
         - return_tail_abs_bps * 0.02
         - impact_liquidity_penalty_bps * 0.18
         - square_root_impact_capacity_penalty_bps * 0.22
+        - execution_schedule_rank_penalty_bps * 0.14
         - conformal_tail_risk_penalty_bps * 0.12
         - macro_stress_veto_score * 18.0
     )
@@ -1138,6 +1165,7 @@ def _score_candidate_spec(
         - (macro_window_concentration or 0.0) * 3.0
         - conformal_tail_risk_penalty_bps * 0.04
         - square_root_impact_capacity_penalty_bps * 0.08
+        - execution_schedule_rank_penalty_bps * 0.05
     )
     return FastReplayPreviewRow(
         candidate_spec_id=spec.candidate_spec_id,
@@ -1173,6 +1201,7 @@ def _score_candidate_spec(
         frontier_bucket="not_selected",
         microstructure_prefilter=dict(microstructure_prefilter),
         clusterlob_order_flow_features=dict(clusterlob_order_flow_features),
+        execution_schedule_stress=dict(execution_schedule_stress),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
@@ -1207,8 +1236,14 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         float(row.robust_lower_percentile_post_cost_utility_bps)
         - float(row.macro_stress_veto_score) * 25.0
         - float(row.square_root_impact_capacity_penalty_bps) * 0.15
+        - _execution_schedule_rank_penalty_bps(row) * 0.08
         - float(row.conformal_tail_risk_penalty_bps) * 0.10
     )
+
+
+def _execution_schedule_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
+    ranking_features = _mapping(row.execution_schedule_stress.get("ranking_features"))
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
 
 def _row_explicitly_non_hpairs(row: FastReplayPreviewRow) -> bool:
@@ -1397,6 +1432,7 @@ def _row_with_rank_and_selection(
         frontier_bucket=frontier_bucket,
         microstructure_prefilter=dict(row.microstructure_prefilter),
         clusterlob_order_flow_features=dict(row.clusterlob_order_flow_features),
+        execution_schedule_stress=dict(row.execution_schedule_stress),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -1454,6 +1490,7 @@ def _row_with_frontier_dedupe(
         frontier_bucket=row.frontier_bucket,
         microstructure_prefilter=dict(row.microstructure_prefilter),
         clusterlob_order_flow_features=dict(row.clusterlob_order_flow_features),
+        execution_schedule_stress=dict(row.execution_schedule_stress),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,

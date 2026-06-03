@@ -168,11 +168,20 @@ class TestFastReplayPreview(TestCase):
             "hawkes_event_time_excitation_replay_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "mpc_market_limit_execution_schedule_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
         )
         self.assertIn("observed_post_cost_expectancy_bps", row_payload)
+        self.assertIn("execution_schedule_stress", row_payload)
+        self.assertFalse(row_payload["execution_schedule_stress"]["proof_authority"])
+        self.assertFalse(
+            row_payload["execution_schedule_stress"]["promotion_authority"]
+        )
         self.assertIn("cost_impact_lineage", row_payload)
         self.assertIn("impact_capacity_lineage", row_payload)
         self.assertEqual(
