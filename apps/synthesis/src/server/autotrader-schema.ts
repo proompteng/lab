@@ -291,10 +291,14 @@ export type AutotraderSession = {
 export type AutotraderSessionPerformance = {
   verdict: 'running' | 'profitable' | 'flat' | 'loss' | 'unproven'
   realizedPnl: string | null
+  totalRealizedR: string | null
+  avgRealizedR: string | null
+  realizedRObservationCount: number
   equityDelta: string | null
   equityDeltaPercent: string | null
   goalRemaining: string | null
   goalProgressPercent: string | null
+  filledOrderCount: number
   orderFillRate: string | null
   ticketOrderRate: string | null
   ticketFillRate: string | null

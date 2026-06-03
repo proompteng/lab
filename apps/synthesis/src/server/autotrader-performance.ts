@@ -4,6 +4,9 @@ export type AutotraderSessionPerformanceCounts = {
   tradeTicketCount: number
   orderCount: number
   fillCount: number
+  filledOrderCount?: number
+  realizedRObservationCount?: number
+  totalRealizedR?: string | number | null
 }
 
 const parseFiniteNumber = (value: string | number | null | undefined) => {
@@ -21,6 +24,11 @@ const compactNumber = (value: number | null) => {
 const ratioPercent = (numerator: number, denominator: number) => {
   if (denominator <= 0) return null
   return compactNumber((numerator / denominator) * 100)
+}
+
+const boundedRatioPercent = (numerator: number, denominator: number) => {
+  if (denominator <= 0) return null
+  return ratioPercent(Math.min(Math.max(numerator, 0), denominator), denominator)
 }
 
 const summaryText = (summary: Record<string, unknown>, key: string) => {
@@ -64,10 +72,18 @@ export const buildAutotraderSessionPerformance = (
   const equityDelta = openingEquity == null || closingEquity == null ? null : closingEquity - openingEquity
   const goalRemaining = goalEquity == null || closingEquity == null ? null : goalEquity - closingEquity
   const goalDenominator = goalEquity != null && openingEquity != null ? goalEquity - openingEquity : null
+  const filledOrderCount = counts.filledOrderCount ?? counts.fillCount
+  const realizedRObservationCount = counts.realizedRObservationCount ?? 0
+  const totalRealizedR = parseFiniteNumber(counts.totalRealizedR)
+  const avgRealizedR =
+    totalRealizedR == null || realizedRObservationCount <= 0 ? null : totalRealizedR / realizedRObservationCount
 
   return {
     verdict: resultVerdict(session, realizedPnl, equityDelta),
     realizedPnl: compactNumber(realizedPnl),
+    totalRealizedR: compactNumber(totalRealizedR),
+    avgRealizedR: compactNumber(avgRealizedR),
+    realizedRObservationCount,
     equityDelta: compactNumber(equityDelta),
     equityDeltaPercent:
       equityDelta == null || openingEquity == null || openingEquity === 0
@@ -78,9 +94,10 @@ export const buildAutotraderSessionPerformance = (
       equityDelta == null || goalDenominator == null || goalDenominator === 0
         ? null
         : compactNumber((equityDelta / goalDenominator) * 100),
-    orderFillRate: ratioPercent(counts.fillCount, counts.orderCount),
+    filledOrderCount,
+    orderFillRate: boundedRatioPercent(filledOrderCount, counts.orderCount),
     ticketOrderRate: ratioPercent(counts.orderCount, counts.tradeTicketCount),
-    ticketFillRate: ratioPercent(counts.fillCount, counts.tradeTicketCount),
+    ticketFillRate: boundedRatioPercent(filledOrderCount, counts.tradeTicketCount),
     brokerFlat: summaryBoolean(session.summary, 'brokerFlat'),
     reconciledBy: summaryText(session.summary, 'reconciledBy'),
     reconcileReason: summaryText(session.summary, 'reconcileReason'),
