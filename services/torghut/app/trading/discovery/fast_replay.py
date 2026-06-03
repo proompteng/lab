@@ -31,6 +31,9 @@ from app.trading.discovery.execution_schedule_stress import (
 from app.trading.discovery.feed_lag_liquidity_stress import (
     extract_feed_lag_liquidity_stress,
 )
+from app.trading.discovery.intraday_jump_burst_stress import (
+    extract_intraday_jump_burst_stress,
+)
 from app.trading.discovery.lob_reality_gap_stress import (
     extract_lob_reality_gap_stress,
 )
@@ -81,6 +84,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "counterfactual_regime_replay_stress",
     "nonlinear_impact_execution_stress",
     "option_gamma_flow_stress",
+    "intraday_jump_burst_stress",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -174,6 +178,9 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     option_gamma_flow_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    intraday_jump_burst_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
@@ -281,6 +288,7 @@ class FastReplayPreviewRow:
                 self.nonlinear_impact_execution_stress
             ),
             "option_gamma_flow_stress": dict(self.option_gamma_flow_stress),
+            "intraday_jump_burst_stress": dict(self.intraday_jump_burst_stress),
             "ranking_only_reasons": list(ranking_only_reasons),
             "risk_veto_reasons": list(risk_veto_reasons),
             "exact_replay_required": True,
@@ -471,6 +479,7 @@ class FastReplayPreviewResult:
                 "counterfactual_regime_replay_stress": "deterministic real-tape regime support, edge concentration, and temporal Wasserstein shift stress from arXiv:2602.03776 and SSRN:6232459; no synthetic PnL; preview ranking only",
                 "nonlinear_impact_execution_stress": "deterministic real-tape participation-rate, square-root impact, and permanent-impact decay stress from arXiv:2603.29086 and arXiv:2502.16246; model costs are not PnL authority; preview ranking only",
                 "option_gamma_flow_stress": "deterministic replay-row option gamma, short-horizon option availability, and dealer-hedging feedback stress from SSRN:4692190 and SSRN:6703098; gamma proxies are not PnL authority; preview ranking only",
+                "intraday_jump_burst_stress": "deterministic replay-row intraday jump, volatility burst, and spurious-jump source-gap stress from SSRN:5223127, SSRN:5199540, and arXiv:2602.10925; jump proxies are not PnL authority; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -1130,6 +1139,7 @@ def _score_candidate_spec(
             counterfactual_regime_replay_stress={},
             nonlinear_impact_execution_stress={},
             option_gamma_flow_stress={},
+            intraday_jump_burst_stress={},
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
             candidate_lineage=_candidate_lineage(spec),
@@ -1299,6 +1309,18 @@ def _score_candidate_spec(
         )
         or 0.0
     )
+    intraday_jump_burst_stress = extract_intraday_jump_burst_stress(
+        matched_source_rows,
+        direction=direction,
+    ).to_payload()
+    intraday_jump_burst_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(intraday_jump_burst_stress.get("ranking_features")).get(
+                "replay_rank_penalty_bps"
+            )
+        )
+        or 0.0
+    )
     impact_liquidity_penalty_bps = _impact_liquidity_penalty_bps(
         median_spread_bps=median_spread_bps,
         spread_tail_bps=spread_tail_bps,
@@ -1353,6 +1375,7 @@ def _score_candidate_spec(
         - counterfactual_regime_rank_penalty_bps * 0.07
         - nonlinear_impact_execution_rank_penalty_bps * 0.06
         - option_gamma_flow_rank_penalty_bps * 0.05
+        - intraday_jump_burst_rank_penalty_bps * 0.05
         - conformal_tail_risk_penalty_bps * 0.12
         - macro_stress_veto_score * 18.0
     )
@@ -1392,6 +1415,7 @@ def _score_candidate_spec(
         - counterfactual_regime_rank_penalty_bps * 0.03
         - nonlinear_impact_execution_rank_penalty_bps * 0.03
         - option_gamma_flow_rank_penalty_bps * 0.03
+        - intraday_jump_burst_rank_penalty_bps * 0.03
     )
     return FastReplayPreviewRow(
         candidate_spec_id=spec.candidate_spec_id,
@@ -1437,6 +1461,7 @@ def _score_candidate_spec(
         counterfactual_regime_replay_stress=dict(counterfactual_regime_replay_stress),
         nonlinear_impact_execution_stress=dict(nonlinear_impact_execution_stress),
         option_gamma_flow_stress=dict(option_gamma_flow_stress),
+        intraday_jump_burst_stress=dict(intraday_jump_burst_stress),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
@@ -1481,6 +1506,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _counterfactual_regime_rank_penalty_bps(row) * 0.04
         - _nonlinear_impact_execution_rank_penalty_bps(row) * 0.04
         - _option_gamma_flow_rank_penalty_bps(row) * 0.04
+        - _intraday_jump_burst_rank_penalty_bps(row) * 0.04
         - float(row.conformal_tail_risk_penalty_bps) * 0.10
     )
 
@@ -1542,6 +1568,11 @@ def _nonlinear_impact_execution_rank_penalty_bps(row: FastReplayPreviewRow) -> f
 
 def _option_gamma_flow_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
     ranking_features = _mapping(row.option_gamma_flow_stress.get("ranking_features"))
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _intraday_jump_burst_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
+    ranking_features = _mapping(row.intraday_jump_burst_stress.get("ranking_features"))
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
 
@@ -1743,6 +1774,7 @@ def _row_with_rank_and_selection(
         ),
         nonlinear_impact_execution_stress=dict(row.nonlinear_impact_execution_stress),
         option_gamma_flow_stress=dict(row.option_gamma_flow_stress),
+        intraday_jump_burst_stress=dict(row.intraday_jump_burst_stress),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -1812,6 +1844,7 @@ def _row_with_frontier_dedupe(
         ),
         nonlinear_impact_execution_stress=dict(row.nonlinear_impact_execution_stress),
         option_gamma_flow_stress=dict(row.option_gamma_flow_stress),
+        intraday_jump_burst_stress=dict(row.intraday_jump_burst_stress),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -2625,6 +2658,8 @@ def _risk_flags_for_row(
         flags.add("nonlinear_impact_execution_stress_penalty_active")
     if _option_gamma_flow_rank_penalty_bps(row) > 0:
         flags.add("option_gamma_flow_stress_penalty_active")
+    if _intraday_jump_burst_rank_penalty_bps(row) > 0:
+        flags.add("intraday_jump_burst_stress_penalty_active")
     if row.matched_symbol_count < row.requested_symbol_count:
         flags.add("partial_symbol_coverage")
     if row.trading_day_count <= 0:
@@ -2671,6 +2706,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("nonlinear_impact_execution_stress_downranks_only")
     if _option_gamma_flow_rank_penalty_bps(row) > 0:
         reasons.add("option_gamma_flow_stress_downranks_only")
+    if _intraday_jump_burst_rank_penalty_bps(row) > 0:
+        reasons.add("intraday_jump_burst_stress_downranks_only")
     if row.selection_reason == "insufficient_replay_tape_rows":
         reasons.add("missing_replay_tape_source_data_explicit_blocker")
     if lineage_blockers:
@@ -2710,6 +2747,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("nonlinear_impact_execution_stress_penalty")
     if _option_gamma_flow_rank_penalty_bps(row) > 0:
         vetoes.add("option_gamma_flow_stress_penalty")
+    if _intraday_jump_burst_rank_penalty_bps(row) > 0:
+        vetoes.add("intraday_jump_burst_stress_penalty")
     if row.robust_lower_percentile_post_cost_utility_bps <= 0:
         vetoes.add("robust_lower_percentile_post_cost_utility_not_positive")
     return tuple(sorted(vetoes))

@@ -114,6 +114,9 @@ class TestFastReplayPreview(TestCase):
                 else Decimal("1000"),
                 "weekly_option_availability": stress,
                 "option_days_to_expiry": Decimal("0") if stress else Decimal("21"),
+                "jump_bps": Decimal("120") if stress else Decimal("2"),
+                "news_event_window": stress,
+                "session_open_window": stress,
             },
             ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
         )
@@ -181,6 +184,7 @@ class TestFastReplayPreview(TestCase):
         self.assertGreater(stress.macro_stress_veto_score, Decimal("0"))
         payload = preview.to_manifest_payload()
         row_payload = good.to_payload()
+        stress_payload = stress.to_payload()
         self.assertFalse(payload["promotion_proof"])
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["final_promotion_allowed"])
@@ -235,6 +239,10 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "option_gamma_flow_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
+            "intraday_jump_burst_stress",
             payload["implemented_mechanisms"],
         )
         self.assertEqual(
@@ -403,6 +411,30 @@ class TestFastReplayPreview(TestCase):
         self.assertIn(
             "option_gamma_flow_stress_downranks_only",
             row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("intraday_jump_burst_stress", row_payload)
+        self.assertFalse(row_payload["intraday_jump_burst_stress"]["proof_authority"])
+        self.assertFalse(
+            row_payload["intraday_jump_burst_stress"]["promotion_authority"]
+        )
+        self.assertEqual(
+            row_payload["intraday_jump_burst_stress"]["status"],
+            "preview_only_intraday_jump_burst_stress_ranking",
+        )
+        self.assertIn(
+            "ssrn-5223127",
+            {
+                source["source_id"]
+                for source in row_payload["intraday_jump_burst_stress"]["source_papers"]
+            },
+        )
+        self.assertIn(
+            "intraday_jump_burst_stress_penalty_active",
+            stress_payload["risk_flags"],
+        )
+        self.assertIn(
+            "intraday_jump_burst_stress_downranks_only",
+            stress_payload["ranking_only_reasons"],
         )
         self.assertIn("cost_impact_lineage", row_payload)
         self.assertIn("impact_capacity_lineage", row_payload)
