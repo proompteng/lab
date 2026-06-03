@@ -766,13 +766,13 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             )
             if cronjob_name == "torghut-tigerbeetle-journal-order-events-live":
-                self.assertIn("--reconcile-empty-selection", runtime_argv)
+                self.assertNotIn("--reconcile-empty-selection", runtime_argv)
                 self.assertEqual(
                     runtime_argv[runtime_argv.index("--reconcile-limit") + 1],
                     str(cron_runner.LIVE_RECONCILE_LIMIT),
                 )
             else:
-                self.assertIn("--reconcile-empty-selection", runtime_argv)
+                self.assertNotIn("--reconcile-empty-selection", runtime_argv)
             self.assertIn("--fail-on-degraded", runtime_argv)
             self.assertIn("--allow-data-quality-degraded", runtime_argv)
 
