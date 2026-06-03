@@ -1020,6 +1020,7 @@ def actionable_candidate_for_result(
     return {
         "resultIndex": index,
         "symbol": payload["symbol"],
+        "side": payload["side"],
         "setupType": payload["setupType"],
         "setupGrade": grade,
         "expectedR": payload.get("expectedR"),

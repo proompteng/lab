@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import live_scan_cycle
+import strategy_order_guard
 from synthesis_autotrader_client import SynthesisClient
 
 
@@ -137,6 +138,18 @@ def cycle_action(summary: dict[str, Any]) -> str:
         return f"market_open_cycle_account_gated; action={action}"
     top_results = summary.get("topResults")
     decision = summary.get("decisionSummary")
+    guard = summary.get("strategyGuard")
+    if isinstance(guard, dict):
+        candidate = guard.get("candidate")
+        if not isinstance(candidate, dict):
+            candidate = {}
+        state = "allowed" if guard.get("allowed") is True else "blocked"
+        return (
+            f"market_open_cycle_guard_{state}; "
+            f"ticketId={candidate.get('ticketId')}; "
+            f"symbol={candidate.get('symbol')}; "
+            f"reason={guard.get('reason')}"
+        )
     if isinstance(decision, dict) and decision.get("action") == "run_strategy_order_guard":
         candidate = decision.get("bestCandidate")
         if isinstance(candidate, dict):
@@ -163,6 +176,11 @@ def cycle_blocker(summary: dict[str, Any]) -> str | None:
     blocker = summary.get("blocker")
     if isinstance(blocker, str) and blocker.strip():
         return blocker.strip()
+    guard = summary.get("strategyGuard")
+    if isinstance(guard, dict) and guard.get("allowed") is not True:
+        reason = live_scan_cycle.optional_text(guard.get("reason"), max_length=240)
+        if reason:
+            return reason
     gate = summary.get("accountGate")
     if isinstance(gate, dict):
         return live_scan_cycle.account_gate_blocker(gate)
@@ -190,6 +208,89 @@ def scorecard_count(summary: dict[str, Any]) -> int:
     return live_scan_cycle.int_text_value(readback.get("scorecardCount"))
 
 
+def candidate_guard_inputs(candidate: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
+    values = {
+        "symbol": live_scan_cycle.optional_text(candidate.get("symbol"), max_length=32),
+        "side": live_scan_cycle.optional_text(candidate.get("side"), max_length=32),
+        "entryLimitPrice": live_scan_cycle.numeric_text(candidate.get("entryLimitPrice")),
+        "targetPrice": live_scan_cycle.numeric_text(candidate.get("targetPrice")),
+        "stopPrice": live_scan_cycle.numeric_text(candidate.get("stopPrice")),
+    }
+    missing = [key for key, value in values.items() if not value]
+    if values.get("side") not in {"buy", "sell"} and "side" not in missing:
+        missing.append("side")
+    return {key: value for key, value in values.items() if value is not None}, missing
+
+
+def run_strategy_guard_for_summary(args: argparse.Namespace, summary: dict[str, Any]) -> dict[str, Any] | None:
+    decision = summary.get("decisionSummary")
+    if not isinstance(decision, dict) or decision.get("action") != "run_strategy_order_guard":
+        return None
+    candidate = decision.get("bestCandidate")
+    if not isinstance(candidate, dict):
+        return {
+            "ran": False,
+            "allowed": False,
+            "reason": "strategy_guard_missing_candidate",
+            "candidate": None,
+        }
+    values, missing = candidate_guard_inputs(candidate)
+    compact_candidate = {
+        "ticketId": candidate.get("ticketId"),
+        "symbol": candidate.get("symbol"),
+        "side": candidate.get("side"),
+        "setupType": candidate.get("setupType"),
+        "setupGrade": candidate.get("setupGrade"),
+        "expectedR": candidate.get("expectedR"),
+        "entryLimitPrice": candidate.get("entryLimitPrice"),
+        "targetPrice": candidate.get("targetPrice"),
+        "stopPrice": candidate.get("stopPrice"),
+    }
+    if missing:
+        return {
+            "ran": False,
+            "allowed": False,
+            "reason": "strategy_guard_missing_inputs",
+            "missingFields": missing,
+            "candidate": compact_candidate,
+        }
+    guard_args = strategy_order_guard.build_parser().parse_args(
+        [
+            "--symbol",
+            values["symbol"],
+            "--side",
+            values["side"],
+            "--entry-limit",
+            values["entryLimitPrice"],
+            "--take-profit-limit",
+            values["targetPrice"],
+            "--stop-loss-stop",
+            values["stopPrice"],
+            "--feed",
+            args.feed,
+            "--timeout-seconds",
+            str(args.timeout_seconds),
+        ]
+    )
+    try:
+        result = strategy_order_guard.evaluate_order(guard_args)
+    except Exception as error:
+        return {
+            "ran": False,
+            "allowed": False,
+            "reason": "strategy_guard_error",
+            "error": str(error),
+            "candidate": compact_candidate,
+        }
+    return {
+        "ran": True,
+        "allowed": bool(result.get("allowed")),
+        "reason": result.get("reason"),
+        "candidate": compact_candidate,
+        "result": result,
+    }
+
+
 def record_cycle_complete(
     *,
     synthesis: SynthesisClient,
@@ -210,6 +311,7 @@ def record_cycle_complete(
         "recordedScorecardReadback": summary.get("recordedScorecardReadback"),
         "topResults": summary.get("topResults"),
         "decisionSummary": summary.get("decisionSummary"),
+        "strategyGuard": summary.get("strategyGuard"),
         "marketWindow": summary.get("marketWindow"),
         "windowGate": summary.get("windowGate"),
         "stageTimingsMs": summary.get("stageTimingsMs"),
@@ -242,6 +344,15 @@ def record_cycle_complete(
         "statusRecorded": isinstance(status, dict),
         "eventRecorded": isinstance(event, dict),
     }
+
+
+def strategy_guard_report_value(summary: dict[str, Any]) -> str:
+    guard = summary.get("strategyGuard")
+    if not isinstance(guard, dict):
+        return "not_run"
+    if guard.get("allowed") is True:
+        return f"allowed:{guard.get('reason')}"
+    return f"blocked:{guard.get('reason')}"
 
 
 def scan_args_for(args: argparse.Namespace, *, session_id: str, work_dir: Path) -> argparse.Namespace:
@@ -302,6 +413,7 @@ def write_report(path: Path, result: dict[str, Any]) -> None:
         f"result_count: {live_scan_cycle.int_text_value(summary.get('resultCount'))}",
         f"recorded_ticket_count: {recorded_ticket_count(summary)}",
         f"scorecard_count: {scorecard_count(summary)}",
+        f"strategy_guard: {strategy_guard_report_value(summary)}",
         "",
         "Next: continue bounded market-open cycles until close, target, or hard stop.",
         "",
@@ -321,6 +433,9 @@ def run_market_open_cycle(
     if window["regularSession"]:
         scan_args = scan_args_for(args, session_id=session_id, work_dir=work_dir)
         summary = live_scan_cycle.run_cycle(scan_args)
+        strategy_guard = run_strategy_guard_for_summary(args, summary)
+        if strategy_guard is not None:
+            summary["strategyGuard"] = strategy_guard
     else:
         summary = market_window_skip_summary(args=args, work_dir=work_dir, window=window)
     output = {

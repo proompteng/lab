@@ -470,6 +470,7 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["actionableCandidateCount"], 2)
         self.assertEqual(summary["blockedResultCount"], 1)
         self.assertEqual(summary["bestCandidate"]["symbol"], "NVDA")
+        self.assertEqual(summary["bestCandidate"]["side"], "buy")
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-nvda")
         self.assertEqual(summary["bestCandidate"]["scorecardSampleSize"], 7)
         self.assertEqual(summary["candidateSymbols"], ["NVDA", "AMD"])
