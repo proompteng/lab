@@ -241,9 +241,10 @@ def _build(
     alpha_readiness: Mapping[str, Any] | None = None,
     repair_queue: list[dict[str, object]] | None = None,
     capital: Mapping[str, Any] | None = None,
+    generated_at: datetime = NOW,
 ) -> dict[str, object]:
     return build_executable_alpha_repair_receipts(
-        generated_at=NOW,
+        generated_at=generated_at,
         business_state="repair_only",
         revenue_ready=False,
         repair_queue=repair_queue or _top_alpha_queue(),
@@ -298,6 +299,22 @@ def test_alpha_readiness_top_queue_selects_zero_notional_lineage_receipt() -> No
     assert selected["jangar_reentry"]["max_parallelism"] == 1
     receipts = cast(list[Mapping[str, Any]], payload["receipts"])
     assert "receipt:stale" in cast(list[str], receipts[1]["required_input_refs"])
+
+
+def test_executable_alpha_source_ref_is_stable_across_digest_ticks() -> None:
+    first = _build(generated_at=NOW)
+    second = _build(generated_at=NOW + timedelta(minutes=5))
+
+    assert first["generated_at"] != second["generated_at"]
+    assert first["source_revenue_repair_ref"] == second["source_revenue_repair_ref"]
+    assert (
+        cast(Mapping[str, Any], first["selected_receipt"])["source_revenue_repair_ref"]
+        == first["source_revenue_repair_ref"]
+    )
+    assert (
+        cast(Mapping[str, Any], second["selected_receipt"])["source_revenue_repair_ref"]
+        == first["source_revenue_repair_ref"]
+    )
 
 
 def test_reason_codes_map_to_executable_alpha_repair_classes() -> None:
