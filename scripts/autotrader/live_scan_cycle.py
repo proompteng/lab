@@ -37,6 +37,7 @@ SYNTHESIS_SIDES = {
     "sell_to_open",
     "sell_to_close",
 }
+ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
 
 
 class AlpacaRestClient:
@@ -990,6 +991,118 @@ def record_scan_tickets(
     return recorded
 
 
+def candidate_score(result: dict[str, Any]) -> tuple[int, Decimal, int, Decimal]:
+    grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
+    grade_score = {"A+": 3, "A": 2, "B": 1}.get(grade, 0)
+    expected_r = decimal_value(result.get("expected_r") or result.get("expectedR")) or Decimal("0")
+    sample_size = int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize"))
+    confidence = decimal_value(result.get("scorecard_confidence") or result.get("scorecardConfidence")) or Decimal("0")
+    return grade_score, expected_r, sample_size, confidence
+
+
+def actionable_candidate_for_result(
+    *,
+    cycle: int,
+    index: int,
+    result: dict[str, Any],
+    tickets_by_idempotency_key: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    payload = ticket_payload_for_scan_result(session_id="decision-summary", cycle=cycle, index=index, result=result)
+    if payload is None:
+        return None
+    grade = str(payload["setupGrade"])
+    expected_r = decimal_value(payload.get("expectedR"))
+    if payload.get("status") != "candidate" or grade not in ACTIONABLE_SETUP_GRADES:
+        return None
+    if expected_r is not None and expected_r <= 0:
+        return None
+    ticket = tickets_by_idempotency_key.get(str(payload["idempotencyKey"]), {})
+    return {
+        "resultIndex": index,
+        "symbol": payload["symbol"],
+        "setupType": payload["setupType"],
+        "setupGrade": grade,
+        "expectedR": payload.get("expectedR"),
+        "entryLimitPrice": payload.get("entryLimitPrice"),
+        "stopPrice": payload.get("stopPrice"),
+        "targetPrice": payload.get("targetPrice"),
+        "riskDollars": payload.get("riskDollars"),
+        "plannedQuantity": payload.get("plannedQuantity"),
+        "scorecardSampleSize": int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize")),
+        "scorecardAvgRealizedR": numeric_text(
+            result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR")
+        ),
+        "scorecardConfidence": numeric_text(result.get("scorecard_confidence") or result.get("scorecardConfidence")),
+        "ticketId": ticket.get("ticketId"),
+        "idempotencyKey": payload["idempotencyKey"],
+        "entryTrigger": payload.get("entryTrigger"),
+        "invalidation": payload.get("invalidation"),
+        "protectionType": payload.get("protectionType"),
+    }
+
+
+def decision_summary_for_scan(
+    *,
+    cycle: int,
+    scan: dict[str, Any],
+    recorded_tickets: list[dict[str, Any]],
+) -> dict[str, Any]:
+    results = scan.get("results")
+    if not isinstance(results, list):
+        results = []
+    tickets_by_idempotency_key = {
+        str(ticket.get("idempotencyKey")): ticket
+        for ticket in recorded_tickets
+        if isinstance(ticket, dict) and optional_text(ticket.get("idempotencyKey"))
+    }
+    candidates: list[tuple[tuple[int, Decimal, int, Decimal], dict[str, Any]]] = []
+    blocked_count = 0
+    no_trade_count = 0
+    for index, result in enumerate(results, start=1):
+        if not isinstance(result, dict):
+            continue
+        candidate = actionable_candidate_for_result(
+            cycle=cycle,
+            index=index,
+            result=result,
+            tickets_by_idempotency_key=tickets_by_idempotency_key,
+        )
+        if candidate is not None:
+            candidates.append((candidate_score(result), candidate))
+            continue
+        reason = result_no_trade_reason(
+            result,
+            setup_grade(result.get("setup_grade") or result.get("setupGrade")),
+            setup_type(result.get("setup_type") or result.get("setupType")),
+        )
+        if reason:
+            blocked_count += 1
+        else:
+            no_trade_count += 1
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    actionable_candidates = [candidate for _, candidate in candidates]
+    best_candidate = actionable_candidates[0] if actionable_candidates else None
+    if best_candidate is None:
+        return {
+            "action": "no_actionable_candidate",
+            "reason": "scanner_returned_no_strategy_guard_candidate",
+            "actionableCandidateCount": 0,
+            "blockedResultCount": blocked_count,
+            "noTradeResultCount": no_trade_count,
+            "bestCandidate": None,
+            "candidateSymbols": [],
+        }
+    return {
+        "action": "run_strategy_order_guard",
+        "reason": "best_candidate_ready_for_strategy_guard",
+        "actionableCandidateCount": len(actionable_candidates),
+        "blockedResultCount": blocked_count,
+        "noTradeResultCount": no_trade_count,
+        "bestCandidate": best_candidate,
+        "candidateSymbols": [candidate["symbol"] for candidate in actionable_candidates[:10]],
+    }
+
+
 def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     cycle_started_at = time.monotonic()
     stage_timings: dict[str, Any] = {}
@@ -1090,16 +1203,25 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     )
     summary["scorecardReadback"] = scorecard_readback
     summary["recordedScorecardReadback"] = recorded_scorecard_readback
+    recorded_tickets: list[dict[str, Any]] = []
     if args.record_tickets:
         record_tickets_started_at = time.monotonic()
-        summary["recordedTickets"] = record_scan_tickets(
+        recorded_tickets = record_scan_tickets(
             synthesis=synthesis,
             session_id=args.session_id or "",
             cycle=cycle,
             scan=scan,
             limit=args.max_recorded_tickets,
         )
+        summary["recordedTickets"] = recorded_tickets
         stage_timings["recordTicketsMs"] = elapsed_ms(record_tickets_started_at)
+    else:
+        summary["recordedTickets"] = recorded_tickets
+    summary["decisionSummary"] = decision_summary_for_scan(
+        cycle=cycle,
+        scan=scan,
+        recorded_tickets=recorded_tickets,
+    )
     if gate is not None:
         summary["accountGate"] = gate
         summary["recordedAccountGate"] = recorded_account_gate

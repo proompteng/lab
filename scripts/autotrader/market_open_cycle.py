@@ -136,6 +136,20 @@ def cycle_action(summary: dict[str, Any]) -> str:
             return f"market_open_cycle_market_closed; marketCloseAt={window.get('marketCloseAt')}"
         return f"market_open_cycle_account_gated; action={action}"
     top_results = summary.get("topResults")
+    decision = summary.get("decisionSummary")
+    if isinstance(decision, dict) and decision.get("action") == "run_strategy_order_guard":
+        candidate = decision.get("bestCandidate")
+        if isinstance(candidate, dict):
+            return (
+                "market_open_cycle_candidate; "
+                f"ticketId={candidate.get('ticketId')}; "
+                f"symbol={candidate.get('symbol')} "
+                f"{candidate.get('setupGrade')} "
+                f"{candidate.get('setupType')}; "
+                f"expectedR={candidate.get('expectedR')}"
+            )
+    if isinstance(decision, dict) and decision.get("action") == "no_actionable_candidate":
+        return "market_open_cycle_complete; no_actionable_candidate"
     if isinstance(top_results, list) and top_results:
         first = top_results[0] if isinstance(top_results[0], dict) else {}
         symbol = first.get("symbol") or "unknown"
@@ -195,6 +209,7 @@ def record_cycle_complete(
         "scorecardReadback": summary.get("scorecardReadback"),
         "recordedScorecardReadback": summary.get("recordedScorecardReadback"),
         "topResults": summary.get("topResults"),
+        "decisionSummary": summary.get("decisionSummary"),
         "marketWindow": summary.get("marketWindow"),
         "windowGate": summary.get("windowGate"),
         "stageTimingsMs": summary.get("stageTimingsMs"),

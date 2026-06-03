@@ -57,8 +57,21 @@ class MarketOpenCycleTest(unittest.TestCase):
                         {
                             "symbol": "NVDA",
                             "ticketId": "ticket-1",
+                            "idempotencyKey": "scan-cycle-3-1-NVDA-vwap_reclaim-A",
                         }
                     ],
+                    "decisionSummary": {
+                        "action": "run_strategy_order_guard",
+                        "reason": "best_candidate_ready_for_strategy_guard",
+                        "actionableCandidateCount": 1,
+                        "bestCandidate": {
+                            "symbol": "NVDA",
+                            "setupType": "vwap_reclaim",
+                            "setupGrade": "A",
+                            "expectedR": "2.1",
+                            "ticketId": "ticket-1",
+                        },
+                    },
                     "accountGate": {
                         "action": "scan",
                         "skipFullScan": False,
@@ -114,9 +127,13 @@ class MarketOpenCycleTest(unittest.TestCase):
         event_payload = synthesis.posts[1][1]
         self.assertEqual(status_payload["sessionId"], "session-market-open")
         self.assertEqual(status_payload["phase"], "scan")
-        self.assertEqual(status_payload["currentAction"], "market_open_cycle_complete; top=NVDA A vwap_reclaim")
+        self.assertEqual(
+            status_payload["currentAction"],
+            "market_open_cycle_candidate; ticketId=ticket-1; symbol=NVDA A vwap_reclaim; expectedR=2.1",
+        )
         self.assertEqual(status_payload["payload"]["recordedTicketCount"], 1)
         self.assertEqual(status_payload["payload"]["stageTimingsMs"]["totalMs"], 88)
+        self.assertEqual(status_payload["payload"]["decisionSummary"]["action"], "run_strategy_order_guard")
         self.assertEqual(event_payload["eventType"], "market_open_cycle_complete")
 
     def test_reports_account_gated_cycle_without_scan(self) -> None:
