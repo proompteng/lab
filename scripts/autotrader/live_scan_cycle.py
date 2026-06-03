@@ -886,6 +886,10 @@ def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> st
         return "scanner_blocked_grade"
     if type_ == "no_trade":
         return "scanner_no_trade"
+    scorecard_sample_size = int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize"))
+    scorecard_avg_r = decimal_value(result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR"))
+    if scorecard_sample_size > 0 and scorecard_avg_r is not None and scorecard_avg_r < 0:
+        return "scorecard_avg_realized_r_negative"
     expected_r = decimal_value(result.get("expected_r") or result.get("expectedR"))
     if expected_r is None:
         return "missing_expected_r"
