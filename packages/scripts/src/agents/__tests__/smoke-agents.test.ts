@@ -965,9 +965,17 @@ describe('autonomous trader provider', () => {
     expect(readbackScriptContent).toContain('scorecard_readback.py')
     expect(readbackScriptContent).toContain('trader_mode="$(printf')
     expect(readbackScriptContent).toContain('exit 64')
+    expect(readbackScriptContent).toContain('repo_dir="${AUTONOMOUS_TRADER_REPO_DIR:-/workspace/lab}"')
+    expect(readbackScriptContent).toContain('GIT_TERMINAL_PROMPT=0')
+    expect(readbackScriptContent).toContain('git clone --filter=blob:none --depth=1 --branch "${base_branch}"')
+    expect(readbackScriptContent).toContain(
+      'git -C "${repo_dir}" fetch --prune --filter=blob:none --depth=1 origin "${base_branch}"',
+    )
+    expect(readbackScriptContent).toContain(
+      'exec "${python_bin}" "${repo_dir}/scripts/autotrader/scorecard_readback.py"',
+    )
     expect(readbackScriptContent).toContain('readback_args+=(--finalize-stale-flat)')
     expect(readbackScriptContent).toContain('readback_args+=(--backfill-finalized-flat)')
-    expect(readbackScriptContent).not.toContain('git ')
     expect(readbackScriptContent).not.toContain('stock_analysis')
     expect(outputArtifactNames).toEqual(['autonomous-trader-report', 'runner-log', 'runner-status'])
     const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
