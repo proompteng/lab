@@ -561,6 +561,97 @@ describe('synthesis REST auth', () => {
     expect(scorecardPayload.setupExamples[0].notes).toBe('C setup correctly blocked')
   })
 
+  test('reports live running-session PnL from status and position snapshots', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-live-performance-api-test',
+          mode: 'market_open',
+          tradingDate: '2026-06-03',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          openingEquity: '30000',
+          marketOpenAt: '2026-06-03T13:30:00Z',
+          marketCloseAt: '2026-06-03T20:00:00Z',
+        }),
+      }),
+    )
+    const startPayload = await startResponse.json()
+    const sessionId = startPayload.session.id
+
+    await handleAutotraderUpsertStatus(
+      new Request('http://synthesis.test/api/autotrader/status', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          cycle: 41,
+          phase: 'manage',
+          equity: '29700',
+          currentAction: 'reconciled stopped bracket exits',
+          payload: { openOrders: 0, openPositions: 0 },
+        }),
+      }),
+    )
+    await handleAutotraderRecordPositionSnapshot(
+      new Request('http://synthesis.test/api/autotrader/position-snapshots', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          symbol: 'AMD',
+          quantity: '0',
+          marketValue: '0',
+          unrealizedPnl: '0',
+          capturedAt: '2026-06-03T18:15:00Z',
+          brokerPayload: { realizedPnl: '-100' },
+        }),
+      }),
+    )
+    await handleAutotraderRecordPositionSnapshot(
+      new Request('http://synthesis.test/api/autotrader/position-snapshots', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          symbol: 'AVGO',
+          quantity: '0',
+          marketValue: '0',
+          unrealizedPnl: '0',
+          capturedAt: '2026-06-03T18:20:00Z',
+          brokerPayload: { realizedPnl: '-200' },
+        }),
+      }),
+    )
+
+    const listResponse = await handleAutotraderListSessions(
+      new Request('http://synthesis.test/api/autotrader/sessions?limit=5'),
+    )
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${sessionId}`),
+      sessionId,
+    )
+    const listPayload = await listResponse.json()
+    const detailPayload = await detailResponse.json()
+
+    expect(listPayload.sessions[0].performance).toMatchObject({
+      verdict: 'running',
+      realizedPnl: '-300',
+      equityDelta: '-300',
+      equityDeltaPercent: '-1',
+      goalRemaining: '470300',
+      filledOrderCount: 0,
+    })
+    expect(detailPayload.performance).toEqual(listPayload.sessions[0].performance)
+    expect(detailPayload.session.finalizedAt).toBeNull()
+  })
+
   test('clamps future autotrader position snapshot timestamps at ingestion', async () => {
     const authedHeaders = {
       authorization: `Bearer ${token}`,
