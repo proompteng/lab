@@ -17,6 +17,9 @@ from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.discovery.alpha_decay_predictability_stress import (
     extract_alpha_decay_predictability_stress,
 )
+from app.trading.discovery.counterfactual_regime_replay_stress import (
+    extract_counterfactual_regime_replay_stress,
+)
 from app.trading.discovery.cluster_lob_features import (
     HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
     extract_cluster_lob_features,
@@ -69,6 +72,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "public_feed_lag_quoted_liquidity_stress",
     "lob_simulation_reality_gap_execution_stress",
     "alpha_decay_predictability_stress",
+    "counterfactual_regime_replay_stress",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -153,6 +157,9 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     alpha_decay_predictability_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    counterfactual_regime_replay_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
@@ -252,6 +259,9 @@ class FastReplayPreviewRow:
             "lob_reality_gap_stress": dict(self.lob_reality_gap_stress),
             "alpha_decay_predictability_stress": dict(
                 self.alpha_decay_predictability_stress
+            ),
+            "counterfactual_regime_replay_stress": dict(
+                self.counterfactual_regime_replay_stress
             ),
             "ranking_only_reasons": list(ranking_only_reasons),
             "risk_veto_reasons": list(risk_veto_reasons),
@@ -440,6 +450,7 @@ class FastReplayPreviewResult:
                 "public_feed_lag_quoted_liquidity_stress": "deterministic public-feed delay, quoted-liquidity reliability, stale-quote, and authoritative trade-direction join stress from SSRN:6675338, arXiv:2604.24366, and arXiv:2511.20606; preview ranking only",
                 "lob_simulation_reality_gap_execution_stress": "deterministic spread-volume imbalance, latency-race mode, power-law signed-flow impact, and odd-lot liquidity reliability stress from arXiv:2603.24137, OFR WP 25-01, and arXiv:2507.06345; preview ranking only",
                 "alpha_decay_predictability_stress": "deterministic multi-horizon spread-adjusted alpha decay, cost-crossover, latency-horizon mismatch, and efficiency-regime compression stress from arXiv:2601.02310 and SSRN:6608199; preview ranking only",
+                "counterfactual_regime_replay_stress": "deterministic real-tape regime support, edge concentration, and temporal Wasserstein shift stress from arXiv:2602.03776 and SSRN:6232459; no synthetic PnL; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -1096,6 +1107,7 @@ def _score_candidate_spec(
             feed_lag_liquidity_stress={},
             lob_reality_gap_stress={},
             alpha_decay_predictability_stress={},
+            counterfactual_regime_replay_stress={},
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
             candidate_lineage=_candidate_lineage(spec),
@@ -1228,6 +1240,18 @@ def _score_candidate_spec(
         )
         or 0.0
     )
+    counterfactual_regime_replay_stress = extract_counterfactual_regime_replay_stress(
+        matched_source_rows,
+        direction=direction,
+    ).to_payload()
+    counterfactual_regime_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(counterfactual_regime_replay_stress.get("ranking_features")).get(
+                "replay_rank_penalty_bps"
+            )
+        )
+        or 0.0
+    )
     impact_liquidity_penalty_bps = _impact_liquidity_penalty_bps(
         median_spread_bps=median_spread_bps,
         spread_tail_bps=spread_tail_bps,
@@ -1279,6 +1303,7 @@ def _score_candidate_spec(
         - feed_lag_liquidity_rank_penalty_bps * 0.10
         - lob_reality_gap_rank_penalty_bps * 0.09
         - alpha_decay_predictability_rank_penalty_bps * 0.08
+        - counterfactual_regime_rank_penalty_bps * 0.07
         - conformal_tail_risk_penalty_bps * 0.12
         - macro_stress_veto_score * 18.0
     )
@@ -1315,6 +1340,7 @@ def _score_candidate_spec(
         - feed_lag_liquidity_rank_penalty_bps * 0.04
         - lob_reality_gap_rank_penalty_bps * 0.04
         - alpha_decay_predictability_rank_penalty_bps * 0.04
+        - counterfactual_regime_rank_penalty_bps * 0.03
     )
     return FastReplayPreviewRow(
         candidate_spec_id=spec.candidate_spec_id,
@@ -1357,6 +1383,7 @@ def _score_candidate_spec(
         feed_lag_liquidity_stress=dict(feed_lag_liquidity_stress),
         lob_reality_gap_stress=dict(lob_reality_gap_stress),
         alpha_decay_predictability_stress=dict(alpha_decay_predictability_stress),
+        counterfactual_regime_replay_stress=dict(counterfactual_regime_replay_stress),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
@@ -1398,6 +1425,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _feed_lag_liquidity_rank_penalty_bps(row) * 0.06
         - _lob_reality_gap_rank_penalty_bps(row) * 0.05
         - _alpha_decay_predictability_rank_penalty_bps(row) * 0.05
+        - _counterfactual_regime_rank_penalty_bps(row) * 0.04
         - float(row.conformal_tail_risk_penalty_bps) * 0.10
     )
 
@@ -1439,6 +1467,13 @@ def _alpha_decay_predictability_rank_penalty_bps(
 ) -> float:
     ranking_features = _mapping(
         row.alpha_decay_predictability_stress.get("ranking_features")
+    )
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _counterfactual_regime_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
+    ranking_features = _mapping(
+        row.counterfactual_regime_replay_stress.get("ranking_features")
     )
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
@@ -1636,6 +1671,9 @@ def _row_with_rank_and_selection(
         feed_lag_liquidity_stress=dict(row.feed_lag_liquidity_stress),
         lob_reality_gap_stress=dict(row.lob_reality_gap_stress),
         alpha_decay_predictability_stress=dict(row.alpha_decay_predictability_stress),
+        counterfactual_regime_replay_stress=dict(
+            row.counterfactual_regime_replay_stress
+        ),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -1700,6 +1738,9 @@ def _row_with_frontier_dedupe(
         feed_lag_liquidity_stress=dict(row.feed_lag_liquidity_stress),
         lob_reality_gap_stress=dict(row.lob_reality_gap_stress),
         alpha_decay_predictability_stress=dict(row.alpha_decay_predictability_stress),
+        counterfactual_regime_replay_stress=dict(
+            row.counterfactual_regime_replay_stress
+        ),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -2507,6 +2548,8 @@ def _risk_flags_for_row(
         flags.add("lob_reality_gap_stress_penalty_active")
     if _alpha_decay_predictability_rank_penalty_bps(row) > 0:
         flags.add("alpha_decay_predictability_stress_penalty_active")
+    if _counterfactual_regime_rank_penalty_bps(row) > 0:
+        flags.add("counterfactual_regime_replay_stress_penalty_active")
     if row.matched_symbol_count < row.requested_symbol_count:
         flags.add("partial_symbol_coverage")
     if row.trading_day_count <= 0:
@@ -2547,6 +2590,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("lob_reality_gap_stress_downranks_only")
     if _alpha_decay_predictability_rank_penalty_bps(row) > 0:
         reasons.add("alpha_decay_predictability_stress_downranks_only")
+    if _counterfactual_regime_rank_penalty_bps(row) > 0:
+        reasons.add("counterfactual_regime_replay_stress_downranks_only")
     if row.selection_reason == "insufficient_replay_tape_rows":
         reasons.add("missing_replay_tape_source_data_explicit_blocker")
     if lineage_blockers:
@@ -2580,6 +2625,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("lob_reality_gap_stress_penalty")
     if _alpha_decay_predictability_rank_penalty_bps(row) > 0:
         vetoes.add("alpha_decay_predictability_stress_penalty")
+    if _counterfactual_regime_rank_penalty_bps(row) > 0:
+        vetoes.add("counterfactual_regime_replay_stress_penalty")
     if row.robust_lower_percentile_post_cost_utility_bps <= 0:
         vetoes.add("robust_lower_percentile_post_cost_utility_not_positive")
     return tuple(sorted(vetoes))
