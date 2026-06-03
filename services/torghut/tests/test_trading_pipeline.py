@@ -9092,6 +9092,10 @@ class TestTradingPipeline(TestCase):
         )
         self.assertTrue(targets[0]["source_decision_readiness"]["ready"])
         self.assertEqual(
+            targets[0]["source_decision_readiness"]["source"],
+            "local_target_plan_probe_symbols",
+        )
+        self.assertEqual(
             targets[0]["source_decision_readiness"]["scoped_probe_symbols"],
             ["AAPL", "AMZN"],
         )
