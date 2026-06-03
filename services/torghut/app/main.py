@@ -134,6 +134,7 @@ from .trading.paper_route_evidence import (
     DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
     MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
     MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
     build_paper_route_evidence_audit,
     build_paper_route_target_plan_payload,
 )
@@ -6076,7 +6077,9 @@ def trading_paper_route_evidence(
             route_reacquisition_book=route_reacquisition_book,
             lookback_hours=lookback_hours,
             target_limit=target_limit,
-            target_account_audit_available=settings.trading_mode == "paper",
+            target_account_audit_available=_paper_route_target_account_audit_available(
+                cast(Mapping[str, Any], live_submission_gate)
+            ),
         )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
@@ -6179,13 +6182,47 @@ def trading_paper_route_target_plan() -> JSONResponse:
             # Keep this provider endpoint bounded; proof-grade runtime import
             # audits run only after the runtime window is import-ready.
             include_runtime_window_import_audit=None,
-            target_account_audit_available=settings.trading_mode == "paper",
+            target_account_audit_available=_paper_route_target_account_audit_available(
+                cast(Mapping[str, Any], live_submission_gate)
+            ),
         )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
 def _mapping_items(value: object) -> list[dict[str, Any]]:
     return _shared_mapping_items(value)
+
+
+def _normalized_paper_route_text(value: object) -> str:
+    return str(value or "").strip().upper()
+
+
+def _paper_route_mapping_targets_sim_account(value: Mapping[str, Any]) -> bool:
+    return (
+        _normalized_paper_route_text(value.get("account_label"))
+        == PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL
+        or _normalized_paper_route_text(value.get("target_dsn_env")) == "SIM_DB_DSN"
+        or _normalized_paper_route_text(value.get("source_dsn_env")) == "SIM_DB_DSN"
+    )
+
+
+def _paper_route_target_account_audit_available(
+    live_submission_gate: Mapping[str, Any],
+) -> bool:
+    if settings.trading_mode == "paper":
+        return True
+    if settings.trading_mode != "live":
+        return False
+    plan = live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
+    if not isinstance(plan, Mapping):
+        return False
+    normalized_plan = cast(Mapping[str, Any], plan)
+    if _paper_route_mapping_targets_sim_account(normalized_plan):
+        return True
+    return any(
+        _paper_route_mapping_targets_sim_account(target)
+        for target in _shared_mapping_items(normalized_plan.get("targets"))
+    )
 
 
 def _paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> list[str]:

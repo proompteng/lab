@@ -6906,9 +6906,7 @@ class TestTradingApi(TestCase):
     def test_zero_notional_repair_endpoint_returns_dry_run_receipt(self) -> None:
         status_payload = {
             "active_revision": "torghut-00320",
-            "freshness_carry_ledger": _freshness_carry_ledger_for_test(
-                "empirical"
-            ),
+            "freshness_carry_ledger": _freshness_carry_ledger_for_test("empirical"),
             "profit_freshness_frontier": {
                 "frontier_id": "profit-freshness-frontier:test",
                 "capital_posture": {
@@ -6963,9 +6961,7 @@ class TestTradingApi(TestCase):
     def test_zero_notional_repair_endpoint_accepts_dispatch_ticket_body(self) -> None:
         status_payload = {
             "active_revision": "torghut-00320",
-            "freshness_carry_ledger": _freshness_carry_ledger_for_test(
-                "empirical"
-            ),
+            "freshness_carry_ledger": _freshness_carry_ledger_for_test("empirical"),
             "profit_freshness_frontier": {
                 "frontier_id": "profit-freshness-frontier:test",
                 "capital_posture": {
@@ -10461,6 +10457,212 @@ class TestTradingApi(TestCase):
                     del app.state.trading_scheduler
             else:
                 app.state.trading_scheduler = original_scheduler
+
+    def test_live_paper_route_evidence_enables_sim_target_account_audit(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        original_mode = settings.trading_mode
+        settings.trading_mode = "live"
+        settings.trading_paper_route_target_plan_url = ""
+        live_gate = {
+            "allowed": False,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [
+                    {
+                        "candidate_id": "sim-runtime-target",
+                        "account_label": "TORGHUT_SIM",
+                        "target_dsn_env": "SIM_DB_DSN",
+                        "source_dsn_env": "SIM_DB_DSN",
+                        "observed_stage": "paper",
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            },
+        }
+
+        try:
+            app.state.trading_scheduler = SimpleNamespace(
+                state=SimpleNamespace(market_session_open=False),
+                llm_status=lambda: {"dspy_runtime": {}},
+                market_context_status=lambda: {},
+            )
+            with (
+                patch("app.main._empirical_jobs_status", return_value={}),
+                patch("app.main.load_quant_evidence_status", return_value={}),
+                patch("app.main._load_tca_summary", return_value={}),
+                patch(
+                    "app.main._build_hypothesis_runtime_payload",
+                    return_value=({}, {}, {}),
+                ),
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=live_gate,
+                ),
+                patch("app.main._build_simple_lane_status_payload", return_value={}),
+                patch(
+                    "app.main._paper_route_probe_book_from_target_plan",
+                    return_value={},
+                ),
+                patch(
+                    "app.main.build_paper_route_evidence_audit",
+                    return_value={
+                        "schema_version": "torghut.paper-route-evidence.v1",
+                        "summary": {"target_count": 1},
+                    },
+                ) as audit_builder,
+            ):
+                response = self.client.get("/trading/paper-route-evidence")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(
+                audit_builder.call_args.kwargs["target_account_audit_available"]
+            )
+        finally:
+            settings.trading_mode = original_mode
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_live_paper_route_target_plan_enables_sim_target_account_audit(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        original_mode = settings.trading_mode
+        settings.trading_mode = "live"
+        settings.trading_paper_route_target_plan_url = ""
+        live_gate = {
+            "allowed": False,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [
+                    {
+                        "candidate_id": "sim-runtime-target",
+                        "account_label": "TORGHUT_SIM",
+                        "target_dsn_env": "SIM_DB_DSN",
+                        "source_dsn_env": "SIM_DB_DSN",
+                        "observed_stage": "paper",
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            },
+        }
+
+        try:
+            app.state.trading_scheduler = SimpleNamespace(
+                state=SimpleNamespace(market_session_open=False),
+                _last_live_submission_gate=live_gate,
+            )
+            with (
+                patch(
+                    "app.main._paper_route_cached_live_submission_gate",
+                    return_value=live_gate,
+                ),
+                patch("app.main._build_simple_lane_status_payload", return_value={}),
+                patch(
+                    "app.main._paper_route_probe_book_from_target_plan",
+                    return_value={},
+                ),
+                patch(
+                    "app.main.build_paper_route_target_plan_payload",
+                    return_value={
+                        "schema_version": "torghut.paper-route-target-plan.v1",
+                        "target_count": 1,
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                        "targets": [{"candidate_id": "sim-runtime-target"}],
+                    },
+                ) as target_plan_builder,
+            ):
+                response = self.client.get("/trading/paper-route-target-plan")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(
+                target_plan_builder.call_args.kwargs["target_account_audit_available"]
+            )
+        finally:
+            settings.trading_mode = original_mode
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_live_target_account_audit_stays_disabled_for_non_sim_target(self) -> None:
+        original_mode = settings.trading_mode
+        try:
+            settings.trading_mode = "disabled"
+            self.assertFalse(
+                main_module._paper_route_target_account_audit_available({})
+            )
+
+            settings.trading_mode = "live"
+            self.assertFalse(
+                main_module._paper_route_target_account_audit_available({})
+            )
+
+            self.assertFalse(
+                main_module._paper_route_target_account_audit_available(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "targets": [
+                                {
+                                    "account_label": "PA3SX7FYNUTF",
+                                    "target_dsn_env": "LIVE_DB_DSN",
+                                    "source_dsn_env": "LIVE_DB_DSN",
+                                    "observed_stage": "live",
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+
+            self.assertFalse(
+                main_module._paper_route_target_account_audit_available(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "targets": [
+                                {
+                                    "account_label": "PA3SX7FYNUTF",
+                                    "target_dsn_env": "LIVE_DB_DSN",
+                                    "source_dsn_env": "LIVE_DB_DSN",
+                                    "observed_stage": "paper",
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+
+            self.assertTrue(
+                main_module._paper_route_target_account_audit_available(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "account_label": "TORGHUT_SIM",
+                            "target_dsn_env": "SIM_DB_DSN",
+                            "source_dsn_env": "SIM_DB_DSN",
+                            "observed_stage": "paper",
+                            "targets": [],
+                        }
+                    }
+                )
+            )
+        finally:
+            settings.trading_mode = original_mode
 
     def test_paper_route_target_plan_releases_db_session_before_external_plan_fetch(
         self,
