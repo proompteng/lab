@@ -10631,6 +10631,23 @@ class TestTradingApi(TestCase):
                 )
             )
 
+            self.assertFalse(
+                main_module._paper_route_target_account_audit_available(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "targets": [
+                                {
+                                    "account_label": "PA3SX7FYNUTF",
+                                    "target_dsn_env": "LIVE_DB_DSN",
+                                    "source_dsn_env": "LIVE_DB_DSN",
+                                    "observed_stage": "paper",
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+
             self.assertTrue(
                 main_module._paper_route_target_account_audit_available(
                     {
