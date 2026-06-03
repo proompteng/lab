@@ -68,8 +68,10 @@ class TestFastReplayPreview(TestCase):
         volume: str = "100000",
         stress: bool = False,
         event_type: str = "trade",
+        queue_ratio: str = "0.15",
     ) -> SignalEnvelope:
         mid = Decimal(price)
+        fill_qty = Decimal("100") if event_type == "trade" else Decimal("0")
         return SignalEnvelope(
             event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc)
             + timedelta(minutes=offset),
@@ -85,6 +87,8 @@ class TestFastReplayPreview(TestCase):
                 "ofi": Decimal(ofi),
                 "microbar_volume": Decimal(volume),
                 "event_type": event_type,
+                "queue_ratio": Decimal(queue_ratio),
+                "fill_qty": fill_qty,
                 "bid_size": Decimal("700"),
                 "ask_size": Decimal("300"),
                 "macro_event_window": stress,
@@ -183,6 +187,10 @@ class TestFastReplayPreview(TestCase):
             "markov_order_transition_latent_regime_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "queue_position_survival_fill_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -221,6 +229,22 @@ class TestFastReplayPreview(TestCase):
             {
                 source["source_id"]
                 for source in row_payload["order_transition_stress"]["source_papers"]
+            },
+        )
+        self.assertIn("queue_survival_fill_stress", row_payload)
+        self.assertFalse(row_payload["queue_survival_fill_stress"]["proof_authority"])
+        self.assertFalse(
+            row_payload["queue_survival_fill_stress"]["promotion_authority"]
+        )
+        self.assertEqual(
+            row_payload["queue_survival_fill_stress"]["status"],
+            "preview_only_queue_survival_fill_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2512.05734",
+            {
+                source["source_id"]
+                for source in row_payload["queue_survival_fill_stress"]["source_papers"]
             },
         )
         self.assertIn("cost_impact_lineage", row_payload)

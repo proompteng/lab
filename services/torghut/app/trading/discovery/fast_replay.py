@@ -33,6 +33,9 @@ from app.trading.discovery.order_book_observability_stress import (
 from app.trading.discovery.order_transition_stress import (
     extract_order_transition_stress,
 )
+from app.trading.discovery.queue_survival_fill_stress import (
+    extract_queue_survival_fill_stress,
+)
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
@@ -53,6 +56,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "mpc_market_limit_execution_schedule_stress",
     "order_book_observability_feedback_stress",
     "markov_order_transition_latent_regime_stress",
+    "queue_position_survival_fill_stress",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -125,6 +129,9 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     order_transition_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    queue_survival_fill_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
@@ -219,6 +226,7 @@ class FastReplayPreviewRow:
                 self.order_book_observability_stress
             ),
             "order_transition_stress": dict(self.order_transition_stress),
+            "queue_survival_fill_stress": dict(self.queue_survival_fill_stress),
             "ranking_only_reasons": list(ranking_only_reasons),
             "risk_veto_reasons": list(risk_veto_reasons),
             "exact_replay_required": True,
@@ -402,6 +410,7 @@ class FastReplayPreviewResult:
                 "mpc_market_limit_execution_schedule_stress": "deterministic MPC-style schedule deviation/opportunity-cost/market-limit-mix stress from arXiv:2603.28898 and arXiv:2507.06345; preview ranking only",
                 "order_book_observability_feedback_stress": "deterministic order-book feedback/censored-trade and state-dependent spread-cost stress from arXiv:2605.19584 and arXiv:2507.09196; preview ranking only",
                 "markov_order_transition_latent_regime_stress": "deterministic Markov transition entropy/inertia plus latent rising-edge stress from arXiv:2502.07625 and arXiv:2604.20949; preview ranking only",
+                "queue_position_survival_fill_stress": "deterministic queue-position survival fill probability, depth-delay, and nonfill opportunity-cost stress from arXiv:2512.05734, SSRN:6440898, and SSRN:6730443; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -1054,6 +1063,7 @@ def _score_candidate_spec(
             execution_schedule_stress={},
             order_book_observability_stress={},
             order_transition_stress={},
+            queue_survival_fill_stress={},
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
             candidate_lineage=_candidate_lineage(spec),
@@ -1137,6 +1147,19 @@ def _score_candidate_spec(
         )
         or 0.0
     )
+    queue_survival_fill_stress = extract_queue_survival_fill_stress(
+        matched_source_rows,
+        direction=direction,
+        max_notional=_candidate_notional(spec),
+    ).to_payload()
+    queue_survival_fill_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(queue_survival_fill_stress.get("ranking_features")).get(
+                "replay_rank_penalty_bps"
+            )
+        )
+        or 0.0
+    )
     impact_liquidity_penalty_bps = _impact_liquidity_penalty_bps(
         median_spread_bps=median_spread_bps,
         spread_tail_bps=spread_tail_bps,
@@ -1184,6 +1207,7 @@ def _score_candidate_spec(
         - execution_schedule_rank_penalty_bps * 0.14
         - order_book_observability_rank_penalty_bps * 0.12
         - order_transition_rank_penalty_bps * 0.11
+        - queue_survival_fill_rank_penalty_bps * 0.13
         - conformal_tail_risk_penalty_bps * 0.12
         - macro_stress_veto_score * 18.0
     )
@@ -1216,6 +1240,7 @@ def _score_candidate_spec(
         - execution_schedule_rank_penalty_bps * 0.05
         - order_book_observability_rank_penalty_bps * 0.04
         - order_transition_rank_penalty_bps * 0.04
+        - queue_survival_fill_rank_penalty_bps * 0.05
     )
     return FastReplayPreviewRow(
         candidate_spec_id=spec.candidate_spec_id,
@@ -1254,6 +1279,7 @@ def _score_candidate_spec(
         execution_schedule_stress=dict(execution_schedule_stress),
         order_book_observability_stress=dict(order_book_observability_stress),
         order_transition_stress=dict(order_transition_stress),
+        queue_survival_fill_stress=dict(queue_survival_fill_stress),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
@@ -1291,6 +1317,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _execution_schedule_rank_penalty_bps(row) * 0.08
         - _order_book_observability_rank_penalty_bps(row) * 0.07
         - _order_transition_rank_penalty_bps(row) * 0.06
+        - _queue_survival_fill_rank_penalty_bps(row) * 0.07
         - float(row.conformal_tail_risk_penalty_bps) * 0.10
     )
 
@@ -1309,6 +1336,11 @@ def _order_book_observability_rank_penalty_bps(row: FastReplayPreviewRow) -> flo
 
 def _order_transition_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
     ranking_features = _mapping(row.order_transition_stress.get("ranking_features"))
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _queue_survival_fill_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
+    ranking_features = _mapping(row.queue_survival_fill_stress.get("ranking_features"))
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
 
@@ -1501,6 +1533,7 @@ def _row_with_rank_and_selection(
         execution_schedule_stress=dict(row.execution_schedule_stress),
         order_book_observability_stress=dict(row.order_book_observability_stress),
         order_transition_stress=dict(row.order_transition_stress),
+        queue_survival_fill_stress=dict(row.queue_survival_fill_stress),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -1561,6 +1594,7 @@ def _row_with_frontier_dedupe(
         execution_schedule_stress=dict(row.execution_schedule_stress),
         order_book_observability_stress=dict(row.order_book_observability_stress),
         order_transition_stress=dict(row.order_transition_stress),
+        queue_survival_fill_stress=dict(row.queue_survival_fill_stress),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -2360,6 +2394,8 @@ def _risk_flags_for_row(
         flags.add("order_book_observability_stress_penalty_active")
     if _order_transition_rank_penalty_bps(row) > 0:
         flags.add("order_transition_stress_penalty_active")
+    if _queue_survival_fill_rank_penalty_bps(row) > 0:
+        flags.add("queue_survival_fill_stress_penalty_active")
     if row.matched_symbol_count < row.requested_symbol_count:
         flags.add("partial_symbol_coverage")
     if row.trading_day_count <= 0:
@@ -2392,6 +2428,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("order_book_observability_stress_downranks_only")
     if _order_transition_rank_penalty_bps(row) > 0:
         reasons.add("order_transition_stress_downranks_only")
+    if _queue_survival_fill_rank_penalty_bps(row) > 0:
+        reasons.add("queue_survival_fill_stress_downranks_only")
     if row.selection_reason == "insufficient_replay_tape_rows":
         reasons.add("missing_replay_tape_source_data_explicit_blocker")
     if lineage_blockers:
@@ -2417,6 +2455,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("order_book_observability_stress_penalty")
     if _order_transition_rank_penalty_bps(row) > 0:
         vetoes.add("order_transition_stress_penalty")
+    if _queue_survival_fill_rank_penalty_bps(row) > 0:
+        vetoes.add("queue_survival_fill_stress_penalty")
     if row.robust_lower_percentile_post_cost_utility_bps <= 0:
         vetoes.add("robust_lower_percentile_post_cost_utility_not_positive")
     return tuple(sorted(vetoes))
