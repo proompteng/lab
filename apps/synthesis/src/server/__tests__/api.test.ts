@@ -965,13 +965,14 @@ describe('synthesis REST auth', () => {
       ],
     }
 
-    await handleAutotraderFinalizeSession(
+    const firstFinalizeResponse = await handleAutotraderFinalizeSession(
       new Request('http://synthesis.test/api/autotrader/finalize', {
         method: 'POST',
         headers: authedHeaders,
         body: JSON.stringify(finalizeBody),
       }),
     )
+    const firstDetail = await firstFinalizeResponse.json()
     const secondFinalizeResponse = await handleAutotraderFinalizeSession(
       new Request('http://synthesis.test/api/autotrader/finalize', {
         method: 'POST',
@@ -991,6 +992,7 @@ describe('synthesis REST auth', () => {
       sessionId: sessionA,
       ticketSessionId: sessionB,
     })
+    expect(detail.session.finalizedAt).toBe(firstDetail.session.finalizedAt)
     expect(detail.setupExamples).toHaveLength(1)
     expect(detail.setupExamples[0]).toMatchObject({
       ticketId: null,

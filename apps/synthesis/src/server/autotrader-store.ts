@@ -587,7 +587,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
     const summary = summaryWithFinalizationWarnings(input.summary, finalization.warnings)
     const updatedSession: AutotraderSession = {
       ...session,
-      finalizedAt: nowIso(),
+      finalizedAt: session.finalizedAt ?? nowIso(),
       terminalReason: input.terminalReason,
       openingEquity:
         input.openingEquity ??
@@ -1540,7 +1540,7 @@ class PostgresAutotraderStore implements AutotraderStore {
       const summary = summaryWithFinalizationWarnings(input.summary, finalization.warnings)
       await client.query(
         `UPDATE autotrader.sessions
-         SET finalized_at = now(),
+         SET finalized_at = COALESCE(finalized_at, now()),
              terminal_reason = $2,
              summary = $3::jsonb,
              opening_equity = COALESCE($4, opening_equity),
