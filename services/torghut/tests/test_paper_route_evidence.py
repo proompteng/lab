@@ -4103,6 +4103,61 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "scripts/flatten_paper_account_positions.py",
         )
 
+    def test_source_backed_runtime_ledger_satisfied_blockers_require_current_evidence(
+        self,
+    ) -> None:
+        def satisfied_blockers(
+            *,
+            source_reference_blockers: list[str] | None = None,
+            closed_round_trip_evidence: bool = True,
+            evidence_grade_bucket_count: int = 1,
+            closed_trade_count: int = 1,
+            open_position_count: int = 0,
+            filled_notional: str = "400",
+            net_strategy_pnl_after_costs: str = "10",
+        ) -> set[str]:
+            return (
+                paper_route_evidence._source_backed_runtime_ledger_satisfied_blockers(
+                    source_activity={
+                        "missing": False,
+                        "source_lifecycle_blockers": [],
+                        "source_reference_blockers": source_reference_blockers or [],
+                        "source_lifecycle": {
+                            "closed_round_trip_evidence": closed_round_trip_evidence,
+                        },
+                    },
+                    account_close_state={
+                        "blockers": [],
+                        "zero_open_position_evidence": True,
+                    },
+                    runtime_ledger={
+                        "evidence_grade_bucket_count": evidence_grade_bucket_count,
+                        "closed_trade_count": closed_trade_count,
+                        "open_position_count": open_position_count,
+                        "filled_notional": filled_notional,
+                        "net_strategy_pnl_after_costs": net_strategy_pnl_after_costs,
+                    },
+                )
+            )
+
+        satisfied = satisfied_blockers()
+        self.assertIn("paper_route_runtime_ledger_import_pending", satisfied)
+        self.assertIn("post_cost_pnl_non_positive", satisfied)
+        self.assertNotIn(
+            "post_cost_pnl_non_positive",
+            satisfied_blockers(net_strategy_pnl_after_costs="0"),
+        )
+
+        for blockers in (
+            satisfied_blockers(source_reference_blockers=["source_ref_missing"]),
+            satisfied_blockers(closed_round_trip_evidence=False),
+            satisfied_blockers(evidence_grade_bucket_count=0),
+            satisfied_blockers(closed_trade_count=0),
+            satisfied_blockers(open_position_count=1),
+            satisfied_blockers(filled_notional="0"),
+        ):
+            self.assertEqual(blockers, set())
+
     def test_successful_bounded_collection_emits_source_backed_import_ready_metadata(
         self,
     ) -> None:
@@ -4110,6 +4165,17 @@ class TestPaperRouteEvidenceAudit(TestCase):
         window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
         strategy_name = "hpairs-source-backed-ready"
         candidate_id = "candidate-source-backed-ready"
+        stale_import_blockers = [
+            "paper_route_runtime_ledger_import_pending",
+            "runtime_ledger_candidate_mismatch",
+            "runtime_ledger_source_window_evidence_pending",
+            "closed_round_trip_missing",
+            "runtime_ledger_closed_trades_missing",
+            "runtime_ledger_expectancy_missing",
+            "runtime_ledger_post_cost_expectancy_missing",
+            "unclosed_position",
+            "post_cost_pnl_non_positive",
+        ]
         with Session(self.engine) as session:
             strategy = Strategy(
                 name=strategy_name,
@@ -4267,6 +4333,43 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     ),
                 )
             )
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="source-backed-import-ready-stale-diagnostic",
+                    candidate_id=candidate_id,
+                    hypothesis_id="H-PAIRS-01",
+                    observed_stage="paper",
+                    bucket_started_at=window_start,
+                    bucket_ended_at=window_end,
+                    account_label="TORGHUT_SIM",
+                    runtime_strategy_name=strategy_name,
+                    strategy_family="microbar_cross_sectional_pairs",
+                    fill_count=4,
+                    decision_count=4,
+                    submitted_order_count=4,
+                    cancelled_order_count=0,
+                    rejected_order_count=0,
+                    unfilled_order_count=0,
+                    closed_trade_count=0,
+                    open_position_count=1,
+                    filled_notional=Decimal("400"),
+                    gross_strategy_pnl=Decimal("-1"),
+                    cost_amount=Decimal("2"),
+                    net_strategy_pnl_after_costs=Decimal("-3"),
+                    post_cost_expectancy_bps=None,
+                    ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                    pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                    execution_policy_hash_counts={"policy-a": 4},
+                    cost_model_hash_counts={"cost-a": 4},
+                    lineage_hash_counts={"lineage-a": 4},
+                    blockers_json=stale_import_blockers,
+                    payload_json=self._runtime_ledger_source_authority_payload(
+                        window_start=window_start,
+                        window_end=window_end,
+                        suffix="source-backed-stale-diagnostic",
+                    ),
+                )
+            )
             session.commit()
 
             payload = build_paper_route_evidence_audit(
@@ -4301,6 +4404,24 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "paper_probation_satisfied_for_bounded_live_paper_collection": True,
                                 "promotion_allowed": False,
                                 "final_promotion_authorized": False,
+                                "final_promotion_blockers": [
+                                    "paper_probation_evidence_collection_only",
+                                    "live_runtime_ledger_required",
+                                    *stale_import_blockers,
+                                ],
+                                "candidate_blockers": [
+                                    "paper_probation_evidence_collection_only",
+                                    "live_runtime_ledger_required",
+                                    "runtime_ledger_source_collection_only",
+                                    "runtime_ledger_stage_not_live",
+                                    *stale_import_blockers,
+                                ],
+                                "runtime_ledger_target_metadata_blockers": [
+                                    "live_runtime_ledger_required",
+                                    "runtime_ledger_source_collection_only",
+                                    "runtime_ledger_stage_not_live",
+                                    *stale_import_blockers,
+                                ],
                             }
                         ],
                     },
@@ -4331,16 +4452,34 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(metadata["filled_notional"], "400")
         self.assertTrue(metadata["closed_round_trip_evidence"])
         self.assertTrue(metadata["zero_open_position_evidence"])
+        self.assertGreaterEqual(
+            set(metadata["stale_blockers_satisfied_by_source_backed_evidence"]),
+            set(stale_import_blockers),
+        )
         self.assertEqual(metadata["blockers"], [])
+        readiness_blockers = target_audit["readiness"]["blockers"]
+        evidence_readback_blockers = target_audit["evidence_readback"]["blockers"]
+        import_audit = payload["runtime_window_import_audit"]
+        target_blocker_reasons = [
+            blocker
+            for target_blocker in import_audit["target_blockers"]
+            for blocker in target_blocker["blockers"]
+        ]
+        for stale_blocker in stale_import_blockers:
+            self.assertNotIn(stale_blocker, readiness_blockers)
+            self.assertNotIn(stale_blocker, evidence_readback_blockers)
+            self.assertNotIn(stale_blocker, target_blocker_reasons)
+        self.assertIn("live_runtime_ledger_required", readiness_blockers)
+        self.assertIn("runtime_ledger_source_collection_only", readiness_blockers)
+        self.assertIn("runtime_ledger_stage_not_live", readiness_blockers)
+        self.assertEqual(target_audit["readiness"]["evidence_collection_blockers"], [])
         self.assertEqual(
-            payload["runtime_window_import_audit"]["state"],
+            import_audit["state"],
             "runtime_ledger_ready_for_gate_review",
         )
-        self.assertEqual(payload["runtime_window_import_audit"]["blockers"], [])
+        self.assertEqual(import_audit["blockers"], [])
         self.assertEqual(
-            payload["runtime_window_import_audit"]["counts"][
-                "targets_with_source_backed_import_ready"
-            ],
+            import_audit["counts"]["targets_with_source_backed_import_ready"],
             1,
         )
         self.assertFalse(payload["runtime_window_import_plan"]["promotion_allowed"])
