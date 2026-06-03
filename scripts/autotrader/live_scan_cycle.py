@@ -777,6 +777,7 @@ def fetch_scan_inputs(
     feed: str,
     scorecard_limit: int,
     broker_state: dict[str, Any] | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     inputs, _ = fetch_scan_inputs_with_metrics(
         alpaca=alpaca,
@@ -787,6 +788,7 @@ def fetch_scan_inputs(
         feed=feed,
         scorecard_limit=scorecard_limit,
         broker_state=broker_state,
+        session_id=session_id,
     )
     return inputs
 
@@ -801,11 +803,13 @@ def fetch_scan_inputs_with_metrics(
     feed: str,
     scorecard_limit: int,
     broker_state: dict[str, Any] | None = None,
+    session_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     started_at = time.monotonic()
+    fetch_current_session = bool(optional_text(session_id, max_length=240))
     metrics: dict[str, Any] = {
         "brokerStateSource": "provided" if broker_state is not None else "fetched",
-        "parallelFetchCount": 3,
+        "parallelFetchCount": 4 if fetch_current_session else 3,
     }
     if broker_state is None:
         raw_broker_state, broker_metrics = fetch_broker_state_with_metrics(alpaca)
@@ -856,18 +860,28 @@ def fetch_scan_inputs_with_metrics(
         payload = synthesis.get("/api/autotrader/scorecards", {"limit": str(scorecard_limit)})
         return payload, elapsed_ms(task_started_at)
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    def timed_current_session() -> tuple[Any, int]:
+        task_started_at = time.monotonic()
+        payload = synthesis.get(f"/api/autotrader/sessions/{urllib.parse.quote(str(session_id))}", None)
+        return payload, elapsed_ms(task_started_at)
+
+    with ThreadPoolExecutor(max_workers=4 if fetch_current_session else 3) as executor:
         futures = {
             "bars": executor.submit(timed_bars),
             "quotes": executor.submit(timed_quotes),
             "scorecards": executor.submit(timed_scorecards),
         }
+        if fetch_current_session:
+            futures["currentSession"] = executor.submit(timed_current_session)
         bars, metrics["barsMs"] = futures["bars"].result()
         quotes, metrics["quotesMs"] = futures["quotes"].result()
         scorecards, metrics["scorecardsMs"] = futures["scorecards"].result()
+        current_session = None
+        if fetch_current_session:
+            current_session, metrics["currentSessionMs"] = futures["currentSession"].result()
 
     metrics["totalMs"] = elapsed_ms(started_at)
-    return {
+    inputs = {
         "account.json": account,
         "positions.json": {"positions": positions if isinstance(positions, list) else []},
         "open-orders.json": {"orders": orders if isinstance(orders, list) else []},
@@ -875,7 +889,10 @@ def fetch_scan_inputs_with_metrics(
         "quotes.json": quotes,
         "scorecards.json": scorecards,
         "watchlist.json": {"watchlist": symbols},
-    }, metrics
+    }
+    if fetch_current_session:
+        inputs["current-session.json"] = current_session
+    return inputs, metrics
 
 
 def summarize_scan(
@@ -914,6 +931,7 @@ def summarize_scan(
                     "scorecard_sample_size",
                     "scorecard_avg_realized_r",
                     "scorecard_confidence",
+                    "current_session_loss_lockout",
                 )
             }
         )
@@ -928,6 +946,7 @@ def summarize_scan(
         "topResults": top_results,
         "scorecardInfluence": scorecard_usage_summary(scan),
         "scorecardOverlay": scan.get("scorecardOverlay"),
+        "currentSessionLossLockout": scan.get("currentSessionLossLockout"),
     }
 
 
@@ -1164,6 +1183,150 @@ def overlay_scorecards_on_scan(scan: dict[str, Any], scorecard_payload: Any) -> 
         "scorecardOverlay": {
             "sourceScorecardCount": len(scorecards),
             "appliedResultCount": applied_count,
+        },
+    }
+
+
+def session_detail_object(payload: Any) -> dict[str, Any]:
+    return payload if isinstance(payload, dict) else {}
+
+
+def session_detail_collection(payload: Any, key: str) -> list[Any]:
+    detail = session_detail_object(payload)
+    value = detail.get(key)
+    return value if isinstance(value, list) else []
+
+
+def normalized_loss_key(symbol: Any, setup: Any = None) -> tuple[str, str | None] | None:
+    symbol_text = optional_text(symbol, max_length=32)
+    if not symbol_text:
+        return None
+    setup_text = setup_type(setup) if setup is not None else None
+    return symbol_text.upper(), setup_text if setup_text and setup_text != "no_trade" else None
+
+
+def session_ticket_lookup(payload: Any) -> dict[str, dict[str, Any]]:
+    tickets: dict[str, dict[str, Any]] = {}
+    for ticket in session_detail_collection(payload, "tradeTickets"):
+        if not isinstance(ticket, dict):
+            continue
+        ticket_id = optional_text(ticket.get("id") or ticket.get("ticketId"), max_length=240)
+        if ticket_id:
+            tickets[ticket_id] = ticket
+    return tickets
+
+
+def session_losing_round_trip_keys(payload: Any) -> dict[tuple[str, str | None], dict[str, Any]]:
+    orders = [order for order in session_detail_collection(payload, "orders") if isinstance(order, dict)]
+    by_client_order_id = {
+        str(order["clientOrderId"]): order
+        for order in orders
+        if optional_text(order.get("clientOrderId"), max_length=240)
+    }
+    tickets_by_id = session_ticket_lookup(payload)
+    losing: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for exit_order in orders:
+        payload_value = exit_order.get("brokerPayload")
+        broker_payload = payload_value if isinstance(payload_value, dict) else {}
+        parent_client_order_id = optional_text(
+            broker_payload.get("parentClientOrderId") or exit_order.get("parentClientOrderId"),
+            max_length=240,
+        )
+        if not parent_client_order_id:
+            continue
+        parent = by_client_order_id.get(parent_client_order_id)
+        if not isinstance(parent, dict):
+            continue
+        parent_side = optional_text(parent.get("side"), max_length=32)
+        exit_side = optional_text(exit_order.get("side"), max_length=32)
+        if parent_side != "buy" or exit_side != "sell":
+            continue
+        parent_broker_payload = parent.get("brokerPayload") if isinstance(parent.get("brokerPayload"), dict) else {}
+        parent_price = decimal_value(
+            parent.get("filledAvgPrice") or parent.get("filled_avg_price") or parent_broker_payload.get("filled_avg_price")
+        )
+        exit_price = decimal_value(
+            exit_order.get("filledAvgPrice")
+            or exit_order.get("filled_avg_price")
+            or broker_payload.get("filled_avg_price")
+        )
+        if parent_price is None or exit_price is None or exit_price >= parent_price:
+            continue
+        ticket = tickets_by_id.get(str(parent.get("ticketId") or exit_order.get("ticketId") or ""))
+        setup = ticket.get("setupType") if isinstance(ticket, dict) else None
+        symbol = parent.get("symbol") or exit_order.get("symbol")
+        symbol_key = normalized_loss_key(symbol)
+        setup_key = normalized_loss_key(symbol, setup)
+        details = {
+            "symbol": optional_text(symbol, max_length=32).upper() if optional_text(symbol, max_length=32) else None,
+            "setupType": setup_type(setup) if setup is not None else None,
+            "parentClientOrderId": parent_client_order_id,
+            "exitClientOrderId": exit_order.get("clientOrderId"),
+            "entryPrice": str(parent_price),
+            "exitPrice": str(exit_price),
+        }
+        if symbol_key:
+            losing[symbol_key] = details
+        if setup_key:
+            losing[setup_key] = details
+    return losing
+
+
+def current_session_loss_for_result(
+    result: dict[str, Any],
+    losing_keys: dict[tuple[str, str | None], dict[str, Any]],
+) -> dict[str, Any] | None:
+    symbol = optional_text(result.get("symbol"), max_length=32)
+    if not symbol:
+        return None
+    setup = setup_type(result.get("setup_type") or result.get("setupType"))
+    setup_key = normalized_loss_key(symbol, setup)
+    symbol_key = normalized_loss_key(symbol)
+    if setup_key and setup_key in losing_keys:
+        return {**losing_keys[setup_key], "lockoutScope": "symbol_setup"}
+    if symbol_key and symbol_key in losing_keys:
+        return {**losing_keys[symbol_key], "lockoutScope": "symbol"}
+    return None
+
+
+def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_payload: Any) -> dict[str, Any]:
+    results = scan.get("results")
+    if not isinstance(results, list):
+        return scan
+    losing_keys = session_losing_round_trip_keys(current_session_payload)
+    if not losing_keys:
+        return scan
+    enriched_results: list[Any] = []
+    applied_count = 0
+    blocked_symbols: list[str] = []
+    for result in results:
+        if not isinstance(result, dict):
+            enriched_results.append(result)
+            continue
+        if is_scanner_no_trade_result(result):
+            enriched_results.append(result)
+            continue
+        lockout = current_session_loss_for_result(result, losing_keys)
+        if lockout is None:
+            enriched_results.append(result)
+            continue
+        symbol = optional_text(result.get("symbol"), max_length=32)
+        if symbol and symbol.upper() not in blocked_symbols:
+            blocked_symbols.append(symbol.upper())
+        enriched_results.append(
+            {
+                **result,
+                "no_trade_reason": "current_session_loss_lockout",
+                "current_session_loss_lockout": lockout,
+            }
+        )
+        applied_count += 1
+    return {
+        **scan,
+        "results": enriched_results,
+        "currentSessionLossLockout": {
+            "appliedResultCount": applied_count,
+            "blockedSymbols": blocked_symbols[:20],
         },
     }
 
@@ -1813,6 +1976,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         feed=args.feed,
         scorecard_limit=args.scorecard_limit,
         broker_state=broker_state,
+        session_id=args.session_id,
     )
     stage_timings["inputFetchMs"] = input_fetch_metrics["totalMs"]
     stage_timings["inputFetch"] = input_fetch_metrics
@@ -1840,6 +2004,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         watchlist=symbols,
     )
     scan = overlay_scorecards_on_scan(scan, inputs.get("scorecards.json"))
+    scan = overlay_current_session_loss_lockout(scan, inputs.get("current-session.json"))
     stage_timings["stockAnalysisScanMs"] = elapsed_ms(scan_started_at)
     prune_started_at = time.monotonic()
     removed_cycle_dirs = prune_old_cycle_dirs(work_dir, args.retain_cycles)

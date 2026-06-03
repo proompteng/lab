@@ -1210,6 +1210,102 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
         self.assertEqual(summary["candidateSymbols"], ["AMD"])
 
+    def test_current_session_loss_lockout_blocks_same_symbol_setup(self) -> None:
+        current_session = {
+            "tradeTickets": [
+                {
+                    "id": "ticket-avgo",
+                    "symbol": "AVGO",
+                    "setupType": "vwap_reclaim",
+                    "setupGrade": "A",
+                }
+            ],
+            "orders": [
+                {
+                    "ticketId": "ticket-avgo",
+                    "clientOrderId": "entry-avgo",
+                    "symbol": "AVGO",
+                    "side": "buy",
+                    "status": "filled",
+                    "brokerPayload": {"filled_avg_price": "486.14"},
+                },
+                {
+                    "ticketId": "ticket-avgo",
+                    "clientOrderId": "stop-avgo",
+                    "symbol": "AVGO",
+                    "side": "sell",
+                    "status": "filled",
+                    "brokerPayload": {
+                        "parentClientOrderId": "entry-avgo",
+                        "filled_avg_price": "482.90",
+                    },
+                },
+            ],
+        }
+        scan = live_scan_cycle.overlay_current_session_loss_lockout(
+            {
+                "results": [
+                    {
+                        "symbol": "AVGO",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A+",
+                        "expected_r": "3.0",
+                        "last": "486.00",
+                        "support": "484.00",
+                        "resistance": "492.00",
+                        "scorecard_sample_size": 1,
+                        "scorecard_avg_realized_r": "0.3811",
+                    },
+                    {
+                        "symbol": "AMD",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "3.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "103.00",
+                        "scorecard_sample_size": 1,
+                        "scorecard_avg_realized_r": "3.042857",
+                    },
+                ]
+            },
+            current_session,
+        )
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=15,
+            index=1,
+            result=scan["results"][0],
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=15,
+            scan=scan,
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-15-1-AVGO-vwap_reclaim-A+",
+                    "ticketId": "ticket-avgo-repeat",
+                },
+                {
+                    "idempotencyKey": "scan-cycle-15-2-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                },
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(scan["currentSessionLossLockout"]["appliedResultCount"], 1)
+        self.assertEqual(scan["currentSessionLossLockout"]["blockedSymbols"], ["AVGO"])
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "current_session_loss_lockout")
+        self.assertEqual(
+            payload["brokerOrderPlan"]["raw"]["current_session_loss_lockout"]["lockoutScope"],
+            "symbol_setup",
+        )
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
+        self.assertEqual(summary["candidateSymbols"], ["AMD"])
+
     def test_decision_summary_reports_no_actionable_candidate(self) -> None:
         summary = live_scan_cycle.decision_summary_for_scan(
             cycle=5,
@@ -1518,6 +1614,9 @@ class LiveScanCycleTest(unittest.TestCase):
                 self.timeout_seconds = timeout_seconds
 
             def get(self, path: str, query: dict[str, str]) -> object:
+                if path == "/api/autotrader/sessions/session-1":
+                    case.assertIsNone(query)
+                    return {"session": {"id": "session-1"}, "orders": [], "tradeTickets": []}
                 case.assertEqual(path, "/api/autotrader/scorecards")
                 case.assertEqual(query, {"limit": "20"})
                 return {
@@ -1588,6 +1687,7 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertEqual(summary["cycle"], 2)
             self.assertEqual(summary["resultCount"], 1)
             self.assertTrue((cycle_dir / "account.json").exists())
+            self.assertTrue((cycle_dir / "current-session.json").exists())
             self.assertTrue((cycle_dir / "watchlist.json").exists())
             self.assertFalse((cycle_dir / "summary.json").exists())
             self.assertFalse(old_cycle.exists())
@@ -1599,7 +1699,7 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertEqual(summary["scorecardInfluence"]["scorecardInfluencedResultCount"], 1)
             self.assertEqual(summary["decisionSummary"]["action"], "no_actionable_candidate")
             self.assertGreaterEqual(summary["stageTimingsMs"]["totalMs"], 0)
-            self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["parallelFetchCount"], 3)
+            self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["parallelFetchCount"], 4)
             self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["brokerStateSource"], "fetched")
             self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["brokerState"]["parallelFetchCount"], 3)
             self.assertGreaterEqual(summary["stageTimingsMs"]["stockAnalysisScanMs"], 0)
