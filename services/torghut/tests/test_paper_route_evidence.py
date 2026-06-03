@@ -5450,6 +5450,84 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 0,
             )
 
+    def test_runtime_window_import_audit_reports_observed_source_blockers_without_session_readiness(
+        self,
+    ) -> None:
+        audit = paper_route_evidence._runtime_window_import_audit(
+            next_targets={
+                "target_count": 1,
+                "source": "paper_route_observed_strategy_source_collection",
+                "targets": [
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "candidate_id": "ca4e6e3c7d639e3363dc5860",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                        "account_label": "TORGHUT_SIM",
+                    }
+                ],
+            },
+            target_audits=[
+                {
+                    "source_activity": {"missing": False, "decision_count": 8},
+                    "runtime_ledger": {
+                        "bucket_count": 1,
+                        "evidence_grade_bucket_count": 0,
+                        "blockers": [
+                            "runtime_ledger_source_offsets_missing",
+                            "runtime_ledger_source_materialization_missing",
+                        ],
+                    },
+                    "promotion_decisions": {"decision_count": 1},
+                }
+            ],
+            next_target_audits=[
+                {
+                    "target": {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "candidate_id": "ca4e6e3c7d639e3363dc5860",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                        "account_label": "TORGHUT_SIM",
+                    },
+                    "source_activity": {"missing": False, "decision_count": 8},
+                    "runtime_ledger": {
+                        "bucket_count": 1,
+                        "evidence_grade_bucket_count": 0,
+                        "blockers": [
+                            "runtime_ledger_source_offsets_missing",
+                            "runtime_ledger_source_materialization_missing",
+                        ],
+                    },
+                    "promotion_decisions": {"decision_count": 1},
+                }
+            ],
+        )
+
+        self.assertEqual(
+            audit["state"], "runtime_ledger_imported_but_not_evidence_grade"
+        )
+        self.assertEqual(
+            audit["next_action"], "repair_runtime_ledger_bucket_authority_or_candidate"
+        )
+        self.assertFalse(audit["import_ready"])
+        self.assertFalse(audit["proof_allowed"])
+        self.assertEqual(
+            audit["evidence_window_state"],
+            "runtime_ledger_evidence_grade_required",
+        )
+        self.assertEqual(
+            audit["blockers"],
+            [
+                "runtime_ledger_evidence_grade_bucket_missing",
+                "runtime_ledger_source_materialization_missing",
+                "runtime_ledger_source_offsets_missing",
+            ],
+        )
+        self.assertTrue(
+            audit["diagnostics"]["observed_source_evidence_ready_for_diagnostics"]
+        )
+
     def test_runtime_window_import_audit_explains_quote_rejected_source_activity(
         self,
     ) -> None:
