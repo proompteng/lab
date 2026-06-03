@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -25,6 +26,7 @@ from app.models import (
     ExecutionOrderEvent,
     ExecutionTCAMetric,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleReconciliationRun,
     TigerBeetleAccountRef,
     TigerBeetleTransferRef,
 )
@@ -1900,6 +1902,128 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             reconcile.call_args.kwargs["client"],
             FakeJournal.instances[0].reconciliation_client,
         )
+
+    def test_main_reuses_fresh_reconciliation_when_empty_source_selects_no_rows(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+            with Session(engine) as session:
+                observed_at = datetime.now(timezone.utc)
+                session.add(
+                    TigerBeetleReconciliationRun(
+                        cluster_id=2001,
+                        started_at=observed_at,
+                        finished_at=observed_at,
+                        status="ok",
+                        checked_transfer_count=26,
+                        missing_transfer_count=0,
+                        mismatched_transfer_count=0,
+                        source_missing_count=0,
+                        payload_json={
+                            "ok": True,
+                            "status": "ok",
+                            "blockers": [],
+                            "reconciliation_max_age_seconds": 300,
+                            "runtime_ledger_checked_transfer_count": 26,
+                            "runtime_ledger_signed_transfer_count": 26,
+                            "runtime_ledger_missing_signed_ref_count": 0,
+                        },
+                    )
+                )
+                session.commit()
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--sources",
+                        "strategy_runtime_ledger_bucket",
+                        "--batch-size",
+                        "5",
+                        "--reconcile-limit",
+                        "12",
+                        "--reconcile-empty-selection",
+                        "--fail-on-degraded",
+                        "--allow-data-quality-degraded",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script, "reconcile_tigerbeetle_transfers") as reconcile,
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["selected"], 0)
+        self.assertEqual(payload["journaled"], 0)
+        self.assertEqual(payload["failed"], 0)
+        self.assertEqual(payload["reconciliation"]["status"], "skipped")
+        self.assertEqual(
+            payload["reconciliation"]["reason"],
+            "fresh_reconciliation_available",
+        )
+        self.assertEqual(
+            payload["reconciliation"]["latest_status"],
+            "ok",
+        )
+        self.assertFalse(payload["reconciliation"]["reconciliation_stale"])
+        self.assertEqual(FakeJournal.instances[0].runtime_buckets, [])
+        self.assertEqual(FakeJournal.instances[0].stable_ref_backfills, 0)
+        reconcile.assert_not_called()
+
+    def test_fresh_empty_selection_reconciliation_requires_clean_latest_payload(
+        self,
+    ) -> None:
+        base_payload: dict[str, object] = {
+            "ok": True,
+            "status": "ok",
+            "reconciliation_stale": False,
+            "reconciliation_max_age_seconds": 300,
+            "blockers": [],
+            "client_lookup_ok": True,
+        }
+        rejection_cases = [
+            {"ok": False},
+            {"status": "degraded"},
+            {"reconciliation_stale": True},
+            {"reconciliation_max_age_seconds": 0},
+            {"blockers": ["runtime_ledger_missing"]},
+            {"blockers": True},
+            {"client_lookup_ok": False},
+        ]
+
+        for override in rejection_cases:
+            with self.subTest(override=override):
+                payload = {**base_payload, **override}
+                session = object()
+                with patch.object(
+                    script,
+                    "latest_tigerbeetle_reconciliation_payload",
+                    return_value=payload,
+                ) as latest:
+                    result = script._fresh_reconciliation_for_empty_selection(
+                        session,
+                        settings_obj=cast(
+                            Settings,
+                            SimpleNamespace(tigerbeetle_cluster_id=2001),
+                        ),
+                    )
+
+                self.assertIsNone(result)
+                latest.assert_called_once_with(session, cluster_id=2001)
 
     def test_main_dry_run_rolls_back_without_reconcile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

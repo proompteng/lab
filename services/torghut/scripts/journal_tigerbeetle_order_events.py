@@ -42,7 +42,10 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_KIND_RUNTIME_NET_PNL,
 )
-from app.trading.tigerbeetle_reconcile import reconcile_tigerbeetle_transfers
+from app.trading.tigerbeetle_reconcile import (
+    latest_tigerbeetle_reconciliation_payload,
+    reconcile_tigerbeetle_transfers,
+)
 
 DEFAULT_SOURCES = (
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
@@ -609,6 +612,62 @@ def _reset_session_identity_map(session: Any) -> None:
         expunge_all()
 
 
+def _fresh_reconciliation_for_empty_selection(
+    session: Any,
+    *,
+    settings_obj: Settings,
+) -> dict[str, object] | None:
+    latest = latest_tigerbeetle_reconciliation_payload(
+        session,
+        cluster_id=settings_obj.tigerbeetle_cluster_id,
+    )
+    if latest is None:
+        return None
+    if not bool(latest.get("ok")):
+        return None
+    if str(latest.get("status") or "") != "ok":
+        return None
+    if bool(latest.get("reconciliation_stale")):
+        return None
+    max_age_seconds = int(latest.get("reconciliation_max_age_seconds") or 0)
+    if max_age_seconds <= 0:
+        return None
+    raw_blockers = latest.get("blockers")
+    if isinstance(raw_blockers, Sequence) and not isinstance(
+        raw_blockers,
+        (str, bytes, bytearray),
+    ):
+        if any(str(item).strip() for item in raw_blockers):
+            return None
+    elif raw_blockers:
+        return None
+    if not bool(latest.get("client_lookup_ok", True)):
+        return None
+    return {
+        "ok": True,
+        "status": "skipped",
+        "reason": "fresh_reconciliation_available",
+        "fresh_reconciliation_available": True,
+        "latest_status": str(latest.get("status") or ""),
+        "latest_started_at": latest.get("started_at"),
+        "latest_finished_at": latest.get("finished_at"),
+        "age_seconds": int(latest.get("age_seconds") or 0),
+        "reconciliation_stale": False,
+        "reconciliation_max_age_seconds": max_age_seconds,
+        "checked_transfer_count": int(latest.get("checked_transfer_count") or 0),
+        "runtime_ledger_checked_transfer_count": int(
+            latest.get("runtime_ledger_checked_transfer_count") or 0
+        ),
+        "runtime_ledger_signed_transfer_count": int(
+            latest.get("runtime_ledger_signed_transfer_count") or 0
+        ),
+        "runtime_ledger_missing_signed_ref_count": int(
+            latest.get("runtime_ledger_missing_signed_ref_count") or 0
+        ),
+        "blockers": [],
+    }
+
+
 def _payload(
     *,
     args: argparse.Namespace,
@@ -1173,13 +1232,20 @@ def main() -> int:
                 or bool(getattr(args, "reconcile_empty_selection", False))
             )
         ):
-            reconciliation = reconcile_tigerbeetle_transfers(
-                session,
-                settings_obj=settings_obj,
-                client=journal.client_for_reconciliation(),
-                limit=max(1, int(args.reconcile_limit)),
-                persist=True,
-            )
+            reconciliation = None
+            if selected_source_rows == 0:
+                reconciliation = _fresh_reconciliation_for_empty_selection(
+                    session,
+                    settings_obj=settings_obj,
+                )
+            if reconciliation is None:
+                reconciliation = reconcile_tigerbeetle_transfers(
+                    session,
+                    settings_obj=settings_obj,
+                    client=journal.client_for_reconciliation(),
+                    limit=max(1, int(args.reconcile_limit)),
+                    persist=True,
+                )
             session.commit()
         elif not args.dry_run and not args.skip_reconcile and not stop_journaling:
             reconciliation = {
