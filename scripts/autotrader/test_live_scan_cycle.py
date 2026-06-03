@@ -693,7 +693,7 @@ class LiveScanCycleTest(unittest.TestCase):
                         "support": "99.00",
                         "resistance": "102.50",
                         "scorecard_sample_size": 2,
-                        "scorecard_avg_realized_r": "0.2",
+                        "scorecard_avg_realized_r": "0.75",
                     },
                     {
                         "symbol": "NVDA",
@@ -747,7 +747,7 @@ class LiveScanCycleTest(unittest.TestCase):
                         "support": "99.00",
                         "resistance": "102.10",
                         "scorecard_sample_size": 2,
-                        "scorecard_avg_realized_r": "0.1",
+                        "scorecard_avg_realized_r": "0.75",
                     },
                     {
                         "symbol": "AMD",
@@ -758,7 +758,7 @@ class LiveScanCycleTest(unittest.TestCase):
                         "support": "99.00",
                         "resistance": "104.00",
                         "scorecard_sample_size": 2,
-                        "scorecard_avg_realized_r": "0.1",
+                        "scorecard_avg_realized_r": "0.75",
                     },
                 ]
             },
@@ -1004,6 +1004,45 @@ class LiveScanCycleTest(unittest.TestCase):
             payload["brokerOrderPlan"]["riskDirective"]["reason"],
             "positive_scorecard_edge_pending_repeat_sample",
         )
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["actionableCandidateCount"], 0)
+        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertIsNone(summary["bestCandidate"])
+
+    def test_decision_summary_blocks_weak_positive_scorecard_edge(self) -> None:
+        result = {
+            "symbol": "AMD",
+            "setup_type": "vwap_reclaim",
+            "setup_grade": "A",
+            "expected_r": "4.0",
+            "last": "100.00",
+            "support": "99.00",
+            "resistance": "104.00",
+            "scorecard_sample_size": 5,
+            "scorecard_avg_realized_r": "0.25",
+            "scorecard_confidence": "0.75",
+        }
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=10,
+            index=1,
+            result=result,
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=10,
+            scan={"results": [result]},
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-10-1-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                }
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "scorecard_avg_realized_r_below_actionable_floor")
+        self.assertIsNone(payload["brokerOrderPlan"]["riskDirective"])
         self.assertEqual(summary["action"], "no_actionable_candidate")
         self.assertEqual(summary["actionableCandidateCount"], 0)
         self.assertEqual(summary["blockedResultCount"], 1)
