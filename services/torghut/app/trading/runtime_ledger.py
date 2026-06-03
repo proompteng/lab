@@ -621,6 +621,16 @@ def _order_lifecycle_blockers(
         row.order_id for row in fill_lifecycle_rows if row.order_id is not None
     }
     fill_order_ids = {row.order_id for row in usable_fills if row.order_id is not None}
+    cancelled_order_ids = {
+        row.order_id
+        for row in lifecycle_rows
+        if row.event_type in _CANCELLED_ORDER_EVENTS and row.order_id is not None
+    }
+    rejected_order_ids = {
+        row.order_id
+        for row in lifecycle_rows
+        if row.event_type in _REJECTED_ORDER_EVENTS and row.order_id is not None
+    }
     if any(row.order_id is None for row in usable_fills):
         blockers.append("fill_order_linkage_missing")
     if any(row.order_id is None for row in fill_lifecycle_rows):
@@ -629,7 +639,12 @@ def _order_lifecycle_blockers(
         blockers.append("fill_order_submission_missing")
     if fill_order_ids - fill_lifecycle_order_ids:
         blockers.append("order_feed_lifecycle_missing")
-    if submitted_order_ids - fill_lifecycle_order_ids:
+    if (
+        submitted_order_ids
+        - fill_lifecycle_order_ids
+        - cancelled_order_ids
+        - rejected_order_ids
+    ):
         blockers.append("unfilled_order_present")
     if rejected_order_count > 0:
         blockers.append("rejected_order_present")

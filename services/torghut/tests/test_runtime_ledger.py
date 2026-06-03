@@ -2482,3 +2482,48 @@ def test_exact_replay_ledger_blocks_unfilled_or_unhashed_order_lifecycle() -> No
     assert "zero_fill_runtime_ledger" in bucket.blockers
     assert "unfilled_order_present" in bucket.blockers
     assert "cost_model_hash_missing" in bucket.blockers
+
+
+def test_cancelled_zero_fill_order_does_not_remain_unfilled() -> None:
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                "event_type": "decision",
+                "executed_at": _ts(1),
+                "decision_id": "decision-exit",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "execution_policy_hash": "policy-sha",
+                "lineage_hash": "lineage-sha",
+            },
+            {
+                "event_type": "order_submitted",
+                "executed_at": _ts(2),
+                "decision_id": "decision-exit",
+                "order_id": "order-exit",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "execution_policy_hash": "policy-sha",
+                "lineage_hash": "lineage-sha",
+            },
+            {
+                "event_type": "order_cancelled",
+                "executed_at": _ts(3),
+                "decision_id": "decision-exit",
+                "order_id": "order-exit",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "execution_policy_hash": "policy-sha",
+                "lineage_hash": "lineage-sha",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.cancelled_order_count == 1
+    assert "zero_fill_runtime_ledger" in bucket.blockers
+    assert "unfilled_order_present" not in bucket.blockers
