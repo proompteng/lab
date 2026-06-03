@@ -69,6 +69,7 @@ class TestFastReplayPreview(TestCase):
         stress: bool = False,
         event_type: str = "trade",
     ) -> SignalEnvelope:
+        mid = Decimal(price)
         return SignalEnvelope(
             event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc)
             + timedelta(minutes=offset),
@@ -77,7 +78,9 @@ class TestFastReplayPreview(TestCase):
             seq=offset,
             source="test",
             payload={
-                "price": Decimal(price),
+                "price": mid,
+                "bid": mid - Decimal("0.01"),
+                "ask": mid + Decimal("0.01"),
                 "spread_bps": Decimal("2"),
                 "ofi": Decimal(ofi),
                 "microbar_volume": Decimal(volume),
@@ -172,6 +175,10 @@ class TestFastReplayPreview(TestCase):
             "mpc_market_limit_execution_schedule_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "order_book_observability_feedback_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -181,6 +188,22 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(row_payload["execution_schedule_stress"]["proof_authority"])
         self.assertFalse(
             row_payload["execution_schedule_stress"]["promotion_authority"]
+        )
+        self.assertIn("order_book_observability_stress", row_payload)
+        self.assertFalse(
+            row_payload["order_book_observability_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["order_book_observability_stress"]["promotion_authority"]
+        )
+        self.assertIn(
+            "arxiv-2605.19584",
+            {
+                source["source_id"]
+                for source in row_payload["order_book_observability_stress"][
+                    "source_papers"
+                ]
+            },
         )
         self.assertIn("cost_impact_lineage", row_payload)
         self.assertIn("impact_capacity_lineage", row_payload)
