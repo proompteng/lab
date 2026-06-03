@@ -8545,38 +8545,55 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
         next_plan = payload["next_paper_route_runtime_window_targets"]
         self.assertEqual(
-            next_plan["source"], "paper_route_observed_strategy_source_collection"
+            next_plan["schema_version"],
+            paper_route_evidence.NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         )
-        self.assertEqual(next_plan["targets"][0]["candidate_id"], "candidate-tsmom")
+        self.assertEqual(next_plan["source"], "paper_route_evidence_audit")
+        self.assertEqual(next_plan["targets"][0]["candidate_id"], "candidate-hpairs")
         self.assertEqual(
             next_plan["targets"][0]["selected_by"],
-            "paper_route_observed_strategy_source_collection",
+            "paper_route_evidence_audit",
         )
         self.assertFalse(next_plan["targets"][0]["promotion_allowed"])
         self.assertIn(
-            "runtime_ledger_source_collection_only",
+            "paper_route_runtime_ledger_import_pending",
             next_plan["targets"][0]["final_promotion_blockers"],
         )
+        runtime_plan = payload["runtime_window_import_plan"]
         self.assertEqual(
-            payload["runtime_window_import_plan"]["targets"][0]["candidate_id"],
-            "candidate-tsmom",
+            runtime_plan["source"], "paper_route_observed_strategy_source_collection"
+        )
+        self.assertEqual(runtime_plan["targets"][0]["candidate_id"], "candidate-tsmom")
+        self.assertEqual(
+            runtime_plan["targets"][0]["selected_by"],
+            "paper_route_observed_strategy_source_collection",
+        )
+        self.assertFalse(runtime_plan["targets"][0]["promotion_allowed"])
+        self.assertIn(
+            "runtime_ledger_source_collection_only",
+            runtime_plan["targets"][0]["final_promotion_blockers"],
         )
         self.assertEqual(
             payload["source_runtime_window_import_plan"]["source"],
             "paper_route_observed_strategy_source_collection",
         )
-        raw_next_plan = payload["raw_next_paper_route_runtime_window_targets"]
         self.assertEqual(
-            raw_next_plan["targets"][0]["candidate_id"], "candidate-hpairs"
+            payload["observed_strategy_source_runtime_window_import_plan"]["source"],
+            "paper_route_observed_strategy_source_collection",
         )
+        self.assertEqual(payload["raw_next_paper_route_runtime_window_targets"], {})
         self.assertEqual(
-            raw_next_plan["targets"][0]["paper_route_account_contamination_state"][
+            next_plan["targets"][0]["paper_route_account_contamination_state"][
                 "foreign_strategy_counts"
             ],
             {"intraday-tsmom-profit-v3": 1},
         )
         self.assertEqual(
             payload["summary"]["selected_next_runtime_window_plan_source"],
+            "paper_route_evidence_audit",
+        )
+        self.assertEqual(
+            payload["summary"]["runtime_window_import_plan_source"],
             "paper_route_observed_strategy_source_collection",
         )
 
