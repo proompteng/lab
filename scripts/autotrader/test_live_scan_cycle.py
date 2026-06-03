@@ -215,6 +215,52 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["openOrderCount"], 0)
         self.assertEqual(summary["account"]["intraday_equity_entry"]["status"], "blocked")
 
+    def test_summarizes_account_gate_as_monitor_only_when_intraday_drawdown_breached(self) -> None:
+        summary = live_scan_cycle.summarize_account_gate(
+            raw_account={
+                "id": "paper-account",
+                "equity": "29540.00",
+                "last_equity": "30000.00",
+                "buying_power": "90000",
+                "daytrading_buying_power": "90000",
+                "daytrade_count": 2,
+            },
+            raw_positions=[],
+            raw_orders=[],
+        )
+
+        eligibility = summary["account"]["intraday_equity_entry"]
+        self.assertEqual(summary["action"], "monitor_only")
+        self.assertTrue(summary["skipFullScan"])
+        self.assertEqual(summary["account"]["last_equity"], "30000.00")
+        self.assertEqual(eligibility["status"], "blocked")
+        self.assertEqual(eligibility["reasons"], ["intraday_equity_drawdown_limit_exceeded"])
+        self.assertEqual(eligibility["intradayEquityDrawdownBasis"], "equity_vs_last_equity")
+        self.assertEqual(eligibility["intradayEquityDrawdownAmount"], "460.00")
+        self.assertEqual(eligibility["intradayEquityDrawdownPct"], "0.015333")
+        self.assertEqual(eligibility["intradayEquityDrawdownLimitPct"], "0.015000")
+
+    def test_summarizes_account_gate_as_scan_when_intraday_drawdown_inside_limit(self) -> None:
+        summary = live_scan_cycle.summarize_account_gate(
+            raw_account={
+                "id": "paper-account",
+                "equity": "29600.00",
+                "last_equity": "30000.00",
+                "buying_power": "90000",
+                "daytrading_buying_power": "90000",
+                "daytrade_count": 2,
+            },
+            raw_positions=[],
+            raw_orders=[],
+        )
+
+        eligibility = summary["account"]["intraday_equity_entry"]
+        self.assertEqual(summary["action"], "scan")
+        self.assertFalse(summary["skipFullScan"])
+        self.assertEqual(eligibility["status"], "allowed")
+        self.assertEqual(eligibility["reasons"], [])
+        self.assertEqual(eligibility["intradayEquityDrawdownPct"], "0.013333")
+
     def test_summarizes_account_gate_as_manage_state_when_entry_blocked_with_position(self) -> None:
         summary = live_scan_cycle.summarize_account_gate(
             raw_account={

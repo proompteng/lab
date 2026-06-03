@@ -41,6 +41,9 @@ ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
 MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
+MAX_INTRADAY_EQUITY_DRAWDOWN_PCT = Decimal("0.015")
+ACCOUNT_MONEY_QUANT = Decimal("0.01")
+ACCOUNT_RATIO_QUANT = Decimal("0.000001")
 PROFIT_PROTECT_BREAKEVEN_TRIGGER_R = Decimal("0.5")
 PROFIT_PROTECT_LOCK_TRIGGER_R = Decimal("1.0")
 PROFIT_LOCK_R = Decimal("0.25")
@@ -188,11 +191,18 @@ def parse_account_int(value: Any) -> int | None:
         return None
 
 
+def quantized_decimal_text(value: Decimal, quantum: Decimal) -> str:
+    return str(value.quantize(quantum))
+
+
 def intraday_equity_entry_eligibility(account: dict[str, Any]) -> dict[str, Any]:
     daytrading_buying_power = account.get("daytrading_buying_power") or account.get("daytrade_buying_power")
     daytrading_buying_power_value = parse_account_decimal(daytrading_buying_power)
     daytrade_count = parse_account_int(account.get("daytrade_count"))
+    equity = parse_account_decimal(account.get("equity"))
+    last_equity = parse_account_decimal(account.get("last_equity") or account.get("lastEquity"))
     reasons: list[str] = []
+    details: dict[str, str] = {}
 
     if account_bool(account.get("account_blocked", False)) or account_bool(account.get("trading_blocked", False)):
         reasons.append("account_or_trading_blocked")
@@ -206,15 +216,30 @@ def intraday_equity_entry_eligibility(account: dict[str, Any]) -> dict[str, Any]
     ):
         reasons.append("pdt_daytrade_count_at_or_above_four_without_dtbp")
 
+    if equity is not None and last_equity is not None and last_equity > 0:
+        drawdown_amount = max(last_equity - equity, Decimal("0"))
+        drawdown_pct = drawdown_amount / last_equity
+        details = {
+            "intradayEquityDrawdownBasis": "equity_vs_last_equity",
+            "intradayEquityDrawdownAmount": quantized_decimal_text(drawdown_amount, ACCOUNT_MONEY_QUANT),
+            "intradayEquityDrawdownPct": quantized_decimal_text(drawdown_pct, ACCOUNT_RATIO_QUANT),
+            "intradayEquityDrawdownLimitPct": quantized_decimal_text(
+                MAX_INTRADAY_EQUITY_DRAWDOWN_PCT, ACCOUNT_RATIO_QUANT
+            ),
+        }
+        if drawdown_pct >= MAX_INTRADAY_EQUITY_DRAWDOWN_PCT:
+            reasons.append("intraday_equity_drawdown_limit_exceeded")
+
     return {
         "status": "blocked" if reasons else "allowed",
         "reasons": reasons,
+        **details,
     }
 
 
 def format_account(account: dict[str, Any]) -> dict[str, Any]:
     daytrading_buying_power = account.get("daytrading_buying_power") or account.get("daytrade_buying_power")
-    return {
+    formatted_account = {
         "account": {
             "id": account.get("id"),
             "equity": account.get("equity"),
@@ -228,6 +253,10 @@ def format_account(account: dict[str, Any]) -> dict[str, Any]:
             "intraday_equity_entry": intraday_equity_entry_eligibility(account),
         }
     }
+    last_equity = account.get("last_equity") or account.get("lastEquity")
+    if last_equity is not None:
+        formatted_account["account"]["last_equity"] = last_equity
+    return formatted_account
 
 
 def list_payload(value: Any) -> list[Any]:
