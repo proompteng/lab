@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -546,12 +547,53 @@ def test_paper_route_target_plan_target_summary_accepts_explicit_quantity_and_sy
             "account_label": "TORGHUT_SIM",
             "target_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
             "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+            "window_start": "2026-06-01T13:30:00+00:00",
+            "window_end": "2026-06-01T20:00:00+00:00",
             "bounded_collection_stage": "paper",
             "target_notional": "20",
             "target_quantity": "3",
             "symbols": ["AAPL", "AMZN"],
             "symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
             "symbol_quantities": {"AAPL": "3", "AMZN": "3"},
+        }
+    ]
+
+
+def test_paper_route_materializer_window_datetime_helpers_handle_edge_cases() -> None:
+    assert cli._parse_utc_datetime(None) is None
+    assert cli._parse_utc_datetime("not-a-time") is None
+    assert cli._parse_utc_datetime("2026-06-01T13:30:00") == datetime(
+        2026,
+        6,
+        1,
+        13,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    before = datetime.now(timezone.utc)
+    fallback = cli._resolve_now_utc(Namespace(now_utc="not-a-time"))
+    after = datetime.now(timezone.utc)
+
+    assert before <= fallback <= after
+
+
+def test_paper_route_materializer_window_check_reports_missing_target_windows() -> None:
+    check = cli._active_target_window_check(
+        [{"target_index": 7, "window_start": None, "window_end": ""}],
+        now=datetime(2026, 6, 1, 14, tzinfo=timezone.utc),
+    )
+
+    assert check["active"] is False
+    assert check["active_count"] == 0
+    assert check["inactive_count"] == 0
+    assert check["missing_count"] == 1
+    assert check["targets"] == [
+        {
+            "target_index": 7,
+            "state": "missing_window",
+            "window_start": None,
+            "window_end": "",
         }
     ]
 
@@ -664,6 +706,9 @@ def test_commit_url_nested_plan_with_dynamic_confirmation_writes_targets(
             "25",
             "--commit",
             "--allow-dynamic-target-plan",
+            "--require-active-target-window",
+            "--now-utc",
+            "2026-06-01T14:00:00+00:00",
             "--confirm-account-label",
             "TORGHUT_SIM",
             "--confirm-dsn-env",
@@ -687,6 +732,8 @@ def test_commit_url_nested_plan_with_dynamic_confirmation_writes_targets(
     assert exit_code == 0
     assert report["mode"] == "commit"
     assert report["materialized"] is True
+    assert report["skipped"] is False
+    assert report["target_window_check"]["active"] is True
     assert report["dynamic_target_plan_confirmation"] is True
     assert (
         report["plan_source"]["selected_plan"]
@@ -698,6 +745,116 @@ def test_commit_url_nested_plan_with_dynamic_confirmation_writes_targets(
     assert report["route_submission_count"] == 2
     assert report["blockers"] == []
     assert _count_decisions(sqlite_dsn) == 2
+
+
+def test_commit_dynamic_plan_skips_before_active_target_window_without_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
+        },
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "25",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--skip-unless-active-target-window",
+            "--now-utc",
+            "2026-06-01T13:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            cli.DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "25",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["skipped"] is True
+    assert report["skip_reason"] == cli.ACTIVE_TARGET_WINDOW_SKIP_REASON
+    assert report["materialized"] is False
+    assert report["blocked"] is False
+    assert report["target_window_check"]["active"] is False
+    assert report["target_window_check"]["inactive_count"] == 1
+    assert report["materialized_decision_count"] == 0
+    assert report["route_submission_count"] == 0
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_commit_dynamic_plan_requires_active_target_window_without_skip(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
+        },
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "25",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--require-active-target-window",
+            "--now-utc",
+            "2026-06-01T13:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            cli.DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "25",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 2
+    assert cli.ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER in report["blockers"]
+    assert report["skipped"] is False
+    assert report["materialized"] is False
+    assert report["target_window_check"]["active"] is False
+    assert _count_decisions(sqlite_dsn) == 0
 
 
 def test_commit_dynamic_confirmation_rejects_wrong_selected_plan_source(
