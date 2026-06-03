@@ -105,6 +105,7 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             batch_size=5,
             max_batches=1,
             reconcile_limit=LIVE_RECONCILE_LIMIT,
+            reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
         ),
     ]
@@ -139,6 +140,7 @@ def _sim_commands() -> list[JournalCronCommand]:
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
             **common,
         ),
