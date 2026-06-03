@@ -2099,6 +2099,87 @@ class TestSubmissionCouncil(TestCase):
             target["source_collection_reason_codes"],
         )
 
+    def test_runtime_ledger_source_collection_replay_bucket_reads_from_live_db(
+        self,
+    ) -> None:
+        candidates = _runtime_ledger_source_collection_candidates(
+            [
+                {
+                    "source": "strategy_runtime_ledger_buckets",
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-pairs-vwap-cap-safe",
+                    "account": "TORGHUT_REPLAY",
+                    "observed_stage": "paper",
+                    "bucket_started_at": "2026-05-13T17:00:00+00:00",
+                    "bucket_ended_at": "2026-05-13T17:30:00+00:00",
+                    "submitted_order_count": 8,
+                    "fill_count": 35,
+                    "closed_trade_count": 2,
+                    "open_position_count": 0,
+                    "filled_notional": "127090.02495200",
+                    "net_strategy_pnl_after_costs": "567.44720578",
+                    "reason_codes": [
+                        "runtime_ledger_source_window_missing",
+                        "runtime_ledger_source_refs_missing",
+                        "execution_reconstruction_not_runtime_ledger_proof",
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(len(candidates), 1)
+        plan = _runtime_ledger_paper_probation_import_plan(candidates)
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["source_dsn_env"], "DB_DSN")
+        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(
+            target["source_kind"], "runtime_ledger_source_collection_candidate"
+        )
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertFalse(target["paper_probation_authorized"])
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertEqual(target["max_notional"], "0")
+
+    def test_runtime_ledger_source_collection_bucket_without_account_uses_sim_source(
+        self,
+    ) -> None:
+        candidates = _runtime_ledger_source_collection_candidates(
+            [
+                {
+                    "source": "strategy_runtime_ledger_buckets",
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-pairs-vwap-cap-safe",
+                    "observed_stage": "paper",
+                    "bucket_started_at": "2026-05-13T17:00:00+00:00",
+                    "bucket_ended_at": "2026-05-13T17:30:00+00:00",
+                    "submitted_order_count": 8,
+                    "fill_count": 35,
+                    "filled_notional": "127090.02495200",
+                    "reason_codes": [
+                        "runtime_ledger_source_window_missing",
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(len(candidates), 1)
+        plan = _runtime_ledger_paper_probation_import_plan(candidates)
+
+        target = plan["targets"][0]
+        self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
+
     def test_runtime_ledger_source_collection_allows_unclosed_or_losing_activity(
         self,
     ) -> None:
