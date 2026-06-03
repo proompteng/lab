@@ -287,6 +287,214 @@ class MarketOpenCycleTest(unittest.TestCase):
             "market_open_cycle_order_intent_blocked; ticketId=ticket-amd-1; symbol=AMD; reason=broker_order_intent_missing_fields",
         )
 
+    def test_executes_ready_broker_order_intent_when_mutation_gate_is_enabled(self) -> None:
+        synthesis = FakeSynthesis()
+
+        class FakeAlpaca:
+            def __init__(self, *, base_url: str | None, timeout_seconds: float) -> None:
+                self.base_url = base_url
+                self.timeout_seconds = timeout_seconds
+                self.submitted_payloads: list[dict[str, Any]] = []
+
+            def get_order_by_client_order_id(self, client_order_id: str) -> None:
+                return None
+
+            def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+                self.submitted_payloads.append(payload)
+                self.client_order_id = payload["client_order_id"]
+                return {
+                    "id": "broker-order-1",
+                    "client_order_id": payload["client_order_id"],
+                    "status": "new",
+                    "order_class": "bracket",
+                    "legs": [
+                        {"id": "target-leg", "client_order_id": "target-leg", "status": "held"},
+                        {"id": "stop-leg", "client_order_id": "stop-leg", "status": "held"},
+                    ],
+                }
+
+            def get_order_by_id(self, order_id: str) -> dict[str, Any]:
+                return {
+                    "id": order_id,
+                    "client_order_id": self.client_order_id,
+                    "status": "accepted",
+                    "order_class": "bracket",
+                    "legs": [
+                        {"id": "target-leg", "client_order_id": "target-leg", "status": "held"},
+                        {"id": "stop-leg", "client_order_id": "stop-leg", "status": "held"},
+                    ],
+                }
+
+        fake_alpaca = FakeAlpaca(base_url=None, timeout_seconds=10.0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "session.json").write_text('{"sessionId":"session-market-open"}\n', encoding="utf-8")
+            report_path = root / "report.md"
+
+            def fake_run_cycle(args: Any) -> dict[str, Any]:
+                return {
+                    "ok": True,
+                    "mode": "cycle",
+                    "cycle": 6,
+                    "cycleDir": str(root / "cycle-6"),
+                    "resultCount": 1,
+                    "topResults": [],
+                    "recordedTickets": [
+                        {
+                            "symbol": "AVGO",
+                            "ticketId": "ticket-avgo-1",
+                            "idempotencyKey": "scan-cycle-6-1-AVGO-vwap_reclaim-A",
+                        }
+                    ],
+                    "decisionSummary": {
+                        "action": "run_strategy_order_guard",
+                        "bestCandidate": {
+                            "symbol": "AVGO",
+                            "side": "buy",
+                            "setupType": "vwap_reclaim",
+                            "setupGrade": "A",
+                            "expectedR": "2.5",
+                            "entryLimitPrice": "500.00",
+                            "targetPrice": "510.00",
+                            "stopPrice": "496.00",
+                            "riskDollars": "100.00",
+                            "plannedQuantity": "25",
+                            "actualBracketR": "2.5000",
+                            "riskDirective": {
+                                "source": "account_equity_stop_distance",
+                                "recommendedRiskDollars": "100.00",
+                                "plannedQuantity": "25",
+                            },
+                            "ticketId": "ticket-avgo-1",
+                        },
+                    },
+                    "accountGate": {
+                        "action": "scan",
+                        "skipFullScan": False,
+                        "account": {
+                            "equity": "30000",
+                            "buying_power": "60000",
+                            "daytrading_buying_power": "60000",
+                        },
+                    },
+                    "skipFullScan": False,
+                    "action": "scan",
+                }
+
+            def fake_evaluate_order(args: Any) -> dict[str, Any]:
+                return {
+                    "ok": True,
+                    "allowed": True,
+                    "reason": "fresh_strategy_order",
+                }
+
+            args = market_open_cycle.build_parser().parse_args(
+                [
+                    "--work-dir",
+                    str(root),
+                    "--report-path",
+                    str(report_path),
+                    "--agent-run-name",
+                    "autonomous-trader-market-open-test",
+                    "--execute-broker-intent",
+                    "--now",
+                    "2026-06-03T14:00:00Z",
+                ]
+            )
+            with (
+                patch.object(market_open_cycle.live_scan_cycle, "run_cycle", fake_run_cycle),
+                patch.object(market_open_cycle.strategy_order_guard, "evaluate_order", fake_evaluate_order),
+                patch.object(market_open_cycle.protective_preflight, "AlpacaClient", lambda **kwargs: fake_alpaca),
+            ):
+                result = market_open_cycle.run_market_open_cycle(args=args, synthesis=synthesis)  # type: ignore[arg-type]
+
+            intent = result["summary"]["brokerOrderIntent"]
+            execution = result["summary"]["brokerOrderExecution"]
+            self.assertEqual(execution["submitted"], True)
+            self.assertEqual(execution["orderStatus"], "accepted")
+            self.assertEqual(execution["synthesisStatus"], "accepted")
+            self.assertEqual(execution["protectiveLegCount"], 2)
+            self.assertEqual(fake_alpaca.submitted_payloads, [intent["alpacaBracketPayload"]])
+            self.assertEqual(fake_alpaca.submitted_payloads[0]["qty"], "25")
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("broker_order_execution: submitted:", report)
+
+        order_posts = [payload for path, payload in synthesis.posts if path == "/api/autotrader/orders"]
+        event_posts = [payload for path, payload in synthesis.posts if path == "/api/autotrader/events"]
+        status_payload = next(payload for path, payload in synthesis.posts if path == "/api/autotrader/status")
+        self.assertEqual([payload["status"] for payload in order_posts], ["planned", "submitted", "accepted"])
+        self.assertEqual(order_posts[0]["clientOrderId"], intent["clientOrderId"])
+        self.assertEqual(order_posts[2]["brokerOrderId"], "broker-order-1")
+        self.assertIn("broker_order_intent_started", [payload["eventType"] for payload in event_posts])
+        self.assertIn("broker_order_intent_submitted", [payload["eventType"] for payload in event_posts])
+        self.assertEqual(
+            status_payload["currentAction"],
+            f"market_open_cycle_order_submitted; ticketId=ticket-avgo-1; symbol=AVGO; clientOrderId={intent['clientOrderId']}; status=accepted",
+        )
+
+    def test_broker_order_intent_execution_records_paper_routing_failure(self) -> None:
+        synthesis = FakeSynthesis()
+        args = market_open_cycle.build_parser().parse_args(
+            [
+                "--execute-broker-intent",
+                "--alpaca-base-url",
+                "https://api.alpaca.markets",
+            ]
+        )
+        intent = {
+            "state": "ready",
+            "cycle": 8,
+            "clientOrderId": "autonomous-trader-market-open-test-8-ticket-avgo-1-AVGO",
+            "symbol": "AVGO",
+            "alpacaBracketPayload": {
+                "symbol": "AVGO",
+                "qty": "25",
+                "side": "buy",
+                "type": "limit",
+                "time_in_force": "day",
+                "limit_price": "500.00",
+                "order_class": "bracket",
+                "client_order_id": "autonomous-trader-market-open-test-8-ticket-avgo-1-AVGO",
+                "take_profit": {"limit_price": "510.00"},
+                "stop_loss": {"stop_price": "496.00"},
+            },
+            "synthesisRecordOrderInput": {
+                "sessionId": "session-market-open",
+                "ticketId": "ticket-avgo-1",
+                "clientOrderId": "autonomous-trader-market-open-test-8-ticket-avgo-1-AVGO",
+                "symbol": "AVGO",
+                "instrument": "stock",
+                "side": "buy",
+                "quantity": "25",
+                "orderType": "limit",
+                "orderClass": "bracket",
+                "limitPrice": "500.00",
+                "takeProfitLimitPrice": "510.00",
+                "stopLossStopPrice": "496.00",
+                "status": "planned",
+            },
+        }
+
+        execution = market_open_cycle.execute_broker_order_intent(
+            args=args,
+            synthesis=synthesis,  # type: ignore[arg-type]
+            session_id="session-market-open",
+            intent=intent,
+        )
+
+        self.assertIsNotNone(execution)
+        assert execution is not None
+        self.assertEqual(execution["ok"], False)
+        self.assertEqual(execution["submitted"], False)
+        self.assertEqual(execution["reason"], "broker_order_intent_execution_failed")
+        self.assertIn("paper API host", execution["error"])
+        order_posts = [payload for path, payload in synthesis.posts if path == "/api/autotrader/orders"]
+        event_posts = [payload for path, payload in synthesis.posts if path == "/api/autotrader/events"]
+        self.assertEqual(order_posts[0]["status"], "rejected")
+        self.assertIn("paper API host", order_posts[0]["rejectReason"])
+        self.assertEqual(event_posts[0]["eventType"], "broker_order_intent_failed")
+
     def test_records_missing_strategy_guard_inputs_without_calling_guard(self) -> None:
         synthesis = FakeSynthesis()
 
