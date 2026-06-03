@@ -1898,21 +1898,24 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertNotIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
-        self.assertIn("--runtime-window-target hypothesis_id=H-PAIRS-01", args)
+        self.assertIn('--runtime-window-target \'{"hypothesis_id":"H-PAIRS-01"', args)
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
         self.assertIn("--runtime-window-observed-stage paper", args)
         self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)
         self.assertIn("--runtime-window-target-dsn-env SIM_DB_DSN", args)
         self.assertIn(
-            "--runtime-window-target "
-            "hypothesis_id=H-PAIRS-01,candidate_id=c88421d619759b2cfaa6f4d0,"
-            "observed_stage=live,strategy_family=microbar_cross_sectional_pairs,"
-            "strategy_name=microbar-cross-sectional-pairs-v1,account_label=PA3SX7FYNUTF,"
-            "source_account_label=PA3SX7FYNUTF,source_dsn_env=DB_DSN,target_dsn_env=DB_DSN,"
-            "source_kind=live_runtime_observed,"
-            "source_manifest_ref=config/trading/hypotheses/h-pairs-01.json",
+            '"source_kind":"live_runtime_observed"',
             args,
         )
+        self.assertIn('"dependency_quorum_decision":"allow"', args)
+        self.assertIn('"continuity_ok":"true"', args)
+        self.assertIn('"drift_ok":"false"', args)
+        self.assertIn(
+            '"runtime_window_import_promotion_blockers":["drift_checks_not_ok"]',
+            args,
+        )
+        self.assertIn('"evidence_collection_stage":"live"', args)
+        self.assertIn('"promotion_allowed":false', args)
         self.assertIn(
             "RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json",
             args,
