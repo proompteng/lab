@@ -41,6 +41,7 @@ ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
 MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_ACTIONABLE_BRACKET_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
+MIN_SCORECARD_ACTIONABLE_AVG_REALIZED_R = Decimal("0.5")
 MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
 MAX_CURRENT_SESSION_LOSING_ROUND_TRIPS = 2
 BASE_RISK_EQUITY_PCT = Decimal("0.0025")
@@ -1614,6 +1615,8 @@ def result_no_trade_reason(
         return bracket_reason
     if scorecard_sample_size <= 0 or scorecard_avg_r is None or scorecard_avg_r <= 0:
         return "positive_scorecard_edge_required"
+    if scorecard_avg_r < MIN_SCORECARD_ACTIONABLE_AVG_REALIZED_R:
+        return "scorecard_avg_realized_r_below_actionable_floor"
     if scorecard_sample_size < MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE:
         return "positive_scorecard_repeat_sample_required"
     risk_directive = scorecard_risk_directive(result, account=account)
@@ -1770,6 +1773,8 @@ def scorecard_edge_weight(sample_size: int) -> Decimal:
 def scorecard_risk_directive(result: dict[str, Any], account: dict[str, Any] | None = None) -> dict[str, Any] | None:
     sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
     if sample_size <= 0 or avg_realized_r is None or avg_realized_r <= 0:
+        return None
+    if avg_realized_r < MIN_SCORECARD_ACTIONABLE_AVG_REALIZED_R:
         return None
     risk_multiplier = (
         min(MAX_SCORECARD_RISK_MULTIPLIER, max(Decimal("1.0"), avg_realized_r))
