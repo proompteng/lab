@@ -8432,43 +8432,66 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
             session.add(decision)
             session.flush()
-            session.add(
-                Execution(
-                    trade_decision_id=decision.id,
-                    alpaca_account_label="TORGHUT_SIM",
-                    alpaca_order_id="tsmom-source-order",
-                    client_order_id="tsmom-source-client",
-                    symbol="AAPL",
-                    side="buy",
-                    order_type="market",
-                    time_in_force="day",
-                    submitted_qty=Decimal("1"),
-                    filled_qty=Decimal("1"),
-                    avg_fill_price=Decimal("100"),
-                    status="filled",
-                    raw_order={},
-                    created_at=event_at,
-                    updated_at=event_at,
-                    last_update_at=event_at,
-                )
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="tsmom-source-order",
+                client_order_id="tsmom-source-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at,
+                updated_at=event_at,
+                last_update_at=event_at,
             )
-            session.add(
-                ExecutionOrderEvent(
-                    event_fingerprint="tsmom-source-order-event",
-                    source_topic="trade_updates",
-                    source_partition=0,
-                    source_offset=101,
-                    alpaca_account_label="TORGHUT_SIM",
-                    event_ts=event_at,
-                    symbol="AAPL",
-                    alpaca_order_id="tsmom-source-order",
-                    client_order_id="tsmom-source-client",
-                    event_type="fill",
-                    status="filled",
-                    raw_event={},
-                    trade_decision_id=decision.id,
-                    created_at=event_at,
-                )
+            session.add(execution)
+            session.flush()
+            session.add_all(
+                [
+                    ExecutionOrderEvent(
+                        event_fingerprint="tsmom-source-order-event",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=101,
+                        alpaca_account_label="TORGHUT_SIM",
+                        event_ts=event_at,
+                        symbol="AAPL",
+                        alpaca_order_id="tsmom-source-order",
+                        client_order_id="tsmom-source-client",
+                        event_type="fill",
+                        status="filled",
+                        raw_event={},
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        created_at=event_at,
+                    ),
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=tsmom_strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        side="buy",
+                        arrival_price=Decimal("99"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("1"),
+                        slippage_bps=Decimal("10"),
+                        shortfall_notional=Decimal("1"),
+                        realized_shortfall_bps=Decimal("10"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=event_at,
+                        created_at=event_at,
+                        updated_at=event_at,
+                    ),
+                ]
             )
             session.commit()
 
@@ -8579,6 +8602,25 @@ class TestPaperRouteEvidenceAudit(TestCase):
             payload["summary"]["selected_next_runtime_window_plan_source"],
             "paper_route_observed_strategy_source_collection",
         )
+        summary = payload["summary"]
+        self.assertEqual(
+            summary["summary_target_audit_source"],
+            "runtime_window_import_target_audits",
+        )
+        self.assertEqual(summary["source_plan_target_with_source_activity_count"], 0)
+        self.assertEqual(summary["target_with_source_activity_count"], 1)
+        self.assertEqual(summary["target_with_runtime_ledger_count"], 0)
+        self.assertEqual(
+            summary["runtime_window_import_target_with_source_activity_count"], 1
+        )
+        self.assertEqual(summary["readback"]["source_decisions_present_count"], 1)
+        self.assertEqual(summary["readback"]["submitted_lifecycle_present_count"], 1)
+        self.assertEqual(summary["readback"]["fills_or_executions_present_count"], 1)
+        self.assertEqual(summary["readback"]["source_refs_present_count"], 1)
+        self.assertNotIn("source_decisions_missing", summary["blockers"])
+        self.assertNotIn("source_executions_missing", summary["blockers"])
+        self.assertNotIn("source_tca_missing", summary["blockers"])
+        self.assertIn("runtime_ledger_bucket_missing", summary["blockers"])
 
     def test_observed_strategy_source_collection_plan_limits_targets(self) -> None:
         target_template = {
