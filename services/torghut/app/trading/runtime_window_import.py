@@ -2376,6 +2376,7 @@ def _journal_tigerbeetle_runtime_ledger_bucket(
     session: Session,
     row: StrategyRuntimeLedgerBucket,
 ) -> None:
+    session.flush()
     if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
         _mark_runtime_ledger_bucket_tigerbeetle_journal(
             session,
@@ -2385,7 +2386,6 @@ def _journal_tigerbeetle_runtime_ledger_bucket(
             blockers=[TIGERBEETLE_BLOCKER_JOURNAL_DISABLED],
         )
         return
-    session.flush()
     try:
         with TigerBeetleLedgerJournal() as journal, session.begin_nested():
             ref = journal.journal_runtime_ledger_bucket(session, row)

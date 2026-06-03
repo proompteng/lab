@@ -349,7 +349,6 @@ class TestRuntimeWindowImport(TestCase):
                 payload_json={},
             )
             session.add(row)
-            session.flush()
 
             with (
                 patch.object(
@@ -370,6 +369,16 @@ class TestRuntimeWindowImport(TestCase):
             self.assertEqual(parity["status"], "non_authority_blocked")
             self.assertEqual(parity["blockers"], ["tigerbeetle_journal_disabled"])
             self.assertEqual(parity["transfer_ids"], [])
+            self.assertIsNotNone(row.id)
+            self.assertEqual(parity["runtime_ledger_bucket_id"], str(row.id))
+            self.assertIn(
+                f"postgres:strategy_runtime_ledger_buckets:{row.id}",
+                parity["source_refs"],
+            )
+            self.assertNotIn(
+                "postgres:strategy_runtime_ledger_buckets:None",
+                row.payload_json["source_refs"],
+            )
 
     def test_runtime_bucket_journal_unavailable_records_non_authority_blocker(
         self,
