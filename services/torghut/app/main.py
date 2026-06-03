@@ -6203,7 +6203,6 @@ def _paper_route_mapping_targets_sim_account(value: Mapping[str, Any]) -> bool:
         == PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL
         or _normalized_paper_route_text(value.get("target_dsn_env")) == "SIM_DB_DSN"
         or _normalized_paper_route_text(value.get("source_dsn_env")) == "SIM_DB_DSN"
-        or _normalized_paper_route_text(value.get("observed_stage")) == "PAPER"
     )
 
 
