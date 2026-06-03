@@ -179,6 +179,10 @@ class TestFastReplayPreview(TestCase):
             "order_book_observability_feedback_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "markov_order_transition_latent_regime_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -203,6 +207,20 @@ class TestFastReplayPreview(TestCase):
                 for source in row_payload["order_book_observability_stress"][
                     "source_papers"
                 ]
+            },
+        )
+        self.assertIn("order_transition_stress", row_payload)
+        self.assertFalse(row_payload["order_transition_stress"]["proof_authority"])
+        self.assertFalse(row_payload["order_transition_stress"]["promotion_authority"])
+        self.assertEqual(
+            row_payload["order_transition_stress"]["status"],
+            "preview_only_order_transition_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2502.07625",
+            {
+                source["source_id"]
+                for source in row_payload["order_transition_stress"]["source_papers"]
             },
         )
         self.assertIn("cost_impact_lineage", row_payload)
