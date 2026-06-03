@@ -5551,6 +5551,71 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["reason"], "cached_health_payload")
         self.assertNotEqual(payload["reason"], "trading_health_evaluation_timeout")
 
+    def test_trading_health_serves_cached_payload_during_inflight_refresh(
+        self,
+    ) -> None:
+        cache_key = main_module._trading_health_surface_cache_key(
+            include_database_contract=False,
+            allow_stale_dependency_cache=False,
+        )
+        cached_payload: dict[str, object] = {
+            "status": "degraded",
+            "reason": "cached_health_payload",
+            "reason_codes": ["cached_health_payload"],
+            "dependencies": {"postgres": {"ok": True, "detail": "ok"}},
+            "live_submission_gate": {
+                "allowed": False,
+                "promotion_authority": False,
+                "final_authority_ok": False,
+                "final_promotion_allowed": False,
+            },
+        }
+        refresh_started = Event()
+        release_refresh = Event()
+
+        def _refresh_health_payload() -> tuple[dict[str, object], int]:
+            refresh_started.set()
+            release_refresh.wait(1.0)
+            return (
+                {
+                    **cached_payload,
+                    "reason": "refreshed_health_payload",
+                    "reason_codes": ["refreshed_health_payload"],
+                },
+                503,
+            )
+
+        refresh_future = main_module._TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
+            _refresh_health_payload,
+        )
+        self.assertTrue(refresh_started.wait(1.0))
+        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = refresh_future
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+                "payload": cached_payload,
+                "status_code": 503,
+                "checked_at": datetime.now(timezone.utc),
+            }
+
+        try:
+            started_at = time.monotonic()
+            response = self.client.get("/trading/health")
+            elapsed = time.monotonic() - started_at
+        finally:
+            release_refresh.set()
+            refresh_future.result(timeout=1.0)
+            with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["reason"], "cached_health_payload")
+        self.assertNotEqual(payload["reason"], "trading_health_evaluation_timeout")
+
     def test_trading_health_starts_fresh_eval_when_completed_future_has_no_cache(
         self,
     ) -> None:
