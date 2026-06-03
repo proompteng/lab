@@ -3080,7 +3080,11 @@ def _unavailable_source_activity(
     }
 
 
-def _order_event_signed_filled_qty(row: ExecutionOrderEvent) -> Decimal:
+def _order_event_signed_filled_qty(
+    row: ExecutionOrderEvent,
+    *,
+    execution_side_by_id: Mapping[object, str] | None = None,
+) -> Decimal:
     qty = _safe_decimal(row.filled_qty_delta)
     if qty == 0:
         qty = _safe_decimal(row.filled_qty)
@@ -3092,6 +3096,8 @@ def _order_event_signed_filled_qty(row: ExecutionOrderEvent) -> Decimal:
         if text := _safe_text(raw_event.get(key)):
             side = text.lower()
             break
+    if not side and execution_side_by_id is not None and row.execution_id is not None:
+        side = execution_side_by_id.get(row.execution_id, "").lower()
     if not side:
         client_order_id = (_safe_text(row.client_order_id) or "").lower()
         if "sell" in client_order_id or "short" in client_order_id:
@@ -3284,10 +3290,18 @@ def _source_activity_lifecycle_summary(
         )
     net_filled_qty_by_symbol: dict[str, Decimal] = {}
     fill_event_rows = [row for row in order_event_rows if _order_event_is_fill(row)]
+    execution_side_by_id: dict[object, str] = {
+        row.id: (_safe_text(row.side) or "")
+        for row in execution_rows
+        if _safe_text(row.side) is not None
+    }
     if fill_event_rows:
         for row in fill_event_rows:
             symbol = (_safe_text(row.symbol) or "missing").upper()
-            signed_qty = _order_event_signed_filled_qty(row)
+            signed_qty = _order_event_signed_filled_qty(
+                row,
+                execution_side_by_id=execution_side_by_id,
+            )
             if signed_qty != 0:
                 net_filled_qty_by_symbol[symbol] = (
                     net_filled_qty_by_symbol.get(symbol, Decimal("0")) + signed_qty

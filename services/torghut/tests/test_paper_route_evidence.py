@@ -6525,6 +6525,203 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertNotIn("source_tca_missing", import_audit["blockers"])
 
+    def test_source_activity_signs_order_feed_fills_from_linked_execution_side(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(minutes=20)
+        strategy_name = "order-feed-linked-side"
+        candidate_id = "candidate-linked-side"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="paper route source activity signs linked execution side",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed",
+                source_topic="trade_updates",
+                source_partition=0,
+                alpaca_account_label="TORGHUT_SIM",
+                assignment_mode="group",
+                collector_identity="test-order-feed",
+                source_revision="alpaca_trade_updates_v1",
+                window_started_at=event_at,
+                window_ended_at=event_at + timedelta(minutes=1),
+                start_offset=10,
+                end_offset=11,
+                consumed_count=2,
+                inserted_count=2,
+                status="inserted",
+                status_reason="linked_execution_and_decision",
+                payload_json={},
+            )
+            session.add(source_window)
+            session.flush()
+            for index, side in enumerate(("buy", "sell"), start=1):
+                opaque_order_id = f"linked-side-order-{index}"
+                opaque_client_order_id = f"linked-side-client-{index}"
+                decision = TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    decision_json={
+                        "action": side,
+                        "qty": "1",
+                        "candidate_id": candidate_id,
+                        "hypothesis_id": "H-LINKED-SIDE",
+                    },
+                    rationale="linked execution side fixture",
+                    status="executed",
+                    created_at=event_at + timedelta(seconds=index),
+                    executed_at=event_at + timedelta(seconds=index),
+                )
+                session.add(decision)
+                session.flush()
+                execution = Execution(
+                    trade_decision_id=decision.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id=opaque_order_id,
+                    client_order_id=opaque_client_order_id,
+                    symbol="AAPL",
+                    side=side,
+                    order_type="limit",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    status="filled",
+                    raw_order={},
+                    created_at=event_at + timedelta(seconds=index),
+                    updated_at=event_at + timedelta(seconds=index),
+                    last_update_at=event_at + timedelta(seconds=index),
+                    order_feed_last_event_ts=event_at + timedelta(seconds=index),
+                )
+                session.add(execution)
+                session.flush()
+                session.add(
+                    ExecutionOrderEvent(
+                        event_fingerprint=f"linked-side-fill-event-{side}",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=10 + index,
+                        alpaca_account_label="TORGHUT_SIM",
+                        feed_seq=10 + index,
+                        event_ts=event_at + timedelta(seconds=index),
+                        symbol="AAPL",
+                        alpaca_order_id=opaque_order_id,
+                        client_order_id=opaque_client_order_id,
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        filled_qty_delta=Decimal("1"),
+                        avg_fill_price=Decimal("100"),
+                        filled_notional_delta=Decimal("100"),
+                        raw_event={
+                            "event": "fill",
+                            "order": {
+                                "id": opaque_order_id,
+                                "client_order_id": opaque_client_order_id,
+                                "symbol": "AAPL",
+                                "status": "filled",
+                                "qty": "1",
+                                "filled_qty": "1",
+                                "filled_avg_price": "100",
+                            },
+                        },
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        source_window_id=source_window.id,
+                        created_at=event_at + timedelta(seconds=index),
+                    )
+                )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            self._add_flat_account_close_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_end=window_end,
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-LINKED-SIDE",
+                                "candidate_id": candidate_id,
+                                "observed_stage": "paper",
+                                "strategy_family": "intraday_tsmom_consistent",
+                                "strategy_name": strategy_name,
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-linked-side.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                    },
+                },
+                generated_at=window_end + timedelta(hours=2),
+            )
+
+        source_activity = payload["targets"][0]["source_activity"]
+        lifecycle = source_activity["source_lifecycle"]
+        self.assertEqual(source_activity["execution_count"], 2)
+        self.assertEqual(source_activity["fill_order_event_count"], 2)
+        self.assertEqual(lifecycle["net_filled_qty_by_symbol"], {"AAPL": "0"})
+        self.assertEqual(lifecycle["open_symbols_after_source_fills"], [])
+        self.assertTrue(lifecycle["closed_round_trip_evidence"])
+        self.assertNotIn(
+            "source_close_missing",
+            source_activity["source_lifecycle_blockers"],
+        )
+        self.assertNotIn(
+            "source_closed_round_trip_missing",
+            source_activity["source_lifecycle_blockers"],
+        )
+
     def test_hpairs_collection_blocks_missing_lifecycle_costs_and_flatten(
         self,
     ) -> None:
