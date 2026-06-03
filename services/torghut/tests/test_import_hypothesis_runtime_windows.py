@@ -1322,6 +1322,59 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
+    def test_runtime_ledger_tca_refs_accept_readback_aliases(self) -> None:
+        readback_alias_bucket = _complete_runtime_ledger_bucket(
+            execution_tca_metric_ids=[],
+            runtime_ledger_execution_tca_metric_ids=["tca-buy", "tca-sell"],
+        )
+        readback_alias_blockers = _runtime_ledger_bucket_profit_proof_blockers(
+            readback_alias_bucket
+        )
+        self.assertNotIn("execution_tca_missing", readback_alias_blockers)
+        self.assertNotIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            readback_alias_blockers,
+        )
+
+        split_alias_bucket = _complete_runtime_ledger_bucket(
+            execution_tca_metric_ids=["tca-buy"],
+            runtime_ledger_execution_tca_metric_ids=["tca-sell"],
+        )
+        split_alias_blockers = _runtime_ledger_bucket_profit_proof_blockers(
+            split_alias_bucket
+        )
+        self.assertNotIn("execution_tca_missing", split_alias_blockers)
+        self.assertNotIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            split_alias_blockers,
+        )
+
+        mapping_alias_bucket = _complete_runtime_ledger_bucket(
+            execution_tca_metric_ids={"id": "tca-buy"},
+            runtime_ledger_execution_tca_metric_ids=[{"ref": "tca-sell"}],
+        )
+        mapping_alias_blockers = _runtime_ledger_bucket_profit_proof_blockers(
+            mapping_alias_bucket
+        )
+        self.assertNotIn("execution_tca_missing", mapping_alias_blockers)
+        self.assertNotIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            mapping_alias_blockers,
+        )
+
+        missing_ref_bucket = _complete_runtime_ledger_bucket(
+            execution_tca_metric_ids={"ignored": "not-a-ref"},
+            execution_tca_metric_refs=["tca-buy"],
+        )
+        missing_ref_blockers = _runtime_ledger_bucket_profit_proof_blockers(
+            missing_ref_bucket
+        )
+        self.assertIn("execution_tca_missing", missing_ref_blockers)
+        self.assertIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            missing_ref_blockers,
+        )
+
     def test_execution_economics_without_order_lifecycle_blocks_missing_lifecycle(
         self,
     ) -> None:

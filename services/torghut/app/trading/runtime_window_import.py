@@ -309,6 +309,62 @@ def _string_list(value: Any) -> list[str]:
     ]
 
 
+_EXECUTION_TCA_REF_KEYS = (
+    "execution_tca_metric_ids",
+    "execution_tca_metric_refs",
+    "execution_tca_metric_id",
+    "execution_tca_metric_ref",
+    "execution_tca_metrics",
+    "execution_tca_ids",
+    "execution_tca_refs",
+    "execution_tca_id",
+    "execution_tca_ref",
+    "runtime_ledger_execution_tca_metric_ids",
+    "runtime_ledger_execution_tca_metric_refs",
+    "runtime_ledger_execution_tca_metric_id",
+    "runtime_ledger_execution_tca_metric_ref",
+    "runtime_ledger_execution_tca_ids",
+    "runtime_ledger_execution_tca_refs",
+    "runtime_ledger_execution_tca_id",
+    "runtime_ledger_execution_tca_ref",
+    "tca_metric_ids",
+    "tca_metric_refs",
+    "tca_metric_id",
+    "tca_metric_ref",
+    "tca_ids",
+    "tca_refs",
+    "tca_id",
+    "tca_ref",
+)
+
+
+def _runtime_ledger_tca_ref_texts(value: Any) -> list[str]:
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, object], value)
+        for key in _EXECUTION_TCA_REF_KEYS + ("id", "ref"):
+            if (text := _text(mapping.get(key))) is not None:
+                return [text]
+        return []
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        values: list[str] = []
+        for item in cast(Sequence[object], value):
+            if isinstance(item, Mapping):
+                values.extend(_runtime_ledger_tca_ref_texts(item))
+                continue
+            if (text := _text(item)) is not None:
+                values.append(text)
+        return values
+    text = _text(value)
+    return [text] if text is not None else []
+
+
+def _runtime_ledger_execution_tca_metric_refs(bucket: Mapping[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for key in _EXECUTION_TCA_REF_KEYS:
+        refs.extend(_runtime_ledger_tca_ref_texts(bucket.get(key)))
+    return list(dict.fromkeys(refs))
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
@@ -426,11 +482,7 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
     source_row_counts = _mapping(bucket.get("source_row_counts"))
     execution_count = _observation_int(source_row_counts.get("executions"))
     tca_count = _observation_int(source_row_counts.get("execution_tca_metrics"))
-    execution_tca_ref_count = len(
-        _string_list(bucket.get("execution_tca_metric_ids"))
-        or _string_list(bucket.get("execution_tca_metric_refs"))
-        or _string_list(bucket.get("execution_tca_metrics"))
-    )
+    execution_tca_ref_count = len(_runtime_ledger_execution_tca_metric_refs(bucket))
     execution_tca_required = (
         _observation_bool(
             bucket.get("execution_tca_required") or bucket.get("requires_execution_tca")
