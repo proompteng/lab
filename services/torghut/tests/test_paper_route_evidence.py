@@ -4796,6 +4796,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         "strategy_family": "microbar_cross_sectional_pairs",
                         "strategy_name": "microbar-cross-sectional-pairs-v1",
                         "source_collection_authorized": "true",
+                        "source_account_label": "TORGHUT_REPLAY",
+                        "source_dsn_env": "DB_DSN",
+                        "target_dsn_env": "SIM_DB_DSN",
                         "runtime_ledger_bucket_ref": (
                             "strategy_runtime_ledger_buckets:run-1:start:end"
                         ),
@@ -4819,6 +4822,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(plan["target_count"], 1)
         target = plan["targets"][0]
         self.assertEqual(target["candidate_id"], "keep-source-collection")
+        self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(target["source_dsn_env"], "DB_DSN")
+        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(
             target["runtime_ledger_bucket_ref"],
             "strategy_runtime_ledger_buckets:run-1:start:end",

@@ -1642,6 +1642,10 @@ _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND = (
 )
 _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV = "SIM_DB_DSN"
 _RUNTIME_LEDGER_SOURCE_COLLECTION_TARGET_DSN_ENV = "SIM_DB_DSN"
+_RUNTIME_LEDGER_SOURCE_COLLECTION_BUCKET_SOURCE = "strategy_runtime_ledger_buckets"
+_RUNTIME_LEDGER_SOURCE_COLLECTION_BUCKET_SOURCE_DSN_ENVS = {
+    "TORGHUT_REPLAY": "DB_DSN",
+}
 _RUNTIME_LEDGER_PAPER_PROBATION_TARGET_DSN_ENV = "SIM_DB_DSN"
 _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS = frozenset(
     {
@@ -1910,6 +1914,27 @@ def _runtime_ledger_paper_probation_bucket_ref(
     return f"strategy_runtime_ledger_buckets:{run_id}:{started_at}:{ended_at}"
 
 
+def _runtime_ledger_source_collection_source_dsn_env(
+    candidate: Mapping[str, object],
+) -> str:
+    if (
+        _safe_text(candidate.get("source"))
+        != _RUNTIME_LEDGER_SOURCE_COLLECTION_BUCKET_SOURCE
+    ):
+        return _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV
+    account_label = (
+        _safe_text(candidate.get("account"))
+        or _safe_text(candidate.get("account_label"))
+        or _safe_text(candidate.get("source_account_label"))
+    )
+    if account_label is None:
+        return _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV
+    return _RUNTIME_LEDGER_SOURCE_COLLECTION_BUCKET_SOURCE_DSN_ENVS.get(
+        account_label,
+        _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV,
+    )
+
+
 def _runtime_ledger_paper_probation_import_plan(
     candidates: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
@@ -1993,7 +2018,7 @@ def _runtime_ledger_paper_probation_import_plan(
             else _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND
         )
         source_dsn_env = (
-            _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV
+            _runtime_ledger_source_collection_source_dsn_env(candidate)
             if source_collection
             else _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV
         )
