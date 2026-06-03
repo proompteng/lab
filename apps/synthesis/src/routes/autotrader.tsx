@@ -287,8 +287,12 @@ function PerformancePanel({ detail }: { detail: AutotraderSessionDetail }) {
         <Metric label="verdict" value={performance.verdict} />
         <Metric label="equity delta" value={formatMoney(performance.equityDelta)} />
         <Metric label="equity delta %" value={formatPercent(performance.equityDeltaPercent)} />
+        <Metric label="total R" value={formatNumber(performance.totalRealizedR)} />
+        <Metric label="avg R" value={formatNumber(performance.avgRealizedR)} />
+        <Metric label="R samples" value={performance.realizedRObservationCount} />
         <Metric label="goal remaining" value={formatMoney(performance.goalRemaining)} />
         <Metric label="goal progress" value={formatPercent(performance.goalProgressPercent)} />
+        <Metric label="filled orders" value={performance.filledOrderCount} />
         <Metric label="order fill rate" value={formatPercent(performance.orderFillRate)} />
         <Metric label="ticket fill rate" value={formatPercent(performance.ticketFillRate)} />
         <Metric label="broker state" value={brokerState} />

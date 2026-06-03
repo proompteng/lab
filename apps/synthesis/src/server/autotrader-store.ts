@@ -253,16 +253,46 @@ const sessionPerformanceCounts = (summary: {
   tradeTicketCount: number
   orderCount: number
   fillCount: number
+  filledOrderCount?: number
+  realizedRObservationCount?: number
+  totalRealizedR?: string | number | null
 }): AutotraderSessionPerformanceCounts => ({
   tradeTicketCount: summary.tradeTicketCount,
   orderCount: summary.orderCount,
   fillCount: summary.fillCount,
+  filledOrderCount: summary.filledOrderCount,
+  realizedRObservationCount: summary.realizedRObservationCount,
+  totalRealizedR: summary.totalRealizedR,
 })
 
 const asNumber = (value: string | number | null | undefined) => {
   if (value == null) return 0
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+const sessionPerformanceCountsForRecords = ({
+  tickets,
+  orders,
+  fills,
+  examples,
+}: {
+  tickets: AutotraderTradeTicket[]
+  orders: AutotraderOrder[]
+  fills: AutotraderFill[]
+  examples: AutotraderSetupExample[]
+}): AutotraderSessionPerformanceCounts => {
+  const realizedRValues = examples
+    .map((example) => (example.realizedR == null ? null : Number(example.realizedR)))
+    .filter((value): value is number => value != null && Number.isFinite(value))
+  return {
+    tradeTicketCount: tickets.length,
+    orderCount: orders.length,
+    fillCount: fills.length,
+    filledOrderCount: new Set(fills.map((fill) => fill.clientOrderId)).size,
+    realizedRObservationCount: realizedRValues.length,
+    totalRealizedR: realizedRValues.length ? String(realizedRValues.reduce((total, value) => total + value, 0)) : null,
+  }
 }
 
 const averageWithObservation = (currentAverage: string | null, sampleSize: number, next: string | null | undefined) => {
@@ -667,11 +697,15 @@ class InMemoryAutotraderStore implements AutotraderStore {
     const fills = [...this.fills.values()].filter((fill) => fill.sessionId === sessionId)
     return {
       session,
-      performance: buildAutotraderSessionPerformance(session, {
-        tradeTicketCount: sessionTickets.length,
-        orderCount: orders.length,
-        fillCount: fills.length,
-      }),
+      performance: buildAutotraderSessionPerformance(
+        session,
+        sessionPerformanceCountsForRecords({
+          tickets: sessionTickets,
+          orders,
+          fills,
+          examples: sessionExamples,
+        }),
+      ),
       status: this.statuses.get(sessionId) ?? null,
       events: [...this.events.values()]
         .filter((event) => event.sessionId === sessionId)
@@ -717,6 +751,8 @@ class InMemoryAutotraderStore implements AutotraderStore {
       ),
     ])
     const relationKeys = scorecardRelationKeySet(scorecardRelationsForTickets(tickets))
+    const orders = [...this.orders.values()].filter((order) => order.sessionId === sessionId)
+    const fills = [...this.fills.values()].filter((fill) => fill.sessionId === sessionId)
     const positionSymbols = new Set(
       [...this.positions.values()]
         .filter((snapshot) => snapshot.sessionId === sessionId)
@@ -728,8 +764,8 @@ class InMemoryAutotraderStore implements AutotraderStore {
       eventCount: [...this.events.values()].filter((event) => event.sessionId === sessionId).length,
       tradeTicketCount: tickets.length,
       riskCheckCount: [...this.riskChecks.values()].filter((riskCheck) => riskCheck.sessionId === sessionId).length,
-      orderCount: [...this.orders.values()].filter((order) => order.sessionId === sessionId).length,
-      fillCount: [...this.fills.values()].filter((fill) => fill.sessionId === sessionId).length,
+      orderCount: orders.length,
+      fillCount: fills.length,
       positionSnapshotCount: positionSymbols.size,
       scorecardCount: [...this.scorecards.values()].filter(
         (scorecard) => scorecardKeys.has(scorecard.key) || scorecardMatchesTicketRelation(scorecard, relationKeys),
@@ -738,7 +774,15 @@ class InMemoryAutotraderStore implements AutotraderStore {
     }
     return {
       ...summary,
-      performance: buildAutotraderSessionPerformance(session, sessionPerformanceCounts(summary)),
+      performance: buildAutotraderSessionPerformance(
+        session,
+        sessionPerformanceCountsForRecords({
+          tickets,
+          orders,
+          fills,
+          examples,
+        }),
+      ),
     }
   }
 }
@@ -770,9 +814,12 @@ type SessionSummaryRow = SessionRow & {
   risk_check_count: number | string | null
   order_count: number | string | null
   fill_count: number | string | null
+  filled_order_count: number | string | null
   position_snapshot_count: number | string | null
   scorecard_count: number | string | null
   setup_example_count: number | string | null
+  realized_r_observation_count: number | string | null
+  total_realized_r: number | string | null
 }
 
 type StatusRow = {
@@ -975,7 +1022,15 @@ const mapSessionSummary = (row: SessionSummaryRow): AutotraderSessionSummary => 
   }
   return {
     ...summary,
-    performance: buildAutotraderSessionPerformance(session, sessionPerformanceCounts(summary)),
+    performance: buildAutotraderSessionPerformance(
+      session,
+      sessionPerformanceCounts({
+        ...summary,
+        filledOrderCount: countFromRow(row.filled_order_count),
+        realizedRObservationCount: countFromRow(row.realized_r_observation_count),
+        totalRealizedR: row.total_realized_r == null ? null : String(row.total_realized_r),
+      }),
+    ),
   }
 }
 
@@ -1653,6 +1708,8 @@ class PostgresAutotraderStore implements AutotraderStore {
            AS risk_check_count,
          (SELECT COUNT(*)::int FROM autotrader.orders o WHERE o.session_id = s.id) AS order_count,
          (SELECT COUNT(*)::int FROM autotrader.fills f WHERE f.session_id = s.id) AS fill_count,
+         (SELECT COUNT(DISTINCT f.client_order_id)::int FROM autotrader.fills f WHERE f.session_id = s.id)
+           AS filled_order_count,
          (
            SELECT COUNT(DISTINCT ps.symbol)::int
            FROM autotrader.position_snapshots ps
@@ -1675,7 +1732,17 @@ class PostgresAutotraderStore implements AutotraderStore {
            )
          ) AS scorecard_count,
          (SELECT COUNT(*)::int FROM autotrader.setup_examples se WHERE se.session_id = s.id)
-           AS setup_example_count
+           AS setup_example_count,
+         (
+           SELECT COUNT(*)::int
+           FROM autotrader.setup_examples se
+           WHERE se.session_id = s.id AND se.realized_r IS NOT NULL
+         ) AS realized_r_observation_count,
+         (
+           SELECT SUM(se.realized_r)
+           FROM autotrader.setup_examples se
+           WHERE se.session_id = s.id AND se.realized_r IS NOT NULL
+         ) AS total_realized_r
        FROM autotrader.sessions s
        ORDER BY s.started_at DESC
        LIMIT $1`,
@@ -1775,11 +1842,15 @@ class PostgresAutotraderStore implements AutotraderStore {
       : []
     return {
       session,
-      performance: buildAutotraderSessionPerformance(session, {
-        tradeTicketCount: tickets.length,
-        orderCount: orders.length,
-        fillCount: fills.length,
-      }),
+      performance: buildAutotraderSessionPerformance(
+        session,
+        sessionPerformanceCountsForRecords({
+          tickets,
+          orders,
+          fills,
+          examples: setupExamples,
+        }),
+      ),
       status: statusResult.rows[0] ? mapStatus(statusResult.rows[0]) : null,
       events: eventResult.rows.map(mapEvent),
       tradeTickets: tickets,
