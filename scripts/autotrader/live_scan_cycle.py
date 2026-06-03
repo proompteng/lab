@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -547,6 +548,9 @@ def summarize_scan(
                     "liquidity_score",
                     "momentum_score",
                     "risk_notes",
+                    "scorecard_sample_size",
+                    "scorecard_avg_realized_r",
+                    "scorecard_confidence",
                 )
             }
         )
@@ -559,6 +563,7 @@ def summarize_scan(
         "watchlist": symbols,
         "resultCount": len(results),
         "topResults": top_results,
+        "scorecardInfluence": scorecard_usage_summary(scan),
     }
 
 
@@ -581,6 +586,166 @@ def numeric_text(value: Any) -> str | None:
         return str(Decimal(text))
     except InvalidOperation:
         return None
+
+
+def scorecard_collection(payload: Any, key: str) -> list[Any]:
+    if not isinstance(payload, dict):
+        return []
+    value = payload.get(key)
+    if isinstance(value, list):
+        return value
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get(key), list):
+        return data[key]
+    if key == "scorecards" and isinstance(data, list):
+        return data
+    return []
+
+
+def int_text_value(value: Any) -> int:
+    text = optional_text(value)
+    if text is None:
+        return 0
+    try:
+        return int(Decimal(text))
+    except (InvalidOperation, ValueError):
+        return 0
+
+
+def decimal_value(value: Any) -> Decimal | None:
+    text = optional_text(value)
+    if text is None:
+        return None
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def scorecard_readback_summary(payload: Any) -> dict[str, Any]:
+    scorecards = scorecard_collection(payload, "scorecards")
+    setup_examples = scorecard_collection(payload, "setupExamples")
+    scorecard_count = len(scorecards)
+    total_sample_size = 0
+    nonzero_sample_count = 0
+    positive_avg_r_count = 0
+    negative_avg_r_count = 0
+    symbols: list[str] = []
+    symbol_seen: set[str] = set()
+    top_scorecards: list[dict[str, Any]] = []
+
+    for item in scorecards:
+        if not isinstance(item, dict):
+            continue
+        sample_size = int_text_value(item.get("sampleSize") or item.get("sample_size"))
+        total_sample_size += sample_size
+        if sample_size > 0:
+            nonzero_sample_count += 1
+
+        avg_r = decimal_value(item.get("avgRealizedR") or item.get("avg_realized_r"))
+        if avg_r is not None and avg_r > 0:
+            positive_avg_r_count += 1
+        if avg_r is not None and avg_r < 0:
+            negative_avg_r_count += 1
+
+        symbol = optional_text(item.get("symbol"), max_length=32)
+        if symbol and symbol.upper() not in symbol_seen:
+            symbol_seen.add(symbol.upper())
+            symbols.append(symbol.upper())
+
+        if len(top_scorecards) < 10:
+            top_scorecards.append(
+                {
+                    "key": optional_text(item.get("key"), max_length=240),
+                    "symbol": symbol.upper() if symbol else None,
+                    "setupType": optional_text(item.get("setupType") or item.get("setup_type"), max_length=120),
+                    "setupGrade": setup_grade(item.get("setupGrade") or item.get("setup_grade")),
+                    "regime": optional_text(item.get("regime"), max_length=120),
+                    "timeBucket": optional_text(item.get("timeBucket") or item.get("time_bucket"), max_length=80),
+                    "sampleSize": sample_size,
+                    "avgRealizedR": numeric_text(item.get("avgRealizedR") or item.get("avg_realized_r")),
+                    "confidence": numeric_text(item.get("confidence")),
+                }
+            )
+
+    payload_hash = hashlib.sha256(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest()
+    return {
+        "stage": "before_stock_analysis_scan",
+        "scorecardCount": scorecard_count,
+        "setupExampleCount": len(setup_examples),
+        "totalSampleSize": total_sample_size,
+        "nonzeroSampleScorecardCount": nonzero_sample_count,
+        "positiveAvgRScorecardCount": positive_avg_r_count,
+        "negativeAvgRScorecardCount": negative_avg_r_count,
+        "symbols": symbols[:20],
+        "topScorecards": top_scorecards,
+        "payloadHash": payload_hash,
+    }
+
+
+def scorecard_usage_summary(scan: dict[str, Any]) -> dict[str, Any]:
+    results = scan.get("results")
+    if not isinstance(results, list):
+        results = []
+    used_results = 0
+    top_results: list[dict[str, Any]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        sample_size = int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize"))
+        if sample_size > 0:
+            used_results += 1
+        if len(top_results) < 10:
+            top_results.append(
+                {
+                    "symbol": optional_text(result.get("symbol"), max_length=32),
+                    "setupType": setup_type(result.get("setup_type") or result.get("setupType")),
+                    "setupGrade": setup_grade(result.get("setup_grade") or result.get("setupGrade")),
+                    "scorecardSampleSize": sample_size,
+                    "scorecardAvgRealizedR": numeric_text(
+                        result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR")
+                    ),
+                    "scorecardConfidence": numeric_text(
+                        result.get("scorecard_confidence") or result.get("scorecardConfidence")
+                    ),
+                }
+            )
+    return {
+        "resultCount": len(results),
+        "scorecardInfluencedResultCount": used_results,
+        "topResults": top_results,
+    }
+
+
+def record_scorecard_readback(
+    *,
+    synthesis: SynthesisClient,
+    session_id: str,
+    cycle: int,
+    scorecard_readback: dict[str, Any],
+) -> dict[str, Any]:
+    if not session_id.strip():
+        raise ValueError("session id is required when recording scorecard readback")
+    scorecard_count = int_text_value(scorecard_readback.get("scorecardCount"))
+    passed = scorecard_count > 0
+    response = synthesis.post(
+        "/api/autotrader/risk-checks",
+        {
+            "sessionId": session_id,
+            "idempotencyKey": f"scorecard-readback-before-scan-cycle-{cycle}",
+            "checkType": "scorecard_readback_before_scan",
+            "passed": passed,
+            "reason": "scorecards_available_before_scan" if passed else "scorecards_empty_before_scan",
+            "payload": scorecard_readback,
+        },
+    )
+    risk_check = response.get("riskCheck") if isinstance(response, dict) else None
+    return {
+        "riskCheckId": risk_check.get("id") if isinstance(risk_check, dict) else None,
+        "passed": passed,
+        "scorecardCount": scorecard_count,
+        "payloadHash": scorecard_readback.get("payloadHash"),
+    }
 
 
 def setup_grade(value: Any) -> str:
@@ -701,6 +866,15 @@ def record_scan_tickets(
                 "noTradeReason": payload["noTradeReason"],
                 "ticketId": ticket.get("id") if isinstance(ticket, dict) else None,
                 "idempotencyKey": payload["idempotencyKey"],
+                "scorecardSampleSize": int_text_value(
+                    result.get("scorecard_sample_size") or result.get("scorecardSampleSize")
+                ),
+                "scorecardAvgRealizedR": numeric_text(
+                    result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR")
+                ),
+                "scorecardConfidence": numeric_text(
+                    result.get("scorecard_confidence") or result.get("scorecardConfidence")
+                ),
             }
         )
     return recorded
@@ -759,6 +933,15 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     )
     for name, payload in inputs.items():
         write_json(cycle_dir / name, payload)
+    scorecard_readback = scorecard_readback_summary(inputs.get("scorecards.json"))
+    recorded_scorecard_readback = None
+    if args.session_id:
+        recorded_scorecard_readback = record_scorecard_readback(
+            synthesis=synthesis,
+            session_id=args.session_id,
+            cycle=cycle,
+            scorecard_readback=scorecard_readback,
+        )
     analysis_context = Path(args.analysis_context or work_dir / "analysis-context.json")
     scan = run_stock_analysis_scan(
         stock_analysis_cli=stock_analysis_cli_path(args.stock_analysis_cli),
@@ -775,6 +958,8 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         retained_cycles=args.retain_cycles,
         removed_cycle_dirs=removed_cycle_dirs,
     )
+    summary["scorecardReadback"] = scorecard_readback
+    summary["recordedScorecardReadback"] = recorded_scorecard_readback
     if args.record_tickets:
         summary["recordedTickets"] = record_scan_tickets(
             synthesis=synthesis,

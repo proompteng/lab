@@ -245,6 +245,9 @@ class LiveScanCycleTest(unittest.TestCase):
                         "liquidity_score": 2.0,
                         "momentum_score": 3.0,
                         "risk_notes": ["limited_bar_history"],
+                        "scorecard_sample_size": 4,
+                        "scorecard_avg_realized_r": 1.25,
+                        "scorecard_confidence": 0.8,
                     }
                 ]
             },
@@ -256,8 +259,50 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["cycle"], 2)
         self.assertEqual(summary["resultCount"], 1)
         self.assertEqual(summary["topResults"][0]["symbol"], "NVDA")
+        self.assertEqual(summary["topResults"][0]["scorecard_sample_size"], 4)
+        self.assertEqual(summary["scorecardInfluence"]["scorecardInfluencedResultCount"], 1)
+        self.assertEqual(summary["scorecardInfluence"]["topResults"][0]["scorecardAvgRealizedR"], "1.25")
         self.assertEqual(summary["retainedCycles"], 5)
         self.assertEqual(summary["removedCycleDirs"], [])
+
+    def test_summarizes_scorecard_readback_payload(self) -> None:
+        summary = live_scan_cycle.scorecard_readback_summary(
+            {
+                "scorecards": [
+                    {
+                        "key": "AMD|vwap_reclaim|A|trend|open",
+                        "symbol": "amd",
+                        "setupType": "vwap_reclaim",
+                        "setupGrade": "A",
+                        "regime": "trend",
+                        "timeBucket": "open",
+                        "sampleSize": 4,
+                        "avgRealizedR": "1.25",
+                        "confidence": "0.8",
+                    },
+                    {
+                        "symbol": "NVDA",
+                        "setup_type": "opening_range_breakout",
+                        "setup_grade": "B",
+                        "sample_size": "2",
+                        "avg_realized_r": "-0.25",
+                        "confidence": "0.5",
+                    },
+                ],
+                "setupExamples": [{}, {}, {}],
+            }
+        )
+
+        self.assertEqual(summary["stage"], "before_stock_analysis_scan")
+        self.assertEqual(summary["scorecardCount"], 2)
+        self.assertEqual(summary["setupExampleCount"], 3)
+        self.assertEqual(summary["totalSampleSize"], 6)
+        self.assertEqual(summary["nonzeroSampleScorecardCount"], 2)
+        self.assertEqual(summary["positiveAvgRScorecardCount"], 1)
+        self.assertEqual(summary["negativeAvgRScorecardCount"], 1)
+        self.assertEqual(summary["symbols"], ["AMD", "NVDA"])
+        self.assertEqual(summary["topScorecards"][0]["avgRealizedR"], "1.25")
+        self.assertEqual(len(summary["payloadHash"]), 64)
 
     def test_builds_ticket_payload_from_scanner_candidate(self) -> None:
         payload = live_scan_cycle.ticket_payload_for_scan_result(
@@ -329,7 +374,15 @@ class LiveScanCycleTest(unittest.TestCase):
             cycle=4,
             scan={
                 "results": [
-                    {"symbol": "AAPL", "setup_type": "vwap_reclaim", "setup_grade": "B", "expected_r": "1.2"},
+                    {
+                        "symbol": "AAPL",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "B",
+                        "expected_r": "1.2",
+                        "scorecard_sample_size": 3,
+                        "scorecard_avg_realized_r": "0.75",
+                        "scorecard_confidence": "0.6",
+                    },
                     {
                         "symbol": "AMD",
                         "setup_type": "no_trade",
@@ -344,6 +397,9 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual([path for path, _ in synthesis.posts], ["/api/autotrader/trade-tickets"] * 2)
         self.assertEqual(recorded[0]["ticketId"], "ticket-1")
         self.assertEqual(recorded[0]["status"], "candidate")
+        self.assertEqual(recorded[0]["scorecardSampleSize"], 3)
+        self.assertEqual(recorded[0]["scorecardAvgRealizedR"], "0.75")
+        self.assertEqual(recorded[0]["scorecardConfidence"], "0.6")
         self.assertEqual(recorded[1]["ticketId"], "ticket-2")
         self.assertEqual(recorded[1]["status"], "blocked")
         self.assertEqual(recorded[1]["noTradeReason"], "no_confirmed_setup")
@@ -549,6 +605,7 @@ class LiveScanCycleTest(unittest.TestCase):
 
     def test_run_cycle_returns_summary_without_summary_file(self) -> None:
         case = self
+        posts: list[tuple[str, dict[str, object]]] = []
 
         class FakeAlpaca:
             def __init__(self, *, timeout_seconds: float) -> None:
@@ -579,18 +636,36 @@ class LiveScanCycleTest(unittest.TestCase):
             def __init__(self, *, base_url: str | None, timeout_seconds: float) -> None:
                 self.base_url = base_url
                 self.timeout_seconds = timeout_seconds
-                self.posts: list[tuple[str, dict[str, object]]] = []
 
             def get(self, path: str, query: dict[str, str]) -> object:
                 case.assertEqual(path, "/api/autotrader/scorecards")
                 case.assertEqual(query, {"limit": "20"})
-                return {"scorecards": []}
+                return {
+                    "scorecards": [
+                        {
+                            "key": "NVDA|vwap_reclaim|A|intraday_live_scan|market_session",
+                            "symbol": "NVDA",
+                            "setupType": "vwap_reclaim",
+                            "setupGrade": "A",
+                            "regime": "intraday_live_scan",
+                            "timeBucket": "market_session",
+                            "sampleSize": 5,
+                            "avgRealizedR": "1.40",
+                            "confidence": "0.9",
+                        }
+                    ],
+                    "setupExamples": [{"id": "example-1"}],
+                }
 
             def post(self, path: str, payload: dict[str, object]) -> object:
-                self.posts.append((path, payload))
+                posts.append((path, payload))
+                if path.endswith("/risk-checks"):
+                    return {"riskCheck": {"id": "risk-scorecard"}}
                 return {"ticket": {"id": "ticket-nvda"}}
 
         def fake_scan(**kwargs: object) -> dict[str, object]:
+            case.assertEqual(posts[0][0], "/api/autotrader/risk-checks")
+            case.assertEqual(posts[0][1]["checkType"], "scorecard_readback_before_scan")
             return {
                 "results": [
                     {
@@ -599,6 +674,9 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "blocked",
                         "no_trade_reason": "limited_live_bars",
+                        "scorecard_sample_size": 5,
+                        "scorecard_avg_realized_r": 1.4,
+                        "scorecard_confidence": 0.9,
                     }
                 ]
             }
@@ -634,8 +712,15 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertFalse((cycle_dir / "summary.json").exists())
             self.assertFalse(old_cycle.exists())
             self.assertEqual(summary["removedCycleDirs"], ["cycle-1"])
+            self.assertEqual(summary["scorecardReadback"]["scorecardCount"], 1)
+            self.assertEqual(summary["scorecardReadback"]["setupExampleCount"], 1)
+            self.assertEqual(summary["recordedScorecardReadback"]["riskCheckId"], "risk-scorecard")
+            self.assertTrue(summary["recordedScorecardReadback"]["passed"])
+            self.assertEqual(summary["scorecardInfluence"]["scorecardInfluencedResultCount"], 1)
             self.assertEqual(summary["recordedTickets"][0]["ticketId"], "ticket-nvda")
             self.assertEqual(summary["recordedTickets"][0]["status"], "blocked")
+            self.assertEqual(summary["recordedTickets"][0]["scorecardSampleSize"], 5)
+            self.assertEqual([path for path, _ in posts], ["/api/autotrader/risk-checks", "/api/autotrader/trade-tickets"])
 
 
 if __name__ == "__main__":
