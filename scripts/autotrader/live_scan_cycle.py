@@ -39,6 +39,7 @@ SYNTHESIS_SIDES = {
 }
 ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
 MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
+MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
 
 
 class AlpacaRestClient:
@@ -1011,6 +1012,7 @@ def ticket_payload_for_scan_result(
     )
     entry_trigger = optional_text(result.get("entry_trigger") or result.get("entryTrigger"), max_length=1200)
     invalidation = optional_text(result.get("invalidation"), max_length=1200)
+    risk_directive = scorecard_risk_directive(result)
 
     return {
         "sessionId": session_id,
@@ -1039,6 +1041,7 @@ def ticket_payload_for_scan_result(
             "source": "live_scan_cycle",
             "cycle": cycle,
             "resultIndex": index,
+            "riskDirective": risk_directive,
             "raw": result,
         },
         "status": "blocked" if blocked else "candidate",
@@ -1091,16 +1094,43 @@ def record_scan_tickets(
     return recorded
 
 
+def scorecard_edge_values(result: dict[str, Any]) -> tuple[int, Decimal | None, Decimal]:
+    sample_size = int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize"))
+    avg_realized_r = decimal_value(result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR"))
+    confidence = decimal_value(result.get("scorecard_confidence") or result.get("scorecardConfidence")) or Decimal("0")
+    return sample_size, avg_realized_r, confidence
+
+
+def scorecard_risk_directive(result: dict[str, Any]) -> dict[str, Any] | None:
+    sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
+    if sample_size <= 0 or avg_realized_r is None or avg_realized_r <= 0:
+        return None
+    risk_multiplier = min(MAX_SCORECARD_RISK_MULTIPLIER, max(Decimal("1.0"), avg_realized_r))
+    directive: dict[str, Any] = {
+        "source": "scorecard_realized_r",
+        "mode": "scale_positive_realized_edge",
+        "riskMultiplier": str(risk_multiplier),
+        "maxRiskMultiplier": str(MAX_SCORECARD_RISK_MULTIPLIER),
+        "scorecardSampleSize": sample_size,
+        "scorecardAvgRealizedR": str(avg_realized_r),
+        "scorecardConfidence": str(confidence),
+        "reason": "positive_scorecard_edge",
+    }
+    risk_dollars = decimal_value(result.get("risk_dollars") or result.get("riskDollars"))
+    if risk_dollars is not None and risk_dollars > 0:
+        directive["baseRiskDollars"] = str(risk_dollars)
+        directive["recommendedRiskDollars"] = str(risk_dollars * risk_multiplier)
+    return directive
+
+
 def candidate_score(result: dict[str, Any]) -> tuple[Decimal, Decimal, int, int, Decimal]:
     grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
     grade_score = {"A+": 3, "A": 2, "B": 1}.get(grade, 0)
     expected_r = decimal_value(result.get("expected_r") or result.get("expectedR")) or Decimal("0")
-    sample_size = int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize"))
-    avg_realized_r = decimal_value(result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR"))
+    sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
     scorecard_edge = (
         avg_realized_r if sample_size > 0 and avg_realized_r is not None and avg_realized_r > 0 else Decimal("0")
     )
-    confidence = decimal_value(result.get("scorecard_confidence") or result.get("scorecardConfidence")) or Decimal("0")
     return expected_r + scorecard_edge, expected_r, grade_score, sample_size, confidence
 
 
@@ -1133,6 +1163,7 @@ def actionable_candidate_for_result(
         "targetPrice": payload.get("targetPrice"),
         "riskDollars": payload.get("riskDollars"),
         "plannedQuantity": payload.get("plannedQuantity"),
+        "riskDirective": scorecard_risk_directive(result),
         "scorecardSampleSize": int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize")),
         "scorecardAvgRealizedR": numeric_text(
             result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR")

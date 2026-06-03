@@ -783,6 +783,7 @@ describe('autonomous trader provider', () => {
       const parameters = objectAt(templateSpec, 'parameters')
       const role = objectAt(scheduleSpec, 'suspend') === false ? 'active' : 'preview'
       const laneResources = [lane.schedule, lane.template, lane.agent, lane.implementationSpec, lane.systemPrompt]
+      const systemPromptText = String(objectAt(objectAt(lane.systemPrompt, 'data'), 'system-prompt.md') ?? '')
 
       expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
       expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
@@ -803,6 +804,10 @@ describe('autonomous trader provider', () => {
       expect(objectAt(parameters, 'sessionReconcileEnabled')).toBe(role === 'active' ? 'true' : 'false')
       expect(objectAt(parameters, 'accountType')).toBe('paper')
       expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
+      expect(systemPromptText).toContain('Ad hoc Python scripts and scratch files are allowed for immediate analysis')
+      expect(systemPromptText).toContain('decisionSummary.bestCandidate.riskDirective')
+      expect(systemPromptText).toContain('recommendedRiskDollars')
+      expect(systemPromptText).toContain('Positive scorecard edge should be acted on aggressively')
     }
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE')).toBe(
