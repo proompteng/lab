@@ -1573,6 +1573,8 @@ def result_no_trade_reason(
         return bracket_reason
     if scorecard_sample_size <= 0 or scorecard_avg_r is None or scorecard_avg_r <= 0:
         return "positive_scorecard_edge_required"
+    if scorecard_sample_size < MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE:
+        return "positive_scorecard_repeat_sample_required"
     risk_directive = scorecard_risk_directive(result, account=account)
     if account is not None and risk_directive is not None and not risk_directive.get("plannedQuantity"):
         return optional_text(risk_directive.get("positionSizeReason"), max_length=120) or "deterministic_size_missing"
