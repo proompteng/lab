@@ -66,6 +66,9 @@ class MicrostructureCandidatePrefilterRow:
     impact_capacity_lineage: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
+    pair_convergence_risk: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
     proof_source: str = HPAIRS_PREFILTER_PROOF_SOURCE
     proof_semantics_label: str = HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL
     promotion_allowed: bool = False
@@ -95,6 +98,7 @@ class MicrostructureCandidatePrefilterRow:
             "regime_stress_veto": dict(self.regime_stress_veto),
             "macro_window_stress": dict(self.macro_window_stress),
             "impact_capacity_lineage": dict(self.impact_capacity_lineage),
+            "pair_convergence_risk": dict(self.pair_convergence_risk),
             "source_input_blockers": list(
                 _source_input_blockers(self.blockers, self.warnings)
             ),
@@ -141,6 +145,7 @@ class MicrostructurePrefilterResult:
                 "regime_stress_veto_metadata",
                 "macro_window_concentration_stress_metadata",
                 "square_root_power_law_impact_capacity_lineage",
+                "pair_spread_convergence_risk_prefilter",
                 "bounded_exploitation_plus_exploration_handoff",
             ],
             "requested_top_k": self.requested_top_k,
@@ -173,6 +178,7 @@ class _SymbolMicrostructureStats:
     cluster_behavior: Mapping[str, Any]
     regime_stress_veto: Mapping[str, Any]
     stress_values: tuple[float, ...]
+    price_by_timestamp: Mapping[int, float]
 
 
 def build_hpairs_microstructure_prefilter(
@@ -315,6 +321,11 @@ def _build_symbol_microstructure_stats(
         event_labels = tuple(
             _event_label(row, source_fields=source_fields) for row in ordered
         )
+        price_by_timestamp = {
+            _timestamp_key(row): price
+            for row, price in zip(ordered, prices, strict=False)
+            if price is not None and price > 0.0
+        }
         stress_values = [
             stress
             for row in ordered
@@ -368,6 +379,7 @@ def _build_symbol_microstructure_stats(
             cluster_behavior=cluster_behavior,
             regime_stress_veto=regime_stress_veto,
             stress_values=tuple(stress_values),
+            price_by_timestamp=price_by_timestamp,
         )
     return stats
 
@@ -429,6 +441,7 @@ def _score_spec(
                 median_spread_bps=0.0,
                 capacity_penalty_bps=0.0,
             ),
+            pair_convergence_risk=_empty_pair_convergence_risk(),
         )
 
     direction = _candidate_direction(spec)
@@ -499,12 +512,22 @@ def _score_spec(
         median_spread_bps=median_spread_bps,
         capacity_penalty_bps=capacity_penalty,
     )
+    pair_convergence_risk = _pair_convergence_risk(matched)
+    convergence_risk_score = float(pair_convergence_risk["risk_score"])
+    convergence_quality_score = float(pair_convergence_risk["convergence_score"])
+    if pair_convergence_risk.get("status") != "available" and len(matched) >= 2:
+        warnings.add("missing_pair_convergence_price_alignment")
+    elif convergence_risk_score >= 0.85:
+        blockers.add("pair_convergence_risk_veto_active")
+    elif convergence_risk_score >= 0.55:
+        warnings.add("pair_convergence_risk_elevated")
     exploitation_score = (
         signed_return_bps
         + ofi_alignment * 18.0
         + ofi_shock * 9.0
         + ofi_memory * 6.0
         + cluster_score * 12.0
+        + convergence_quality_score * 16.0
         + microprice_alignment * 0.25
         + coverage_score * 15.0
         + volume_score * 5.0
@@ -513,15 +536,18 @@ def _score_spec(
         - return_tail_abs_bps * 0.025
         - capacity_penalty * 0.18
         - stress_veto * 30.0
+        - convergence_risk_score * 24.0
     )
     exploration_score = (
         abs(ofi_shock) * 12.0
         + abs(ofi_memory) * 8.0
         + cluster_score * 10.0
+        + convergence_quality_score * 8.0
         + volume_score * 4.0
         + coverage_score * 8.0
         - stress_veto * 12.0
         - capacity_penalty * 0.06
+        - convergence_risk_score * 8.0
     )
     prefilter_score = (
         exploitation_score if is_hpairs_candidate else exploitation_score - 1_000.0
@@ -548,6 +574,7 @@ def _score_spec(
         regime_stress_veto=regime_stress_veto,
         macro_window_stress=_macro_window_stress_from_regime(regime_stress_veto),
         impact_capacity_lineage=impact_capacity_lineage,
+        pair_convergence_risk=pair_convergence_risk,
     )
 
 
@@ -624,6 +651,7 @@ def _with_rank_and_bucket(
         regime_stress_veto=row.regime_stress_veto,
         macro_window_stress=row.macro_window_stress,
         impact_capacity_lineage=row.impact_capacity_lineage,
+        pair_convergence_risk=row.pair_convergence_risk,
     )
 
 
@@ -1115,6 +1143,13 @@ def _candidate_symbols(spec: CandidateSpec) -> tuple[str, ...]:
     return (spec.runtime_strategy_name.upper(),)
 
 
+def _timestamp_key(signal: SignalEnvelope) -> int:
+    event_ts = signal.event_ts
+    if event_ts.tzinfo is None:
+        event_ts = event_ts.replace(tzinfo=timezone.utc)
+    return int(event_ts.astimezone(timezone.utc).timestamp() * 1_000_000)
+
+
 def _candidate_direction(spec: CandidateSpec) -> float:
     params = _mapping(spec.strategy_overrides.get("params"))
     text = " ".join(
@@ -1208,6 +1243,139 @@ def _impact_capacity_lineage(
         "proof_authority": False,
         "promotion_authority": False,
         "requires_source_backed_adv": True,
+    }
+
+
+def _pair_convergence_risk(
+    stats: Sequence[_SymbolMicrostructureStats],
+) -> dict[str, Any]:
+    """Return aligned-pair convergence risk for H-PAIRS ranking only."""
+
+    if len(stats) < 2:
+        return _empty_pair_convergence_risk(status="not_applicable_single_symbol")
+
+    pair_payloads: list[dict[str, Any]] = []
+    for left_index, left in enumerate(stats):
+        for right in stats[left_index + 1 :]:
+            payload = _pair_convergence_payload(left, right)
+            if payload is not None:
+                pair_payloads.append(payload)
+
+    if not pair_payloads:
+        return _empty_pair_convergence_risk(status="missing_common_price_timestamps")
+
+    risk_scores = [
+        _float_or_none(item.get("risk_score")) or 0.0 for item in pair_payloads
+    ]
+    convergence_scores = [
+        _float_or_none(item.get("convergence_score")) or 0.0 for item in pair_payloads
+    ]
+    worst_pair = max(
+        pair_payloads,
+        key=lambda item: (
+            _float_or_none(item.get("risk_score")) or 0.0,
+            str(item.get("pair") or ""),
+        ),
+    )
+    return {
+        "schema_version": "torghut.hpairs-pair-convergence-risk.v1",
+        "status": "available",
+        "source": "aligned_replay_tape_mid_prices",
+        "pair_count": len(pair_payloads),
+        "common_sample_count": min(
+            int(item.get("common_sample_count") or 0) for item in pair_payloads
+        ),
+        "risk_score": str(_decimal(max(risk_scores))),
+        "convergence_score": str(_decimal(min(convergence_scores))),
+        "worst_pair": worst_pair.get("pair"),
+        "worst_pair_risk_score": worst_pair.get("risk_score"),
+        "pair_details": pair_payloads,
+        "prefilter_only": True,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "final_promotion_allowed": False,
+    }
+
+
+def _pair_convergence_payload(
+    left: _SymbolMicrostructureStats,
+    right: _SymbolMicrostructureStats,
+) -> dict[str, Any] | None:
+    common_keys = sorted(
+        set(left.price_by_timestamp).intersection(right.price_by_timestamp)
+    )
+    if len(common_keys) < 4:
+        return None
+
+    left_log = np.asarray(
+        [log(left.price_by_timestamp[key]) for key in common_keys],
+        dtype=np.float64,
+    )
+    right_log = np.asarray(
+        [log(right.price_by_timestamp[key]) for key in common_keys],
+        dtype=np.float64,
+    )
+    spread = left_log - right_log
+    centered = spread - _mean(spread)
+    lagged = centered[:-1]
+    forward = centered[1:]
+    denominator = float(np.sum(lagged * lagged))
+    phi = float(np.sum(lagged * forward) / denominator) if denominator > 0.0 else 1.0
+    phi_abs = min(abs(phi), 2.0)
+    spread_change_bps = np.diff(spread) * 10_000.0
+    spread_abs_bps = np.abs(centered) * 10_000.0
+    spread_vol_bps = float(np.std(spread_change_bps)) if spread_change_bps.size else 0.0
+    tail_abs_spread_bps = _percentile(spread_abs_bps, 95.0)
+    mean_abs_spread_bps = _mean(spread_abs_bps)
+    phi_risk = float(np.clip((phi_abs - 0.65) / 0.55, 0.0, 1.0))
+    vol_risk = float(np.clip((spread_vol_bps - 5.0) / 35.0, 0.0, 1.0))
+    level_risk = float(np.clip((tail_abs_spread_bps - 20.0) / 80.0, 0.0, 1.0))
+    sample_penalty = float(np.clip((8.0 - len(common_keys)) / 8.0, 0.0, 1.0)) * 0.20
+    risk_score = float(
+        np.clip(
+            0.50 * phi_risk + 0.30 * vol_risk + 0.20 * level_risk + sample_penalty,
+            0.0,
+            1.0,
+        )
+    )
+    mean_reversion_score = float(np.clip(1.0 - min(phi_abs, 1.25) / 1.25, 0.0, 1.0))
+    convergence_score = float(
+        np.clip(
+            0.70 * mean_reversion_score
+            + 0.20 * (1.0 - vol_risk)
+            + 0.10 * (1.0 - level_risk),
+            0.0,
+            1.0,
+        )
+    )
+    return {
+        "pair": f"{left.symbol}/{right.symbol}",
+        "common_sample_count": len(common_keys),
+        "ar1_phi": str(_decimal(phi)),
+        "ar1_phi_abs": str(_decimal(phi_abs)),
+        "mean_reversion_score": str(_decimal(mean_reversion_score)),
+        "spread_vol_bps": str(_decimal(spread_vol_bps)),
+        "mean_abs_spread_bps": str(_decimal(mean_abs_spread_bps)),
+        "tail_abs_spread_bps": str(_decimal(tail_abs_spread_bps)),
+        "risk_score": str(_decimal(risk_score)),
+        "convergence_score": str(_decimal(convergence_score)),
+    }
+
+
+def _empty_pair_convergence_risk(*, status: str = "missing_inputs") -> dict[str, Any]:
+    return {
+        "schema_version": "torghut.hpairs-pair-convergence-risk.v1",
+        "status": status,
+        "source": "aligned_replay_tape_mid_prices",
+        "pair_count": 0,
+        "common_sample_count": 0,
+        "risk_score": "0",
+        "convergence_score": "0",
+        "pair_details": [],
+        "prefilter_only": True,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "final_promotion_allowed": False,
     }
 
 
