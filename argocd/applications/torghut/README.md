@@ -37,7 +37,8 @@ uses `DB_DSN` for source and target reads/writes and is a separate scope from th
 to remain blocked until live execution-eligible decisions, executions, order events, TCA rows, and durable runtime-ledger
 buckets exist; the target makes those blockers visible in the scheduled proof packet without granting promotion.
 
-The `torghut-paper-account-flatten` CronJob runs both before the regular session and after the regular session close.
+The `torghut-paper-account-flatten` CronJob runs at 09:05, 09:15, 09:20, and 09:25 America/New_York before the regular
+session, then repeats those minutes during the post-close 16:00 hour.
 The post-close run is part of the paper-route proof lane: it persists the flat account snapshot required before the
 21:23 UTC renewal/import conductor can turn a closed paper-route window into authority-checkable runtime-ledger evidence.
 
