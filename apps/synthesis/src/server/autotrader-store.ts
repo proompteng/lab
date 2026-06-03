@@ -256,6 +256,8 @@ const sessionPerformanceCounts = (summary: {
   filledOrderCount?: number
   realizedRObservationCount?: number
   totalRealizedR?: string | number | null
+  currentEquity?: string | number | null
+  currentRealizedPnl?: string | number | null
 }): AutotraderSessionPerformanceCounts => ({
   tradeTicketCount: summary.tradeTicketCount,
   orderCount: summary.orderCount,
@@ -263,6 +265,8 @@ const sessionPerformanceCounts = (summary: {
   filledOrderCount: summary.filledOrderCount,
   realizedRObservationCount: summary.realizedRObservationCount,
   totalRealizedR: summary.totalRealizedR,
+  currentEquity: summary.currentEquity,
+  currentRealizedPnl: summary.currentRealizedPnl,
 })
 
 const asNumber = (value: string | number | null | undefined) => {
@@ -271,20 +275,52 @@ const asNumber = (value: string | number | null | undefined) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+const finiteNumber = (value: string | number | null | undefined) => {
+  if (value == null) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const positionSnapshotRealizedPnl = (snapshot: AutotraderPositionSnapshot) =>
+  finiteNumber(
+    numericFromPayload(snapshot.brokerPayload, [
+      'realizedPnl',
+      'realized_pnl',
+      'realizedPnL',
+      'realizedProfitLoss',
+      'realized_profit_loss',
+      'realizedPL',
+      'realized_pl',
+    ]),
+  )
+
+const sumLatestPositionSnapshotRealizedPnl = (snapshots: AutotraderPositionSnapshot[]) => {
+  const realizedValues = latestPositionSnapshots(snapshots)
+    .map(positionSnapshotRealizedPnl)
+    .filter((value): value is number => value != null)
+  if (!realizedValues.length) return null
+  return String(realizedValues.reduce((total, value) => total + value, 0))
+}
+
 const sessionPerformanceCountsForRecords = ({
   tickets,
   orders,
   fills,
   examples,
+  status,
+  positions,
 }: {
   tickets: AutotraderTradeTicket[]
   orders: AutotraderOrder[]
   fills: AutotraderFill[]
   examples: AutotraderSetupExample[]
+  status?: AutotraderStatus | null
+  positions?: AutotraderPositionSnapshot[]
 }): AutotraderSessionPerformanceCounts => {
   const realizedRValues = examples
     .map((example) => (example.realizedR == null ? null : Number(example.realizedR)))
     .filter((value): value is number => value != null && Number.isFinite(value))
+  const currentRealizedPnl = status?.realizedPnl ?? sumLatestPositionSnapshotRealizedPnl(positions ?? [])
   return {
     tradeTicketCount: tickets.length,
     orderCount: orders.length,
@@ -292,6 +328,8 @@ const sessionPerformanceCountsForRecords = ({
     filledOrderCount: new Set(fills.map((fill) => fill.clientOrderId)).size,
     realizedRObservationCount: realizedRValues.length,
     totalRealizedR: realizedRValues.length ? String(realizedRValues.reduce((total, value) => total + value, 0)) : null,
+    currentEquity: status?.equity ?? null,
+    currentRealizedPnl,
   }
 }
 
@@ -695,6 +733,8 @@ class InMemoryAutotraderStore implements AutotraderStore {
     const sessionScorecardRelationKeys = scorecardRelationKeySet(scorecardRelationsForTickets(sessionTickets))
     const orders = [...this.orders.values()].filter((order) => order.sessionId === sessionId)
     const fills = [...this.fills.values()].filter((fill) => fill.sessionId === sessionId)
+    const status = this.statuses.get(sessionId) ?? null
+    const positions = [...this.positions.values()].filter((snapshot) => snapshot.sessionId === sessionId)
     return {
       session,
       performance: buildAutotraderSessionPerformance(
@@ -704,9 +744,11 @@ class InMemoryAutotraderStore implements AutotraderStore {
           orders,
           fills,
           examples: sessionExamples,
+          status,
+          positions,
         }),
       ),
-      status: this.statuses.get(sessionId) ?? null,
+      status,
       events: [...this.events.values()]
         .filter((event) => event.sessionId === sessionId)
         .sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.seq - right.seq),
@@ -714,9 +756,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
       riskChecks: [...this.riskChecks.values()].filter((riskCheck) => riskCheck.sessionId === sessionId),
       orders,
       fills,
-      positionSnapshots: latestPositionSnapshots(
-        [...this.positions.values()].filter((snapshot) => snapshot.sessionId === sessionId),
-      ),
+      positionSnapshots: latestPositionSnapshots(positions),
       scorecards: [...this.scorecards.values()]
         .filter(
           (scorecard) =>
@@ -753,11 +793,9 @@ class InMemoryAutotraderStore implements AutotraderStore {
     const relationKeys = scorecardRelationKeySet(scorecardRelationsForTickets(tickets))
     const orders = [...this.orders.values()].filter((order) => order.sessionId === sessionId)
     const fills = [...this.fills.values()].filter((fill) => fill.sessionId === sessionId)
-    const positionSymbols = new Set(
-      [...this.positions.values()]
-        .filter((snapshot) => snapshot.sessionId === sessionId)
-        .map((snapshot) => snapshot.symbol),
-    )
+    const status = this.statuses.get(sessionId) ?? null
+    const positions = [...this.positions.values()].filter((snapshot) => snapshot.sessionId === sessionId)
+    const positionSymbols = new Set(positions.map((snapshot) => snapshot.symbol))
 
     const summary = {
       ...session,
@@ -781,6 +819,8 @@ class InMemoryAutotraderStore implements AutotraderStore {
           orders,
           fills,
           examples,
+          status,
+          positions,
         }),
       ),
     }
@@ -820,6 +860,9 @@ type SessionSummaryRow = SessionRow & {
   setup_example_count: number | string | null
   realized_r_observation_count: number | string | null
   total_realized_r: number | string | null
+  current_equity: number | string | null
+  current_status_realized_pnl: number | string | null
+  current_snapshot_realized_pnl: number | string | null
 }
 
 type StatusRow = {
@@ -1009,6 +1052,7 @@ const countFromRow = (value: number | string | null | undefined) => {
 
 const mapSessionSummary = (row: SessionSummaryRow): AutotraderSessionSummary => {
   const session = mapSession(row)
+  const currentRealizedPnl = row.current_status_realized_pnl ?? row.current_snapshot_realized_pnl
   const summary = {
     ...session,
     eventCount: countFromRow(row.event_count),
@@ -1029,6 +1073,8 @@ const mapSessionSummary = (row: SessionSummaryRow): AutotraderSessionSummary => 
         filledOrderCount: countFromRow(row.filled_order_count),
         realizedRObservationCount: countFromRow(row.realized_r_observation_count),
         totalRealizedR: row.total_realized_r == null ? null : String(row.total_realized_r),
+        currentEquity: row.current_equity == null ? null : String(row.current_equity),
+        currentRealizedPnl: currentRealizedPnl == null ? null : String(currentRealizedPnl),
       }),
     ),
   }
@@ -1742,7 +1788,29 @@ class PostgresAutotraderStore implements AutotraderStore {
            SELECT SUM(se.realized_r)
            FROM autotrader.setup_examples se
            WHERE se.session_id = s.id AND se.realized_r IS NOT NULL
-         ) AS total_realized_r
+         ) AS total_realized_r,
+         (SELECT st.equity FROM autotrader.status st WHERE st.session_id = s.id) AS current_equity,
+         (SELECT st.realized_pnl FROM autotrader.status st WHERE st.session_id = s.id)
+           AS current_status_realized_pnl,
+         (
+           SELECT SUM(
+             CASE
+               WHEN (latest.broker_payload->>'realizedPnl') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                 THEN (latest.broker_payload->>'realizedPnl')::numeric
+               WHEN (latest.broker_payload->>'realized_pnl') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                 THEN (latest.broker_payload->>'realized_pnl')::numeric
+               WHEN (latest.broker_payload->>'realizedPnL') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                 THEN (latest.broker_payload->>'realizedPnL')::numeric
+               ELSE NULL
+             END
+           )
+           FROM (
+             SELECT DISTINCT ON (ps.symbol) ps.symbol, ps.broker_payload
+             FROM autotrader.position_snapshots ps
+             WHERE ps.session_id = s.id
+             ORDER BY ps.symbol, ps.captured_at DESC
+           ) latest
+         ) AS current_snapshot_realized_pnl
        FROM autotrader.sessions s
        ORDER BY s.started_at DESC
        LIMIT $1`,
@@ -1802,6 +1870,10 @@ class PostgresAutotraderStore implements AutotraderStore {
     const tickets = ticketResult.rows.map(mapTicket)
     const orders = orderResult.rows.map(mapOrder)
     const fills = fillResult.rows.map(mapFill)
+    const status = statusResult.rows[0] ? mapStatus(statusResult.rows[0]) : null
+    const positionSnapshots = positionResult.rows
+      .map(mapPositionSnapshot)
+      .sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt))
     const setupExamples = exampleResult.rows.map(mapSetupExample)
     const sessionScorecardKeys = [
       ...new Set([
@@ -1849,17 +1921,17 @@ class PostgresAutotraderStore implements AutotraderStore {
           orders,
           fills,
           examples: setupExamples,
+          status,
+          positions: positionSnapshots,
         }),
       ),
-      status: statusResult.rows[0] ? mapStatus(statusResult.rows[0]) : null,
+      status,
       events: eventResult.rows.map(mapEvent),
       tradeTickets: tickets,
       riskChecks: riskResult.rows.map(mapRiskCheck),
       orders,
       fills,
-      positionSnapshots: positionResult.rows
-        .map(mapPositionSnapshot)
-        .sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt)),
+      positionSnapshots,
       scorecards,
       setupExamples,
     }

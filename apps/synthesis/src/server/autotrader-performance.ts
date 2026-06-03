@@ -7,6 +7,8 @@ export type AutotraderSessionPerformanceCounts = {
   filledOrderCount?: number
   realizedRObservationCount?: number
   totalRealizedR?: string | number | null
+  currentEquity?: string | number | null
+  currentRealizedPnl?: string | number | null
 }
 
 const parseFiniteNumber = (value: string | number | null | undefined) => {
@@ -67,10 +69,12 @@ export const buildAutotraderSessionPerformance = (
 ): AutotraderSessionPerformance => {
   const openingEquity = parseFiniteNumber(session.openingEquity)
   const closingEquity = parseFiniteNumber(session.closingEquity)
+  const currentEquity = parseFiniteNumber(counts.currentEquity)
+  const effectiveEquity = closingEquity ?? currentEquity
   const goalEquity = parseFiniteNumber(session.goalEquity)
-  const realizedPnl = parseFiniteNumber(session.realizedPnl)
-  const equityDelta = openingEquity == null || closingEquity == null ? null : closingEquity - openingEquity
-  const goalRemaining = goalEquity == null || closingEquity == null ? null : goalEquity - closingEquity
+  const realizedPnl = parseFiniteNumber(session.realizedPnl) ?? parseFiniteNumber(counts.currentRealizedPnl)
+  const equityDelta = openingEquity == null || effectiveEquity == null ? null : effectiveEquity - openingEquity
+  const goalRemaining = goalEquity == null || effectiveEquity == null ? null : goalEquity - effectiveEquity
   const goalDenominator = goalEquity != null && openingEquity != null ? goalEquity - openingEquity : null
   const filledOrderCount = counts.filledOrderCount ?? counts.fillCount
   const realizedRObservationCount = counts.realizedRObservationCount ?? 0
