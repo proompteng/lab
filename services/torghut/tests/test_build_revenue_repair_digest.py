@@ -23,6 +23,7 @@ from scripts.build_revenue_repair_digest import (
     build_revenue_repair_digest,
     main,
 )
+from app.trading.revenue_repair import _summarize_runtime_window_import_repair
 
 
 NOW = datetime(2026, 5, 7, 16, 0, tzinfo=timezone.utc)
@@ -741,6 +742,214 @@ class TestBuildRevenueRepairDigest(TestCase):
             ],
         )
         self.assertEqual(route_reacquisition["expected_unblock_value"], 13)
+
+    def test_repair_only_payload_surfaces_source_collection_import_targets(
+        self,
+    ) -> None:
+        status = _repair_only_status()
+        live_gate = status["live_submission_gate"]
+        self.assertIsInstance(live_gate, dict)
+        live_gate["blocked_reasons"] = [
+            "simple_submit_disabled",
+            "runtime_ledger_source_collection_pending",
+        ]
+        live_gate["runtime_ledger_paper_probation_import_plan"] = {
+            "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+            "source": "runtime_ledger_paper_probation_and_source_collection_candidates",
+            "purpose": "paper_stage_runtime_ledger_source_evidence_collection",
+            "target_count": 1,
+            "paper_probation_target_count": 0,
+            "source_collection_target_count": 1,
+            "skipped_target_count": 0,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "targets": [
+                {
+                    "hypothesis_id": "H-TSMOM-LIQ-01",
+                    "candidate_id": "cand-source-collection",
+                    "observed_stage": "paper",
+                    "strategy_family": "intraday_tsmom_consistent",
+                    "strategy_name": "intraday-tsmom-profit-v3",
+                    "account_label": "TORGHUT_SIM",
+                    "source_account_label": "TORGHUT_SIM",
+                    "source_dsn_env": "SIM_DB_DSN",
+                    "target_dsn_env": "SIM_DB_DSN",
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                    "source_manifest_ref": (
+                        "config/trading/hypotheses/h-tsmom-liq-01.json"
+                    ),
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                    "window_start": "2026-06-02T13:30:00+00:00",
+                    "window_end": "2026-06-02T20:00:00+00:00",
+                    "source_collection_authorized": True,
+                    "source_collection_reason_codes": [
+                        "paper_probe_runtime_activity_positive"
+                    ],
+                    "final_promotion_blockers": [
+                        "runtime_ledger_source_collection_only",
+                        "runtime_ledger_pnl_basis_missing",
+                    ],
+                    "candidate_blockers": ["runtime_ledger_candidate_mismatch"],
+                    "handoff": "runtime_ledger_source_collection_import",
+                    "probation_reason": "source_window_evidence_collection_pending",
+                    "max_notional": "0",
+                    "promotion_allowed": False,
+                    "final_promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                    "final_authority_ok": False,
+                }
+            ],
+            "skipped_targets": [],
+        }
+
+        digest = build_revenue_repair_digest(
+            readyz_payload=_repair_only_readyz(),
+            status_payload=status,
+            generated_at=NOW,
+        )
+
+        repair_queue = digest["repair_queue"]
+        self.assertIsInstance(repair_queue, list)
+        self.assertEqual(repair_queue[0]["code"], "repair_source_runtime_window_import")
+        self.assertEqual(
+            repair_queue[0]["action"],
+            "import_source_collection_runtime_ledger_window_before_alpha_promotion",
+        )
+        self.assertEqual(
+            repair_queue[0]["required_output_receipt"],
+            "torghut.runtime-window-import-readback.v1",
+        )
+        self.assertEqual(repair_queue[0]["max_notional"], "0")
+        self.assertFalse(repair_queue[0].get("promotion_allowed", False))
+        self.assertEqual(
+            digest["runtime_window_import_repair_status"],
+            "source_collection_pending",
+        )
+        self.assertEqual(
+            digest["runtime_window_import_next_action"],
+            "run_runtime_window_import_for_source_collection_targets",
+        )
+        self.assertEqual(digest["runtime_window_import_target_count"], 1)
+        self.assertEqual(
+            digest["runtime_window_import_source_collection_target_count"], 1
+        )
+        self.assertEqual(
+            digest["runtime_window_import_paper_probation_target_count"], 0
+        )
+        evidence = digest["evidence"]
+        self.assertIsInstance(evidence, dict)
+        runtime_import = evidence["runtime_window_import_repair"]
+        self.assertIsInstance(runtime_import, dict)
+        self.assertEqual(runtime_import["promotion_allowed"], False)
+        self.assertEqual(runtime_import["final_promotion_allowed"], False)
+        top_targets = runtime_import["top_targets"]
+        self.assertIsInstance(top_targets, list)
+        self.assertEqual(top_targets[0]["hypothesis_id"], "H-TSMOM-LIQ-01")
+        self.assertEqual(top_targets[0]["candidate_id"], "cand-source-collection")
+        self.assertEqual(top_targets[0]["source_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(top_targets[0]["target_dsn_env"], "SIM_DB_DSN")
+        self.assertTrue(top_targets[0]["source_collection_authorized"])
+        self.assertEqual(top_targets[0]["max_notional"], "0")
+        self.assertFalse(top_targets[0]["promotion_allowed"])
+        self.assertFalse(top_targets[0]["final_promotion_allowed"])
+        self.assertIn(
+            "runtime_ledger_pnl_basis_missing",
+            top_targets[0]["final_promotion_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_candidate_mismatch",
+            top_targets[0]["candidate_blockers"],
+        )
+
+    def test_runtime_window_import_repair_summarizes_non_source_plan_states(
+        self,
+    ) -> None:
+        paper_summary = _summarize_runtime_window_import_repair(
+            {
+                "blocked_reasons": ["runtime_ledger_paper_probation_pending"],
+                "runtime_ledger_paper_probation_import_plan": {
+                    "schema_version": (
+                        "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                    ),
+                    "target_count": 1,
+                    "paper_probation_target_count": 1,
+                    "source_collection_target_count": 0,
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAPER",
+                            "candidate_id": "cand-paper",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "paper_probation_authorized": True,
+                            "handoff": "runtime_ledger_paper_probation_import",
+                            "max_notional": "0",
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertEqual(paper_summary["status"], "paper_probation_import_pending")
+        self.assertEqual(
+            paper_summary["next_action"],
+            "run_runtime_window_import_for_paper_probation_targets",
+        )
+        paper_targets = paper_summary["top_targets"]
+        self.assertIsInstance(paper_targets, list)
+        self.assertEqual(paper_targets[0]["candidate_id"], "cand-paper")
+        self.assertFalse(paper_targets[0]["source_collection_authorized"])
+        self.assertTrue(paper_targets[0]["paper_probation_authorized"])
+
+        skipped_summary = _summarize_runtime_window_import_repair(
+            {
+                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                "runtime_ledger_paper_probation_import_plan": {
+                    "target_count": 0,
+                    "skipped_target_count": 1,
+                    "targets": [],
+                    "skipped_targets": [
+                        {
+                            "hypothesis_id": "H-SKIP",
+                            "candidate_id": "cand-skip",
+                            "reason": (
+                                "runtime_ledger_paper_probation_target_missing_required_fields"
+                            ),
+                            "missing_fields": ["window_start"],
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertEqual(skipped_summary["status"], "target_plan_repair_required")
+        self.assertEqual(
+            skipped_summary["next_action"], "repair_runtime_window_import_target_fields"
+        )
+        skipped_targets = skipped_summary["skipped_targets"]
+        self.assertIsInstance(skipped_targets, list)
+        self.assertEqual(skipped_targets[0]["missing_fields"], ["window_start"])
+
+        raw_target_summary = _summarize_runtime_window_import_repair(
+            {
+                "runtime_ledger_paper_probation_import_plan": {
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-RAW",
+                            "candidate_id": "cand-raw",
+                            "source_kind": "paper_route_candidate_unclassified",
+                            "max_notional": "0",
+                        }
+                    ],
+                    "skipped_targets": [],
+                },
+            }
+        )
+        self.assertEqual(raw_target_summary["status"], "empty")
+        self.assertEqual(
+            raw_target_summary["next_action"],
+            "wait_for_runtime_window_import_candidates",
+        )
+        raw_targets = raw_target_summary["top_targets"]
+        self.assertIsInstance(raw_targets, list)
+        self.assertEqual(raw_targets[0]["candidate_id"], "cand-raw")
 
     def test_repair_only_payload_selects_repairable_jangar_carry_ticket(self) -> None:
         status_payload = _repair_only_status()
