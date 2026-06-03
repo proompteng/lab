@@ -6306,20 +6306,31 @@ def _hpairs_zero_activity_reason_flags(
     ).lower()
     audit_state = (_safe_text(runtime_window_import_audit.get("state")) or "").lower()
     import_ready = bool(runtime_window_import_audit.get("import_ready"))
-    no_market_window = bool(
-        {
-            "paper_route_session_window_not_open",
-            "paper_route_session_window_closed",
-            "paper_route_session_window_not_closed",
-            "paper_route_session_settlement_pending",
-            "market_session_closed",
-        }
-        & normalized
-    ) or session_state in {
-        "waiting_for_session_open",
-        "collecting_session_evidence",
-        "window_closed_settlement_pending",
+    window_import_ready = import_ready or audit_state in {
+        "import_due_source_activity_missing",
+        "import_due_runtime_ledger_missing",
+        "import_due_runtime_ledger_not_materialized",
+        "runtime_ledger_imported_but_not_evidence_grade",
+        "window_closed_import_ready",
     }
+    no_market_window = not window_import_ready and (
+        bool(
+            {
+                "paper_route_session_window_not_open",
+                "paper_route_session_window_closed",
+                "paper_route_session_window_not_closed",
+                "paper_route_session_settlement_pending",
+                "market_session_closed",
+            }
+            & normalized
+        )
+        or session_state
+        in {
+            "waiting_for_session_open",
+            "collecting_session_evidence",
+            "window_closed_settlement_pending",
+        }
+    )
     no_candidate_target_materialization = hpairs_target_count <= 0
     no_symbols = hpairs_symbol_count <= 0 or bool(
         {

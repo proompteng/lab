@@ -36,6 +36,7 @@ from app.trading.paper_route_evidence import (
     _balanced_pair_probe_symbol_actions,
     _hpairs_round_trip_identity_blockers,
     _hpairs_zero_activity_reason_flags,
+    _hpairs_zero_activity_state,
     _next_regular_equities_session_window,
     _normalized_open_positions,
     _order_event_source_offset_refs,
@@ -5945,6 +5946,33 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertTrue(decisions_without_execution["source_executions_missing"])
         self.assertFalse(decisions_without_execution["source_tca_missing"])
         self.assertTrue(decisions_without_execution["runtime_ledger_bucket_missing"])
+
+        closed_import_ready_window = _hpairs_zero_activity_reason_flags(
+            blockers=[
+                "market_session_closed",
+                "paper_route_session_window_not_open",
+                "source_executions_missing",
+            ],
+            probe={"configured_enabled": True},
+            runtime_window_import_audit={
+                "import_ready": True,
+                "session_state": "window_closed_import_ready",
+                "state": "runtime_ledger_imported_but_not_evidence_grade",
+            },
+            hpairs_target_count=1,
+            hpairs_symbol_count=2,
+            hpairs_source_decision_ready_count=1,
+            hpairs_decision_count=2,
+            hpairs_submitted_order_count=0,
+            hpairs_tca_sample_count=0,
+            hpairs_runtime_bucket_count=0,
+        )
+        self.assertFalse(closed_import_ready_window["no_market_window"])
+        self.assertTrue(closed_import_ready_window["source_executions_missing"])
+        self.assertEqual(
+            _hpairs_zero_activity_state(closed_import_ready_window),
+            "source_ledger_import_not_running",
+        )
 
         executions_without_tca = _hpairs_zero_activity_reason_flags(
             blockers=[],
