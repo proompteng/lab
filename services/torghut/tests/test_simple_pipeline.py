@@ -19,6 +19,7 @@ from app.trading.scheduler.simple_pipeline import (
     _bounded_sim_collection_metadata_from_decision,
     _quote_snapshot_matches_symbol,
     _target_metadata_quote_snapshot,
+    _target_symbols,
     _target_probe_symbol_quantities,
 )
 from app.trading.runtime_window_import import (
@@ -376,6 +377,17 @@ def test_target_probe_symbol_quantities_apply_target_quantity_fallback() -> None
     )
 
     assert quantities == {"AAPL": Decimal("3"), "AMZN": Decimal("3")}
+
+
+def test_target_symbols_accept_action_and_execution_source_fields() -> None:
+    assert _target_symbols(
+        {
+            "paper_route_probe_symbol_actions": {"aapl": "buy"},
+            "paper_route_execution_source_key": {
+                "paper_route_probe_symbols": [" amzn "],
+            },
+        }
+    ) == {"AAPL", "AMZN"}
 
 
 def _routeability_decision(
@@ -996,6 +1008,92 @@ def test_bounded_source_collection_authorizes_after_runtime_account_audit_readba
             assert metadata["paper_route_target_account_audit_blockers"] == []
             assert (
                 "paper_route_target_account_audit_unavailable"
+                not in metadata["bounded_evidence_collection_blockers"]
+            )
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_allow_shorts = allow_shorts_before
+
+
+def test_local_target_plan_enriches_probe_contract_before_bounded_gate(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    allow_shorts_before = settings.trading_allow_shorts
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_allow_shorts = True
+        now = datetime(2026, 6, 3, 16, 0, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            paper_route_probe_window_start="2026-06-03T13:30:00+00:00",
+            paper_route_probe_window_end="2026-06-03T20:00:00+00:00",
+            paper_route_probe_next_session_max_notional="25",
+            paper_route_probe_symbol_actions={"AAPL": "buy", "AMZN": "sell"},
+            paper_route_probe_symbol_quantities={"AAPL": "2", "AMZN": "1"},
+        )
+        target.pop("paper_route_probe_symbols")
+        target.pop("source_decision_readiness")
+        live_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "targets": [target],
+            }
+        }
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._live_submission_gate = lambda **_kwargs: live_gate
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        symbols, error, targets = pipeline._local_paper_route_target_probe_symbols(
+            session=None,
+            strategies=[strategy],
+        )
+
+        assert error is None
+        assert symbols == {"AAPL", "AMZN"}
+        assert targets[0]["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+        assert targets[0]["source_decision_readiness"]["ready"] is True
+        assert targets[0]["source_decision_readiness"]["blockers"] == []
+
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            symbols,
+            error,
+            targets,
+        )
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[strategy],
+            allowed_symbols={"AAPL", "AMZN"},
+            positions=[],
+            session=None,
+        )
+
+        assert {decision.symbol for decision in decisions} == {"AAPL", "AMZN"}
+        for decision in decisions:
+            metadata = decision.params["paper_route_target_plan_source_decision"]
+            assert metadata["source_decision_readiness"]["ready"] is True
+            assert metadata["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+            assert (
+                "bounded_sim_collection_probe_symbols_missing"
+                not in metadata["bounded_evidence_collection_blockers"]
+            )
+            assert (
+                "bounded_sim_collection_source_decision_readiness_missing"
                 not in metadata["bounded_evidence_collection_blockers"]
             )
     finally:
