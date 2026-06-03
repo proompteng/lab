@@ -475,6 +475,43 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["scorecardSampleSize"], 7)
         self.assertEqual(summary["candidateSymbols"], ["NVDA", "AMD"])
 
+    def test_decision_summary_prefers_edge_over_grade_after_threshold(self) -> None:
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=8,
+            scan={
+                "results": [
+                    {
+                        "symbol": "AVGO",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A+",
+                        "expected_r": "2.1",
+                    },
+                    {
+                        "symbol": "AMD",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "4.0",
+                    },
+                ]
+            },
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-8-1-AVGO-vwap_reclaim-A+",
+                    "ticketId": "ticket-avgo",
+                },
+                {
+                    "idempotencyKey": "scan-cycle-8-2-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                },
+            ],
+        )
+
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
+        self.assertEqual(summary["bestCandidate"]["expectedR"], "4.0")
+        self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-amd")
+        self.assertEqual(summary["candidateSymbols"], ["AMD", "AVGO"])
+
     def test_decision_summary_blocks_sub_two_r_candidates(self) -> None:
         result = {
             "symbol": "GOOGL",

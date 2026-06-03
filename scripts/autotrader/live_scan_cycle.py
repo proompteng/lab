@@ -997,13 +997,13 @@ def record_scan_tickets(
     return recorded
 
 
-def candidate_score(result: dict[str, Any]) -> tuple[int, Decimal, int, Decimal]:
+def candidate_score(result: dict[str, Any]) -> tuple[Decimal, int, int, Decimal]:
     grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
     grade_score = {"A+": 3, "A": 2, "B": 1}.get(grade, 0)
     expected_r = decimal_value(result.get("expected_r") or result.get("expectedR")) or Decimal("0")
     sample_size = int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize"))
     confidence = decimal_value(result.get("scorecard_confidence") or result.get("scorecardConfidence")) or Decimal("0")
-    return grade_score, expected_r, sample_size, confidence
+    return expected_r, grade_score, sample_size, confidence
 
 
 def actionable_candidate_for_result(
