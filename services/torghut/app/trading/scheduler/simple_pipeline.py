@@ -4279,8 +4279,16 @@ class SimpleTradingPipeline(TradingPipeline):
             blockers.append("paper_route_probe_symbol_missing")
         elif not scoped_probe_symbols:
             blockers.append("source_strategy_universe_excludes_probe_symbols")
+        source = (
+            "local_strategy_universe_target_plan_fallback"
+            if _target_truthy(
+                target.get("paper_route_probe_strategy_universe_fallback")
+            )
+            else "local_target_plan"
+        )
         return {
             "schema_version": "torghut.paper-route-source-decision-readiness.v1",
+            "source": source,
             "ready": not blockers,
             "blockers": blockers,
             "strategy_lookup_names": lookup_names,
