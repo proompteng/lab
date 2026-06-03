@@ -17,6 +17,7 @@ from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.discovery.cluster_lob_features import (
     HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
     extract_cluster_lob_features,
+    extract_hawkes_excitation_summary,
 )
 from app.trading.discovery.microstructure_prefilter import (
     HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
@@ -39,6 +40,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "cluster_lob_event_clustering_proxy",
     "bounded_hpairs_clusterlob_ofi_candidate_prefilter",
     "offline_clusterlob_order_flow_feature_lane",
+    "hawkes_event_time_excitation_replay_stress",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -370,6 +372,7 @@ class FastReplayPreviewResult:
             "implemented_mechanisms": {
                 "hpairs_clusterlob_ofi_prefilter": "deterministic bounded H-PAIRS candidate prefilter metadata only; never promotion authority",
                 "clusterlob_order_flow_feature_lane": "offline replay-tape/fixture ClusterLOB and horizon OFI features for preview ranking only",
+                "hawkes_event_time_excitation_replay_stress": "deterministic Hawkes-style event-time burst/self-excitation proxy from arXiv:2510.08085 and arXiv:2604.23961; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -1716,8 +1719,16 @@ def _cluster_lob_activity_score(
         burstiness = float(np.clip(np.percentile(changes, 75), 0.0, 1.0))
     else:
         burstiness = 0.0
+    hawkes_stress = extract_hawkes_excitation_summary(rows).replay_stress_score
     return float(
-        np.clip(0.35 * label_entropy + 0.45 * pressure + 0.20 * burstiness, 0.0, 1.0)
+        np.clip(
+            0.30 * label_entropy
+            + 0.35 * pressure
+            + 0.15 * burstiness
+            + 0.20 * hawkes_stress,
+            0.0,
+            1.0,
+        )
     )
 
 
