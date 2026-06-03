@@ -288,6 +288,17 @@ export type AutotraderSession = {
   summary: Record<string, unknown>
 }
 
+export type AutotraderSessionSummary = AutotraderSession & {
+  eventCount: number
+  tradeTicketCount: number
+  riskCheckCount: number
+  orderCount: number
+  fillCount: number
+  positionSnapshotCount: number
+  scorecardCount: number
+  setupExampleCount: number
+}
+
 export type AutotraderStatus = {
   sessionId: string
   cycle: number

@@ -21,8 +21,8 @@ import type {
   AutotraderEvent,
   AutotraderOrder,
   AutotraderRiskCheck,
-  AutotraderSession,
   AutotraderSessionDetail,
+  AutotraderSessionSummary,
   AutotraderTradeTicket,
 } from '~/server/autotrader-schema'
 
@@ -36,7 +36,7 @@ export const Route = createFileRoute('/autotrader')({
 const cx = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' ')
 
 type SessionsResponse = {
-  sessions: AutotraderSession[]
+  sessions: AutotraderSessionSummary[]
 }
 
 async function fetchSessions(): Promise<SessionsResponse> {
@@ -69,6 +69,8 @@ const formatNumber = (value: string | null | undefined) => {
   if (!Number.isFinite(parsed)) return value
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(parsed)
 }
+
+const formatInteger = (value: number) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)
 
 const formatMoney = (value: string | null | undefined) => {
   if (value == null) return 'n/a'
@@ -169,6 +171,16 @@ function AutotraderPage() {
                       <span>{session.tradingDate}</span>
                       <span>{formatDate(session.finalizedAt)}</span>
                     </div>
+                    <div className="mt-2 grid grid-cols-4 gap-x-2 gap-y-1 font-mono text-[0.625rem] text-[#71767b]">
+                      <SessionSummaryCount label="evt" value={session.eventCount} />
+                      <SessionSummaryCount label="tickets" value={session.tradeTicketCount} />
+                      <SessionSummaryCount label="orders" value={session.orderCount} />
+                      <SessionSummaryCount label="fills" value={session.fillCount} />
+                      <SessionSummaryCount label="risk" value={session.riskCheckCount} />
+                      <SessionSummaryCount label="pos" value={session.positionSnapshotCount} />
+                      <SessionSummaryCount label="scores" value={session.scorecardCount} />
+                      <SessionSummaryCount label="examples" value={session.setupExampleCount} />
+                    </div>
                   </button>
                 ))
               ) : (
@@ -218,6 +230,14 @@ function RailLink({
       <span className="[&>svg]:size-6">{icon}</span>
       <span>{children}</span>
     </a>
+  )
+}
+
+function SessionSummaryCount({ label, value }: { label: string; value: number }) {
+  return (
+    <span className="min-w-0 truncate">
+      {label} {formatInteger(value)}
+    </span>
   )
 }
 

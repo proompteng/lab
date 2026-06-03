@@ -514,6 +514,14 @@ describe('synthesis REST auth', () => {
       closingEquity: '38025',
       realizedPnl: '25',
       maxDrawdown: '12',
+      eventCount: 2,
+      tradeTicketCount: 1,
+      riskCheckCount: 0,
+      orderCount: 0,
+      fillCount: 0,
+      positionSnapshotCount: 0,
+      scorecardCount: 1,
+      setupExampleCount: 1,
     })
     expect(detailPayload.session.closingEquity).toBe('38025')
     expect(detailPayload.status.phase).toBe('no_trade')
