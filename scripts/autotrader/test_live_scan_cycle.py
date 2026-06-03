@@ -429,6 +429,72 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(payload["entryTrigger"], "blocked_by_scanner")
         self.assertEqual(payload["brokerOrderPlan"]["source"], "live_scan_cycle")
 
+    def test_decision_summary_selects_best_actionable_candidate_with_ticket(self) -> None:
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=3,
+            scan={
+                "results": [
+                    {
+                        "symbol": "AMD",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "B",
+                        "expected_r": "2.5",
+                        "scorecard_sample_size": 2,
+                    },
+                    {
+                        "symbol": "NVDA",
+                        "setup_type": "opening_range_breakout",
+                        "setup_grade": "A",
+                        "expected_r": "1.6",
+                        "scorecard_sample_size": 7,
+                        "scorecard_avg_realized_r": "0.9",
+                        "scorecard_confidence": "0.75",
+                    },
+                    {
+                        "symbol": "QQQ",
+                        "setup_type": "no_trade",
+                        "setup_grade": "C",
+                        "no_trade_reason": "wide_spread",
+                    },
+                ]
+            },
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-3-2-NVDA-opening_range_breakout-A",
+                    "ticketId": "ticket-nvda",
+                }
+            ],
+        )
+
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["actionableCandidateCount"], 2)
+        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertEqual(summary["bestCandidate"]["symbol"], "NVDA")
+        self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-nvda")
+        self.assertEqual(summary["bestCandidate"]["scorecardSampleSize"], 7)
+        self.assertEqual(summary["candidateSymbols"], ["NVDA", "AMD"])
+
+    def test_decision_summary_reports_no_actionable_candidate(self) -> None:
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=5,
+            scan={
+                "results": [
+                    {
+                        "symbol": "QQQ",
+                        "setup_type": "no_trade",
+                        "setup_grade": "C",
+                        "no_trade_reason": "wide_spread",
+                    }
+                ]
+            },
+            recorded_tickets=[],
+        )
+
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["actionableCandidateCount"], 0)
+        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertIsNone(summary["bestCandidate"])
+
     def test_records_scan_tickets_to_synthesis_with_ticket_ids(self) -> None:
         class FakeSynthesis:
             def __init__(self) -> None:
@@ -790,6 +856,7 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertEqual(summary["recordedScorecardReadback"]["riskCheckId"], "risk-scorecard")
             self.assertTrue(summary["recordedScorecardReadback"]["passed"])
             self.assertEqual(summary["scorecardInfluence"]["scorecardInfluencedResultCount"], 1)
+            self.assertEqual(summary["decisionSummary"]["action"], "no_actionable_candidate")
             self.assertGreaterEqual(summary["stageTimingsMs"]["totalMs"], 0)
             self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["parallelFetchCount"], 3)
             self.assertEqual(summary["stageTimingsMs"]["inputFetch"]["brokerStateSource"], "fetched")
