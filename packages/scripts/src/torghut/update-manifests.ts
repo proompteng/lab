@@ -30,6 +30,8 @@ const defaultExecutionTcaRefreshManifestPath = 'argocd/applications/torghut/exec
 const defaultOrderFeedSourceWindowRepairManifestPath =
   'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml'
 const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
+const defaultBoundedPaperRouteTargetMaterializationManifestPath =
+  'argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml'
 const defaultWhitepaperSemanticBackfillManifestPath =
   'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
 const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
@@ -61,6 +63,7 @@ type UpdateManifestsOptions = {
   executionTcaRefreshManifestPath?: string
   orderFeedSourceWindowRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
+  boundedPaperRouteTargetMaterializationManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   tigerBeetleJournalOrderEventsManifestPath?: string
@@ -91,6 +94,7 @@ type CliOptions = {
   executionTcaRefreshManifestPath?: string
   orderFeedSourceWindowRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
+  boundedPaperRouteTargetMaterializationManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   tigerBeetleJournalOrderEventsManifestPath?: string
@@ -352,6 +356,12 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.paperAccountFlattenManifestPath ?? defaultPaperAccountFlattenManifestPath,
     'torghut-paper-account-flatten image reference',
   )
+  const boundedPaperRouteTargetMaterialization = updateImageOnlyManifest(
+    options,
+    options.boundedPaperRouteTargetMaterializationManifestPath ??
+      defaultBoundedPaperRouteTargetMaterializationManifestPath,
+    'torghut-bounded-paper-route-target-materialization image reference',
+  )
   const whitepaperSemanticBackfill = updateImageOnlyManifest(
     options,
     options.whitepaperSemanticBackfillManifestPath ?? defaultWhitepaperSemanticBackfillManifestPath,
@@ -399,6 +409,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     executionTcaRefresh,
     orderFeedSourceWindowRepair,
     paperAccountFlatten,
+    boundedPaperRouteTargetMaterialization,
     whitepaperSemanticBackfill,
     tigerBeetleSmoke,
     tigerBeetleJournalOrderEvents,
@@ -445,6 +456,7 @@ Options:
   --execution-tca-refresh-manifest-path <path>
   --order-feed-source-window-repair-manifest-path <path>
   --paper-account-flatten-manifest-path <path>
+  --bounded-paper-route-target-materialization-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
   --tigerbeetle-journal-order-events-manifest-path <path>
@@ -532,6 +544,9 @@ Options:
         break
       case '--paper-account-flatten-manifest-path':
         options.paperAccountFlattenManifestPath = value
+        break
+      case '--bounded-paper-route-target-materialization-manifest-path':
+        options.boundedPaperRouteTargetMaterializationManifestPath = value
         break
       case '--whitepaper-semantic-backfill-manifest-path':
         options.whitepaperSemanticBackfillManifestPath = value
