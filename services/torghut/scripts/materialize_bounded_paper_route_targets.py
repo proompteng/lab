@@ -571,6 +571,34 @@ def _confirmed_selected_plan_sources(value: object) -> set[str]:
     return {item.strip() for item in text.split(",") if item.strip()}
 
 
+def _confirmed_dynamic_target_filters(args: argparse.Namespace) -> dict[str, str]:
+    if not bool(args.commit) or not bool(args.allow_dynamic_target_plan):
+        return {}
+    filters = {
+        "hypothesis_id": _safe_text(args.confirm_hypothesis_id),
+        "runtime_strategy_name": _safe_text(args.confirm_runtime_strategy_name),
+        "candidate_id": _safe_text(args.confirm_candidate_id),
+        "target_plan_ref": _safe_text(args.confirm_target_plan_ref),
+    }
+    return {field: value for field, value in filters.items() if value}
+
+
+def _confirmed_dynamic_target_indexes(
+    summaries: Sequence[Mapping[str, Any]],
+    filters: Mapping[str, str],
+) -> list[int]:
+    if not filters:
+        return []
+    indexes: list[int] = []
+    for summary in summaries:
+        if all(
+            _safe_text(summary.get(field)) == expected
+            for field, expected in filters.items()
+        ):
+            indexes.append(int(summary.get("target_index", 0)))
+    return indexes
+
+
 def _plan_flag_blockers(plan: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
     for field in PROMOTION_FLAG_FIELDS:
@@ -897,20 +925,32 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     source_summaries = _target_summaries(source_plan)
     materialization_plan = source_plan
     summaries = source_summaries
+    confirmed_dynamic_target_filter = _confirmed_dynamic_target_filters(args)
+    confirmed_dynamic_target_filter_applied = False
     active_target_window_filter_applied = False
     target_window_check: dict[str, Any] | None = None
     skip_reason: str | None = None
+    if confirmed_dynamic_target_filter:
+        confirmed_indexes = _confirmed_dynamic_target_indexes(
+            summaries,
+            confirmed_dynamic_target_filter,
+        )
+        materialization_plan = _plan_with_target_indexes(source_plan, confirmed_indexes)
+        summaries = _target_summaries(materialization_plan)
+        confirmed_dynamic_target_filter_applied = len(confirmed_indexes) != len(
+            source_summaries
+        )
     if bool(args.skip_unless_active_target_window) or bool(
         args.require_active_target_window
     ):
         target_window_check = _active_target_window_check(
-            source_summaries,
+            summaries,
             now=_resolve_now_utc(args),
         )
         active_target_indexes = _target_window_check_active_indexes(target_window_check)
-        if active_target_indexes and len(active_target_indexes) < len(source_summaries):
+        if active_target_indexes and len(active_target_indexes) < len(summaries):
             materialization_plan = _plan_with_target_indexes(
-                source_plan,
+                materialization_plan,
                 active_target_indexes,
             )
             summaries = _target_summaries(materialization_plan)
@@ -979,6 +1019,8 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "operator_confirmation_required": OPERATOR_CONFIRMATION if commit else None,
         "dynamic_target_plan_confirmation": bool(args.allow_dynamic_target_plan),
         "default_dynamic_selected_plan_source": DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+        "confirmed_dynamic_target_filter": confirmed_dynamic_target_filter or None,
+        "confirmed_dynamic_target_filter_applied": confirmed_dynamic_target_filter_applied,
         "target_window_check": target_window_check,
         "active_target_window_filter_applied": active_target_window_filter_applied,
         "source_target_count": len(source_summaries),
@@ -997,7 +1039,8 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         ),
         "targets": summaries,
         "source_targets": source_summaries
-        if active_target_window_filter_applied
+        if confirmed_dynamic_target_filter_applied
+        or active_target_window_filter_applied
         else None,
         "materialization": materialization,
         "materialized_decision_count": int(

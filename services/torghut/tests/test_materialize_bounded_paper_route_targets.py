@@ -80,6 +80,44 @@ def _hpairs_target(**overrides: object) -> dict[str, Any]:
     return target
 
 
+def _tsmom_target(**overrides: object) -> dict[str, Any]:
+    target: dict[str, Any] = {
+        "hypothesis_id": "H-TSMOM-LIQ-01",
+        "candidate_id": "ca4e6e3c7d639e3363dc5860",
+        "runtime_strategy_name": "intraday-tsmom-profit-v3",
+        "strategy_name": "intraday-tsmom-profit-v3",
+        "account_label": "TORGHUT_SIM",
+        "source_plan_ref": "paper-route-plan:ca4e6e3c7d639e3363dc5860",
+        "source_manifest_ref": "config/trading/hypotheses/h-tsmom-liq-01.json",
+        "target_notional": "75000",
+        "target_quantity": "8",
+        "bounded_collection_stage": "paper",
+        "evidence_collection_stage": "paper",
+        "window_start": "2026-06-01T13:30:00+00:00",
+        "window_end": "2026-06-01T20:00:00+00:00",
+        "paper_route_probe_symbol_actions": {},
+        "paper_route_probe_symbol_quantities": {
+            "AAPL": "1",
+            "AMD": "1",
+            "AMZN": "1",
+            "AVGO": "1",
+            "GOOGL": "1",
+            "INTC": "1",
+            "NVDA": "1",
+            "ORCL": "1",
+        },
+        "bounded_evidence_collection_authorized": True,
+        "capital_promotion_allowed": False,
+        "promotion_allowed": False,
+        "final_authority_ok": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "live_capital_routing_enabled": False,
+    }
+    target.update(overrides)
+    return target
+
+
 def _plan(*targets: dict[str, Any], **overrides: object) -> dict[str, Any]:
     plan: dict[str, Any] = {
         "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
@@ -510,6 +548,13 @@ def test_paper_route_target_plan_json_and_scalar_helpers_preserve_report_encodin
     assert cli._json_default(Path("target-plan.json")) == "target-plan.json"
     assert cli._safe_decimal("not-a-number") == Decimal("0")
     assert cli._confirmed_selected_plan_sources(None) == set()
+    assert (
+        cli._confirmed_dynamic_target_filters(
+            Namespace(commit=False, allow_dynamic_target_plan=True)
+        )
+        == {}
+    )
+    assert cli._confirmed_dynamic_target_indexes([], {}) == []
     assert cli._truthy(1) is True
     assert cli._truthy(0) is False
 
@@ -929,6 +974,131 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_writes_when_open
     assert report["route_submission_count"] == 2
     assert report["blockers"] == []
     assert _count_decisions(sqlite_dsn) == 2
+
+
+def test_commit_dynamic_next_window_plan_filters_to_confirmed_hpairs_target(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "next_paper_route_runtime_window_targets": _plan(
+            _tsmom_target(),
+            _hpairs_target(target_notional="75000"),
+        ),
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "75000",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--require-active-target-window",
+            "--now-utc",
+            "2026-06-01T14:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            HPAIRS_DYNAMIC_SELECTED_PLAN_SOURCE_CONFIRMATION,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "75000",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["blocked"] is False
+    assert report["materialized"] is True
+    assert report["source_target_count"] == 2
+    assert report["target_count"] == 1
+    assert report["confirmed_dynamic_target_filter"] == {
+        "hypothesis_id": "H-PAIRS-01",
+        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+    }
+    assert report["confirmed_dynamic_target_filter_applied"] is True
+    assert report["target_window_check"]["active"] is True
+    assert report["target_window_check"]["active_count"] == 1
+    assert report["source_targets"][0]["hypothesis_id"] == "H-TSMOM-LIQ-01"
+    assert report["targets"][0]["hypothesis_id"] == "H-PAIRS-01"
+    assert report["targets"][0]["symbol_actions"] == {"AAPL": "buy", "AMZN": "sell"}
+    assert report["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 2
+
+
+def test_commit_dynamic_next_window_plan_blocks_when_confirmed_target_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "next_paper_route_runtime_window_targets": _plan(_tsmom_target()),
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "75000",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--require-active-target-window",
+            "--now-utc",
+            "2026-06-01T14:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            HPAIRS_DYNAMIC_SELECTED_PLAN_SOURCE_CONFIRMATION,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "75000",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 2
+    assert report["blocked"] is True
+    assert report["materialized"] is False
+    assert report["source_target_count"] == 1
+    assert report["target_count"] == 0
+    assert report["confirmed_dynamic_target_filter_applied"] is True
+    assert report["source_targets"][0]["hypothesis_id"] == "H-TSMOM-LIQ-01"
+    assert (
+        "paper_route_materialization_target_plan_targets_missing" in report["blockers"]
+    )
+    assert (
+        "paper_route_materialization_commit_confirm_target_count_min_missing"
+        in report["blockers"]
+    )
+    assert _count_decisions(sqlite_dsn) == 0
 
 
 def test_commit_dynamic_plan_filters_to_active_target_window_subset(
