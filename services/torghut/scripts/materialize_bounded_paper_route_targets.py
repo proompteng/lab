@@ -262,7 +262,7 @@ def _plan_materialization_score(plan: Mapping[str, Any]) -> tuple[int, int, int,
         hpairs += target_hpairs
         materializable_shape += target_shape
         bounded_authorized += target_authorized
-    return (hpairs, materializable_shape, bounded_authorized, len(targets))
+    return (materializable_shape, bounded_authorized, hpairs, len(targets))
 
 
 def _candidate_materialization_plans(

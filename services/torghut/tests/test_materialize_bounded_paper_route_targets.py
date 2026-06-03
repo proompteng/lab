@@ -1135,6 +1135,85 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_writes_when_open
     assert _count_decisions(sqlite_dsn) == 2
 
 
+def test_commit_dynamic_plan_prefers_materializable_next_window_over_stale_hpairs_import(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stale_target = _hpairs_target(
+        candidate_id="stale-import-target",
+        source_plan_ref="paper-route-plan:stale-import-target",
+        target_notional="0",
+        target_quantity="0",
+        window_start="2026-05-13T17:00:00+00:00",
+        window_end="2026-05-13T17:30:00+00:00",
+        paper_route_probe_symbol_actions={},
+        paper_route_probe_symbol_quantities={},
+        bounded_evidence_collection_authorized=False,
+    )
+    payload = {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(
+                stale_target,
+                {**stale_target, "candidate_id": "second-stale-import-target"},
+            )
+        },
+        "next_paper_route_runtime_window_targets": _plan(
+            _hpairs_target(target_notional="75000")
+        ),
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "75000",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--require-active-target-window",
+            "--now-utc",
+            "2026-06-01T14:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            HPAIRS_DYNAMIC_SELECTED_PLAN_SOURCE_CONFIRMATION,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "75000",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["materialized"] is True
+    assert report["skipped"] is False
+    assert report["blocked"] is False
+    assert (
+        report["plan_source"]["selected_plan"]
+        == "next_paper_route_runtime_window_targets"
+    )
+    assert report["source_target_count"] == 1
+    assert report["target_count"] == 1
+    assert report["target_window_check"]["active_count"] == 1
+    assert report["materialized_decision_count"] == 2
+    assert report["route_submission_count"] == 2
+    assert report["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 2
+
+
 def test_commit_dynamic_next_window_plan_filters_to_confirmed_hpairs_target(
     monkeypatch: pytest.MonkeyPatch,
     sqlite_dsn: str,
