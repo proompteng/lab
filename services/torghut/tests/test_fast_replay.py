@@ -217,6 +217,10 @@ class TestFastReplayPreview(TestCase):
             "alpha_decay_predictability_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "counterfactual_regime_replay_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -319,6 +323,26 @@ class TestFastReplayPreview(TestCase):
             {
                 source["source_id"]
                 for source in row_payload["alpha_decay_predictability_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn("counterfactual_regime_replay_stress", row_payload)
+        self.assertFalse(
+            row_payload["counterfactual_regime_replay_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["counterfactual_regime_replay_stress"]["promotion_authority"]
+        )
+        self.assertEqual(
+            row_payload["counterfactual_regime_replay_stress"]["status"],
+            "preview_only_counterfactual_regime_replay_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2602.03776",
+            {
+                source["source_id"]
+                for source in row_payload["counterfactual_regime_replay_stress"][
                     "source_papers"
                 ]
             },
