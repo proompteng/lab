@@ -523,7 +523,20 @@ describe('synthesis REST auth', () => {
       scorecardCount: 1,
       setupExampleCount: 1,
     })
+    expect(listPayload.sessions[0].performance).toMatchObject({
+      verdict: 'profitable',
+      realizedPnl: '25',
+      equityDelta: '25',
+      equityDeltaPercent: '0.065789',
+      goalRemaining: '461975',
+      goalProgressPercent: '0.005411',
+      orderFillRate: null,
+      ticketOrderRate: '0',
+      ticketFillRate: '0',
+      brokerFlat: null,
+    })
     expect(detailPayload.session.closingEquity).toBe('38025')
+    expect(detailPayload.performance).toEqual(listPayload.sessions[0].performance)
     expect(detailPayload.status.phase).toBe('no_trade')
     expect(detailPayload.status.currentAction).toContain('standing down')
     expect(detailPayload.events.map((event: { eventType: string }) => event.eventType)).toEqual([

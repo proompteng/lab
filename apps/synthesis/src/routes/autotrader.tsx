@@ -8,6 +8,7 @@ import {
   CircleDollarSign,
   Clock,
   Crosshair,
+  Gauge,
   ListChecks,
   Newspaper,
   ShieldCheck,
@@ -79,6 +80,13 @@ const formatMoney = (value: string | null | undefined) => {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(
     parsed,
   )
+}
+
+const formatPercent = (value: string | null | undefined) => {
+  if (value == null) return 'n/a'
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return value
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(parsed)}%`
 }
 
 function AutotraderPage() {
@@ -171,6 +179,10 @@ function AutotraderPage() {
                       <span>{session.tradingDate}</span>
                       <span>{formatDate(session.finalizedAt)}</span>
                     </div>
+                    <div className="mt-2 flex items-center justify-between gap-3 font-mono text-[0.625rem] text-[#cfd3d6]">
+                      <span className="truncate">{session.performance.verdict}</span>
+                      <span className="shrink-0">p/l {formatMoney(session.performance.realizedPnl)}</span>
+                    </div>
                     <div className="mt-2 grid grid-cols-4 gap-x-2 gap-y-1 font-mono text-[0.625rem] text-[#71767b]">
                       <SessionSummaryCount label="evt" value={session.eventCount} />
                       <SessionSummaryCount label="tickets" value={session.tradeTicketCount} />
@@ -247,6 +259,7 @@ function SessionDashboard({ detail }: { detail: AutotraderSessionDetail }) {
   return (
     <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="min-w-0">
+        <PerformancePanel detail={detail} />
         <StatusPanel detail={detail} />
         <RuntimeAlertsPanel alerts={alerts} />
         <TicketsPanel tickets={detail.tradeTickets} />
@@ -260,6 +273,31 @@ function SessionDashboard({ detail }: { detail: AutotraderSessionDetail }) {
         <SummaryPanel detail={detail} />
       </div>
     </div>
+  )
+}
+
+function PerformancePanel({ detail }: { detail: AutotraderSessionDetail }) {
+  const performance = detail.performance
+  const brokerState = performance.brokerFlat == null ? 'n/a' : performance.brokerFlat ? 'flat' : 'open'
+  const reconcile = performance.reconcileReason ?? performance.reconciledBy ?? 'n/a'
+
+  return (
+    <Panel title="Performance" icon={<Gauge />}>
+      <div className="grid gap-px bg-[#2f3336] sm:grid-cols-2 2xl:grid-cols-4">
+        <Metric label="verdict" value={performance.verdict} />
+        <Metric label="equity delta" value={formatMoney(performance.equityDelta)} />
+        <Metric label="equity delta %" value={formatPercent(performance.equityDeltaPercent)} />
+        <Metric label="goal remaining" value={formatMoney(performance.goalRemaining)} />
+        <Metric label="goal progress" value={formatPercent(performance.goalProgressPercent)} />
+        <Metric label="order fill rate" value={formatPercent(performance.orderFillRate)} />
+        <Metric label="ticket fill rate" value={formatPercent(performance.ticketFillRate)} />
+        <Metric label="broker state" value={brokerState} />
+      </div>
+      <div className="grid gap-px bg-[#2f3336] sm:grid-cols-2">
+        <Metric label="ticket order rate" value={formatPercent(performance.ticketOrderRate)} />
+        <Metric label="reconcile" value={reconcile} />
+      </div>
+    </Panel>
   )
 }
 
