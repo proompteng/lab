@@ -9209,23 +9209,41 @@ def build_paper_route_evidence_audit(
         next_targets=runtime_window_import_plan,
         runtime_window_import_audit=runtime_window_import_audit,
     )
+    summary_target_audits: Sequence[Mapping[str, object]]
+    summary_target_audit_source: str
+    if (
+        _as_mapping_items(observed_strategy_source_targets.get("targets"))
+        and runtime_window_import_target_audits
+    ):
+        summary_target_audits = runtime_window_import_target_audits
+        summary_target_audit_source = "runtime_window_import_target_audits"
+    else:
+        summary_target_audits = target_audits
+        summary_target_audit_source = "paper_route_source_target_audits"
+    source_plan_target_counts = _runtime_window_target_counts(target_audits)
+    summary_target_counts = _runtime_window_target_counts(summary_target_audits)
     summary_blockers = sorted(
         {
             str(blocker)
-            for audit in target_audits
+            for audit in summary_target_audits
             for blocker in _as_sequence(
                 _as_mapping(audit.get("readiness")).get("blockers")
             )
         }
+        | {
+            str(blocker).strip()
+            for blocker in _as_sequence(runtime_window_import_audit.get("blockers"))
+            if str(blocker).strip()
+        }
     )
     if not targets:
-        summary_blockers.append("paper_probation_import_plan_missing")
+        summary_blockers = ["paper_probation_import_plan_missing"]
     readback_items = [
-        _as_mapping(audit.get("evidence_readback")) for audit in target_audits
+        _as_mapping(audit.get("evidence_readback")) for audit in summary_target_audits
     ]
     source_activity_limits = [
         _as_mapping(_as_mapping(audit.get("source_activity")).get("query_limits"))
-        for audit in target_audits
+        for audit in summary_target_audits
     ]
     truncated_source_names = sorted(
         {
@@ -9342,52 +9360,36 @@ def build_paper_route_evidence_audit(
             "runtime_window_import_plan_source": _safe_text(
                 runtime_window_import_plan.get("source")
             ),
-            "target_with_source_activity_count": sum(
-                int(not bool(_as_mapping(audit.get("source_activity")).get("missing")))
-                for audit in target_audits
+            "summary_target_count": len(summary_target_audits),
+            "summary_target_audit_source": summary_target_audit_source,
+            "source_plan_target_with_source_activity_count": (
+                source_plan_target_counts["source_activity"]
             ),
-            "target_with_rejected_signal_activity_count": sum(
-                int(
-                    _safe_int(
-                        _as_mapping(audit.get("rejected_signal_activity")).get(
-                            "event_count"
-                        )
-                    )
-                    > 0
-                )
-                for audit in target_audits
+            "source_plan_target_with_rejected_signal_activity_count": (
+                source_plan_target_counts["rejected_signal_activity"]
             ),
-            "target_with_runtime_ledger_count": sum(
-                int(
-                    _safe_int(
-                        _as_mapping(audit.get("runtime_ledger")).get("bucket_count")
-                    )
-                    > 0
-                )
-                for audit in target_audits
+            "source_plan_target_with_runtime_ledger_count": (
+                source_plan_target_counts["runtime_ledger"]
             ),
-            "target_with_evidence_grade_runtime_ledger_count": sum(
-                int(
-                    _safe_int(
-                        _as_mapping(audit.get("runtime_ledger")).get(
-                            "evidence_grade_bucket_count"
-                        )
-                    )
-                    > 0
-                )
-                for audit in target_audits
+            "source_plan_target_with_evidence_grade_runtime_ledger_count": (
+                source_plan_target_counts["evidence_grade_runtime_ledger"]
             ),
-            "target_with_promotion_decision_count": sum(
-                int(
-                    _safe_int(
-                        _as_mapping(audit.get("promotion_decisions")).get(
-                            "decision_count"
-                        )
-                    )
-                    > 0
-                )
-                for audit in target_audits
+            "source_plan_target_with_promotion_decision_count": (
+                source_plan_target_counts["promotion_decision"]
             ),
+            "target_with_source_activity_count": summary_target_counts[
+                "source_activity"
+            ],
+            "target_with_rejected_signal_activity_count": summary_target_counts[
+                "rejected_signal_activity"
+            ],
+            "target_with_runtime_ledger_count": summary_target_counts["runtime_ledger"],
+            "target_with_evidence_grade_runtime_ledger_count": summary_target_counts[
+                "evidence_grade_runtime_ledger"
+            ],
+            "target_with_promotion_decision_count": summary_target_counts[
+                "promotion_decision"
+            ],
             "readback": {
                 "schema_version": "torghut.paper-route-evidence-readback-summary.v1",
                 "target_count": len(readback_items),
@@ -9440,7 +9442,7 @@ def build_paper_route_evidence_audit(
                         )
                     )
                 )
-                for audit in target_audits
+                for audit in summary_target_audits
             ),
             "final_promotion_allowed_count": sum(
                 int(
@@ -9450,7 +9452,7 @@ def build_paper_route_evidence_audit(
                         )
                     )
                 )
-                for audit in target_audits
+                for audit in summary_target_audits
             ),
             "stripped_source_promotion_authority_count": sum(
                 int(
