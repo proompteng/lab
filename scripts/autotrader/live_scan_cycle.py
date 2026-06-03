@@ -1223,6 +1223,10 @@ def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> st
     return None
 
 
+def is_scanner_no_trade_result(result: dict[str, Any]) -> bool:
+    return setup_type(result.get("setup_type") or result.get("setupType")) == "no_trade"
+
+
 def ticket_payload_for_scan_result(
     *,
     session_id: str,
@@ -1462,7 +1466,9 @@ def decision_summary_for_scan(
             setup_grade(result.get("setup_grade") or result.get("setupGrade")),
             setup_type(result.get("setup_type") or result.get("setupType")),
         )
-        if reason:
+        if is_scanner_no_trade_result(result):
+            no_trade_count += 1
+        elif reason:
             blocked_count += 1
         else:
             no_trade_count += 1
