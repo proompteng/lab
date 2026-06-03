@@ -992,6 +992,101 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(payload["brokerOrderPlan"]["executableBracket"]["stopSource"], "support")
         self.assertEqual(payload["brokerOrderPlan"]["executableBracket"]["targetSource"], "resistance")
 
+    def test_ticket_payload_derives_account_risk_budget_and_quantity(self) -> None:
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=12,
+            index=1,
+            result={
+                "symbol": "AMD",
+                "setup_type": "vwap_reclaim",
+                "setup_grade": "A",
+                "expected_r": "3.0",
+                "last": "100.00",
+                "support": "99.00",
+                "resistance": "103.00",
+                "scorecard_sample_size": 2,
+                "scorecard_avg_realized_r": "1.5",
+                "scorecard_confidence": "0.25",
+            },
+            account={
+                "account": {
+                    "equity": "30000.00",
+                    "buying_power": "120000.00",
+                    "daytrading_buying_power": "120000.00",
+                }
+            },
+        )
+
+        assert payload is not None
+        directive = payload["brokerOrderPlan"]["riskDirective"]
+        self.assertEqual(payload["status"], "candidate")
+        self.assertEqual(payload["riskDollars"], "112.50")
+        self.assertEqual(payload["plannedQuantity"], "112")
+        self.assertEqual(
+            directive["accountRiskBudget"],
+            {
+                "source": "account_equity_stop_distance",
+                "equity": "30000.00",
+                "baseRiskPct": "0.0025",
+                "maxRiskPct": "0.005",
+                "maxPositionNotionalPct": "0.5",
+                "baseRiskDollars": "75.00",
+                "maxRiskDollars": "150.00",
+                "maxPositionNotionalDollars": "15000.00",
+            },
+        )
+        self.assertEqual(directive["recommendedRiskDollars"], "112.50")
+        self.assertEqual(directive["plannedQuantity"], "112")
+        self.assertEqual(directive["perShareRiskDollars"], "1.00")
+        self.assertEqual(directive["plannedMaxLossDollars"], "112.00")
+        self.assertEqual(directive["plannedNotionalDollars"], "11200.00")
+
+    def test_decision_summary_blocks_when_account_budget_cannot_buy_one_share(self) -> None:
+        result = {
+            "symbol": "AMD",
+            "setup_type": "vwap_reclaim",
+            "setup_grade": "A",
+            "expected_r": "3.0",
+            "last": "100.00",
+            "support": "99.00",
+            "resistance": "103.00",
+            "scorecard_sample_size": 2,
+            "scorecard_avg_realized_r": "1.5",
+            "scorecard_confidence": "0.25",
+        }
+        account = {
+            "account": {
+                "equity": "100.00",
+                "buying_power": "100.00",
+                "daytrading_buying_power": "100.00",
+            }
+        }
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=13,
+            index=1,
+            result=result,
+            account=account,
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=13,
+            scan={"results": [result]},
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-13-1-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                }
+            ],
+            account=account,
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "deterministic_position_size_not_positive")
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["blockedResultCount"], 1)
+
     def test_decision_summary_blocks_weak_derived_bracket_r(self) -> None:
         result = {
             "symbol": "AMD",
@@ -1177,6 +1272,9 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(recorded[0]["ticketId"], "ticket-1")
         self.assertEqual(recorded[0]["status"], "blocked")
         self.assertEqual(recorded[0]["noTradeReason"], "expected_r_below_threshold")
+        self.assertEqual(recorded[0]["actualBracketR"], None)
+        self.assertEqual(recorded[0]["riskDollars"], None)
+        self.assertEqual(recorded[0]["plannedQuantity"], None)
         self.assertEqual(recorded[0]["scorecardSampleSize"], 3)
         self.assertEqual(recorded[0]["scorecardAvgRealizedR"], "0.75")
         self.assertEqual(recorded[0]["scorecardConfidence"], "0.6")
