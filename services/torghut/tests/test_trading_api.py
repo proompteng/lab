@@ -11692,6 +11692,25 @@ class TestTradingApi(TestCase):
 
         self.assertEqual(plan["load_error"], "paper_route_target_plan_self_reference")
 
+    def test_paper_route_target_plan_self_reference_defaults_conservative(
+        self,
+    ) -> None:
+        parsed = urlsplit(
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "K_SERVICE": "",
+                "POD_NAMESPACE": "",
+                "NAMESPACE": "",
+            },
+        ):
+            self.assertTrue(
+                main_module._paper_route_target_plan_url_points_to_self(parsed)
+            )
+
     def test_paper_route_target_plan_self_reference_requires_host(self) -> None:
         parsed = urlsplit("/trading/paper-route-target-plan")
 
@@ -11715,6 +11734,30 @@ class TestTradingApi(TestCase):
         ):
             self.assertTrue(
                 main_module._paper_route_target_plan_url_points_to_self(parsed)
+            )
+
+    def test_paper_route_target_plan_self_reference_allows_provider_from_sim(
+        self,
+    ) -> None:
+        provider = urlsplit(
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        )
+        current_service = urlsplit(
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "K_SERVICE": "torghut-sim",
+                "POD_NAMESPACE": "torghut",
+            },
+        ):
+            self.assertFalse(
+                main_module._paper_route_target_plan_url_points_to_self(provider)
+            )
+            self.assertTrue(
+                main_module._paper_route_target_plan_url_points_to_self(current_service)
             )
 
     def test_load_external_paper_route_target_plan_uses_recent_success_after_timeout(

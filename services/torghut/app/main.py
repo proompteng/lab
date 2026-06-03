@@ -6689,14 +6689,6 @@ def _paper_route_target_plan_url_points_to_self(parsed: Any) -> bool:
         "localhost",
         "127.0.0.1",
         "::1",
-        "torghut",
-        "torghut.torghut",
-        "torghut.torghut.svc",
-        "torghut.torghut.svc.cluster.local",
-        "torghut-sim",
-        "torghut-sim.torghut",
-        "torghut-sim.torghut.svc",
-        "torghut-sim.torghut.svc.cluster.local",
     }
     service_name = os.getenv("K_SERVICE", "").strip().lower()
     namespace = os.getenv("POD_NAMESPACE", os.getenv("NAMESPACE", "")).strip().lower()
@@ -6710,6 +6702,19 @@ def _paper_route_target_plan_url_points_to_self(parsed: Any) -> bool:
                     f"{service_name}.{namespace}.svc.cluster.local",
                 }
             )
+    else:
+        self_hosts.update(
+            {
+                "torghut",
+                "torghut.torghut",
+                "torghut.torghut.svc",
+                "torghut.torghut.svc.cluster.local",
+                "torghut-sim",
+                "torghut-sim.torghut",
+                "torghut-sim.torghut.svc",
+                "torghut-sim.torghut.svc.cluster.local",
+            }
+        )
     return hostname in self_hosts
 
 
