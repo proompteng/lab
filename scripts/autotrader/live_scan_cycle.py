@@ -676,6 +676,7 @@ def summarize_scan(
         "resultCount": len(results),
         "topResults": top_results,
         "scorecardInfluence": scorecard_usage_summary(scan),
+        "scorecardOverlay": scan.get("scorecardOverlay"),
     }
 
 
@@ -826,6 +827,93 @@ def scorecard_usage_summary(scan: dict[str, Any]) -> dict[str, Any]:
         "resultCount": len(results),
         "scorecardInfluencedResultCount": used_results,
         "topResults": top_results,
+    }
+
+
+def scorecard_match_text(value: Any) -> str | None:
+    text = optional_text(value)
+    return text.lower() if text else None
+
+
+def scorecard_overlay_for_result(result: dict[str, Any], scorecards: list[Any]) -> dict[str, str] | None:
+    symbol = optional_text(result.get("symbol"), max_length=32)
+    setup = scorecard_match_text(result.get("setup_type") or result.get("setupType"))
+    grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
+    if not symbol or not setup or grade not in ACTIONABLE_SETUP_GRADES:
+        return None
+    regime = scorecard_match_text(result.get("regime"))
+    time_bucket = scorecard_match_text(result.get("time_bucket") or result.get("timeBucket"))
+    matches: list[dict[str, Any]] = []
+    for scorecard in scorecards:
+        if not isinstance(scorecard, dict):
+            continue
+        scorecard_symbol = optional_text(scorecard.get("symbol"), max_length=32)
+        if not scorecard_symbol or scorecard_symbol.upper() != symbol.upper():
+            continue
+        if scorecard_match_text(scorecard.get("setupType") or scorecard.get("setup_type")) != setup:
+            continue
+        if setup_grade(scorecard.get("setupGrade") or scorecard.get("setup_grade")) != grade:
+            continue
+        matches.append(scorecard)
+    if not matches:
+        return None
+    contextual_matches = [
+        scorecard
+        for scorecard in matches
+        if (not regime or scorecard_match_text(scorecard.get("regime")) == regime)
+        and (not time_bucket or scorecard_match_text(scorecard.get("timeBucket") or scorecard.get("time_bucket")) == time_bucket)
+    ]
+    selected = contextual_matches or matches
+    weighted_sum = Decimal("0")
+    sample_total = 0
+    confidence = Decimal("0")
+    for scorecard in selected:
+        sample_size = int_text_value(scorecard.get("sampleSize") or scorecard.get("sample_size"))
+        avg_r = decimal_value(scorecard.get("avgRealizedR") or scorecard.get("avg_realized_r"))
+        if sample_size <= 0 or avg_r is None:
+            continue
+        weighted_sum += avg_r * Decimal(sample_size)
+        sample_total += sample_size
+        confidence = max(confidence, decimal_value(scorecard.get("confidence")) or Decimal("0"))
+    if sample_total <= 0:
+        return None
+    return {
+        "scorecard_sample_size": str(sample_total),
+        "scorecard_avg_realized_r": str(weighted_sum / Decimal(sample_total)),
+        "scorecard_confidence": str(confidence),
+    }
+
+
+def overlay_scorecards_on_scan(scan: dict[str, Any], scorecard_payload: Any) -> dict[str, Any]:
+    results = scan.get("results")
+    if not isinstance(results, list):
+        return scan
+    scorecards = scorecard_collection(scorecard_payload, "scorecards")
+    if not scorecards:
+        return scan
+    enriched_results: list[Any] = []
+    applied_count = 0
+    for result in results:
+        if not isinstance(result, dict):
+            enriched_results.append(result)
+            continue
+        if int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize")) > 0:
+            enriched_results.append(result)
+            continue
+        overlay = scorecard_overlay_for_result(result, scorecards)
+        if overlay is None:
+            enriched_results.append(result)
+            continue
+        enriched = {**result, **overlay, "scorecard_overlay_source": "synthesis_scorecards"}
+        enriched_results.append(enriched)
+        applied_count += 1
+    return {
+        **scan,
+        "results": enriched_results,
+        "scorecardOverlay": {
+            "sourceScorecardCount": len(scorecards),
+            "appliedResultCount": applied_count,
+        },
     }
 
 
@@ -1206,6 +1294,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         analysis_context_path=analysis_context,
         watchlist=symbols,
     )
+    scan = overlay_scorecards_on_scan(scan, inputs.get("scorecards.json"))
     stage_timings["stockAnalysisScanMs"] = elapsed_ms(scan_started_at)
     prune_started_at = time.monotonic()
     removed_cycle_dirs = prune_old_cycle_dirs(work_dir, args.retain_cycles)
