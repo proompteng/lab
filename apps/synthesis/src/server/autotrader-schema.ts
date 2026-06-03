@@ -288,6 +288,21 @@ export type AutotraderSession = {
   summary: Record<string, unknown>
 }
 
+export type AutotraderSessionPerformance = {
+  verdict: 'running' | 'profitable' | 'flat' | 'loss' | 'unproven'
+  realizedPnl: string | null
+  equityDelta: string | null
+  equityDeltaPercent: string | null
+  goalRemaining: string | null
+  goalProgressPercent: string | null
+  orderFillRate: string | null
+  ticketOrderRate: string | null
+  ticketFillRate: string | null
+  brokerFlat: boolean | null
+  reconciledBy: string | null
+  reconcileReason: string | null
+}
+
 export type AutotraderSessionSummary = AutotraderSession & {
   eventCount: number
   tradeTicketCount: number
@@ -297,6 +312,7 @@ export type AutotraderSessionSummary = AutotraderSession & {
   positionSnapshotCount: number
   scorecardCount: number
   setupExampleCount: number
+  performance: AutotraderSessionPerformance
 }
 
 export type AutotraderStatus = {
@@ -460,6 +476,7 @@ export type AutotraderSetupExample = {
 
 export type AutotraderSessionDetail = {
   session: AutotraderSession
+  performance: AutotraderSessionPerformance
   status: AutotraderStatus | null
   events: AutotraderEvent[]
   tradeTickets: AutotraderTradeTicket[]

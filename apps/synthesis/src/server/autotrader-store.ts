@@ -26,6 +26,8 @@ import type {
   AutotraderTradeTicket,
   AutotraderUpsertStatusInput,
 } from './autotrader-schema'
+import { buildAutotraderSessionPerformance } from './autotrader-performance'
+import type { AutotraderSessionPerformanceCounts } from './autotrader-performance'
 
 export type AutotraderStore = {
   startSession(input: AutotraderStartSessionInput): Promise<AutotraderSession>
@@ -246,6 +248,16 @@ const summaryWithFinalizationWarnings = (
   const existing = Array.isArray(summary.finalizationWarnings) ? summary.finalizationWarnings : []
   return { ...summary, finalizationWarnings: [...existing, ...warnings] }
 }
+
+const sessionPerformanceCounts = (summary: {
+  tradeTicketCount: number
+  orderCount: number
+  fillCount: number
+}): AutotraderSessionPerformanceCounts => ({
+  tradeTicketCount: summary.tradeTicketCount,
+  orderCount: summary.orderCount,
+  fillCount: summary.fillCount,
+})
 
 const asNumber = (value: string | number | null | undefined) => {
   if (value == null) return 0
@@ -651,16 +663,23 @@ class InMemoryAutotraderStore implements AutotraderStore {
       ),
     ])
     const sessionScorecardRelationKeys = scorecardRelationKeySet(scorecardRelationsForTickets(sessionTickets))
+    const orders = [...this.orders.values()].filter((order) => order.sessionId === sessionId)
+    const fills = [...this.fills.values()].filter((fill) => fill.sessionId === sessionId)
     return {
       session,
+      performance: buildAutotraderSessionPerformance(session, {
+        tradeTicketCount: sessionTickets.length,
+        orderCount: orders.length,
+        fillCount: fills.length,
+      }),
       status: this.statuses.get(sessionId) ?? null,
       events: [...this.events.values()]
         .filter((event) => event.sessionId === sessionId)
         .sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.seq - right.seq),
       tradeTickets: sessionTickets,
       riskChecks: [...this.riskChecks.values()].filter((riskCheck) => riskCheck.sessionId === sessionId),
-      orders: [...this.orders.values()].filter((order) => order.sessionId === sessionId),
-      fills: [...this.fills.values()].filter((fill) => fill.sessionId === sessionId),
+      orders,
+      fills,
       positionSnapshots: latestPositionSnapshots(
         [...this.positions.values()].filter((snapshot) => snapshot.sessionId === sessionId),
       ),
@@ -704,7 +723,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
         .map((snapshot) => snapshot.symbol),
     )
 
-    return {
+    const summary = {
       ...session,
       eventCount: [...this.events.values()].filter((event) => event.sessionId === sessionId).length,
       tradeTicketCount: tickets.length,
@@ -716,6 +735,10 @@ class InMemoryAutotraderStore implements AutotraderStore {
         (scorecard) => scorecardKeys.has(scorecard.key) || scorecardMatchesTicketRelation(scorecard, relationKeys),
       ).length,
       setupExampleCount: examples.length,
+    }
+    return {
+      ...summary,
+      performance: buildAutotraderSessionPerformance(session, sessionPerformanceCounts(summary)),
     }
   }
 }
@@ -937,17 +960,24 @@ const countFromRow = (value: number | string | null | undefined) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-const mapSessionSummary = (row: SessionSummaryRow): AutotraderSessionSummary => ({
-  ...mapSession(row),
-  eventCount: countFromRow(row.event_count),
-  tradeTicketCount: countFromRow(row.trade_ticket_count),
-  riskCheckCount: countFromRow(row.risk_check_count),
-  orderCount: countFromRow(row.order_count),
-  fillCount: countFromRow(row.fill_count),
-  positionSnapshotCount: countFromRow(row.position_snapshot_count),
-  scorecardCount: countFromRow(row.scorecard_count),
-  setupExampleCount: countFromRow(row.setup_example_count),
-})
+const mapSessionSummary = (row: SessionSummaryRow): AutotraderSessionSummary => {
+  const session = mapSession(row)
+  const summary = {
+    ...session,
+    eventCount: countFromRow(row.event_count),
+    tradeTicketCount: countFromRow(row.trade_ticket_count),
+    riskCheckCount: countFromRow(row.risk_check_count),
+    orderCount: countFromRow(row.order_count),
+    fillCount: countFromRow(row.fill_count),
+    positionSnapshotCount: countFromRow(row.position_snapshot_count),
+    scorecardCount: countFromRow(row.scorecard_count),
+    setupExampleCount: countFromRow(row.setup_example_count),
+  }
+  return {
+    ...summary,
+    performance: buildAutotraderSessionPerformance(session, sessionPerformanceCounts(summary)),
+  }
+}
 
 const mapStatus = (row: StatusRow): AutotraderStatus => ({
   sessionId: row.session_id,
@@ -1703,6 +1733,8 @@ class PostgresAutotraderStore implements AutotraderStore {
       ),
     ])
     const tickets = ticketResult.rows.map(mapTicket)
+    const orders = orderResult.rows.map(mapOrder)
+    const fills = fillResult.rows.map(mapFill)
     const setupExamples = exampleResult.rows.map(mapSetupExample)
     const sessionScorecardKeys = [
       ...new Set([
@@ -1743,12 +1775,17 @@ class PostgresAutotraderStore implements AutotraderStore {
       : []
     return {
       session,
+      performance: buildAutotraderSessionPerformance(session, {
+        tradeTicketCount: tickets.length,
+        orderCount: orders.length,
+        fillCount: fills.length,
+      }),
       status: statusResult.rows[0] ? mapStatus(statusResult.rows[0]) : null,
       events: eventResult.rows.map(mapEvent),
       tradeTickets: tickets,
       riskChecks: riskResult.rows.map(mapRiskCheck),
-      orders: orderResult.rows.map(mapOrder),
-      fills: fillResult.rows.map(mapFill),
+      orders,
+      fills,
       positionSnapshots: positionResult.rows
         .map(mapPositionSnapshot)
         .sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt)),
