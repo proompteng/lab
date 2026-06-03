@@ -57,7 +57,10 @@ from app.trading.llm.schema import (
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.ingest import SignalBatch
-from app.trading.paper_route_target_plan import paper_route_target_plan_from_payload
+from app.trading.paper_route_target_plan import (
+    materialize_bounded_paper_route_target_plan,
+    paper_route_target_plan_from_payload,
+)
 from app.trading.reconcile import Reconciler
 from app.trading.runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -7127,6 +7130,827 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(
                 paper_route_probe["bounded_paper_route_execution_policy"]["authority"],
                 "bounded_paper_route_collection_only",
+            )
+
+    def test_simple_pipeline_submits_materialized_target_plan_source_decisions(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 500.0
+        config.settings.trading_paper_route_target_plan_url = ""
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL,AMZN"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL,AMZN"
+        config.settings.trading_allow_shorts = True
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="bounded H-PAIRS materialized target",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+            materialized = materialize_bounded_paper_route_target_plan(
+                session,
+                {
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "c88421d619759b2cfaa6f4d0",
+                            "runtime_strategy_name": (
+                                "microbar-cross-sectional-pairs-v1"
+                            ),
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_REPLAY",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "source_plan_ref": (
+                                "s3://torghut-proof/hpairs/current-window.json"
+                            ),
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-pairs.json"
+                            ),
+                            "observed_stage": "paper",
+                            "bounded_collection_stage": ("bounded_paper_collection"),
+                            "target_notional": "200",
+                            "target_quantity": "2",
+                            "paper_route_probe_next_session_max_notional": "200",
+                            "paper_route_probe_window_start": (
+                                window_start.isoformat()
+                            ),
+                            "paper_route_probe_window_end": window_end.isoformat(),
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                            "paper_route_probe_symbol_actions": {
+                                "AAPL": "buy",
+                                "AMZN": "sell",
+                            },
+                            "paper_route_probe_symbol_quantities": {
+                                "AAPL": "1",
+                                "AMZN": "1",
+                            },
+                            "paper_route_probe_pair_balance_state": "balanced",
+                            "paper_route_clean_window_baseline_state": {
+                                "state": "clean",
+                                "blockers": [],
+                            },
+                            "paper_route_clean_window_state": "clean",
+                            "source_decision_readiness": {
+                                "ready": True,
+                                "blockers": [],
+                            },
+                            "bounded_evidence_collection_authorized": True,
+                            "bounded_live_paper_collection_authorized": True,
+                            "canary_collection_authorized": True,
+                            "evidence_collection_ok": True,
+                            "bounded_evidence_collection_blockers": [],
+                            "runtime_window_import_health_gate_blockers": [],
+                            "paper_route_target_account_audit_state": {
+                                "state": "available",
+                                "audit_available": True,
+                                "blockers": [],
+                            },
+                            "paper_route_target_account_audit_blockers": [],
+                            "paper_route_account_pre_session_blockers": [],
+                            "paper_route_hpairs_symbol_blockers": [],
+                            "promotion_allowed": False,
+                            "final_promotion_authorized": False,
+                            "final_promotion_allowed": False,
+                        },
+                    ]
+                },
+                generated_at=now,
+                bounded_notional_limit=Decimal("500"),
+            )
+            self.assertEqual(len(materialized["decisions"]), 2)
+            materialized_ids = {
+                str(item["trade_decision_id"])
+                for item in cast(
+                    Sequence[Mapping[str, object]],
+                    materialized["decisions"],
+                )
+            }
+            materialized_hashes = {
+                str(item["decision_hash"])
+                for item in cast(
+                    Sequence[Mapping[str, object]],
+                    materialized["decisions"],
+                )
+            }
+            session.commit()
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("100"),
+                spread=Decimal("0.02"),
+                bid=Decimal("99.99"),
+                ask=Decimal("100.01"),
+            ),
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with (
+            patch.object(
+                SimpleTradingPipeline,
+                "_profitability_proof_floor",
+                return_value={
+                    "route_state": "repair_only",
+                    "capital_state": "zero_notional",
+                    "max_notional": "0",
+                    "market_window": {"session_open": True},
+                    "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+                },
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=now,
+            ),
+            patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+            patch("app.trading.simulation.trading_now", return_value=now),
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 2)
+        self.assertEqual(
+            {order["symbol"]: order["side"] for order in alpaca_client.submitted},
+            {"AAPL": "buy", "AMZN": "sell"},
+        )
+        with self.session_local() as session:
+            decisions = list(
+                session.execute(select(TradeDecision).order_by(TradeDecision.symbol))
+                .scalars()
+                .all()
+            )
+            executions = list(
+                session.execute(select(Execution).order_by(Execution.symbol))
+                .scalars()
+                .all()
+            )
+            self.assertEqual(
+                {str(decision.id) for decision in decisions}, materialized_ids
+            )
+            self.assertEqual(
+                {str(decision.decision_hash) for decision in decisions},
+                materialized_hashes,
+            )
+            self.assertEqual(
+                [decision.status for decision in decisions], ["submitted", "submitted"]
+            )
+            self.assertEqual(len(executions), 2)
+            for decision in decisions:
+                decision_json = cast(dict[str, Any], decision.decision_json)
+                params = cast(dict[str, Any], decision_json["params"])
+                source_decision = cast(
+                    dict[str, Any],
+                    params["paper_route_target_plan_source_decision"],
+                )
+                self.assertEqual(
+                    params["source_decision_mode"],
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                )
+                self.assertTrue(params["profit_proof_eligible"])
+                self.assertTrue(params["paper_route_target_plan_materialized"])
+                self.assertEqual(
+                    params["paper_route_materialized_trade_decision_id"],
+                    str(decision.id),
+                )
+                self.assertEqual(
+                    params["bounded_paper_route_submit_path"],
+                    "bounded_paper_route_collection",
+                )
+                self.assertEqual(
+                    source_decision["source"],
+                    "paper_route_target_plan_materializer",
+                )
+                self.assertEqual(
+                    source_decision["source_account_label"],
+                    "TORGHUT_REPLAY",
+                )
+                self.assertFalse(params["promotion_allowed"])
+                self.assertFalse(params["final_promotion_authorized"])
+
+    def test_materialized_target_plan_helpers_reject_bad_source_payloads(
+        self,
+    ) -> None:
+        row = TradeDecision(decision_json=[])
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_materialized_source_payload(row)
+        )
+
+        row.decision_json = {"params": None}
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_materialized_source_payload(row)
+        )
+
+        row.decision_json = {
+            "submission_stage": "planned",
+            "params": {
+                "paper_route_target_plan_materialized": False,
+                "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+            },
+        }
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_materialized_source_payload(row)
+        )
+
+        row.decision_json = {
+            "params": {
+                "paper_route_target_plan_materialized": True,
+                "source": "manual",
+                "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+            },
+        }
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_materialized_source_payload(row)
+        )
+
+        row.decision_json = {
+            "params": {
+                "paper_route_target_plan_materialized": True,
+                "source": "paper_route_target_plan_materializer",
+                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            },
+        }
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_materialized_source_payload(row)
+        )
+
+    def test_materialized_target_plan_target_payload_defaults_runtime_identity(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_materialized_target_from_payload(
+                {"params": None}
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_materialized_target_from_payload(
+                {"params": {}}
+            )
+        )
+
+        target = SimpleTradingPipeline._paper_route_materialized_target_from_payload(
+            {
+                "target_plan_identity": {
+                    "window_start": "2026-05-26T13:30:00+00:00",
+                    "window_end": "2026-05-26T20:00:00+00:00",
+                    "source_account_label": "TORGHUT_REPLAY",
+                    "source_kind": "paper_route_probe_runtime_observed",
+                },
+                "params": {
+                    "paper_route_target_plan_source_decision": {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_SIM",
+                    }
+                },
+            }
+        )
+
+        self.assertIsNotNone(target)
+        typed_target = cast(dict[str, Any], target)
+        self.assertEqual(
+            typed_target["paper_route_probe_window_start"],
+            "2026-05-26T13:30:00+00:00",
+        )
+        self.assertEqual(
+            typed_target["paper_route_probe_window_end"],
+            "2026-05-26T20:00:00+00:00",
+        )
+        self.assertEqual(
+            typed_target["account_stage_runtime_identity"]["source_account_label"],
+            "TORGHUT_REPLAY",
+        )
+        self.assertFalse(typed_target["final_promotion_allowed"])
+
+    def test_materialized_target_plan_decision_builder_defaults_event_time(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded H-PAIRS materialized target",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_SIM",
+            "source_account_label": "TORGHUT_REPLAY",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "source_plan_ref": "s3://torghut-proof/hpairs/current-window.json",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "observed_stage": "paper",
+            "bounded_collection_stage": "bounded_paper_collection",
+            "target_notional": "200",
+            "target_quantity": "1",
+            "paper_route_probe_next_session_max_notional": "200",
+            "paper_route_probe_symbols": ["AAPL"],
+            "paper_route_probe_symbol_actions": {"AAPL": "buy"},
+            "paper_route_probe_symbol_quantities": {"AAPL": "1"},
+        }
+        decision_row = TradeDecision(
+            id=uuid4(),
+            strategy_id=strategy.id,
+            alpaca_account_label="TORGHUT_SIM",
+            symbol="AAPL",
+            timeframe="1Min",
+            decision_json={"params": {}},
+            decision_hash="materialized-default-event-hash",
+            created_at=datetime(2026, 5, 26, 14, 0),
+        )
+
+        decision = pipeline._paper_route_materialized_decision_with_execution_metadata(
+            decision_row=decision_row,
+            payload={"params": {}},
+            target=target,
+            strategy=strategy,
+            symbol="AAPL",
+            action="buy",
+            window_start=window_start,
+            window_end=window_end,
+            max_notional=Decimal("200"),
+            now=window_start,
+        )
+
+        self.assertIsNotNone(decision)
+        typed_decision = cast(StrategyDecision, decision)
+        self.assertEqual(
+            typed_decision.event_ts,
+            datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
+        )
+
+        rejected = pipeline._paper_route_materialized_decision_with_execution_metadata(
+            decision_row=decision_row,
+            payload={"qty": "-1", "params": {}},
+            target={
+                key: value
+                for key, value in target.items()
+                if key != "paper_route_probe_symbol_quantities"
+            },
+            strategy=strategy,
+            symbol="AAPL",
+            action="buy",
+            window_start=window_start,
+            window_end=window_end,
+            max_notional=Decimal("200"),
+            now=window_start,
+        )
+        self.assertIsNone(rejected)
+
+    def test_materialized_target_plan_planned_decisions_skip_unsafe_rows(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_allow_shorts = False
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="bounded H-PAIRS materialized target",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            base_target = {
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                "account_label": "TORGHUT_SIM",
+                "source_account_label": "TORGHUT_REPLAY",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "source_plan_ref": "s3://torghut-proof/hpairs/current-window.json",
+                "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+                "observed_stage": "paper",
+                "bounded_collection_stage": "bounded_paper_collection",
+                "target_notional": "200",
+                "target_quantity": "1",
+                "paper_route_probe_next_session_max_notional": "200",
+                "paper_route_probe_window_start": window_start.isoformat(),
+                "paper_route_probe_window_end": window_end.isoformat(),
+                "paper_route_probe_symbols": ["AAPL"],
+                "paper_route_probe_symbol_actions": {"AAPL": "buy"},
+                "paper_route_probe_symbol_quantities": {"AAPL": "1"},
+                "source_decision_readiness": {"ready": True, "blockers": []},
+                "evidence_collection_ok": True,
+                "bounded_evidence_collection_authorized": True,
+                "bounded_live_paper_collection_authorized": True,
+                "canary_collection_authorized": True,
+                "promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "final_promotion_allowed": False,
+            }
+
+            def add_row(
+                label: str,
+                *,
+                target_update: Mapping[str, Any] | None = None,
+                symbol: str = "AAPL",
+                payload_symbol: str | None = "AAPL",
+                payload_action: str | None = "buy",
+                strategy_id: Any | None = None,
+                materialized: bool = True,
+                submission_stage: str = "bounded_paper_route_materialized",
+            ) -> TradeDecision:
+                target = dict(base_target)
+                if target_update:
+                    target.update(target_update)
+                payload: dict[str, Any] = {
+                    "submission_stage": submission_stage,
+                    "source": "paper_route_target_plan_materializer",
+                    "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                    "params": {
+                        "paper_route_target_plan_materialized": materialized,
+                        "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                        "paper_route_target_plan_source_decision": target,
+                    },
+                }
+                if payload_symbol is not None:
+                    payload["symbol"] = payload_symbol
+                if payload_action is not None:
+                    payload["action"] = payload_action
+                row = TradeDecision(
+                    strategy_id=strategy_id or strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol=symbol,
+                    timeframe="1Min",
+                    decision_json=payload,
+                    decision_hash=f"materialized-skip-{label}",
+                    status="planned",
+                )
+                session.add(row)
+                session.commit()
+                session.refresh(row)
+                return row
+
+            add_row("not-materialized", materialized=False, submission_stage="planned")
+            executed_row = add_row("execution-exists")
+            session.add(
+                Execution(
+                    trade_decision_id=executed_row.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id="existing-materialized-order",
+                    client_order_id=executed_row.decision_hash,
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("0"),
+                    status="new",
+                    raw_order={},
+                )
+            )
+            session.commit()
+            add_row("missing-target", target_update={}, payload_symbol="AAPL")
+            missing_target = session.execute(
+                select(TradeDecision).where(
+                    TradeDecision.decision_hash == "materialized-skip-missing-target"
+                )
+            ).scalar_one()
+            payload = dict(cast(Mapping[str, Any], missing_target.decision_json))
+            params = dict(cast(Mapping[str, Any], payload["params"]))
+            params.pop("paper_route_target_plan_source_decision", None)
+            payload["params"] = params
+            missing_target.decision_json = payload
+            session.add(missing_target)
+            session.commit()
+            add_row(
+                "blocked",
+                target_update={
+                    "source_decision_readiness": {
+                        "ready": False,
+                        "blockers": ["quote_missing"],
+                    }
+                },
+            )
+            add_row(
+                "not-hpairs",
+                target_update={
+                    "hypothesis_id": "H-OTHER",
+                    "candidate_id": "candidate-other",
+                    "account_label": "paper",
+                    "strategy_name": "plain-strategy",
+                    "runtime_strategy_name": "plain-strategy",
+                },
+            )
+            add_row(
+                "missing-window",
+                target_update={
+                    "paper_route_probe_window_start": None,
+                    "paper_route_probe_window_end": None,
+                },
+            )
+            add_row(
+                "expired-window",
+                target_update={
+                    "paper_route_probe_window_start": (
+                        window_start - timedelta(days=1)
+                    ).isoformat(),
+                    "paper_route_probe_window_end": (
+                        window_end - timedelta(days=1)
+                    ).isoformat(),
+                },
+            )
+            add_row(
+                "missing-cap",
+                target_update={
+                    "paper_route_probe_next_session_max_notional": None,
+                    "target_notional": None,
+                    "max_notional": None,
+                },
+            )
+            add_row(
+                "missing-strategy",
+                target_update={
+                    "strategy_name": "missing-strategy",
+                    "runtime_strategy_name": "missing-strategy",
+                },
+                strategy_id=uuid4(),
+            )
+            add_row("missing-symbol", symbol="", payload_symbol=None)
+            add_row("not-allowed", symbol="MSFT", payload_symbol="MSFT")
+            add_row("invalid-action", payload_action="hold")
+            add_row("short-disabled", payload_action="sell")
+
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="TORGHUT_SIM",
+                session_factory=self.session_local,
+            )
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=now,
+            ):
+                decisions = pipeline._paper_route_materialized_planned_decisions(
+                    session=session,
+                    strategies=[strategy],
+                    allowed_symbols={"AAPL"},
+                    positions=[],
+                )
+                blocked_by_exposure = (
+                    pipeline._paper_route_materialized_planned_decisions(
+                        session=session,
+                        strategies=[strategy],
+                        allowed_symbols={"AAPL"},
+                        positions=[{"symbol": "ZZZ", "qty": "1"}],
+                    )
+                )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "buy")
+        self.assertEqual(blocked_by_exposure, [])
+
+    def test_materialized_target_plan_process_records_handler_errors(
+        self,
+    ) -> None:
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="AAPL",
+            event_ts=datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="materialized target",
+            params={},
+        )
+        with self.session_local() as session:
+            with (
+                patch.object(
+                    pipeline,
+                    "_paper_route_materialized_planned_decisions",
+                    return_value=[decision],
+                ),
+                patch.object(
+                    pipeline,
+                    "_handle_decision",
+                    side_effect=RuntimeError("submission failed"),
+                ),
+            ):
+                pipeline._process_paper_route_materialized_decisions(
+                    session=session,
+                    strategies=[],
+                    account={},
+                    positions=[],
+                    allowed_symbols={"AAPL"},
+                )
+
+        self.assertEqual(pipeline.state.metrics.orders_rejected_total, 1)
+
+    def test_materialized_target_plan_claim_rejects_stale_or_invalid_rows(
+        self,
+    ) -> None:
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="bounded H-PAIRS materialized target",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            def decision_with(row_id: str | None) -> StrategyDecision:
+                params = (
+                    {"paper_route_materialized_trade_decision_id": row_id}
+                    if row_id is not None
+                    else {}
+                )
+                return StrategyDecision(
+                    strategy_id=str(strategy.id),
+                    symbol="AAPL",
+                    event_ts=datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
+                    timeframe="1Min",
+                    action="buy",
+                    qty=Decimal("1"),
+                    rationale="materialized target",
+                    params=params,
+                )
+
+            self.assertIsNone(
+                pipeline._claim_materialized_paper_route_decision_row(
+                    session=session,
+                    decision=decision_with(None),
+                    strategy=strategy,
+                )
+            )
+            self.assertIsNone(
+                pipeline._claim_materialized_paper_route_decision_row(
+                    session=session,
+                    decision=decision_with("not-a-uuid"),
+                    strategy=strategy,
+                )
+            )
+            self.assertIsNone(
+                pipeline._claim_materialized_paper_route_decision_row(
+                    session=session,
+                    decision=decision_with(str(uuid4())),
+                    strategy=strategy,
+                )
+            )
+
+            def add_row(
+                label: str,
+                *,
+                account_label: str = "TORGHUT_SIM",
+                status: str = "planned",
+            ) -> TradeDecision:
+                row = TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label=account_label,
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    decision_json={"params": {}},
+                    decision_hash=f"claim-materialized-{label}",
+                    status=status,
+                )
+                session.add(row)
+                session.commit()
+                session.refresh(row)
+                return row
+
+            wrong_account = add_row("wrong-account", account_label="paper")
+            submitted = add_row("submitted", status="submitted")
+            executed = add_row("executed")
+            session.add(
+                Execution(
+                    trade_decision_id=executed.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id="claimed-existing-order",
+                    client_order_id=executed.decision_hash,
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("0"),
+                    status="new",
+                    raw_order={},
+                )
+            )
+            session.commit()
+
+            for row in (wrong_account, submitted, executed):
+                self.assertIsNone(
+                    pipeline._claim_materialized_paper_route_decision_row(
+                        session=session,
+                        decision=decision_with(str(row.id)),
+                        strategy=strategy,
+                    )
+                )
+            self.assertIsNone(
+                pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=decision_with(str(uuid4())),
+                    strategy=strategy,
+                )
             )
 
     def test_simple_pipeline_signal_cycle_still_generates_target_plan_source_decision(
