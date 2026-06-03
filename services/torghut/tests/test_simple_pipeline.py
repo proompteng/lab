@@ -954,7 +954,7 @@ def test_bounded_source_collection_authorizes_after_runtime_account_audit_readba
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
         pipeline._is_market_session_open = lambda _now: True
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             {"AAPL", "AMZN"},
             None,
             [target],
@@ -1057,7 +1057,7 @@ def test_source_collection_authorization_emits_bounded_lineage_decisions_without
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
         pipeline._is_market_session_open = lambda _now: True
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             {"AAPL", "AMZN"},
             None,
             [target],
@@ -1307,7 +1307,7 @@ def test_bounded_source_collection_blocks_closed_session_with_explicit_reason(
         pipeline.account_label = "TORGHUT_SIM"
         pipeline.state = SimpleNamespace()
         pipeline._is_market_session_open = lambda _now: False
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             {"AAPL", "AMZN"},
             None,
             [_bounded_hpairs_target()],
@@ -1478,7 +1478,7 @@ def test_contaminated_bounded_window_still_reserves_paper_account(monkeypatch) -
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
         pipeline._is_market_session_open = lambda _now: True
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             {"AAPL", "AMZN"},
             None,
             [target],
@@ -1529,7 +1529,7 @@ def test_target_account_audit_unavailable_still_reserves_paper_account(
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
         pipeline._is_market_session_open = lambda _now: True
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             {"AAPL", "AMZN"},
             None,
             [target],
@@ -1571,7 +1571,7 @@ def test_target_plan_fetch_error_reserves_configured_paper_account(
         pipeline.account_label = "TORGHUT_SIM"
         pipeline.state = SimpleNamespace()
         pipeline._is_market_session_open = lambda _now: True
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             set(),
             "paper_route_target_plan_fetch_failed:timeout",
             [],
@@ -1608,7 +1608,7 @@ def test_target_plan_fetch_error_without_config_does_not_reserve_paper_account(
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
         pipeline._is_market_session_open = lambda _now: True
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             set(),
             "paper_route_target_plan_fetch_failed:timeout",
             [],
@@ -1639,7 +1639,7 @@ def test_empty_target_plan_symbols_do_not_reserve_account(
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
         pipeline._is_market_session_open = lambda _now: True
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             set(),
             None,
             [],
@@ -1691,7 +1691,7 @@ def test_target_account_audit_unavailable_still_scopes_signal_ingest(
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
         pipeline._is_market_session_open = lambda _now: True
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             {"AAPL", "AMZN", "MSFT"},
             None,
             [target],

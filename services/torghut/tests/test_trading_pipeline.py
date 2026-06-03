@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -8980,6 +8981,199 @@ class TestTradingPipeline(TestCase):
         )
         self.assertEqual(fetch_plan.call_count, 2)
 
+    def test_self_referential_paper_route_target_plan_uses_local_gate_without_http(
+        self,
+    ) -> None:
+        from app import config
+
+        original_target_plan_url = config.settings.trading_paper_route_target_plan_url
+        original_target_plan_timeout = (
+            config.settings.trading_paper_route_target_plan_timeout_seconds
+        )
+        original_mode = config.settings.trading_mode
+        original_probe_enabled = (
+            config.settings.trading_simple_paper_route_probe_enabled
+        )
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        pipeline._paper_route_target_plan_cache = None
+        pipeline._paper_route_target_plan_success_cache = None
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        local_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                "targets": [
+                    {
+                        "candidate_id": "candidate-local-gate",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_window_start": ("2026-06-01T13:30:00+00:00"),
+                        "paper_route_probe_window_end": ("2026-06-01T20:00:00+00:00"),
+                        "paper_route_probe_next_session_max_notional": "75000",
+                    }
+                ],
+            }
+        }
+        try:
+            with (
+                patch.dict(
+                    os.environ,
+                    {"K_SERVICE": "torghut-sim", "POD_NAMESPACE": "torghut"},
+                    clear=False,
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    return_value=datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+                ),
+                patch.object(
+                    pipeline, "_live_submission_gate", return_value=local_gate
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                    side_effect=AssertionError(
+                        "scheduler must not self-fetch target plan"
+                    ),
+                ),
+            ):
+                symbols, error, targets = (
+                    pipeline._external_paper_route_target_probe_symbols_cached(
+                        session=None,
+                        strategies=[strategy],
+                    )
+                )
+        finally:
+            config.settings.trading_mode = original_mode
+            config.settings.trading_simple_paper_route_probe_enabled = (
+                original_probe_enabled
+            )
+            config.settings.trading_paper_route_target_plan_url = (
+                original_target_plan_url
+            )
+            config.settings.trading_paper_route_target_plan_timeout_seconds = (
+                original_target_plan_timeout
+            )
+
+        self.assertEqual(symbols, {"AAPL", "AMZN"})
+        self.assertIsNone(error)
+        self.assertEqual(targets[0]["candidate_id"], "candidate-local-gate")
+        self.assertEqual(
+            targets[0]["paper_route_target_plan_source"],
+            "local_live_submission_gate",
+        )
+
+    def test_local_paper_route_target_plan_reports_missing_targets(self) -> None:
+        pipeline = object.__new__(SimpleTradingPipeline)
+        local_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                "targets": [],
+            }
+        }
+
+        with patch.object(pipeline, "_live_submission_gate", return_value=local_gate):
+            symbols, error, targets = pipeline._local_paper_route_target_probe_symbols(
+                session=None,
+                strategies=None,
+            )
+
+        self.assertEqual(symbols, set())
+        self.assertEqual(error, "paper_route_target_plan_missing")
+        self.assertEqual(targets, [])
+
+    def test_local_paper_route_target_plan_falls_back_to_strategy_symbols(self) -> None:
+        pipeline = object.__new__(SimpleTradingPipeline)
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        local_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                "targets": [
+                    {
+                        "candidate_id": "candidate-local-gate",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_window_start": ("2026-06-01T13:30:00+00:00"),
+                        "paper_route_probe_window_end": "2026-06-01T20:00:00+00:00",
+                        "paper_route_probe_next_session_max_notional": "75000",
+                    }
+                ],
+            }
+        }
+
+        with patch.object(pipeline, "_live_submission_gate", return_value=local_gate):
+            symbols, error, targets = pipeline._local_paper_route_target_probe_symbols(
+                session=None,
+                strategies=[strategy],
+            )
+
+        self.assertEqual(symbols, {"AAPL", "AMZN"})
+        self.assertIsNone(error)
+        self.assertEqual(
+            targets[0]["paper_route_target_plan_source"], "local_live_submission_gate"
+        )
+
+    def test_local_paper_route_target_plan_requires_probe_symbols(self) -> None:
+        pipeline = object.__new__(SimpleTradingPipeline)
+        local_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                "targets": [
+                    {
+                        "candidate_id": "candidate-local-gate",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_window_start": ("2026-06-01T13:30:00+00:00"),
+                        "paper_route_probe_window_end": "2026-06-01T20:00:00+00:00",
+                        "paper_route_probe_next_session_max_notional": "75000",
+                    }
+                ],
+            }
+        }
+
+        with patch.object(pipeline, "_live_submission_gate", return_value=local_gate):
+            symbols, error, targets = pipeline._local_paper_route_target_probe_symbols(
+                session=None,
+                strategies=None,
+            )
+
+        self.assertEqual(symbols, set())
+        self.assertEqual(error, "paper_route_target_plan_probe_symbols_missing")
+        self.assertEqual(
+            targets[0]["paper_route_target_plan_source"], "local_live_submission_gate"
+        )
+
     def test_bounded_signal_scope_records_target_plan_fetch_failure(
         self,
     ) -> None:
@@ -9857,7 +10051,7 @@ class TestTradingPipeline(TestCase):
             setattr(
                 pipeline,
                 "_external_paper_route_target_probe_symbols_cached",
-                lambda: ({"AAPL", "AMZN"}, None, [target]),
+                lambda **_kwargs: ({"AAPL", "AMZN"}, None, [target]),
             )
             with patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",
@@ -9983,7 +10177,7 @@ class TestTradingPipeline(TestCase):
             setattr(
                 pipeline,
                 "_external_paper_route_target_probe_symbols_cached",
-                lambda: ({"AAPL", "AMZN"}, None, [target]),
+                lambda **_kwargs: ({"AAPL", "AMZN"}, None, [target]),
             )
             with patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",
@@ -10229,7 +10423,7 @@ class TestTradingPipeline(TestCase):
             setattr(
                 pipeline,
                 "_external_paper_route_target_probe_symbols_cached",
-                lambda: ({"AAPL", "AMZN"}, None, [target]),
+                lambda **_kwargs: ({"AAPL", "AMZN"}, None, [target]),
             )
             with patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",
@@ -10276,7 +10470,7 @@ class TestTradingPipeline(TestCase):
         setattr(
             pipeline,
             "_external_paper_route_target_probe_symbols_cached",
-            lambda: ({"AAPL", "AMZN"}, None, [target]),
+            lambda **_kwargs: ({"AAPL", "AMZN"}, None, [target]),
         )
 
         with patch(
@@ -10798,7 +10992,7 @@ class TestTradingPipeline(TestCase):
         setattr(
             pipeline,
             "_external_paper_route_target_probe_symbols_cached",
-            lambda: ({"AAPL", "AMZN"}, None, targets),
+            lambda **_kwargs: ({"AAPL", "AMZN"}, None, targets),
         )
 
         with patch(
