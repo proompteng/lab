@@ -6,9 +6,10 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, Optional, TypeAlias, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -88,6 +89,14 @@ _PAPER_ROUTE_PROBE_REASONS = {
     "route_tca_passed_but_dependency_receipts_block_capital",
     "tca_evidence_stale",
 }
+_PaperRouteRetryKind: TypeAlias = Literal[
+    "bounded_probe",
+    "quote_routeability",
+    "target_price",
+]
+_PAPER_ROUTE_RETRY_KINDS: frozenset[_PaperRouteRetryKind] = frozenset(
+    {"bounded_probe", "quote_routeability", "target_price"}
+)
 _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
 _PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
@@ -174,6 +183,12 @@ _BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES = frozenset(
         "source_window_evidence_collection_only",
     }
 )
+
+
+@dataclass(frozen=True)
+class _PaperRouteRetryTransition:
+    kind: _PaperRouteRetryKind
+    metadata: dict[str, object]
 
 
 def _safe_int(value: object) -> int:
@@ -2044,11 +2059,7 @@ class SimpleTradingPipeline(TradingPipeline):
         for decision_row in rows:
             if len(decisions) >= batch_limit:
                 break
-            if (
-                self._paper_route_probe_retry_metadata(decision_row) is None
-                and self._paper_route_quote_routeability_retry_metadata(decision_row)
-                is None
-            ):
+            if self._paper_route_retry_transition(decision_row) is None:
                 continue
             if self.executor.execution_exists(session, decision_row):
                 continue
@@ -2550,6 +2561,45 @@ class SimpleTradingPipeline(TradingPipeline):
             "previous_retry_attempts": retry_attempts,
         }
 
+    @staticmethod
+    def _paper_route_retry_transition(
+        decision_row: TradeDecision,
+        *,
+        allowed_kinds: frozenset[_PaperRouteRetryKind] = _PAPER_ROUTE_RETRY_KINDS,
+    ) -> _PaperRouteRetryTransition | None:
+        if "quote_routeability" in allowed_kinds:
+            quote_routeability_metadata = (
+                SimpleTradingPipeline._paper_route_quote_routeability_retry_metadata(
+                    decision_row
+                )
+            )
+            if quote_routeability_metadata is not None:
+                return _PaperRouteRetryTransition(
+                    kind="quote_routeability",
+                    metadata=quote_routeability_metadata,
+                )
+        if "target_price" in allowed_kinds:
+            target_price_metadata = (
+                SimpleTradingPipeline._paper_route_target_price_retry_metadata(
+                    decision_row
+                )
+            )
+            if target_price_metadata is not None:
+                return _PaperRouteRetryTransition(
+                    kind="target_price",
+                    metadata=target_price_metadata,
+                )
+        if "bounded_probe" in allowed_kinds:
+            probe_metadata = SimpleTradingPipeline._paper_route_probe_retry_metadata(
+                decision_row
+            )
+            if probe_metadata is not None:
+                return _PaperRouteRetryTransition(
+                    kind="bounded_probe",
+                    metadata=probe_metadata,
+                )
+        return None
+
     def _reopen_rejected_paper_route_target_price_decision(
         self,
         *,
@@ -2557,9 +2607,13 @@ class SimpleTradingPipeline(TradingPipeline):
         decision: StrategyDecision,
         decision_row: TradeDecision,
     ) -> TradeDecision | None:
-        retry_metadata = self._paper_route_target_price_retry_metadata(decision_row)
-        if retry_metadata is None:
+        retry_transition = self._paper_route_retry_transition(
+            decision_row,
+            allowed_kinds=frozenset({"target_price"}),
+        )
+        if retry_transition is None:
             return None
+        retry_metadata = retry_transition.metadata
         if self.executor.execution_exists(session, decision_row):
             return None
 
@@ -3914,11 +3968,13 @@ class SimpleTradingPipeline(TradingPipeline):
         decision: StrategyDecision,
         decision_row: TradeDecision,
     ) -> TradeDecision | None:
-        retry_metadata = self._paper_route_quote_routeability_retry_metadata(
-            decision_row
+        retry_transition = self._paper_route_retry_transition(
+            decision_row,
+            allowed_kinds=frozenset({"quote_routeability"}),
         )
-        if retry_metadata is None:
+        if retry_transition is None:
             return None
+        retry_metadata = retry_transition.metadata
         if self.executor.execution_exists(session, decision_row):
             return None
 
@@ -6131,9 +6187,13 @@ class SimpleTradingPipeline(TradingPipeline):
         decision: StrategyDecision,
         decision_row: TradeDecision,
     ) -> TradeDecision | None:
-        retry_metadata = self._paper_route_probe_retry_metadata(decision_row)
-        if retry_metadata is None:
+        retry_transition = self._paper_route_retry_transition(
+            decision_row,
+            allowed_kinds=frozenset({"bounded_probe"}),
+        )
+        if retry_transition is None:
             return None
+        retry_metadata = retry_transition.metadata
         if self.executor.execution_exists(session, decision_row):
             return None
         collection_metadata = _bounded_sim_collection_metadata_from_decision(
@@ -6200,11 +6260,9 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         if decision_row.alpaca_account_label != self.account_label:
             return None
-        retryable_status = decision_row.status in {"blocked", "rejected"} and (
-            self._paper_route_quote_routeability_retry_metadata(decision_row)
-            is not None
-            or self._paper_route_target_price_retry_metadata(decision_row) is not None
-            or self._paper_route_probe_retry_metadata(decision_row) is not None
+        retryable_status = (
+            decision_row.status in {"blocked", "rejected"}
+            and self._paper_route_retry_transition(decision_row) is not None
         )
         if decision_row.status != "planned" and not retryable_status:
             return None
@@ -6297,13 +6355,17 @@ class SimpleTradingPipeline(TradingPipeline):
             is not None
         ):
             return decision_row
-        retry_metadata = self._paper_route_probe_retry_metadata(decision_row)
-        if retry_metadata is None:
+        retry_transition = self._paper_route_retry_transition(
+            decision_row,
+            allowed_kinds=frozenset({"bounded_probe"}),
+        )
+        if retry_transition is None:
             return super()._ensure_pending_decision_row(
                 session=session,
                 decision=decision,
                 strategy=strategy,
             )
+        retry_metadata = retry_transition.metadata
         if self.executor.execution_exists(session, decision_row):
             return None
 
