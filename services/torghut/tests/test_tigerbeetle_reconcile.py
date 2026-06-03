@@ -630,6 +630,82 @@ class TestTigerBeetleReconcile(TestCase):
                 SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             )
 
+    def test_reconciliation_checks_runtime_ledger_refs_outside_recent_sample(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            _add_account_refs_for_plan(session, plan)
+            runtime_transfer = plan.transfer_spec
+            old_created_at = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(runtime_transfer.transfer_id),
+                    transfer_kind=runtime_transfer.transfer_kind,
+                    ledger=runtime_transfer.ledger,
+                    code=runtime_transfer.code,
+                    amount=Decimal(runtime_transfer.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=bucket.id,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    created_at=old_created_at,
+                    updated_at=old_created_at,
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "run_id": bucket.run_id,
+                        "candidate_id": bucket.candidate_id,
+                        "hypothesis_id": bucket.hypothesis_id,
+                        "observed_stage": bucket.observed_stage,
+                        "pnl_basis": bucket.pnl_basis,
+                        "ledger_schema_version": bucket.ledger_schema_version,
+                        "amount_source": str(plan.amount_source),
+                        "signed_amount_micros": plan.signed_amount_micros,
+                        "pnl_direction": plan.pnl_direction,
+                        "runtime_key": plan.runtime_key,
+                        "debit_account_id": str(runtime_transfer.debit_account_id),
+                        "credit_account_id": str(runtime_transfer.credit_account_id),
+                    },
+                )
+            )
+            client = FakeTigerBeetleClient()
+            client.transfers[runtime_transfer.transfer_id] = runtime_transfer
+            for offset, transfer_id in enumerate((1001, 1002, 1003), start=1):
+                created_at = datetime(2026, 6, 2, 12, offset, tzinfo=timezone.utc)
+                _add_ref(
+                    session,
+                    transfer_id=str(transfer_id),
+                    payload_json={"created_for": "recent_sample"},
+                )
+                recent_ref = session.execute(
+                    select(TigerBeetleTransferRef).where(
+                        TigerBeetleTransferRef.transfer_id == str(transfer_id)
+                    )
+                ).scalar_one()
+                recent_ref.created_at = created_at
+                recent_ref.updated_at = created_at
+                client.transfers[transfer_id] = _transfer(transfer_id=transfer_id)
+            session.flush()
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+                limit=2,
+            )
+
+            self.assertTrue(payload["ok"], payload)
+            self.assertEqual(payload["checked_transfer_count"], 3)
+            self.assertEqual(payload["runtime_ledger_checked_transfer_count"], 1)
+            self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 1)
+            self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 0)
+
     def test_reconciliation_reports_archived_runtime_ref_without_blocking_current_ref(
         self,
     ) -> None:
