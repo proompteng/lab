@@ -99,6 +99,12 @@ _SIGNAL_INGEST_UNAVAILABLE_REASONS = frozenset(
 )
 _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL = "TORGHUT_SIM"
 _BOUNDED_SIM_COLLECTION_SOURCE_KIND = "paper_route_probe_runtime_observed"
+_BOUNDED_SIM_COLLECTION_SOURCE_KINDS = frozenset(
+    {
+        _BOUNDED_SIM_COLLECTION_SOURCE_KIND,
+        "runtime_ledger_source_collection_candidate",
+    }
+)
 _BOUNDED_SIM_COLLECTION_SCOPE = "paper_route_probe_next_session_only"
 _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS = (
     "bounded_evidence_collection_blockers",
@@ -262,7 +268,7 @@ def _target_has_bounded_source_collection_authorization(
     scope = _safe_text(target.get("source_collection_authorization_scope"))
     return (
         _target_truthy(target.get("source_collection_authorized"))
-        and _safe_text(target.get("source_kind")) == _BOUNDED_SIM_COLLECTION_SOURCE_KIND
+        and _target_has_bounded_sim_collection_source_kind(target)
         and _safe_text(target.get("account_label"))
         == _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
         and scope in _BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES
@@ -276,6 +282,12 @@ def _target_bounded_collection_authorized(target: Mapping[str, Any]) -> bool:
         or _target_truthy(target.get("canary_collection_authorized"))
         or _target_has_bounded_source_collection_authorization(target)
     )
+
+
+def _target_has_bounded_sim_collection_source_kind(
+    target: Mapping[str, Any],
+) -> bool:
+    return _safe_text(target.get("source_kind")) in _BOUNDED_SIM_COLLECTION_SOURCE_KINDS
 
 
 def _bounded_sim_collection_blockers(
@@ -293,7 +305,7 @@ def _bounded_sim_collection_blockers(
         blockers.append("bounded_sim_collection_target_account_not_torghut_sim")
     if _safe_text(target.get("observed_stage")) != "paper":
         blockers.append("bounded_sim_collection_paper_stage_required")
-    if _safe_text(target.get("source_kind")) != _BOUNDED_SIM_COLLECTION_SOURCE_KIND:
+    if not _target_has_bounded_sim_collection_source_kind(target):
         blockers.append("bounded_sim_collection_source_kind_required")
     if not (
         _safe_text(target.get("candidate_id"))
@@ -752,9 +764,7 @@ def _target_probe_exit_minute_after_open(
         )
         if exit_minute is not None:
             return exit_minute, False
-    if _safe_text(
-        target.get("source_kind")
-    ) == "paper_route_probe_runtime_observed" and (
+    if _target_has_bounded_sim_collection_source_kind(target) and (
         _target_truthy(target.get("bounded_evidence_collection_authorized"))
         or _target_truthy(target.get("paper_probation_authorized"))
         or _target_truthy(target.get("source_collection_authorized"))
@@ -3982,26 +3992,82 @@ class SimpleTradingPipeline(TradingPipeline):
         if not targets:
             return set(), "paper_route_target_plan_missing", []
 
-        symbols = set(paper_route_target_plan_probe_symbols(plan))
-        if not symbols:
-            for target in targets:
-                symbols.update(_target_symbols(target))
-                if strategies is None:
-                    continue
-                strategy = self._paper_route_target_strategy(target, strategies)
-                if strategy is not None:
-                    symbols.update(self._paper_route_target_strategy_symbols(strategy))
-
-        resolved_targets = [
-            {
+        resolved_targets: list[dict[str, Any]] = []
+        for target in targets:
+            resolved_target = {
                 **dict(target),
                 "paper_route_target_plan_source": _safe_text(
                     target.get("paper_route_target_plan_source")
                 )
                 or "local_live_submission_gate",
             }
-            for target in targets
-        ]
+            target_symbols = _target_symbols(resolved_target)
+            strategy = (
+                self._paper_route_target_strategy(resolved_target, strategies)
+                if strategies is not None
+                else None
+            )
+            strategy_symbols = (
+                sorted(self._paper_route_target_strategy_symbols(strategy))
+                if strategy is not None
+                else []
+            )
+            if not target_symbols and strategy_symbols:
+                resolved_target["paper_route_probe_symbols"] = strategy_symbols
+                resolved_target["paper_route_probe_raw_target_symbols"] = []
+                resolved_target["paper_route_probe_strategy_scope_applied"] = True
+                resolved_target["paper_route_probe_strategy_universe_fallback"] = True
+                resolved_target["paper_route_probe_strategy_universe_symbols"] = (
+                    strategy_symbols
+                )
+                target_symbols = set(strategy_symbols)
+            if (
+                target_symbols
+                and strategy is not None
+                and not isinstance(
+                    resolved_target.get("source_decision_readiness"), Mapping
+                )
+            ):
+                readiness_blockers = (
+                    [] if bool(strategy.enabled) else ["source_strategy_disabled"]
+                )
+                resolved_target["source_decision_readiness"] = {
+                    "schema_version": (
+                        "torghut.paper-route-source-decision-readiness.v1"
+                    ),
+                    "ready": not readiness_blockers,
+                    "blockers": readiness_blockers,
+                    "strategy_lookup_names": [
+                        item
+                        for item in (
+                            _safe_text(strategy.name),
+                            _safe_text(resolved_target.get("strategy_name")),
+                            _safe_text(resolved_target.get("runtime_strategy_name")),
+                            _safe_text(resolved_target.get("strategy_id")),
+                        )
+                        if item
+                    ],
+                    "matched_strategy": {
+                        "strategy_id": str(strategy.id or ""),
+                        "strategy_name": strategy.name,
+                        "enabled": bool(strategy.enabled),
+                        "base_timeframe": strategy.base_timeframe,
+                        "universe_symbols": strategy_symbols,
+                        "max_notional_per_trade": (
+                            str(strategy.max_notional_per_trade)
+                            if strategy.max_notional_per_trade is not None
+                            else "0"
+                        ),
+                    },
+                    "raw_probe_symbols": sorted(target_symbols),
+                    "scoped_probe_symbols": sorted(target_symbols),
+                    "source": "local_strategy_universe_target_plan_fallback",
+                }
+            resolved_targets.append(resolved_target)
+
+        symbols = set(
+            paper_route_target_plan_probe_symbols({"targets": resolved_targets})
+        )
         if not symbols:
             return (
                 set(),
@@ -5126,10 +5192,7 @@ class SimpleTradingPipeline(TradingPipeline):
                 continue
             if str(target.get("observed_stage") or "").strip().lower() != "paper":
                 continue
-            if (
-                _safe_text(target.get("source_kind"))
-                != "paper_route_probe_runtime_observed"
-            ):
+            if not _target_has_bounded_sim_collection_source_kind(target):
                 continue
             if _target_requires_bounded_sim_collection_gate(target):
                 blockers = _bounded_sim_collection_blockers(

@@ -9085,6 +9085,16 @@ class TestTradingPipeline(TestCase):
             targets[0]["paper_route_target_plan_source"],
             "local_live_submission_gate",
         )
+        self.assertEqual(targets[0]["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            targets[0]["source_decision_readiness"]["schema_version"],
+            "torghut.paper-route-source-decision-readiness.v1",
+        )
+        self.assertTrue(targets[0]["source_decision_readiness"]["ready"])
+        self.assertEqual(
+            targets[0]["source_decision_readiness"]["scoped_probe_symbols"],
+            ["AAPL", "AMZN"],
+        )
 
     def test_local_paper_route_target_plan_reports_missing_targets(self) -> None:
         pipeline = object.__new__(SimpleTradingPipeline)
@@ -9143,6 +9153,80 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(
             targets[0]["paper_route_target_plan_source"], "local_live_submission_gate"
         )
+        self.assertEqual(targets[0]["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+        self.assertTrue(targets[0]["source_decision_readiness"]["ready"])
+        self.assertEqual(
+            targets[0]["source_decision_readiness"]["source"],
+            "local_strategy_universe_target_plan_fallback",
+        )
+        self.assertEqual(
+            targets[0]["source_decision_readiness"]["scoped_probe_symbols"],
+            ["AAPL", "AMZN"],
+        )
+
+    def test_local_paper_route_target_plan_strategy_fallback_satisfies_source_collection_gate(
+        self,
+    ) -> None:
+        pipeline = object.__new__(SimpleTradingPipeline)
+        strategy = Strategy(
+            name="intraday-tsmom-profit-v3",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "NVDA"],
+        )
+        local_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                "targets": [
+                    {
+                        "candidate_id": "candidate-local-source-collection",
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                        "account_label": "TORGHUT_SIM",
+                        "source_account_label": "TORGHUT_SIM",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_manifest_ref": (
+                            "config/trading/hypotheses/h-tsmom-liq-01.json"
+                        ),
+                        "source_collection_authorized": True,
+                        "source_collection_authorization_scope": (
+                            "source_window_evidence_collection_only"
+                        ),
+                        "evidence_collection_ok": True,
+                        "observed_stage": "paper",
+                        "paper_route_probe_window_start": ("2026-06-01T13:30:00+00:00"),
+                        "paper_route_probe_window_end": "2026-06-01T20:00:00+00:00",
+                        "paper_route_probe_next_session_max_notional": "75000",
+                    }
+                ],
+            }
+        }
+
+        with patch.object(pipeline, "_live_submission_gate", return_value=local_gate):
+            symbols, error, targets = pipeline._local_paper_route_target_probe_symbols(
+                session=None,
+                strategies=[strategy],
+            )
+
+        self.assertEqual(symbols, {"AAPL", "NVDA"})
+        self.assertIsNone(error)
+        target = _bounded_sim_collection_target_with_runtime_account_audit(
+            targets[0],
+            positions=[],
+            account_label="TORGHUT_SIM",
+        )
+        blockers = _bounded_sim_collection_blockers(
+            target,
+            account_label="TORGHUT_SIM",
+        )
+        self.assertNotIn("bounded_sim_collection_probe_symbols_missing", blockers)
+        self.assertNotIn(
+            "bounded_sim_collection_source_decision_readiness_missing",
+            blockers,
+        )
+        self.assertEqual(blockers, [])
 
     def test_local_paper_route_target_plan_requires_probe_symbols(self) -> None:
         pipeline = object.__new__(SimpleTradingPipeline)
