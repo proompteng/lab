@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -554,6 +555,45 @@ def test_paper_route_target_plan_target_summary_accepts_explicit_quantity_and_sy
             "symbols": ["AAPL", "AMZN"],
             "symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
             "symbol_quantities": {"AAPL": "3", "AMZN": "3"},
+        }
+    ]
+
+
+def test_paper_route_materializer_window_datetime_helpers_handle_edge_cases() -> None:
+    assert cli._parse_utc_datetime(None) is None
+    assert cli._parse_utc_datetime("not-a-time") is None
+    assert cli._parse_utc_datetime("2026-06-01T13:30:00") == datetime(
+        2026,
+        6,
+        1,
+        13,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    before = datetime.now(timezone.utc)
+    fallback = cli._resolve_now_utc(Namespace(now_utc="not-a-time"))
+    after = datetime.now(timezone.utc)
+
+    assert before <= fallback <= after
+
+
+def test_paper_route_materializer_window_check_reports_missing_target_windows() -> None:
+    check = cli._active_target_window_check(
+        [{"target_index": 7, "window_start": None, "window_end": ""}],
+        now=datetime(2026, 6, 1, 14, tzinfo=timezone.utc),
+    )
+
+    assert check["active"] is False
+    assert check["active_count"] == 0
+    assert check["inactive_count"] == 0
+    assert check["missing_count"] == 1
+    assert check["targets"] == [
+        {
+            "target_index": 7,
+            "state": "missing_window",
+            "window_start": None,
+            "window_end": "",
         }
     ]
 
