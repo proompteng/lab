@@ -878,6 +878,7 @@ describe('autonomous trader provider', () => {
     const providerMetadata = objectAt(provider, 'metadata')
     const agentSpec = objectAt(agent, 'spec')
     const agentMetadata = objectAt(agent, 'metadata')
+    const readbackSystemPromptRef = objectAt(objectAt(agentSpec, 'defaults'), 'systemPromptRef')
     const implementationMetadata = objectAt(implementationSpec, 'metadata')
     const adapter = objectAt(providerSpec, 'adapter')
     const execAdapter = objectAt(adapter, 'exec')
@@ -925,6 +926,11 @@ describe('autonomous trader provider', () => {
     expect(objectAt(objectAt(templateSpec, 'agentRef'), 'name')).toBe('autonomous-trader-readback-agent')
     expect(objectAt(objectAt(templateSpec, 'implementationSpecRef'), 'name')).toBe('autonomous-trader-readback-v1')
     expect(objectAt(objectAt(agentSpec, 'providerRef'), 'name')).toBe('autonomous-trader-readback-runner')
+    expect(readbackSystemPromptRef).toEqual({
+      kind: 'ConfigMap',
+      name: 'autonomous-trader-system-prompt',
+      key: 'system-prompt.md',
+    })
     expect(secretBindingSubjects).toEqual([{ kind: 'Agent', name: 'autonomous-trader-readback-agent' }])
     expect(secretBindingSecrets).toEqual([
       'autonomous-trader-alpaca-mcp',

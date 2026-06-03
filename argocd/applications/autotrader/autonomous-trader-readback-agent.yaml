@@ -14,6 +14,11 @@ metadata:
 spec:
   providerRef:
     name: autonomous-trader-readback-runner
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: autonomous-trader-system-prompt
+      key: system-prompt.md
   security:
     allowedSecrets:
       - autonomous-trader-alpaca-mcp
