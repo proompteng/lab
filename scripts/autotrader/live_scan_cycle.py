@@ -42,6 +42,7 @@ MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_ACTIONABLE_BRACKET_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
+MAX_CURRENT_SESSION_LOSING_ROUND_TRIPS = 2
 BASE_RISK_EQUITY_PCT = Decimal("0.0025")
 MAX_RISK_EQUITY_PCT = Decimal("0.005")
 MAX_POSITION_NOTIONAL_EQUITY_PCT = Decimal("0.50")
@@ -932,6 +933,7 @@ def summarize_scan(
                     "scorecard_avg_realized_r",
                     "scorecard_confidence",
                     "current_session_loss_lockout",
+                    "current_session_loss_limit",
                 )
             }
         )
@@ -947,6 +949,7 @@ def summarize_scan(
         "scorecardInfluence": scorecard_usage_summary(scan),
         "scorecardOverlay": scan.get("scorecardOverlay"),
         "currentSessionLossLockout": scan.get("currentSessionLossLockout"),
+        "currentSessionLossLimit": scan.get("currentSessionLossLimit"),
     }
 
 
@@ -1289,6 +1292,29 @@ def current_session_loss_for_result(
     return None
 
 
+def current_session_loss_limit(payload: Any) -> dict[str, Any] | None:
+    losses_by_parent: dict[str, dict[str, Any]] = {}
+    for loss in session_losing_round_trip_keys(payload).values():
+        parent_id = optional_text(loss.get("parentClientOrderId"), max_length=240)
+        if parent_id:
+            losses_by_parent[parent_id] = loss
+    if len(losses_by_parent) < MAX_CURRENT_SESSION_LOSING_ROUND_TRIPS:
+        return None
+    symbols = sorted(
+        {
+            symbol
+            for loss in losses_by_parent.values()
+            if (symbol := optional_text(loss.get("symbol"), max_length=32))
+        }
+    )
+    return {
+        "reason": "current_session_loss_limit_reached",
+        "losingRoundTripCount": len(losses_by_parent),
+        "maxLosingRoundTrips": MAX_CURRENT_SESSION_LOSING_ROUND_TRIPS,
+        "symbols": symbols[:20],
+    }
+
+
 def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_payload: Any) -> dict[str, Any]:
     results = scan.get("results")
     if not isinstance(results, list):
@@ -1296,6 +1322,7 @@ def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_p
     losing_keys = session_losing_round_trip_keys(current_session_payload)
     if not losing_keys:
         return scan
+    loss_limit = current_session_loss_limit(current_session_payload)
     enriched_results: list[Any] = []
     applied_count = 0
     blocked_symbols: list[str] = []
@@ -1305,6 +1332,19 @@ def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_p
             continue
         if is_scanner_no_trade_result(result):
             enriched_results.append(result)
+            continue
+        if loss_limit is not None:
+            symbol = optional_text(result.get("symbol"), max_length=32)
+            if symbol and symbol.upper() not in blocked_symbols:
+                blocked_symbols.append(symbol.upper())
+            enriched_results.append(
+                {
+                    **result,
+                    "no_trade_reason": "current_session_loss_limit_reached",
+                    "current_session_loss_limit": loss_limit,
+                }
+            )
+            applied_count += 1
             continue
         lockout = current_session_loss_for_result(result, losing_keys)
         if lockout is None:
@@ -1328,6 +1368,7 @@ def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_p
             "appliedResultCount": applied_count,
             "blockedSymbols": blocked_symbols[:20],
         },
+        **({"currentSessionLossLimit": loss_limit} if loss_limit is not None else {}),
     }
 
 

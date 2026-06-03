@@ -1350,6 +1350,117 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
         self.assertEqual(summary["candidateSymbols"], ["AMD"])
 
+    def test_current_session_loss_limit_blocks_all_new_entries_after_two_losses(self) -> None:
+        current_session = {
+            "tradeTickets": [
+                {
+                    "id": "ticket-amd",
+                    "symbol": "AMD",
+                    "setupType": "vwap_reclaim",
+                    "setupGrade": "A",
+                },
+                {
+                    "id": "ticket-avgo",
+                    "symbol": "AVGO",
+                    "setupType": "vwap_reclaim",
+                    "setupGrade": "B",
+                },
+            ],
+            "orders": [
+                {
+                    "ticketId": "ticket-amd",
+                    "clientOrderId": "entry-amd",
+                    "symbol": "AMD",
+                    "side": "buy",
+                    "status": "filled",
+                    "brokerPayload": {"filled_avg_price": "533.37"},
+                },
+                {
+                    "ticketId": "ticket-amd",
+                    "clientOrderId": "stop-amd",
+                    "symbol": "AMD",
+                    "side": "sell",
+                    "status": "filled",
+                    "brokerPayload": {
+                        "parentClientOrderId": "entry-amd",
+                        "filled_avg_price": "532.590054",
+                    },
+                },
+                {
+                    "ticketId": "ticket-avgo",
+                    "clientOrderId": "entry-avgo",
+                    "symbol": "AVGO",
+                    "side": "buy",
+                    "status": "filled",
+                    "brokerPayload": {"filled_avg_price": "486.14"},
+                },
+                {
+                    "ticketId": "ticket-avgo",
+                    "clientOrderId": "stop-avgo",
+                    "symbol": "AVGO",
+                    "side": "sell",
+                    "status": "filled",
+                    "brokerPayload": {
+                        "parentClientOrderId": "entry-avgo",
+                        "filled_avg_price": "482.90",
+                    },
+                },
+            ],
+        }
+        scan = live_scan_cycle.overlay_current_session_loss_lockout(
+            {
+                "results": [
+                    {
+                        "symbol": "NVDA",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A+",
+                        "expected_r": "4.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "104.00",
+                        "scorecard_sample_size": 3,
+                        "scorecard_avg_realized_r": "1.5",
+                    },
+                    {
+                        "symbol": "GOOGL",
+                        "setup_type": "no_trade",
+                        "setup_grade": "C",
+                        "no_trade_reason": "no_confirmed_setup",
+                    },
+                ]
+            },
+            current_session,
+        )
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=16,
+            index=1,
+            result=scan["results"][0],
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=16,
+            scan=scan,
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-16-1-NVDA-vwap_reclaim-A+",
+                    "ticketId": "ticket-nvda",
+                }
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(scan["currentSessionLossLimit"]["losingRoundTripCount"], 2)
+        self.assertEqual(scan["currentSessionLossLimit"]["symbols"], ["AMD", "AVGO"])
+        self.assertEqual(scan["currentSessionLossLockout"]["appliedResultCount"], 1)
+        self.assertEqual(scan["currentSessionLossLockout"]["blockedSymbols"], ["NVDA"])
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "current_session_loss_limit_reached")
+        self.assertEqual(payload["brokerOrderPlan"]["raw"]["current_session_loss_limit"]["maxLosingRoundTrips"], 2)
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["actionableCandidateCount"], 0)
+        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertIsNone(summary["bestCandidate"])
+
     def test_decision_summary_reports_no_actionable_candidate(self) -> None:
         summary = live_scan_cycle.decision_summary_for_scan(
             cycle=5,
