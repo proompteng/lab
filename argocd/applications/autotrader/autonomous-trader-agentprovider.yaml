@@ -320,6 +320,17 @@ spec:
           --output "${analysis_context_path}"
         "${analysis_cli}" daytrading-validate-context \
           "${analysis_context_path}"
+
+        if [ "${trader_mode}" = "market-open" ]; then
+          "${python_bin}" /workspace/lab/scripts/autotrader/market_open_bootstrap.py \
+            --report-path "${report_path}" \
+            --work-dir "${work_dir}" \
+            --analysis-dir "${analysis_dir}" \
+            --analysis-context "${analysis_context_path}" \
+            --agent-run-name "${AGENT_RUN_NAME:-autonomous-trader-market-open}" \
+            --session-mode "${AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE:-market_open}" \
+            --goal-equity "${AUTONOMOUS_TRADER_TARGET_EQUITY_USD:-500000}"
+        fi
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-
         import json
