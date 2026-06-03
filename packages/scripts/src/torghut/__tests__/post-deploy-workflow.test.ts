@@ -84,6 +84,18 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
   })
 
+  it('retries transient sim paper-route target mirror gaps before rollback', () => {
+    expect(workflow).toContain('validate_post_deploy_evidence()')
+    expect(workflow).toContain('post-deploy-evidence-validator.out')
+    expect(workflow).toContain(
+      'torghut-sim paper-route target plan (is empty while live torghut exposes targets|missing live target)',
+    )
+    expect(workflow).toContain(
+      'Torghut sim paper-route target mirror not materialized yet; refreshing evidence payloads',
+    )
+    expect(workflow).toContain('Torghut sim paper-route target mirror did not materialize after bounded retry window')
+  })
+
   it('requests Argo refresh before polling deployed revisions', () => {
     expect(workflow).toContain('argocd.argoproj.io/refresh=hard --overwrite')
     expect(workflow).toContain('for app in torghut torghut-options; do')
