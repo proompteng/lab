@@ -1389,6 +1389,161 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
         self.assertEqual(summary["candidateSymbols"], ["AMD"])
 
+    def test_current_session_post_loss_gate_blocks_weak_different_symbol_recovery(self) -> None:
+        current_session = {
+            "tradeTickets": [
+                {
+                    "id": "ticket-amd",
+                    "symbol": "AMD",
+                    "setupType": "vwap_reclaim",
+                    "setupGrade": "A",
+                }
+            ],
+            "orders": [
+                {
+                    "ticketId": "ticket-amd",
+                    "clientOrderId": "entry-amd",
+                    "symbol": "AMD",
+                    "side": "buy",
+                    "status": "filled",
+                    "brokerPayload": {"filled_avg_price": "533.37"},
+                },
+                {
+                    "ticketId": "ticket-amd",
+                    "clientOrderId": "stop-amd",
+                    "symbol": "AMD",
+                    "side": "sell",
+                    "status": "filled",
+                    "brokerPayload": {
+                        "parentClientOrderId": "entry-amd",
+                        "filled_avg_price": "532.590054",
+                    },
+                },
+            ],
+        }
+        scan = live_scan_cycle.overlay_current_session_loss_lockout(
+            {
+                "results": [
+                    {
+                        "symbol": "AVGO",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "2.5",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "102.50",
+                        "scorecard_sample_size": 2,
+                        "scorecard_avg_realized_r": "0.75",
+                    }
+                ]
+            },
+            current_session,
+        )
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=15,
+            index=1,
+            result=scan["results"][0],
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=15,
+            scan=scan,
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-15-1-AVGO-vwap_reclaim-A",
+                    "ticketId": "ticket-avgo",
+                }
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(scan["currentSessionRecoveryGate"]["losingRoundTripCount"], 1)
+        self.assertEqual(scan["currentSessionLossLockout"]["appliedResultCount"], 1)
+        self.assertEqual(scan["currentSessionLossLockout"]["blockedSymbols"], ["AVGO"])
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "current_session_post_loss_expected_r_below_floor")
+        self.assertEqual(
+            payload["brokerOrderPlan"]["raw"]["current_session_recovery_gate"]["minimumExpectedR"],
+            "3.0",
+        )
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["blockedResultCount"], 1)
+
+    def test_current_session_post_loss_gate_allows_strong_different_symbol_recovery(self) -> None:
+        current_session = {
+            "tradeTickets": [
+                {
+                    "id": "ticket-amd",
+                    "symbol": "AMD",
+                    "setupType": "vwap_reclaim",
+                    "setupGrade": "A",
+                }
+            ],
+            "orders": [
+                {
+                    "ticketId": "ticket-amd",
+                    "clientOrderId": "entry-amd",
+                    "symbol": "AMD",
+                    "side": "buy",
+                    "status": "filled",
+                    "brokerPayload": {"filled_avg_price": "533.37"},
+                },
+                {
+                    "ticketId": "ticket-amd",
+                    "clientOrderId": "stop-amd",
+                    "symbol": "AMD",
+                    "side": "sell",
+                    "status": "filled",
+                    "brokerPayload": {
+                        "parentClientOrderId": "entry-amd",
+                        "filled_avg_price": "532.590054",
+                    },
+                },
+            ],
+        }
+        scan = live_scan_cycle.overlay_current_session_loss_lockout(
+            {
+                "results": [
+                    {
+                        "symbol": "NVDA",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A+",
+                        "expected_r": "3.5",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "103.50",
+                        "scorecard_sample_size": 3,
+                        "scorecard_avg_realized_r": "1.25",
+                    }
+                ]
+            },
+            current_session,
+        )
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=15,
+            index=1,
+            result=scan["results"][0],
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=15,
+            scan=scan,
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-15-1-NVDA-vwap_reclaim-A+",
+                    "ticketId": "ticket-nvda",
+                }
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(scan["currentSessionRecoveryGate"]["losingRoundTripCount"], 1)
+        self.assertEqual(scan["currentSessionLossLockout"]["appliedResultCount"], 0)
+        self.assertEqual(payload["status"], "candidate")
+        self.assertIsNone(payload["noTradeReason"])
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["bestCandidate"]["symbol"], "NVDA")
+
     def test_current_session_loss_limit_blocks_all_new_entries_after_two_losses(self) -> None:
         current_session = {
             "tradeTickets": [

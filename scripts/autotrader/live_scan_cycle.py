@@ -42,6 +42,9 @@ MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_ACTIONABLE_BRACKET_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MIN_SCORECARD_ACTIONABLE_AVG_REALIZED_R = Decimal("0.5")
+MIN_POST_LOSS_EXPECTED_R = Decimal("3.0")
+MIN_POST_LOSS_BRACKET_R = Decimal("3.0")
+MIN_POST_LOSS_SCORECARD_AVG_REALIZED_R = Decimal("1.0")
 MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
 MAX_CURRENT_SESSION_LOSING_ROUND_TRIPS = 2
 BASE_RISK_EQUITY_PCT = Decimal("0.0025")
@@ -1294,11 +1297,7 @@ def current_session_loss_for_result(
 
 
 def current_session_loss_limit(payload: Any) -> dict[str, Any] | None:
-    losses_by_parent: dict[str, dict[str, Any]] = {}
-    for loss in session_losing_round_trip_keys(payload).values():
-        parent_id = optional_text(loss.get("parentClientOrderId"), max_length=240)
-        if parent_id:
-            losses_by_parent[parent_id] = loss
+    losses_by_parent = current_session_losing_round_trips(payload)
     if len(losses_by_parent) < MAX_CURRENT_SESSION_LOSING_ROUND_TRIPS:
         return None
     symbols = sorted(
@@ -1316,6 +1315,53 @@ def current_session_loss_limit(payload: Any) -> dict[str, Any] | None:
     }
 
 
+def current_session_losing_round_trips(payload: Any) -> dict[str, dict[str, Any]]:
+    losses_by_parent: dict[str, dict[str, Any]] = {}
+    for loss in session_losing_round_trip_keys(payload).values():
+        parent_id = optional_text(loss.get("parentClientOrderId"), max_length=240)
+        if parent_id:
+            losses_by_parent[parent_id] = loss
+    return losses_by_parent
+
+
+def post_loss_recovery_gate_no_trade_reason(result: dict[str, Any]) -> str | None:
+    grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
+    if grade not in {"A+", "A"}:
+        return "current_session_post_loss_requires_a_grade"
+    expected_r = decimal_value(result.get("expected_r") or result.get("expectedR"))
+    if expected_r is None or expected_r < MIN_POST_LOSS_EXPECTED_R:
+        return "current_session_post_loss_expected_r_below_floor"
+    bracket_r = decimal_value(derived_bracket_for_scan_result(result).get("actualBracketR"))
+    if bracket_r is None or bracket_r < MIN_POST_LOSS_BRACKET_R:
+        return "current_session_post_loss_bracket_r_below_floor"
+    sample_size, avg_realized_r, _confidence = scorecard_edge_values(result)
+    if sample_size < MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE:
+        return "current_session_post_loss_scorecard_repeat_sample_required"
+    if avg_realized_r is None or avg_realized_r < MIN_POST_LOSS_SCORECARD_AVG_REALIZED_R:
+        return "current_session_post_loss_scorecard_avg_r_below_floor"
+    return None
+
+
+def post_loss_recovery_gate(losing_round_trips: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    symbols = sorted(
+        {
+            symbol
+            for loss in losing_round_trips.values()
+            if (symbol := optional_text(loss.get("symbol"), max_length=32))
+        }
+    )
+    return {
+        "reason": "current_session_post_loss_recovery_gate",
+        "losingRoundTripCount": len(losing_round_trips),
+        "symbols": symbols[:20],
+        "minimumExpectedR": str(MIN_POST_LOSS_EXPECTED_R),
+        "minimumBracketR": str(MIN_POST_LOSS_BRACKET_R),
+        "minimumScorecardAvgRealizedR": str(MIN_POST_LOSS_SCORECARD_AVG_REALIZED_R),
+        "minimumScorecardSampleSize": MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE,
+        "allowedSetupGrades": ["A+", "A"],
+    }
+
+
 def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_payload: Any) -> dict[str, Any]:
     results = scan.get("results")
     if not isinstance(results, list):
@@ -1324,6 +1370,12 @@ def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_p
     if not losing_keys:
         return scan
     loss_limit = current_session_loss_limit(current_session_payload)
+    losing_round_trips = current_session_losing_round_trips(current_session_payload)
+    recovery_gate = (
+        post_loss_recovery_gate(losing_round_trips)
+        if loss_limit is None and losing_round_trips
+        else None
+    )
     enriched_results: list[Any] = []
     applied_count = 0
     blocked_symbols: list[str] = []
@@ -1349,7 +1401,25 @@ def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_p
             continue
         lockout = current_session_loss_for_result(result, losing_keys)
         if lockout is None:
-            enriched_results.append(result)
+            recovery_reason = (
+                post_loss_recovery_gate_no_trade_reason(result)
+                if recovery_gate is not None
+                else None
+            )
+            if recovery_reason is None:
+                enriched_results.append(result)
+                continue
+            symbol = optional_text(result.get("symbol"), max_length=32)
+            if symbol and symbol.upper() not in blocked_symbols:
+                blocked_symbols.append(symbol.upper())
+            enriched_results.append(
+                {
+                    **result,
+                    "no_trade_reason": recovery_reason,
+                    "current_session_recovery_gate": recovery_gate,
+                }
+            )
+            applied_count += 1
             continue
         symbol = optional_text(result.get("symbol"), max_length=32)
         if symbol and symbol.upper() not in blocked_symbols:
@@ -1369,6 +1439,7 @@ def overlay_current_session_loss_lockout(scan: dict[str, Any], current_session_p
             "appliedResultCount": applied_count,
             "blockedSymbols": blocked_symbols[:20],
         },
+        **({"currentSessionRecoveryGate": recovery_gate} if recovery_gate is not None else {}),
         **({"currentSessionLossLimit": loss_limit} if loss_limit is not None else {}),
     }
 
