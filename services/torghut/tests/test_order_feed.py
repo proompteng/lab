@@ -1705,9 +1705,21 @@ class TestOrderFeed(TestCase):
             session.refresh(linkable_event)
             session.refresh(unmatched_event)
             session.refresh(execution)
-            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+            source_windows = (
+                session.execute(select(OrderFeedSourceWindow)).scalars().all()
+            )
+            source_window = session.get(
+                OrderFeedSourceWindow, linkable_event.source_window_id
+            )
+            unmatched_source_window = session.get(
+                OrderFeedSourceWindow,
+                unmatched_event.source_window_id,
+            )
             tca_metric = session.execute(select(ExecutionTCAMetric)).scalar_one()
 
+        self.assertEqual(len(source_windows), 2)
+        self.assertIsNotNone(source_window)
+        self.assertIsNotNone(unmatched_source_window)
         self.assertEqual(
             result,
             {
@@ -1725,6 +1737,7 @@ class TestOrderFeed(TestCase):
         self.assertEqual(linkable_event.execution_id, execution_id)
         self.assertEqual(linkable_event.trade_decision_id, trade_decision_id)
         self.assertEqual(linkable_event.source_window_id, source_window.id)
+        self.assertEqual(unmatched_event.source_window_id, unmatched_source_window.id)
         self.assertIsNone(unmatched_event.execution_id)
         self.assertIsNone(unmatched_event.trade_decision_id)
         self.assertEqual(execution.status, "filled")
@@ -1744,6 +1757,16 @@ class TestOrderFeed(TestCase):
         self.assertEqual(
             source_window.payload_json["authority_class"],
             "runtime_order_feed_execution_source",
+        )
+        self.assertEqual(unmatched_source_window.unlinked_execution_count, 1)
+        self.assertEqual(unmatched_source_window.unlinked_decision_count, 1)
+        self.assertEqual(
+            unmatched_source_window.status_reason,
+            "historical_execution_order_event_backfill",
+        )
+        self.assertEqual(
+            unmatched_source_window.payload_json["linkage_blockers"],
+            ["missing_execution_link", "missing_trade_decision_link"],
         )
 
     def test_repair_order_feed_execution_links_links_by_alpaca_order_id_only(
@@ -2420,6 +2443,158 @@ class TestOrderFeed(TestCase):
         self.assertEqual(result["decision_events_linked"], 0)
         self.assertEqual(result["events_without_execution"], 1)
         self.assertEqual(result["events_without_decision"], 1)
+
+    def test_repair_order_feed_execution_links_marks_existing_decision_missing_execution(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="existing-decision-missing-execution",
+                description="existing-decision-missing-execution",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="symbols_list",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"side": "buy"},
+                decision_hash="existing-decision-client",
+                status="submitted",
+            )
+            session.add(decision)
+            session.flush()
+            decision_id = decision.id
+            event = ExecutionOrderEvent(
+                event_fingerprint="repair-existing-decision-missing-execution",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=390,
+                alpaca_account_label="TORGHUT_SIM",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="missing-execution-existing-decision-order",
+                client_order_id="existing-decision-client",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+                trade_decision_id=decision_id,
+            )
+            session.add(event)
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="TORGHUT_SIM",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+            source_window = session.get(OrderFeedSourceWindow, event.source_window_id)
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 1,
+                "executions_matched": 0,
+                "executions_linked": 0,
+                "decisions_matched": 0,
+                "events_linked": 0,
+                "decision_events_linked": 0,
+                "events_without_execution": 1,
+                "events_without_decision": 0,
+                "account_alias_events_linked": 0,
+            },
+        )
+        self.assertIsNone(event.execution_id)
+        self.assertEqual(event.trade_decision_id, decision_id)
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(event),
+            ["missing_execution_link"],
+        )
+        assert source_window is not None
+        self.assertEqual(source_window.unlinked_execution_count, 1)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertFalse(source_window.payload_json["source_coverage_complete"])
+
+    def test_repair_order_feed_execution_links_marks_missing_links_to_advance_scan(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            old_unmatchable_event = ExecutionOrderEvent(
+                event_fingerprint="repair-old-unmatchable-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=390,
+                alpaca_account_label="TORGHUT_SIM",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="old-missing-order",
+                client_order_id="old-missing-client",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+            )
+            execution = self._seed_execution(
+                session,
+                account_label="TORGHUT_SIM",
+                order_id="new-linkable-order",
+                client_order_id="new-linkable-client",
+            )
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            linkable_event = ExecutionOrderEvent(
+                event_fingerprint="repair-new-linkable-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=391,
+                alpaca_account_label="TORGHUT_SIM",
+                event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="new-linkable-order",
+                client_order_id="new-linkable-client",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add_all([old_unmatchable_event, linkable_event])
+            session.commit()
+
+            first_result = repair_order_feed_execution_links(
+                session,
+                account_label="TORGHUT_SIM",
+                limit=1,
+            )
+            second_result = repair_order_feed_execution_links(
+                session,
+                account_label="TORGHUT_SIM",
+                limit=1,
+            )
+            session.commit()
+            session.refresh(old_unmatchable_event)
+            session.refresh(linkable_event)
+
+        self.assertEqual(first_result["events_without_execution"], 1)
+        self.assertEqual(second_result["events_linked"], 1)
+        self.assertIsNone(old_unmatchable_event.execution_id)
+        self.assertIsNone(old_unmatchable_event.trade_decision_id)
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(old_unmatchable_event),
+            ["missing_execution_link", "missing_trade_decision_link"],
+        )
+        self.assertEqual(linkable_event.execution_id, execution_id)
+        self.assertEqual(linkable_event.trade_decision_id, trade_decision_id)
 
     def test_linkage_payload_helpers_cover_fallback_shapes(self) -> None:
         wrapped = order_feed_module._raw_event_with_linkage_blockers(
