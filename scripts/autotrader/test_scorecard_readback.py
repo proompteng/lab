@@ -61,6 +61,7 @@ class ScorecardReadbackTest(unittest.TestCase):
                 goal_equity="500000",
                 scorecard_limit=20,
                 finalize_stale_flat=True,
+                backfill_finalized_flat=True,
                 current_agent_run_name="autonomous-trader-readback-test",
                 report_path=report_path,
             )

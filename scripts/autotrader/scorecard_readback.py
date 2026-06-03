@@ -126,6 +126,7 @@ def run_readback(
     goal_equity: str,
     scorecard_limit: int,
     finalize_stale_flat: bool,
+    backfill_finalized_flat: bool,
     current_agent_run_name: str,
     report_path: Path,
 ) -> dict[str, Any]:
@@ -148,6 +149,7 @@ def run_readback(
         limit=50,
         grace_minutes=5,
         finalize_stale_flat=finalize_stale_flat,
+        backfill_finalized_flat=backfill_finalized_flat,
         current_agent_run=current_agent_run_name,
     )
     open_positions = as_list(broker.get("openPositions"))
@@ -218,7 +220,9 @@ def run_readback(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the autotrader scorecard-readback path without analysis bootstrap.")
+    parser = argparse.ArgumentParser(
+        description="Run the autotrader scorecard-readback path without analysis bootstrap."
+    )
     parser.add_argument("--base-url")
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--scorecard-limit", type=int, default=20)
@@ -230,6 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--report-path", default="/workspace/.agentrun/autonomous-trader/report.md")
     parser.add_argument("--finalize-stale-flat", action="store_true")
+    parser.add_argument("--backfill-finalized-flat", action="store_true")
     parser.add_argument("--now")
     parser.add_argument("--self-test", action="store_true")
     return parser
@@ -238,7 +243,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.self_test:
-        print(json.dumps({"ok": True, "mode": "scorecard-readback", "analysisBootstrapRequired": False}, sort_keys=True))
+        print(
+            json.dumps(
+                {"ok": True, "mode": "scorecard-readback", "analysisBootstrapRequired": False},
+                sort_keys=True,
+            )
+        )
         return 0
     now = session_reconciler.parse_timestamp(args.now) if args.now else datetime.now(UTC)
     if now is None:
@@ -252,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         goal_equity=args.goal_equity.strip() or "500000",
         scorecard_limit=args.scorecard_limit,
         finalize_stale_flat=args.finalize_stale_flat,
+        backfill_finalized_flat=args.backfill_finalized_flat,
         current_agent_run_name=args.agent_run_name.strip(),
         report_path=Path(args.report_path),
     )

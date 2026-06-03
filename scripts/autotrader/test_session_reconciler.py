@@ -65,6 +65,73 @@ def stale_session(**overrides: Any) -> dict[str, Any]:
     return session
 
 
+def completed_round_trip_detail() -> dict[str, Any]:
+    return {
+        "session": {
+            "id": "session-1",
+            "terminalReason": "market_closed",
+            "openingEquity": "30000",
+            "closingEquity": "30010",
+            "realizedPnl": "10",
+            "summary": {"brokerFlat": True, "originalFinalizedAt": "2026-06-02T20:01:00Z"},
+        },
+        "status": {"equity": "30010.00", "realizedPnl": "10"},
+        "events": [],
+        "tradeTickets": [
+            {
+                "id": "ticket-win",
+                "symbol": "AMD",
+                "setupType": "vwap_reclaim",
+                "setupGrade": "A",
+                "regime": "regular_session",
+                "timeBucket": "mid_session",
+                "riskDollars": "10",
+            }
+        ],
+        "riskChecks": [],
+        "orders": [
+            {
+                "ticketId": "ticket-win",
+                "clientOrderId": "amd-entry",
+                "symbol": "AMD",
+                "side": "buy",
+                "quantity": "10",
+                "status": "filled",
+            },
+            {
+                "ticketId": "ticket-win",
+                "clientOrderId": "amd-exit",
+                "symbol": "AMD",
+                "side": "sell",
+                "quantity": "10",
+                "status": "filled",
+            },
+        ],
+        "fills": [
+            {
+                "clientOrderId": "amd-entry",
+                "brokerFillId": "fill-entry",
+                "symbol": "AMD",
+                "side": "buy",
+                "quantity": "10",
+                "price": "100",
+                "filledAt": "2026-06-02T15:00:00Z",
+            },
+            {
+                "clientOrderId": "amd-exit",
+                "brokerFillId": "fill-exit",
+                "symbol": "AMD",
+                "side": "sell",
+                "quantity": "10",
+                "price": "101",
+                "filledAt": "2026-06-02T15:05:00Z",
+            },
+        ],
+        "positionSnapshots": [],
+        "setupExamples": [],
+    }
+
+
 class SessionReconcilerTest(unittest.TestCase):
     def test_finalizes_stale_market_session_when_broker_is_flat(self) -> None:
         synthesis = FakeSynthesis(
@@ -89,6 +156,7 @@ class SessionReconcilerTest(unittest.TestCase):
             limit=50,
             grace_minutes=5,
             finalize_stale_flat=True,
+            backfill_finalized_flat=False,
             current_agent_run="autonomous-trader-market-open-next",
         )
 
@@ -201,6 +269,7 @@ class SessionReconcilerTest(unittest.TestCase):
             limit=50,
             grace_minutes=5,
             finalize_stale_flat=True,
+            backfill_finalized_flat=False,
             current_agent_run="",
         )
 
@@ -218,6 +287,40 @@ class SessionReconcilerTest(unittest.TestCase):
         self.assertEqual(summary["generated"], 1)
         self.assertEqual(summary["skipped"]["missingRoundTripSides"], 1)
 
+    def test_backfills_finalized_flat_market_session_without_examples(self) -> None:
+        session = stale_session(
+            finalizedAt="2026-06-02T20:01:00Z",
+            fillCount=2,
+            setupExampleCount=0,
+            summary={"brokerFlat": True},
+        )
+        synthesis = FakeSynthesis([session], {"session-1": completed_round_trip_detail()})
+
+        result = session_reconciler.reconcile_sessions(
+            synthesis=synthesis,  # type: ignore[arg-type]
+            alpaca=FakeAlpaca(account={"equity": "30020.00"}),  # type: ignore[arg-type]
+            now=datetime(2026, 6, 2, 20, 10, tzinfo=UTC),
+            limit=50,
+            grace_minutes=5,
+            finalize_stale_flat=True,
+            backfill_finalized_flat=True,
+            current_agent_run="",
+        )
+
+        self.assertEqual(result["staleCandidateCount"], 0)
+        self.assertEqual(result["backfillCandidateCount"], 1)
+        self.assertEqual(result["backfilled"][0]["sessionId"], "session-1")
+        self.assertEqual(result["backfilled"][0]["scorecardObservationCount"], 1)
+        payload = synthesis.finalized[0]
+        self.assertEqual(payload["sessionId"], "session-1")
+        self.assertEqual(payload["terminalReason"], "market_closed")
+        self.assertEqual(payload["openingEquity"], "30000")
+        self.assertEqual(payload["closingEquity"], "30010")
+        self.assertEqual(payload["realizedPnl"], "10")
+        self.assertEqual(payload["summary"]["reconcileReason"], "finalized_session_scorecard_backfill")
+        self.assertEqual(payload["summary"]["originalFinalizedAt"], "2026-06-02T20:01:00Z")
+        self.assertEqual(payload["summary"]["scorecardObservationSummary"]["generated"], 1)
+
     def test_does_not_finalize_when_current_broker_state_is_open(self) -> None:
         synthesis = FakeSynthesis([stale_session()], {"session-1": {"status": {}, "events": []}})
 
@@ -228,6 +331,7 @@ class SessionReconcilerTest(unittest.TestCase):
             limit=50,
             grace_minutes=5,
             finalize_stale_flat=True,
+            backfill_finalized_flat=False,
             current_agent_run="",
         )
 
@@ -250,10 +354,12 @@ class SessionReconcilerTest(unittest.TestCase):
             limit=50,
             grace_minutes=5,
             finalize_stale_flat=True,
+            backfill_finalized_flat=True,
             current_agent_run="autonomous-trader-market-open-current",
         )
 
-        self.assertEqual(result["candidateCount"], 0)
+        self.assertEqual(result["staleCandidateCount"], 0)
+        self.assertEqual(result["backfillCandidateCount"], 0)
         self.assertIsNone(result["brokerFlat"])
         self.assertEqual(synthesis.finalized, [])
 

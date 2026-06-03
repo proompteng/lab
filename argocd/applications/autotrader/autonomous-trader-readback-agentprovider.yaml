@@ -97,6 +97,7 @@ spec:
         )
         if [ "${reconcile_enabled}" = "true" ] || [ "${reconcile_enabled}" = "1" ] || [ "${reconcile_enabled}" = "yes" ]; then
           readback_args+=(--finalize-stale-flat)
+          readback_args+=(--backfill-finalized-flat)
         fi
 
         exec "${python_bin}" /workspace/lab/scripts/autotrader/scorecard_readback.py "${readback_args[@]}"
