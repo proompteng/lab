@@ -9252,24 +9252,22 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
 
         plan = payload["next_paper_route_runtime_window_targets"]
-        self.assertEqual(plan["target_count"], 1)
-        self.assertEqual(plan["skipped_target_count"], 1)
+        self.assertEqual(plan["target_count"], 2)
+        self.assertEqual(plan["skipped_target_count"], 0)
         first_target = plan["targets"][0]
+        second_target = plan["targets"][1]
+        self.assertEqual(second_target["candidate_id"], "candidate-overlap-pair")
         self.assertEqual(
             first_target["paper_route_account_contamination_state"]["reason"],
             "unlinked_and_foreign_account_order_events_present",
-        )
-        self.assertEqual(
-            plan["skipped_targets"][0]["reason"],
-            "paper_route_account_window_already_assigned",
         )
         contamination_readiness = plan["account_contamination_readiness"]
         self.assertEqual(
             contamination_readiness["state"], "contaminated_window_discarded"
         )
-        self.assertEqual(contamination_readiness["target_count"], 1)
-        self.assertEqual(contamination_readiness["contaminated_target_count"], 1)
-        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 10)
+        self.assertEqual(contamination_readiness["target_count"], 2)
+        self.assertEqual(contamination_readiness["contaminated_target_count"], 2)
+        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 15)
         self.assertEqual(contamination_readiness["foreign_linked_order_event_count"], 1)
         sample_refs = contamination_readiness["sample_order_event_refs"]
         self.assertEqual(len(sample_refs), 10)
@@ -9974,7 +9972,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
         self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
 
-    def test_next_paper_route_runtime_window_reserves_account_window_once(
+    def test_next_paper_route_runtime_window_allows_distinct_account_window_targets(
         self,
     ) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
@@ -10071,26 +10069,24 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
 
         next_targets = payload["next_paper_route_runtime_window_targets"]
-        self.assertEqual(next_targets["target_count"], 1)
-        self.assertEqual(next_targets["skipped_target_count"], 1)
+        self.assertEqual(next_targets["target_count"], 2)
+        self.assertEqual(next_targets["skipped_target_count"], 0)
         self.assertEqual(
             next_targets["targets"][0]["candidate_id"], "candidate-paper-alpha"
         )
         self.assertEqual(
-            next_targets["skipped_targets"][0]["reason"],
+            next_targets["targets"][1]["candidate_id"], "candidate-paper-beta"
+        )
+        self.assertEqual(next_targets["targets"][0]["account_label"], "TORGHUT_SIM")
+        self.assertEqual(next_targets["targets"][1]["account_label"], "TORGHUT_SIM")
+        self.assertNotIn(
             "paper_route_account_window_already_assigned",
-        )
-        self.assertEqual(
-            next_targets["skipped_targets"][0]["duplicate_of_candidate_id"],
-            "candidate-paper-alpha",
-        )
-        self.assertEqual(
-            next_targets["skipped_targets"][0]["account_label"], "TORGHUT_SIM"
+            [str(skipped.get("reason")) for skipped in next_targets["skipped_targets"]],
         )
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
-        self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
-        self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
+        self.assertEqual(import_audit["counts"]["selected_target_count"], 2)
+        self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 2)
 
     def test_runtime_import_audit_counts_selected_targets_not_raw_plan_noise(
         self,

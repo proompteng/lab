@@ -2017,7 +2017,9 @@ def _next_paper_route_runtime_window_targets(
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
     planned_execution_source_keys: dict[tuple[object, ...], dict[str, object]] = {}
-    planned_account_window_keys: dict[tuple[str, str, str], dict[str, object]] = {}
+    planned_account_window_keys: dict[
+        tuple[str, str, str, str, str, str], dict[str, object]
+    ] = {}
     for target in targets:
         hypothesis_id = _safe_text(target.get("hypothesis_id"))
         candidate_id = _safe_text(target.get("candidate_id"))
@@ -2317,6 +2319,9 @@ def _next_paper_route_runtime_window_targets(
             PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             account_window_start,
             account_window_end,
+            hypothesis_id or "",
+            candidate_id or "",
+            canonical_strategy_name or "",
         )
         existing_account_window = planned_account_window_keys.get(account_window_key)
         if existing_account_window is not None:
