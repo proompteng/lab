@@ -1735,12 +1735,30 @@ def _runtime_ledger_immutable_lineage(
 ) -> dict[str, Any]:
     source_row_ids: list[str] = []
     source_refs: list[str] = []
+    strategy_ledger_refs: list[str] = []
     bucket_ids: list[str] = []
     metric_window_ids: list[str] = []
     promotion_decision_ids: list[str] = []
+    _extend_unique(strategy_ledger_refs, list(ledger_refs))
 
     def collect_from(source: Mapping[str, Any]) -> None:
         for key in (
+            "trade_decision_id",
+            "trade_decision_ids",
+            "execution_id",
+            "execution_ids",
+            "execution_order_event_id",
+            "execution_order_event_ids",
+            "runtime_ledger_execution_order_event_id",
+            "runtime_ledger_execution_order_event_ids",
+            "execution_tca_metric_id",
+            "execution_tca_metric_ids",
+            "runtime_ledger_execution_tca_metric_id",
+            "runtime_ledger_execution_tca_metric_ids",
+            "source_window_id",
+            "source_window_ids",
+            "runtime_ledger_source_window_id",
+            "runtime_ledger_source_window_ids",
             "source_row_id",
             "source_row_ids",
             "source_execution_row_ids",
@@ -1777,10 +1795,37 @@ def _runtime_ledger_immutable_lineage(
                 text = _text(source.get(key))
                 if text:
                     _extend_unique(bucket_ids, [text])
-        _extend_unique(metric_window_ids, _text_list(source.get("metric_window_ids")))
+        for key in (
+            "runtime_ledger_bucket_ref",
+            "runtime_ledger_bucket_refs",
+            "strategy_runtime_ledger_bucket_ref",
+            "strategy_runtime_ledger_bucket_refs",
+            "evidence_grade_runtime_ledger_bucket_ref",
+            "evidence_grade_runtime_ledger_bucket_refs",
+        ):
+            _extend_unique(strategy_ledger_refs, _text_list(source.get(key)))
+            if not _sequence(source.get(key)):
+                text = _text(source.get(key))
+                if text:
+                    _extend_unique(strategy_ledger_refs, [text])
+        for key in (
+            "metric_window_id",
+            "metric_window_ids",
+            "metric_window_ref",
+            "metric_window_refs",
+        ):
+            _extend_unique(metric_window_ids, _text_list(source.get(key)))
+            if not _sequence(source.get(key)):
+                text = _text(source.get(key))
+                if text:
+                    _extend_unique(metric_window_ids, [text])
         promotion_decision_id = _text(source.get("promotion_decision_id"))
         if promotion_decision_id:
             _extend_unique(promotion_decision_ids, [promotion_decision_id])
+        _extend_unique(
+            promotion_decision_ids,
+            _text_list(source.get("promotion_decision_refs")),
+        )
 
     for target in paper_targets:
         collect_from(target)
@@ -1789,15 +1834,20 @@ def _runtime_ledger_immutable_lineage(
         summary = _mapping(item.get("summary"))
         collect_from(summary)
         collect_from(_mapping(summary.get("runtime_observation")))
-        collect_from(_mapping(summary.get("runtime_materialization_target")))
+        collect_from(_mapping(summary.get("runtime_window_import_readback")))
+        materialization_target = _mapping(summary.get("runtime_materialization_target"))
+        collect_from(materialization_target)
+        collect_from(_mapping(materialization_target.get("readback")))
     collect_from(runtime_summary)
-    for target in _sequence(materialization_summary.get("materialized_targets")):
-        materialized_target = _mapping(target)
-        collect_from(materialized_target)
-        tigerbeetle = _mapping(materialized_target.get("tigerbeetle"))
-        _extend_unique(source_refs, _text_list(tigerbeetle.get("source_refs")))
-        for bucket_ref in _sequence(tigerbeetle.get("runtime_ledger_buckets")):
-            collect_from(_mapping(bucket_ref))
+    for key in ("materialized_targets", "unmaterialized_targets"):
+        for target in _sequence(materialization_summary.get(key)):
+            materialized_target = _mapping(target)
+            collect_from(materialized_target)
+            collect_from(_mapping(materialized_target.get("readback")))
+            tigerbeetle = _mapping(materialized_target.get("tigerbeetle"))
+            _extend_unique(source_refs, _text_list(tigerbeetle.get("source_refs")))
+            for bucket_ref in _sequence(tigerbeetle.get("runtime_ledger_buckets")):
+                collect_from(_mapping(bucket_ref))
 
     runtime_strategy = _text(
         identity.get("runtime_strategy_name") or identity.get("strategy_name")
@@ -1832,7 +1882,7 @@ def _runtime_ledger_immutable_lineage(
         "window_end": _text(identity.get("window_end")),
         "source_row_ids": source_row_ids,
         "source_refs": source_refs,
-        "strategy_runtime_ledger_bucket_refs": list(ledger_refs),
+        "strategy_runtime_ledger_bucket_refs": strategy_ledger_refs,
         "unbacked_metric_window_refs": list(unbacked_refs),
         "runtime_ledger_bucket_ids": bucket_ids,
         "metric_window_ids": metric_window_ids,
@@ -1840,7 +1890,7 @@ def _runtime_ledger_immutable_lineage(
         "counts": {
             "source_row_id_count": len(source_row_ids),
             "source_ref_count": len(source_refs),
-            "strategy_runtime_ledger_bucket_ref_count": len(ledger_refs),
+            "strategy_runtime_ledger_bucket_ref_count": len(strategy_ledger_refs),
             "unbacked_metric_window_ref_count": len(unbacked_refs),
             "runtime_ledger_bucket_id_count": len(bucket_ids),
             "metric_window_id_count": len(metric_window_ids),
