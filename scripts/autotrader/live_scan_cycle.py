@@ -302,11 +302,50 @@ def summarize_account_gate(
 
 
 def fetch_broker_state(alpaca: AlpacaRestClient) -> dict[str, Any]:
-    return {
-        "account": alpaca.trading_get("/v2/account"),
-        "positions": alpaca.trading_get("/v2/positions"),
-        "orders": alpaca.trading_get("/v2/orders", {"status": "open", "nested": "true"}),
+    state, _ = fetch_broker_state_with_metrics(alpaca)
+    return state
+
+
+def fetch_broker_state_with_metrics(alpaca: AlpacaRestClient) -> tuple[dict[str, Any], dict[str, Any]]:
+    started_at = time.monotonic()
+
+    def timed_account() -> tuple[Any, int]:
+        task_started_at = time.monotonic()
+        payload = alpaca.trading_get("/v2/account")
+        return payload, elapsed_ms(task_started_at)
+
+    def timed_positions() -> tuple[Any, int]:
+        task_started_at = time.monotonic()
+        payload = alpaca.trading_get("/v2/positions")
+        return payload, elapsed_ms(task_started_at)
+
+    def timed_orders() -> tuple[Any, int]:
+        task_started_at = time.monotonic()
+        payload = alpaca.trading_get("/v2/orders", {"status": "open", "nested": "true"})
+        return payload, elapsed_ms(task_started_at)
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            "account": executor.submit(timed_account),
+            "positions": executor.submit(timed_positions),
+            "orders": executor.submit(timed_orders),
+        }
+        account, account_ms = futures["account"].result()
+        positions, positions_ms = futures["positions"].result()
+        orders, orders_ms = futures["orders"].result()
+
+    metrics = {
+        "parallelFetchCount": 3,
+        "accountMs": account_ms,
+        "positionsMs": positions_ms,
+        "ordersMs": orders_ms,
+        "totalMs": elapsed_ms(started_at),
     }
+    return {
+        "account": account,
+        "positions": positions,
+        "orders": orders,
+    }, metrics
 
 
 def summarize_broker_state(raw_broker_state: dict[str, Any]) -> dict[str, Any]:
@@ -516,12 +555,17 @@ def fetch_scan_inputs_with_metrics(
         "parallelFetchCount": 3,
     }
     if broker_state is None:
-        broker_started_at = time.monotonic()
-        raw_broker_state = fetch_broker_state(alpaca)
-        metrics["brokerStateMs"] = elapsed_ms(broker_started_at)
+        raw_broker_state, broker_metrics = fetch_broker_state_with_metrics(alpaca)
+        metrics["brokerStateMs"] = broker_metrics["totalMs"]
+        metrics["brokerState"] = broker_metrics
     else:
         raw_broker_state = broker_state
         metrics["brokerStateMs"] = 0
+        metrics["brokerState"] = {
+            "parallelFetchCount": 0,
+            "totalMs": 0,
+            "source": "provided",
+        }
 
     raw_account = raw_broker_state.get("account")
     if not isinstance(raw_account, dict):
@@ -964,7 +1008,9 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     recorded_account_gate: dict[str, Any] | None = None
     if args.respect_account_gate:
         account_gate_started_at = time.monotonic()
-        broker_state = fetch_broker_state(alpaca)
+        broker_state, broker_metrics = fetch_broker_state_with_metrics(alpaca)
+        stage_timings["brokerStateMs"] = broker_metrics["totalMs"]
+        stage_timings["brokerState"] = broker_metrics
         gate = summarize_broker_state(broker_state)
         if args.session_id:
             recorded_account_gate = record_account_gate(
@@ -1065,8 +1111,16 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_account_gate(args: argparse.Namespace) -> dict[str, Any]:
+    started_at = time.monotonic()
     alpaca = AlpacaRestClient(timeout_seconds=args.timeout_seconds)
-    return summarize_broker_state(fetch_broker_state(alpaca))
+    broker_state, broker_metrics = fetch_broker_state_with_metrics(alpaca)
+    summary = summarize_broker_state(broker_state)
+    summary["stageTimingsMs"] = {
+        "brokerStateMs": broker_metrics["totalMs"],
+        "brokerState": broker_metrics,
+        "totalMs": elapsed_ms(started_at),
+    }
+    return summary
 
 
 def build_parser() -> argparse.ArgumentParser:
