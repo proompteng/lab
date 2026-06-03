@@ -715,7 +715,8 @@ class LiveScanCycleTest(unittest.TestCase):
 
         self.assertEqual(summary["action"], "run_strategy_order_guard")
         self.assertEqual(summary["actionableCandidateCount"], 2)
-        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertEqual(summary["blockedResultCount"], 0)
+        self.assertEqual(summary["noTradeResultCount"], 1)
         self.assertEqual(summary["bestCandidate"]["symbol"], "NVDA")
         self.assertEqual(summary["bestCandidate"]["side"], "buy")
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-nvda")
@@ -928,6 +929,7 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["action"], "no_actionable_candidate")
         self.assertEqual(summary["actionableCandidateCount"], 0)
         self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertEqual(summary["noTradeResultCount"], 0)
         self.assertIsNone(summary["bestCandidate"])
 
     def test_decision_summary_blocks_sub_two_r_candidates(self) -> None:
@@ -961,6 +963,7 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["action"], "no_actionable_candidate")
         self.assertEqual(summary["actionableCandidateCount"], 0)
         self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertEqual(summary["noTradeResultCount"], 0)
         self.assertIsNone(summary["bestCandidate"])
 
     def test_decision_summary_blocks_negative_scorecard_history(self) -> None:
@@ -1030,7 +1033,8 @@ class LiveScanCycleTest(unittest.TestCase):
 
         self.assertEqual(summary["action"], "no_actionable_candidate")
         self.assertEqual(summary["actionableCandidateCount"], 0)
-        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertEqual(summary["blockedResultCount"], 0)
+        self.assertEqual(summary["noTradeResultCount"], 1)
         self.assertIsNone(summary["bestCandidate"])
 
     def test_records_scan_tickets_to_synthesis_with_ticket_ids(self) -> None:
