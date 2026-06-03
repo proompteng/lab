@@ -4809,6 +4809,111 @@ class TestTradingPipeline(TestCase):
                 "paper_route_target_price_retry_pending",
             )
 
+    def test_simple_pipeline_scans_target_price_retry_without_new_signal(self) -> None:
+        from app import config
+
+        event_ts = datetime(2026, 5, 29, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 2
+        config.settings.trading_simple_paper_route_probe_retry_batch_limit = 4
+        config.settings.trading_simple_paper_route_probe_retry_scan_limit = 16
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-target-price-retry-scan",
+                description="simple paper target source price retry scan",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=event_ts,
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                rationale="paper-route-target-source",
+                params={
+                    "paper_route_target_plan": {
+                        "candidate_id": "candidate-1",
+                        "hypothesis_id": "H-PAIRS-01",
+                    },
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "paper",
+            )
+            decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
+            params = dict(cast(Mapping[str, Any], decision_json.get("params") or {}))
+            params["simple_lane_precheck"] = {
+                "price": None,
+                "requested_qty": "1",
+            }
+            decision_json.update(
+                {
+                    "params": params,
+                    "submission_stage": "rejected_pre_submit",
+                    "risk_reasons": ["broker_precheck_failed"],
+                    "reject_reason_atomic": ["broker_precheck_failed"],
+                }
+            )
+            decision_row.status = "rejected"
+            decision_row.decision_json = decision_json
+            session.add(decision_row)
+            session.commit()
+
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=executor,
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=datetime(2026, 5, 29, 14, 5, tzinfo=timezone.utc),
+            ):
+                retries = pipeline._paper_route_probe_retry_decisions(session=session)
+                self.assertEqual([retry.symbol for retry in retries], ["AAPL"])
+                pending = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=retries[0],
+                    strategy=strategy,
+                )
+
+            self.assertIsNotNone(pending)
+            session.refresh(decision_row)
+            refreshed_json = cast(dict[str, Any], decision_row.decision_json)
+            self.assertEqual(decision_row.status, "planned")
+            self.assertEqual(
+                refreshed_json.get("submission_stage"),
+                "paper_route_target_price_retry_pending",
+            )
+            self.assertEqual(
+                refreshed_json.get("paper_route_target_price_retry_attempts"),
+                1,
+            )
+
     def test_simple_pipeline_retry_helpers_filter_invalid_rows_and_limits(
         self,
     ) -> None:
