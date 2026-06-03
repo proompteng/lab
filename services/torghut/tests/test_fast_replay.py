@@ -221,6 +221,10 @@ class TestFastReplayPreview(TestCase):
             "counterfactual_regime_replay_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "nonlinear_impact_execution_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -343,6 +347,26 @@ class TestFastReplayPreview(TestCase):
             {
                 source["source_id"]
                 for source in row_payload["counterfactual_regime_replay_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn("nonlinear_impact_execution_stress", row_payload)
+        self.assertFalse(
+            row_payload["nonlinear_impact_execution_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["nonlinear_impact_execution_stress"]["promotion_authority"]
+        )
+        self.assertEqual(
+            row_payload["nonlinear_impact_execution_stress"]["status"],
+            "preview_only_nonlinear_impact_execution_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2603.29086",
+            {
+                source["source_id"]
+                for source in row_payload["nonlinear_impact_execution_stress"][
                     "source_papers"
                 ]
             },
