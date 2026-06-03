@@ -1001,13 +1001,17 @@ def record_scan_tickets(
     return recorded
 
 
-def candidate_score(result: dict[str, Any]) -> tuple[Decimal, int, int, Decimal]:
+def candidate_score(result: dict[str, Any]) -> tuple[Decimal, Decimal, int, int, Decimal]:
     grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
     grade_score = {"A+": 3, "A": 2, "B": 1}.get(grade, 0)
     expected_r = decimal_value(result.get("expected_r") or result.get("expectedR")) or Decimal("0")
     sample_size = int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize"))
+    avg_realized_r = decimal_value(result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR"))
+    scorecard_edge = (
+        avg_realized_r if sample_size > 0 and avg_realized_r is not None and avg_realized_r > 0 else Decimal("0")
+    )
     confidence = decimal_value(result.get("scorecard_confidence") or result.get("scorecardConfidence")) or Decimal("0")
-    return expected_r, grade_score, sample_size, confidence
+    return expected_r + scorecard_edge, expected_r, grade_score, sample_size, confidence
 
 
 def actionable_candidate_for_result(
@@ -1066,7 +1070,7 @@ def decision_summary_for_scan(
         for ticket in recorded_tickets
         if isinstance(ticket, dict) and optional_text(ticket.get("idempotencyKey"))
     }
-    candidates: list[tuple[tuple[int, Decimal, int, Decimal], dict[str, Any]]] = []
+    candidates: list[tuple[tuple[Decimal, Decimal, int, int, Decimal], dict[str, Any]]] = []
     blocked_count = 0
     no_trade_count = 0
     for index, result in enumerate(results, start=1):
