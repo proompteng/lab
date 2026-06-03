@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,8 @@ from typing import Any
 import live_scan_cycle
 import strategy_order_guard
 from synthesis_autotrader_client import SynthesisClient
+
+MAX_CLIENT_ORDER_ID_LENGTH = 128
 
 
 def parse_datetime(value: str | None) -> datetime:
@@ -147,6 +151,21 @@ def cycle_action(summary: dict[str, Any]) -> str:
         candidate = guard.get("candidate")
         if not isinstance(candidate, dict):
             candidate = {}
+        intent = summary.get("brokerOrderIntent")
+        if guard.get("allowed") is True and isinstance(intent, dict):
+            if intent.get("state") == "ready":
+                return (
+                    "market_open_cycle_order_intent_ready; "
+                    f"ticketId={intent.get('ticketId')}; "
+                    f"symbol={intent.get('symbol')}; "
+                    f"clientOrderId={intent.get('clientOrderId')}"
+                )
+            return (
+                "market_open_cycle_order_intent_blocked; "
+                f"ticketId={intent.get('ticketId')}; "
+                f"symbol={intent.get('symbol')}; "
+                f"reason={intent.get('reason')}"
+            )
         state = "allowed" if guard.get("allowed") is True else "blocked"
         return (
             f"market_open_cycle_guard_{state}; "
@@ -169,6 +188,11 @@ def cycle_blocker(summary: dict[str, Any]) -> str | None:
     blocker = summary.get("blocker")
     if isinstance(blocker, str) and blocker.strip():
         return blocker.strip()
+    intent = summary.get("brokerOrderIntent")
+    if isinstance(intent, dict) and intent.get("state") == "blocked":
+        reason = live_scan_cycle.optional_text(intent.get("reason"), max_length=240)
+        if reason:
+            return reason
     guard = summary.get("strategyGuard")
     if isinstance(guard, dict) and guard.get("allowed") is not True:
         reason = live_scan_cycle.optional_text(guard.get("reason"), max_length=240)
@@ -284,6 +308,134 @@ def run_strategy_guard_for_summary(args: argparse.Namespace, summary: dict[str, 
     }
 
 
+def broker_order_client_id(
+    *,
+    agent_run_name: str,
+    session_id: str,
+    cycle: int,
+    ticket_id: str,
+    symbol: str,
+) -> str:
+    prefix = re.sub(r"[^A-Za-z0-9_-]+", "-", agent_run_name.strip()) or "autonomous-trader"
+    symbol_part = re.sub(r"[^A-Za-z0-9_-]+", "-", symbol.strip().upper()) or "UNKNOWN"
+    digest = hashlib.sha256(f"{session_id}:{cycle}:{ticket_id}:{symbol_part}".encode("utf-8")).hexdigest()[:10]
+    suffix = f"c{cycle}-{symbol_part}-{digest}"
+    max_prefix_length = MAX_CLIENT_ORDER_ID_LENGTH - len(suffix) - 1
+    safe_prefix = prefix[: max(1, max_prefix_length)].rstrip("-_") or "autonomous-trader"
+    return f"{safe_prefix}-{suffix}"
+
+
+def broker_order_intent_for_summary(
+    *,
+    args: argparse.Namespace,
+    session_id: str,
+    summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    guard = summary.get("strategyGuard")
+    if not isinstance(guard, dict) or guard.get("allowed") is not True:
+        return None
+    decision = summary.get("decisionSummary")
+    candidate = decision.get("bestCandidate") if isinstance(decision, dict) else None
+    if not isinstance(candidate, dict):
+        return {
+            "source": "market_open_cycle",
+            "state": "blocked",
+            "reason": "broker_order_intent_missing_candidate",
+            "missingFields": ["candidate"],
+        }
+    risk_directive = candidate.get("riskDirective")
+    quantity = live_scan_cycle.numeric_text(
+        candidate.get("plannedQuantity")
+        or (risk_directive.get("plannedQuantity") if isinstance(risk_directive, dict) else None)
+    )
+    risk_dollars = live_scan_cycle.numeric_text(
+        candidate.get("riskDollars")
+        or (risk_directive.get("recommendedRiskDollars") if isinstance(risk_directive, dict) else None)
+    )
+    values = {
+        "ticketId": live_scan_cycle.optional_text(candidate.get("ticketId"), max_length=240),
+        "symbol": live_scan_cycle.optional_text(candidate.get("symbol"), max_length=32),
+        "side": live_scan_cycle.optional_text(candidate.get("side"), max_length=32),
+        "quantity": quantity,
+        "entryLimitPrice": live_scan_cycle.numeric_text(candidate.get("entryLimitPrice")),
+        "takeProfitLimitPrice": live_scan_cycle.numeric_text(candidate.get("targetPrice")),
+        "stopLossStopPrice": live_scan_cycle.numeric_text(candidate.get("stopPrice")),
+        "riskDollars": risk_dollars,
+        "actualBracketR": live_scan_cycle.numeric_text(candidate.get("actualBracketR")),
+    }
+    missing = [key for key, value in values.items() if not value]
+    if not isinstance(risk_directive, dict):
+        missing.append("riskDirective")
+    if values.get("side") not in {"buy", "sell"} and "side" not in missing:
+        missing.append("side")
+    cycle = live_scan_cycle.int_text_value(summary.get("cycle"))
+    common = {
+        "source": "market_open_cycle",
+        "cycle": cycle,
+        "strategyGuardReason": guard.get("reason"),
+        "ticketId": values.get("ticketId"),
+        "symbol": values.get("symbol"),
+        "side": values.get("side"),
+        "quantity": values.get("quantity"),
+        "entryLimitPrice": values.get("entryLimitPrice"),
+        "takeProfitLimitPrice": values.get("takeProfitLimitPrice"),
+        "stopLossStopPrice": values.get("stopLossStopPrice"),
+        "riskDollars": values.get("riskDollars"),
+        "actualBracketR": values.get("actualBracketR"),
+        "riskDirective": risk_directive if isinstance(risk_directive, dict) else None,
+    }
+    if missing:
+        return {
+            **common,
+            "state": "blocked",
+            "reason": "broker_order_intent_missing_fields",
+            "missingFields": missing,
+        }
+    client_order_id = broker_order_client_id(
+        agent_run_name=args.agent_run_name,
+        session_id=session_id,
+        cycle=cycle,
+        ticket_id=str(values["ticketId"]),
+        symbol=str(values["symbol"]),
+    )
+    alpaca_payload = {
+        "symbol": str(values["symbol"]).upper(),
+        "qty": str(values["quantity"]),
+        "side": values["side"],
+        "type": "limit",
+        "time_in_force": "day",
+        "limit_price": values["entryLimitPrice"],
+        "order_class": "bracket",
+        "client_order_id": client_order_id,
+        "take_profit": {"limit_price": values["takeProfitLimitPrice"]},
+        "stop_loss": {"stop_price": values["stopLossStopPrice"]},
+    }
+    synthesis_order = {
+        "sessionId": session_id,
+        "ticketId": values["ticketId"],
+        "clientOrderId": client_order_id,
+        "symbol": str(values["symbol"]).upper(),
+        "instrument": "stock",
+        "side": values["side"],
+        "quantity": values["quantity"],
+        "orderType": "limit",
+        "orderClass": "bracket",
+        "limitPrice": values["entryLimitPrice"],
+        "takeProfitLimitPrice": values["takeProfitLimitPrice"],
+        "stopLossStopPrice": values["stopLossStopPrice"],
+        "status": "planned",
+        "brokerPayload": alpaca_payload,
+    }
+    return {
+        **common,
+        "state": "ready",
+        "reason": "strategy_guard_allowed_broker_intent_ready",
+        "clientOrderId": client_order_id,
+        "alpacaBracketPayload": alpaca_payload,
+        "synthesisRecordOrderInput": synthesis_order,
+    }
+
+
 def record_cycle_complete(
     *,
     synthesis: SynthesisClient,
@@ -305,6 +457,7 @@ def record_cycle_complete(
         "topResults": summary.get("topResults"),
         "decisionSummary": summary.get("decisionSummary"),
         "strategyGuard": summary.get("strategyGuard"),
+        "brokerOrderIntent": summary.get("brokerOrderIntent"),
         "accountGate": summary.get("accountGate"),
         "marketWindow": summary.get("marketWindow"),
         "windowGate": summary.get("windowGate"),
@@ -347,6 +500,15 @@ def strategy_guard_report_value(summary: dict[str, Any]) -> str:
     if guard.get("allowed") is True:
         return f"allowed:{guard.get('reason')}"
     return f"blocked:{guard.get('reason')}"
+
+
+def broker_order_intent_report_value(summary: dict[str, Any]) -> str:
+    intent = summary.get("brokerOrderIntent")
+    if not isinstance(intent, dict):
+        return "not_ready"
+    if intent.get("state") == "ready":
+        return f"ready:{intent.get('clientOrderId')}"
+    return f"blocked:{intent.get('reason')}"
 
 
 def scan_args_for(args: argparse.Namespace, *, session_id: str, work_dir: Path) -> argparse.Namespace:
@@ -410,6 +572,7 @@ def write_report(path: Path, result: dict[str, Any]) -> None:
         f"recorded_ticket_count: {recorded_ticket_count(summary)}",
         f"scorecard_count: {scorecard_count(summary)}",
         f"strategy_guard: {strategy_guard_report_value(summary)}",
+        f"broker_order_intent: {broker_order_intent_report_value(summary)}",
     ]
     if isinstance(management, dict) and management.get("primaryAction"):
         lines.extend(
@@ -455,6 +618,9 @@ def run_market_open_cycle(
         strategy_guard = run_strategy_guard_for_summary(args, summary)
         if strategy_guard is not None:
             summary["strategyGuard"] = strategy_guard
+            broker_order_intent = broker_order_intent_for_summary(args=args, session_id=session_id, summary=summary)
+            if broker_order_intent is not None:
+                summary["brokerOrderIntent"] = broker_order_intent
     else:
         summary = market_window_skip_summary(args=args, work_dir=work_dir, window=window)
     output = {
@@ -487,6 +653,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retain-cycles", type=int, default=5)
     parser.add_argument("--max-recorded-tickets", type=int, default=10)
     parser.add_argument("--report-path", default="/workspace/.agentrun/autonomous-trader/report.md")
+    parser.add_argument("--agent-run-name", default=os.environ.get("AGENT_RUN_NAME", "autonomous-trader-market-open"))
     parser.add_argument("--now")
     parser.add_argument("--self-test", action="store_true")
     return parser

@@ -35,10 +35,10 @@ data:
     3. Do not call `autotrader_start_session` unless `${AUTONOMOUS_TRADER_WORK_DIR}/session.json` is missing or invalid; otherwise reuse the recorded session.
     4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/market_open_cycle.py`; runner owns session loading, market-hour waiting, account gate, scan, scorecard/tickets, best-candidate guard, `last-cycle.json`, and checkpoint.
     5. Do not manually scan, recreate tickets, run candidate guards, or smoke orders for runner candidates. Use runner `ticketId`, `noTradeReason`, `strategyGuard`, and `blocker` as authoritative.
-    6. Only plan new broker risk after the runner returns `strategyGuard.allowed=true` for a candidate.
-    7. Size new broker risk from runner `decisionSummary.bestCandidate.riskDirective`: use `recommendedRiskDollars` when present, otherwise honor `riskMultiplier` inside account/day-trade limits. Positive scorecard edge should be acted on aggressively; unproven or negative history must not be enlarged or bypass gates.
+    6. Only create new broker orders from runner `brokerOrderIntent.state=ready`. If it is absent or blocked, record/report that runner state and stand down from new entries until runner output changes.
+    7. Use runner `brokerOrderIntent.clientOrderId`, `alpacaBracketPayload`, and `synthesisRecordOrderInput` exactly. The runner already sized risk from `decisionSummary.bestCandidate.riskDirective` and `recommendedRiskDollars`. Positive scorecard edge should be acted on aggressively only through that ready intent; do not rebuild sizing, bracket prices, or client order ids in the prompt.
     8. If runner `accountGate.positionManagement.actionRequired=true`, manage the existing broker state before any new entry: repair or flatten unprotected/invalid stops, tighten stops to the runner `recommendedStopPrice` when provided, record the replacement order in Synthesis, then refresh broker state.
-    9. Before Alpaca mutation, record planned risk/order in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when supported.
+    9. Before Alpaca mutation, record planned risk/order in Synthesis from `brokerOrderIntent.synthesisRecordOrderInput`.
     10. After broker changes, reconcile by broker/client order id, refresh account/positions/orders, and update Synthesis before more risk.
     11. Continue until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
 
