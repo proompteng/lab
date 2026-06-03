@@ -629,6 +629,128 @@ def test_url_payload_prefers_nested_hpairs_materialization_plan(
     assert _count_decisions(sqlite_dsn) == 0
 
 
+def test_commit_url_nested_plan_with_dynamic_confirmation_writes_targets(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "targets": [
+            {
+                "hypothesis_id": "H-TSMOM-LIQ-01",
+                "candidate_id": "source-window-only",
+                "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                "account_label": "TORGHUT_SIM",
+                "source_manifest_ref": "config/trading/hypotheses/h-tsmom-liq-01.json",
+                "observed_stage": "paper",
+                "source_collection_authorized": True,
+                "max_notional": "0",
+            }
+        ],
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
+        },
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "25",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            cli.DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "25",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["mode"] == "commit"
+    assert report["materialized"] is True
+    assert report["dynamic_target_plan_confirmation"] is True
+    assert (
+        report["plan_source"]["selected_plan"]
+        == cli.DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE
+    )
+    assert report["candidate_ids"] == ["c88421d619759b2cfaa6f4d0"]
+    assert report["target_plan_refs"] == ["paper-route-plan:c88421d619759b2cfaa6f4d0"]
+    assert report["materialized_decision_count"] == 2
+    assert report["route_submission_count"] == 2
+    assert report["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 2
+
+
+def test_commit_dynamic_confirmation_rejects_wrong_selected_plan_source(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
+        },
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "25",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            "payload",
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "25",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 2
+    assert (
+        "paper_route_materialization_commit_confirm_selected_plan_source_missing"
+        in report["blockers"]
+    )
+    assert report["materialized"] is False
+    assert _count_decisions(sqlite_dsn) == 0
+
+
 def test_paper_route_target_plan_missing_dsn_live_capital_mode_and_empty_plan_are_blockers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

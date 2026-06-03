@@ -37,6 +37,7 @@ resources:
   - empirical-artifacts-objectbucketclaim.yaml
   - empirical-jobs-backfill-job.yaml
   - empirical-promotion-renewal-cronjob.yaml
+  - bounded-paper-route-target-materialization-cronjob.yaml
   - order-feed-source-window-repair-cronjob.yaml
   - empirical-artifacts-retention-cronjob.yaml
   - execution-tca-refresh-cronjob.yaml
