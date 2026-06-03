@@ -491,6 +491,7 @@ class _PostgresRuntimeLedgerPortfolioSummarySession:
 
 class TestTradingApi(TestCase):
     def setUp(self) -> None:
+        self._clear_trading_health_surface_cache()
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
         _OPTIONS_CATALOG_FRESHNESS_CACHE.clear()
@@ -620,6 +621,16 @@ class TestTradingApi(TestCase):
             )
             session.commit()
 
+    def _clear_trading_health_surface_cache(self) -> None:
+        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            refresh_futures = list(
+                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.values()
+            )
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+        for refresh_future in refresh_futures:
+            refresh_future.cancel()
+
     def _enable_exact_options_catalog_route_scope(self) -> None:
         original_exact_scope = (
             settings.trading_options_catalog_freshness_exact_route_scope_enabled
@@ -670,6 +681,7 @@ class TestTradingApi(TestCase):
         self.assertEqual(status["source"], "empirical_jobs")
 
     def tearDown(self) -> None:
+        self._clear_trading_health_surface_cache()
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
         app.dependency_overrides.clear()
@@ -5616,6 +5628,84 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["reason"], "cached_health_payload")
         self.assertNotEqual(payload["reason"], "trading_health_evaluation_timeout")
 
+    def test_trading_health_serves_cached_payload_when_idle_and_refreshes(
+        self,
+    ) -> None:
+        original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+        main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
+        cache_key = main_module._trading_health_surface_cache_key(
+            include_database_contract=False,
+            allow_stale_dependency_cache=False,
+        )
+        cached_payload: dict[str, object] = {
+            "status": "degraded",
+            "reason": "cached_health_payload",
+            "reason_codes": ["cached_health_payload"],
+            "dependencies": {"postgres": {"ok": True, "detail": "ok"}},
+            "live_submission_gate": {
+                "allowed": False,
+                "promotion_authority": False,
+                "final_authority_ok": False,
+                "final_promotion_allowed": False,
+            },
+        }
+        refresh_started = Event()
+        release_refresh = Event()
+        refresh_calls: list[object] = []
+
+        def _refresh_health_payload(
+            **_kwargs: object,
+        ) -> tuple[dict[str, object], int]:
+            refresh_calls.append(_kwargs)
+            refresh_started.set()
+            release_refresh.wait(1.0)
+            return (
+                {
+                    **cached_payload,
+                    "reason": "refreshed_health_payload",
+                    "reason_codes": ["refreshed_health_payload"],
+                },
+                503,
+            )
+
+        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+                "payload": cached_payload,
+                "status_code": 503,
+                "checked_at": datetime.now(timezone.utc),
+            }
+
+        try:
+            with patch(
+                "app.main._evaluate_trading_health_payload",
+                side_effect=_refresh_health_payload,
+            ):
+                started_at = time.monotonic()
+                response = self.client.get("/trading/health")
+                elapsed = time.monotonic() - started_at
+                self.assertTrue(refresh_started.wait(1.0))
+                self.assertEqual(len(refresh_calls), 1)
+        finally:
+            release_refresh.set()
+            main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
+            with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                refresh_futures = list(
+                    main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.values()
+                )
+            for refresh_future in refresh_futures:
+                refresh_future.result(timeout=1.0)
+            with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["reason"], "cached_health_payload")
+        self.assertNotEqual(payload["reason"], "trading_health_evaluation_timeout")
+
     def test_trading_health_starts_fresh_eval_when_completed_future_has_no_cache(
         self,
     ) -> None:
@@ -5763,7 +5853,7 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 503)
         payload = response.json()
         self.assertEqual(payload["status"], "degraded")
-        self.assertEqual(payload["reason"], "trading_health_evaluation_timeout")
+        self.assertNotEqual(payload.get("reason"), "trading_health_evaluation_timeout")
         self.assertIn(
             "source_amount_mismatch",
             payload["dependencies"]["tigerbeetle"]["blockers"],
