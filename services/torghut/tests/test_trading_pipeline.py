@@ -7953,6 +7953,121 @@ class TestTradingPipeline(TestCase):
                 )
             )
 
+    def test_materialized_target_plan_quote_routeability_retry_reopens_row(
+        self,
+    ) -> None:
+        from app import config
+
+        event_ts = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 2
+        config.settings.trading_simple_paper_route_probe_retry_batch_limit = 4
+        config.settings.trading_simple_paper_route_probe_retry_scan_limit = 16
+
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="bounded H-PAIRS materialized target",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"params": {}},
+                decision_hash="materialized-quote-retry",
+                status="planned",
+                created_at=event_ts,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=event_ts,
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                rationale="materialized target",
+                params={
+                    "paper_route_materialized_trade_decision_id": str(row.id),
+                    "paper_route_target_plan": {
+                        "candidate_id": "cand-materialized-retry",
+                        "hypothesis_id": "H-PAIRS-01",
+                    },
+                    "paper_route_target_plan_source_decision": {
+                        "candidate_id": "cand-materialized-retry",
+                        "hypothesis_id": "H-PAIRS-01",
+                    },
+                    "quote_routeability": {
+                        "schema_version": "torghut.paper-route-quote-routeability.v1",
+                        "status": "blocked",
+                        "reason": "spread_bps_exceeded",
+                    },
+                },
+            )
+            decision_json = decision.model_dump(mode="json")
+            decision_json["submission_stage"] = "rejected_pre_submit"
+            decision_json["reject_reason_atomic"] = ["spread_bps_exceeded"]
+            row.status = "rejected"
+            row.decision_json = decision_json
+            session.add(row)
+            session.commit()
+
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=event_ts,
+            ):
+                retries = pipeline._paper_route_probe_retry_decisions(session=session)
+                self.assertEqual([retry.symbol for retry in retries], ["AAPL"])
+                reopened = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=retries[0],
+                    strategy=strategy,
+                )
+
+            self.assertIsNotNone(reopened)
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+            row_params = cast(dict[str, Any], row_json.get("params"))
+
+            self.assertEqual(row.status, "planned")
+            self.assertEqual(
+                row_json.get("submission_stage"),
+                "paper_route_quote_routeability_retry_pending",
+            )
+            self.assertNotIn("quote_routeability", row_params)
+            self.assertEqual(
+                row_json.get("paper_route_quote_routeability_retry_attempts"),
+                1,
+            )
+
     def test_simple_pipeline_signal_cycle_still_generates_target_plan_source_decision(
         self,
     ) -> None:

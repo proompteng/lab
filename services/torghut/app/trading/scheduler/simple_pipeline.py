@@ -6147,6 +6147,8 @@ class SimpleTradingPipeline(TradingPipeline):
         if self._proof_floor_submission_block_reason(proof_floor) is None:
             return None
 
+        self.executor.update_decision_params(session, decision_row, decision.params)
+        self.executor.sync_decision_state(session, decision_row, decision)
         decision_row.status = "planned"
         decision_row.created_at = trading_now(account_label=self.account_label)
         decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
@@ -6198,7 +6200,13 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         if decision_row.alpaca_account_label != self.account_label:
             return None
-        if decision_row.status != "planned":
+        retryable_status = decision_row.status in {"blocked", "rejected"} and (
+            self._paper_route_quote_routeability_retry_metadata(decision_row)
+            is not None
+            or self._paper_route_target_price_retry_metadata(decision_row) is not None
+            or self._paper_route_probe_retry_metadata(decision_row) is not None
+        )
+        if decision_row.status != "planned" and not retryable_status:
             return None
         if self.executor.execution_exists(session, decision_row):
             return None
@@ -6206,10 +6214,11 @@ class SimpleTradingPipeline(TradingPipeline):
         decision_row.strategy_id = strategy.id
         decision_row.symbol = decision.symbol
         decision_row.timeframe = decision.timeframe
-        decision_row.decision_json = coerce_json_payload(
-            decision.model_dump(mode="json")
-        )
         decision_row.rationale = decision.rationale
+        if decision_row.status == "planned":
+            decision_row.decision_json = coerce_json_payload(
+                decision.model_dump(mode="json")
+            )
         session.add(decision_row)
         session.commit()
         session.refresh(decision_row)
@@ -6249,9 +6258,6 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         if reopened_quote_routeability is not None:
             return reopened_quote_routeability
-        if "paper_route_target_plan" in decision.params:
-            self.executor.update_decision_params(session, decision_row, decision.params)
-            self.executor.sync_decision_state(session, decision_row, decision)
         reopened_exit = self._reopen_rejected_paper_route_probe_exit_decision(
             session=session,
             decision=decision,
@@ -6266,6 +6272,16 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         if reopened_price_retry is not None:
             return reopened_price_retry
+        reopened_bounded_collection = self._reopen_bounded_sim_collection_decision(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+        )
+        if reopened_bounded_collection is not None:
+            return reopened_bounded_collection
+        if "paper_route_target_plan" in decision.params:
+            self.executor.update_decision_params(session, decision_row, decision.params)
+            self.executor.sync_decision_state(session, decision_row, decision)
         if (
             decision_row.status == "planned"
             and self._paper_route_target_source_cap(decision.params) is not None
@@ -6274,13 +6290,6 @@ class SimpleTradingPipeline(TradingPipeline):
             session.add(decision_row)
             session.commit()
             session.refresh(decision_row)
-        reopened_bounded_collection = self._reopen_bounded_sim_collection_decision(
-            session=session,
-            decision=decision,
-            decision_row=decision_row,
-        )
-        if reopened_bounded_collection is not None:
-            return reopened_bounded_collection
         if (
             _safe_text(
                 decision.params.get("paper_route_materialized_trade_decision_id")
