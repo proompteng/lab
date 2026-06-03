@@ -464,7 +464,7 @@ def _schema_heads_signature(heads: tuple[str, ...]) -> str:
     return hashlib.sha256(",".join(heads).encode("utf-8")).hexdigest()
 
 
-_POSTGRES_SCHEMA_HEAD_STATEMENT_TIMEOUT_MS = 150
+_POSTGRES_SCHEMA_HEAD_STATEMENT_TIMEOUT_MS = 750
 
 
 def _current_schema_heads(session: Session) -> list[str]:
