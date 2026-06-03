@@ -114,6 +114,30 @@ PROMOTION_ONLY_READINESS_BLOCKERS = frozenset(
         "promotion_decision_not_allowed",
     }
 )
+SOURCE_BACKED_RUNTIME_LEDGER_SATISFIED_BLOCKERS = frozenset(
+    {
+        "closed_round_trip_missing",
+        "filled_notional_missing",
+        "paper_route_runtime_ledger_import_pending",
+        "paper_route_session_window_closed",
+        "runtime_ledger_bucket_missing",
+        "runtime_ledger_candidate_mismatch",
+        "runtime_ledger_closed_trades_missing",
+        "runtime_ledger_evidence_grade_bucket_missing",
+        "runtime_ledger_expectancy_missing",
+        "runtime_ledger_filled_notional_missing",
+        "runtime_ledger_post_cost_expectancy_missing",
+        "runtime_ledger_source_window_evidence_pending",
+        "source_closed_round_trip_missing",
+        "unclosed_position",
+    }
+)
+SOURCE_BACKED_POSITIVE_PNL_SATISFIED_BLOCKERS = frozenset(
+    {
+        "post_cost_pnl_non_positive",
+        "runtime_ledger_post_cost_pnl_non_positive",
+    }
+)
 CLEAN_WINDOW_BASELINE_SCHEMA_VERSION = "torghut.paper-route-clean-window-baseline.v1"
 SOURCE_LINEAGE_CANDIDATE_KEYS = (
     "candidate_id",
@@ -6000,7 +6024,48 @@ def _readiness_blockers(
         latest = _as_mapping(promotion_decisions.get("latest"))
         if not bool(latest.get("allowed")):
             blockers.add("promotion_decision_not_allowed")
+    blockers.difference_update(
+        _source_backed_runtime_ledger_satisfied_blockers(
+            source_activity=source_activity,
+            account_close_state=account_close_state,
+            runtime_ledger=runtime_ledger,
+        )
+    )
     return sorted(blockers)
+
+
+def _source_backed_runtime_ledger_satisfied_blockers(
+    *,
+    source_activity: Mapping[str, object],
+    account_close_state: Mapping[str, object],
+    runtime_ledger: Mapping[str, object],
+) -> set[str]:
+    source_lifecycle = _as_mapping(source_activity.get("source_lifecycle"))
+    if bool(source_activity.get("missing")):
+        return set()
+    if _unique_text_items(source_activity.get("source_lifecycle_blockers")):
+        return set()
+    if _unique_text_items(source_activity.get("source_reference_blockers")):
+        return set()
+    if _unique_text_items(account_close_state.get("blockers")):
+        return set()
+    if not bool(account_close_state.get("zero_open_position_evidence")):
+        return set()
+    if not bool(source_lifecycle.get("closed_round_trip_evidence")):
+        return set()
+    if _safe_int(runtime_ledger.get("evidence_grade_bucket_count")) <= 0:
+        return set()
+    if _safe_int(runtime_ledger.get("closed_trade_count")) <= 0:
+        return set()
+    if _safe_int(runtime_ledger.get("open_position_count")) != 0:
+        return set()
+    if _safe_decimal(runtime_ledger.get("filled_notional")) <= 0:
+        return set()
+
+    satisfied = set(SOURCE_BACKED_RUNTIME_LEDGER_SATISFIED_BLOCKERS)
+    if _safe_decimal(runtime_ledger.get("net_strategy_pnl_after_costs")) > 0:
+        satisfied.update(SOURCE_BACKED_POSITIVE_PNL_SATISFIED_BLOCKERS)
+    return satisfied
 
 
 def _source_backed_import_ready_metadata(
@@ -6055,6 +6120,13 @@ def _source_backed_import_ready_metadata(
         "runtime_ledger_db_row_refs": _unique_text_items(
             runtime_ledger.get("db_row_refs")
         ),
+        "stale_blockers_satisfied_by_source_backed_evidence": sorted(
+            _source_backed_runtime_ledger_satisfied_blockers(
+                source_activity=source_activity,
+                account_close_state=account_close_state,
+                runtime_ledger=runtime_ledger,
+            )
+        ),
         "blockers": _unique_text_items(
             [
                 *(
@@ -6079,6 +6151,7 @@ def _target_evidence_readback_diagnostics(
     *,
     target: Mapping[str, object],
     source_activity: Mapping[str, object],
+    account_close_state: Mapping[str, object] | None = None,
     runtime_ledger: Mapping[str, object],
     promotion_decisions: Mapping[str, object],
     readiness_blockers: Sequence[str],
@@ -6133,10 +6206,19 @@ def _target_evidence_readback_diagnostics(
         state = "source_decisions_present"
     else:
         state = "no_source_activity"
+    stale_runtime_ledger_blockers = _source_backed_runtime_ledger_satisfied_blockers(
+        source_activity=source_activity,
+        account_close_state=_as_mapping(account_close_state),
+        runtime_ledger=runtime_ledger,
+    )
     promotion_authority_blockers = _unique_text_items(
         [
             *readiness_blockers,
-            *_unique_text_items(runtime_ledger.get("blockers")),
+            *[
+                blocker
+                for blocker in _unique_text_items(runtime_ledger.get("blockers"))
+                if blocker not in stale_runtime_ledger_blockers
+            ],
             *(
                 ["final_promotion_authority_blocked"]
                 if not bool(target.get("final_promotion_allowed"))
@@ -7098,6 +7180,7 @@ def _target_audit(
     evidence_readback = _target_evidence_readback_diagnostics(
         target=target,
         source_activity=source_activity,
+        account_close_state=account_close_state,
         runtime_ledger=runtime_ledger,
         promotion_decisions=promotion_decisions,
         readiness_blockers=blockers,
@@ -7753,6 +7836,13 @@ def _runtime_window_target_blockers(
         account_close_state = _as_mapping(audit.get("account_close_state"))
         runtime_ledger = _as_mapping(audit.get("runtime_ledger"))
         promotion_decisions = _as_mapping(audit.get("promotion_decisions"))
+        stale_runtime_ledger_blockers = (
+            _source_backed_runtime_ledger_satisfied_blockers(
+                source_activity=source_activity,
+                account_close_state=account_close_state,
+                runtime_ledger=runtime_ledger,
+            )
+        )
 
         blockers = _unique_text_items(
             [
@@ -7790,7 +7880,11 @@ def _runtime_window_target_blockers(
                     if _safe_int(runtime_ledger.get("evidence_grade_bucket_count")) <= 0
                     else []
                 ),
-                *_unique_text_items(runtime_ledger.get("blockers")),
+                *[
+                    blocker
+                    for blocker in _unique_text_items(runtime_ledger.get("blockers"))
+                    if blocker not in stale_runtime_ledger_blockers
+                ],
                 *(
                     ["promotion_decision_missing"]
                     if _safe_int(promotion_decisions.get("decision_count")) <= 0
