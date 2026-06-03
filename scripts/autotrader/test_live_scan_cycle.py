@@ -536,7 +536,12 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setupType": "vwap_reclaim",
                         "setupGrade": "A",
                         "sampleSize": 2,
+                        "wins": 2,
+                        "losses": 0,
+                        "scratches": 0,
                         "avgRealizedR": "3.042857",
+                        "avgMaeR": "-0.25",
+                        "lastOutcome": "win",
                         "confidence": "0.1667",
                     }
                 ]
@@ -556,7 +561,13 @@ class LiveScanCycleTest(unittest.TestCase):
         result = scan["results"][0]
         self.assertEqual(scan["scorecardOverlay"]["appliedResultCount"], 1)
         self.assertEqual(result["scorecard_sample_size"], "2")
+        self.assertEqual(result["scorecard_wins"], "2")
+        self.assertEqual(result["scorecard_losses"], "0")
+        self.assertEqual(result["scorecard_win_rate"], "1")
+        self.assertEqual(result["scorecard_loss_rate"], "0")
         self.assertEqual(result["scorecard_avg_realized_r"], "3.042857")
+        self.assertEqual(result["scorecard_avg_mae_r"], "-0.25")
+        self.assertEqual(result["scorecard_last_outcome"], "win")
         self.assertEqual(result["scorecard_overlay_source"], "synthesis_scorecards")
         self.assertEqual(summary["action"], "run_strategy_order_guard")
         self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
@@ -844,6 +855,55 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-amd")
         self.assertEqual(summary["candidateSymbols"], ["AMD"])
 
+    def test_decision_summary_quality_adjusts_scorecard_edge_by_loss_rate(self) -> None:
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=10,
+            scan={
+                "results": [
+                    {
+                        "symbol": "AVGO",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "3.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "103.00",
+                        "scorecard_sample_size": 2,
+                        "scorecard_wins": "1",
+                        "scorecard_losses": "1",
+                        "scorecard_avg_realized_r": "3.0",
+                    },
+                    {
+                        "symbol": "NVDA",
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "A",
+                        "expected_r": "3.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "103.00",
+                        "scorecard_sample_size": 2,
+                        "scorecard_wins": "2",
+                        "scorecard_losses": "0",
+                        "scorecard_avg_realized_r": "2.0",
+                    },
+                ]
+            },
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-10-1-AVGO-vwap_reclaim-A",
+                    "ticketId": "ticket-avgo",
+                },
+                {
+                    "idempotencyKey": "scan-cycle-10-2-NVDA-vwap_reclaim-A",
+                    "ticketId": "ticket-nvda",
+                },
+            ],
+        )
+
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["bestCandidate"]["symbol"], "NVDA")
+        self.assertEqual(summary["candidateSymbols"], ["NVDA", "AVGO"])
+
     def test_decision_summary_blocks_one_off_boost_and_prefers_repeated_positive_edge(self) -> None:
         summary = live_scan_cycle.decision_summary_for_scan(
             cycle=11,
@@ -928,6 +988,55 @@ class LiveScanCycleTest(unittest.TestCase):
                 "reason": "positive_scorecard_edge",
                 "baseRiskDollars": "125",
                 "recommendedRiskDollars": "175.0",
+            },
+        )
+
+    def test_ticket_payload_suppresses_risk_scale_after_latest_scorecard_loss(self) -> None:
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=9,
+            index=2,
+            result={
+                "symbol": "AMD",
+                "setup_type": "vwap_reclaim",
+                "setup_grade": "A",
+                "expected_r": "3.0",
+                "last": "100.00",
+                "support": "99.00",
+                "resistance": "103.00",
+                "risk_dollars": "125",
+                "scorecard_sample_size": 3,
+                "scorecard_wins": 2,
+                "scorecard_losses": 1,
+                "scorecard_avg_realized_r": "2.0",
+                "scorecard_last_outcome": "loss",
+                "scorecard_confidence": "0.25",
+            },
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["status"], "candidate")
+        self.assertEqual(
+            payload["brokerOrderPlan"]["riskDirective"],
+            {
+                "source": "scorecard_realized_r",
+                "mode": "scale_positive_quality_adjusted_realized_edge",
+                "riskMultiplier": "1.0",
+                "maxRiskMultiplier": "2.0",
+                "minimumScaleSampleSize": 2,
+                "scorecardSampleSize": 3,
+                "scorecardAvgRealizedR": "2.0",
+                "scorecardConfidence": "0.25",
+                "reason": "positive_scorecard_edge",
+                "scorecardWins": 2,
+                "scorecardLosses": 1,
+                "scorecardScratches": 0,
+                "scorecardWinRate": "0.666667",
+                "scorecardLossRate": "0.333333",
+                "scorecardLastOutcome": "loss",
+                "riskScaleSuppressedReason": "scorecard_last_outcome_loss",
+                "baseRiskDollars": "125",
+                "recommendedRiskDollars": "125.0",
             },
         )
 
