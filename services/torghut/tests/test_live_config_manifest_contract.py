@@ -1479,7 +1479,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--plan-url-attempts 3", args)
         self.assertIn("--database-dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--max-notional 25", args)
+        self.assertIn("--max-notional 75000", args)
         self.assertIn("--commit", args)
         self.assertIn("--allow-dynamic-target-plan", args)
         self.assertIn("--skip-unless-active-target-window", args)
@@ -1492,11 +1492,14 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertIn(
             "--confirm-selected-plan-source "
-            "live_submission_gate.runtime_ledger_paper_probation_import_plan",
+            "live_submission_gate.runtime_ledger_paper_probation_import_plan,"
+            "runtime_ledger_paper_probation_import_plan,"
+            "next_paper_route_runtime_window_targets,"
+            "next_clean_paper_route_runtime_window_targets_after_discard",
             args,
         )
         self.assertIn("--confirm-target-count-min 1", args)
-        self.assertIn("--confirm-max-notional 25", args)
+        self.assertIn("--confirm-max-notional 75000", args)
         self.assertIn(
             "--operator-confirmation MATERIALIZE_BOUNDED_TORGHUT_SIM_PAPER_ROUTE_TARGETS",
             args,

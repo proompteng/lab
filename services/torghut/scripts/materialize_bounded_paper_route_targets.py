@@ -32,6 +32,12 @@ OPERATOR_CONFIRMATION = "MATERIALIZE_BOUNDED_TORGHUT_SIM_PAPER_ROUTE_TARGETS"
 DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE = (
     "live_submission_gate.runtime_ledger_paper_probation_import_plan"
 )
+DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCES = (
+    DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+    "runtime_ledger_paper_probation_import_plan",
+    "next_paper_route_runtime_window_targets",
+    "next_clean_paper_route_runtime_window_targets_after_discard",
+)
 PROMOTION_FLAG_FIELDS = (
     "promotion_allowed",
     "promotion_authorized",
@@ -558,6 +564,13 @@ def _unique_texts(values: Sequence[object]) -> list[str]:
     return sorted({text for value in values if (text := _safe_text(value))})
 
 
+def _confirmed_selected_plan_sources(value: object) -> set[str]:
+    text = _safe_text(value)
+    if text is None:
+        return set()
+    return {item.strip() for item in text.split(",") if item.strip()}
+
+
 def _plan_flag_blockers(plan: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
     for field in PROMOTION_FLAG_FIELDS:
@@ -633,11 +646,13 @@ def _confirmation_blockers(
                 )
     else:
         selected_plan = _safe_text(plan_source.get("selected_plan"))
-        confirmed_selected_plan = _safe_text(args.confirm_selected_plan_source)
+        confirmed_selected_plans = _confirmed_selected_plan_sources(
+            args.confirm_selected_plan_source
+        )
         if (
             not selected_plan
-            or not confirmed_selected_plan
-            or confirmed_selected_plan != selected_plan
+            or not confirmed_selected_plans
+            or selected_plan not in confirmed_selected_plans
         ):
             blockers.append(
                 "paper_route_materialization_commit_confirm_selected_plan_source_missing"
@@ -909,9 +924,8 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         dsn=dsn,
         dsn_env=dsn_env,
     )
-    if (
-        target_window_check is not None
-        and not _target_window_check_active_indexes(target_window_check)
+    if target_window_check is not None and not _target_window_check_active_indexes(
+        target_window_check
     ):
         if bool(args.skip_unless_active_target_window) and not blockers:
             skip_reason = ACTIVE_TARGET_WINDOW_SKIP_REASON
@@ -1032,7 +1046,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirm-max-notional", default=None)
     parser.add_argument("--allow-dynamic-target-plan", action="store_true")
     target_window = parser.add_mutually_exclusive_group()
-    target_window.add_argument("--skip-unless-active-target-window", action="store_true")
+    target_window.add_argument(
+        "--skip-unless-active-target-window", action="store_true"
+    )
     target_window.add_argument("--require-active-target-window", action="store_true")
     parser.add_argument("--now-utc", default=None)
     parser.add_argument("--operator-confirmation", default=None)
