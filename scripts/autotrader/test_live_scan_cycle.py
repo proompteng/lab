@@ -524,6 +524,8 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_grade": "A",
                         "expected_r": "3.0",
                         "last": "180.25",
+                        "support": "179.25",
+                        "resistance": "183.25",
                     }
                 ]
             },
@@ -630,6 +632,8 @@ class LiveScanCycleTest(unittest.TestCase):
                 "setup_grade": "A",
                 "expected_r": "2.50",
                 "last": "100.25",
+                "support": "99.25",
+                "resistance": "102.75",
                 "fat_pitch": True,
                 "regime": "trend_up",
                 "instrument": "equity",
@@ -685,6 +689,9 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "B",
                         "expected_r": "2.5",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "102.50",
                         "scorecard_sample_size": 2,
                         "scorecard_avg_realized_r": "0.2",
                     },
@@ -693,6 +700,9 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "opening_range_breakout",
                         "setup_grade": "A",
                         "expected_r": "2.6",
+                        "last": "200.00",
+                        "support": "198.00",
+                        "resistance": "205.20",
                         "scorecard_sample_size": 7,
                         "scorecard_avg_realized_r": "0.9",
                         "scorecard_confidence": "0.75",
@@ -733,6 +743,9 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A+",
                         "expected_r": "2.1",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "102.10",
                         "scorecard_sample_size": 1,
                         "scorecard_avg_realized_r": "0.1",
                     },
@@ -741,6 +754,9 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A",
                         "expected_r": "4.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "104.00",
                         "scorecard_sample_size": 1,
                         "scorecard_avg_realized_r": "0.1",
                     },
@@ -774,12 +790,18 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A+",
                         "expected_r": "5.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "105.00",
                     },
                     {
                         "symbol": "AMD",
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A",
                         "expected_r": "3.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "103.00",
                         "risk_dollars": "100",
                         "scorecard_sample_size": 1,
                         "scorecard_avg_realized_r": "3.042857",
@@ -832,6 +854,9 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A",
                         "expected_r": "3.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "103.00",
                         "scorecard_sample_size": 1,
                         "scorecard_avg_realized_r": "3.0",
                         "scorecard_confidence": "0.0909",
@@ -841,6 +866,9 @@ class LiveScanCycleTest(unittest.TestCase):
                         "setup_type": "vwap_reclaim",
                         "setup_grade": "A",
                         "expected_r": "3.0",
+                        "last": "100.00",
+                        "support": "99.00",
+                        "resistance": "103.00",
                         "scorecard_sample_size": 2,
                         "scorecard_avg_realized_r": "2.0",
                         "scorecard_confidence": "0.1667",
@@ -873,6 +901,9 @@ class LiveScanCycleTest(unittest.TestCase):
                 "setup_type": "vwap_reclaim",
                 "setup_grade": "A",
                 "expected_r": "3.0",
+                "last": "100.00",
+                "support": "99.00",
+                "resistance": "103.00",
                 "risk_dollars": "125",
                 "scorecard_sample_size": 2,
                 "scorecard_avg_realized_r": "1.4",
@@ -905,6 +936,8 @@ class LiveScanCycleTest(unittest.TestCase):
             "setup_grade": "A+",
             "expected_r": "5.0",
             "last": "280.00",
+            "support": "278.00",
+            "resistance": "290.00",
         }
         payload = live_scan_cycle.ticket_payload_for_scan_result(
             session_id="session-1",
@@ -931,6 +964,70 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["blockedResultCount"], 1)
         self.assertEqual(summary["noTradeResultCount"], 0)
         self.assertIsNone(summary["bestCandidate"])
+
+    def test_ticket_payload_derives_executable_buy_bracket_from_support_resistance(self) -> None:
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=12,
+            index=1,
+            result={
+                "symbol": "AMD",
+                "setup_type": "vwap_reclaim",
+                "setup_grade": "A",
+                "expected_r": "3.0",
+                "last": "100.00",
+                "support": "99.00",
+                "resistance": "103.00",
+                "scorecard_sample_size": 2,
+                "scorecard_avg_realized_r": "1.2",
+            },
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["status"], "candidate")
+        self.assertEqual(payload["entryLimitPrice"], "100.00")
+        self.assertEqual(payload["stopPrice"], "99.00")
+        self.assertEqual(payload["targetPrice"], "103.00")
+        self.assertEqual(payload["actualBracketR"], "3")
+        self.assertEqual(payload["brokerOrderPlan"]["executableBracket"]["stopSource"], "support")
+        self.assertEqual(payload["brokerOrderPlan"]["executableBracket"]["targetSource"], "resistance")
+
+    def test_decision_summary_blocks_weak_derived_bracket_r(self) -> None:
+        result = {
+            "symbol": "AMD",
+            "setup_type": "vwap_reclaim",
+            "setup_grade": "A",
+            "expected_r": "3.5595",
+            "last": "534.83",
+            "support": "524.64",
+            "resistance": "543.88",
+            "scorecard_sample_size": 1,
+            "scorecard_avg_realized_r": "3.0429",
+            "scorecard_confidence": "0.0909",
+        }
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=38,
+            index=1,
+            result=result,
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=38,
+            scan={"results": [result]},
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-38-1-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                }
+            ],
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "actual_bracket_r_below_threshold")
+        self.assertEqual(payload["actualBracketR"], "0.888126")
+        self.assertEqual(summary["action"], "no_actionable_candidate")
+        self.assertEqual(summary["blockedResultCount"], 1)
 
     def test_decision_summary_blocks_sub_two_r_candidates(self) -> None:
         result = {
@@ -981,6 +1078,9 @@ class LiveScanCycleTest(unittest.TestCase):
             "setup_type": "vwap_reclaim",
             "setup_grade": "A",
             "expected_r": "3.0",
+            "last": "100.00",
+            "support": "99.00",
+            "resistance": "103.00",
             "scorecard_sample_size": 1,
             "scorecard_avg_realized_r": "3.042857",
             "scorecard_confidence": "0.0909",

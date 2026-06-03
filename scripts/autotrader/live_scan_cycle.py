@@ -39,11 +39,13 @@ SYNTHESIS_SIDES = {
 }
 ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
 MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
+MIN_ACTIONABLE_BRACKET_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
 MAX_INTRADAY_EQUITY_DRAWDOWN_PCT = Decimal("0.015")
 ACCOUNT_MONEY_QUANT = Decimal("0.01")
 ACCOUNT_RATIO_QUANT = Decimal("0.000001")
+R_MULTIPLE_QUANT = Decimal("0.000001")
 PROFIT_PROTECT_BREAKEVEN_TRIGGER_R = Decimal("0.5")
 PROFIT_PROTECT_LOCK_TRIGGER_R = Decimal("1.0")
 PROFIT_LOCK_R = Decimal("0.25")
@@ -193,6 +195,10 @@ def parse_account_int(value: Any) -> int | None:
 
 def quantized_decimal_text(value: Decimal, quantum: Decimal) -> str:
     return str(value.quantize(quantum))
+
+
+def normalized_quantized_decimal_text(value: Decimal, quantum: Decimal) -> str:
+    return format(value.quantize(quantum).normalize(), "f")
 
 
 def intraday_equity_entry_eligibility(account: dict[str, Any]) -> dict[str, Any]:
@@ -1201,6 +1207,100 @@ def schema_enum(value: Any, allowed: set[str], default: str) -> str:
     return default
 
 
+def first_decimal_value(result: dict[str, Any], *keys: str) -> Decimal | None:
+    for key in keys:
+        value = decimal_value(result.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def result_side(result: dict[str, Any]) -> str:
+    return schema_enum(result.get("side"), SYNTHESIS_SIDES, "buy")
+
+
+def order_side_direction(side: str) -> str:
+    return "sell" if side.startswith("sell") else "buy"
+
+
+def bracket_r_value(*, side: str, entry: Decimal, stop: Decimal, target: Decimal) -> Decimal | None:
+    direction = order_side_direction(side)
+    if direction == "buy":
+        risk = entry - stop
+        reward = target - entry
+    else:
+        risk = stop - entry
+        reward = entry - target
+    if risk <= 0 or reward <= 0:
+        return None
+    return reward / risk
+
+
+def derived_bracket_for_scan_result(result: dict[str, Any]) -> dict[str, Any]:
+    side = result_side(result)
+    direction = order_side_direction(side)
+    entry = first_decimal_value(result, "entry_limit_price", "entryLimitPrice", "last")
+    explicit_stop = first_decimal_value(result, "stop_price", "stopPrice")
+    explicit_target = first_decimal_value(result, "target_price", "targetPrice")
+    support = first_decimal_value(result, "support")
+    resistance = first_decimal_value(result, "resistance")
+    stop = explicit_stop
+    target = explicit_target
+    stop_source = "explicit" if stop is not None else None
+    target_source = "explicit" if target is not None else None
+
+    if entry is not None and stop is None:
+        if direction == "buy" and support is not None and support < entry:
+            stop = support
+            stop_source = "support"
+        elif direction == "sell" and resistance is not None and resistance > entry:
+            stop = resistance
+            stop_source = "resistance"
+
+    if entry is not None and target is None:
+        if direction == "buy" and resistance is not None and resistance > entry:
+            target = resistance
+            target_source = "resistance"
+        elif direction == "sell" and support is not None and support < entry:
+            target = support
+            target_source = "support"
+
+    missing = []
+    if entry is None:
+        missing.append("entryLimitPrice")
+    if stop is None:
+        missing.append("stopPrice")
+    if target is None:
+        missing.append("targetPrice")
+
+    actual_r = bracket_r_value(side=side, entry=entry, stop=stop, target=target) if not missing else None
+    return {
+        "side": side,
+        "entryLimitPrice": str(entry) if entry is not None else None,
+        "stopPrice": str(stop) if stop is not None else None,
+        "targetPrice": str(target) if target is not None else None,
+        "actualBracketR": (
+            normalized_quantized_decimal_text(actual_r, R_MULTIPLE_QUANT) if actual_r is not None else None
+        ),
+        "entrySource": "explicit_or_last" if entry is not None else None,
+        "stopSource": stop_source,
+        "targetSource": target_source,
+        "missingFields": missing,
+    }
+
+
+def executable_bracket_no_trade_reason(result: dict[str, Any]) -> str | None:
+    bracket = derived_bracket_for_scan_result(result)
+    if bracket["missingFields"]:
+        return "missing_executable_bracket_prices"
+    actual_r = decimal_value(bracket.get("actualBracketR"))
+    if actual_r is None:
+        return "invalid_executable_bracket_prices"
+    if actual_r < MIN_ACTIONABLE_BRACKET_R:
+        return "actual_bracket_r_below_threshold"
+    return None
+
+
 def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> str | None:
     reason = optional_text(result.get("no_trade_reason") or result.get("noTradeReason"), max_length=1000)
     if reason:
@@ -1218,6 +1318,9 @@ def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> st
         return "missing_expected_r"
     if expected_r < MIN_ACTIONABLE_EXPECTED_R:
         return "expected_r_below_threshold"
+    bracket_reason = executable_bracket_no_trade_reason(result)
+    if bracket_reason:
+        return bracket_reason
     if scorecard_sample_size <= 0 or scorecard_avg_r is None or scorecard_avg_r <= 0:
         return "positive_scorecard_edge_required"
     return None
@@ -1239,6 +1342,8 @@ def ticket_payload_for_scan_result(
         return None
     grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
     type_ = setup_type(result.get("setup_type") or result.get("setupType"))
+    side = result_side(result)
+    bracket = derived_bracket_for_scan_result(result)
     no_trade_reason = result_no_trade_reason(result, grade, type_)
     expected_r = numeric_text(result.get("expected_r") or result.get("expectedR"))
     blocked = no_trade_reason is not None
@@ -1257,7 +1362,7 @@ def ticket_payload_for_scan_result(
         "idempotencyKey": idempotency_key,
         "symbol": symbol.upper(),
         "instrument": schema_enum(result.get("instrument"), SYNTHESIS_INSTRUMENTS, "stock"),
-        "side": schema_enum(result.get("side"), SYNTHESIS_SIDES, "buy"),
+        "side": side,
         "setupType": type_,
         "setupGrade": grade,
         "fatPitch": bool(result.get("fat_pitch") or result.get("fatPitch") or False),
@@ -1267,10 +1372,11 @@ def ticket_payload_for_scan_result(
         "thesis": thesis,
         "entryTrigger": entry_trigger or ("blocked_by_scanner" if blocked else "scanner_candidate_requires_guard"),
         "invalidation": invalidation or ("no broker order" if blocked else "strategy guard must approve before broker order"),
-        "entryLimitPrice": numeric_text(result.get("entry_limit_price") or result.get("entryLimitPrice") or result.get("last")),
-        "stopPrice": numeric_text(result.get("stop_price") or result.get("stopPrice")),
-        "targetPrice": numeric_text(result.get("target_price") or result.get("targetPrice")),
+        "entryLimitPrice": bracket["entryLimitPrice"],
+        "stopPrice": bracket["stopPrice"],
+        "targetPrice": bracket["targetPrice"],
         "expectedR": expected_r,
+        "actualBracketR": bracket["actualBracketR"],
         "riskDollars": numeric_text(result.get("risk_dollars") or result.get("riskDollars")),
         "plannedQuantity": numeric_text(result.get("planned_quantity") or result.get("plannedQuantity")),
         "protectionType": optional_text(result.get("protection_type") or result.get("protectionType"), max_length=80)
@@ -1280,6 +1386,7 @@ def ticket_payload_for_scan_result(
             "cycle": cycle,
             "resultIndex": index,
             "riskDirective": risk_directive,
+            "executableBracket": bracket,
             "raw": result,
         },
         "status": "blocked" if blocked else "candidate",
@@ -1380,13 +1487,15 @@ def candidate_score(result: dict[str, Any]) -> tuple[Decimal, Decimal, int, int,
     grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
     grade_score = {"A+": 3, "A": 2, "B": 1}.get(grade, 0)
     expected_r = decimal_value(result.get("expected_r") or result.get("expectedR")) or Decimal("0")
+    bracket_r = decimal_value(derived_bracket_for_scan_result(result).get("actualBracketR"))
+    executable_r = min(expected_r, bracket_r) if bracket_r is not None else expected_r
     sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
     scorecard_edge = (
         avg_realized_r * scorecard_edge_weight(sample_size)
         if sample_size > 0 and avg_realized_r is not None and avg_realized_r > 0
         else Decimal("0")
     )
-    return expected_r + scorecard_edge, expected_r, grade_score, sample_size, confidence
+    return executable_r + scorecard_edge, executable_r, grade_score, sample_size, confidence
 
 
 def actionable_candidate_for_result(
@@ -1418,6 +1527,7 @@ def actionable_candidate_for_result(
         "targetPrice": payload.get("targetPrice"),
         "riskDollars": payload.get("riskDollars"),
         "plannedQuantity": payload.get("plannedQuantity"),
+        "actualBracketR": payload.get("actualBracketR"),
         "riskDirective": scorecard_risk_directive(result),
         "scorecardSampleSize": int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize")),
         "scorecardAvgRealizedR": numeric_text(
