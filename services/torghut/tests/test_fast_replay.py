@@ -99,6 +99,10 @@ class TestFastReplayPreview(TestCase):
                 "odd_lot_bid_size": Decimal("20"),
                 "odd_lot_ask_size": Decimal("18"),
                 "off_exchange_trade": stress,
+                "algo_activity_score": Decimal("0.80") if stress else Decimal("0.20"),
+                "model_inference_latency_ms": Decimal("120")
+                if stress
+                else Decimal("5"),
                 "bid_size": Decimal("700"),
                 "ask_size": Decimal("300"),
                 "macro_event_window": stress,
@@ -209,6 +213,10 @@ class TestFastReplayPreview(TestCase):
             "lob_simulation_reality_gap_execution_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "alpha_decay_predictability_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -293,6 +301,26 @@ class TestFastReplayPreview(TestCase):
             {
                 source["source_id"]
                 for source in row_payload["lob_reality_gap_stress"]["source_papers"]
+            },
+        )
+        self.assertIn("alpha_decay_predictability_stress", row_payload)
+        self.assertFalse(
+            row_payload["alpha_decay_predictability_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["alpha_decay_predictability_stress"]["promotion_authority"]
+        )
+        self.assertEqual(
+            row_payload["alpha_decay_predictability_stress"]["status"],
+            "preview_only_alpha_decay_predictability_ranking",
+        )
+        self.assertIn(
+            "arxiv-2601.02310",
+            {
+                source["source_id"]
+                for source in row_payload["alpha_decay_predictability_stress"][
+                    "source_papers"
+                ]
             },
         )
         self.assertIn("cost_impact_lineage", row_payload)
