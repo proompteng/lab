@@ -11683,7 +11683,17 @@ class TestTradingApi(TestCase):
         main_module._paper_route_target_plan_success_cache = None
         try:
             settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
-            with patch("app.main.HTTPConnection") as connection:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "K_SERVICE": "torghut-sim",
+                        "POD_NAMESPACE": "",
+                        "NAMESPACE": "",
+                    },
+                ),
+                patch("app.main.HTTPConnection") as connection,
+            ):
                 plan = _load_external_paper_route_target_plan()
             connection.assert_not_called()
         finally:
@@ -11711,6 +11721,44 @@ class TestTradingApi(TestCase):
             {
                 "K_SERVICE": "route-sim",
                 "POD_NAMESPACE": "proof-ns",
+            },
+        ):
+            self.assertTrue(
+                main_module._paper_route_target_plan_url_points_to_self(parsed)
+            )
+
+    def test_paper_route_target_plan_self_reference_allows_live_from_sim(
+        self,
+    ) -> None:
+        parsed = urlsplit(
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "K_SERVICE": "torghut-sim",
+                "POD_NAMESPACE": "",
+                "NAMESPACE": "",
+            },
+        ):
+            self.assertFalse(
+                main_module._paper_route_target_plan_url_points_to_self(parsed)
+            )
+
+    def test_paper_route_target_plan_self_reference_defaults_torghut_namespace(
+        self,
+    ) -> None:
+        parsed = urlsplit(
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "K_SERVICE": "torghut",
+                "POD_NAMESPACE": "",
+                "NAMESPACE": "",
             },
         ):
             self.assertTrue(
