@@ -189,7 +189,9 @@ def _parse_args() -> argparse.Namespace:
             "Supported keys: hypothesis_id,candidate_id,strategy_family,"
             "strategy_name,account_label,source_account_label,observed_stage,"
             "source_dsn_env,target_dsn_env,dataset_snapshot_ref,source_manifest_ref,"
-            "source_kind,delay_adjusted_depth_stress_report_ref."
+            "source_kind,dependency_quorum_decision,continuity_ok,drift_ok,"
+            "delay_adjusted_depth_stress_report_ref,artifact_refs, and target "
+            "metadata keys accepted by runtime-window target plans."
         ),
     )
     parser.add_argument(
@@ -570,7 +572,7 @@ def _runtime_window_target_is_paper_route_collection(
     )
 
 
-def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
+def _parse_runtime_window_target_spec(spec: str) -> dict[str, Any]:
     text = spec.strip()
     if not text:
         return {}
@@ -579,7 +581,7 @@ def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
         if not isinstance(payload, Mapping):
             raise RuntimeError("runtime_window_target_json_not_mapping")
         return {
-            str(key).replace("-", "_"): str(value)
+            str(key).replace("-", "_"): value
             for key, value in payload.items()
             if value is not None
         }
@@ -1700,8 +1702,16 @@ def _runtime_window_targets(
                     "delay_adjusted_depth_stress_report_ref",
                     "runtime_window_delay_adjusted_depth_stress_report_ref",
                 ),
+                dependency_quorum_decision=value(
+                    "dependency_quorum_decision",
+                    "runtime_window_dependency_quorum_decision",
+                ),
+                continuity_ok=value("continuity_ok", "runtime_window_continuity_ok"),
+                drift_ok=value("drift_ok", "runtime_window_drift_ok"),
                 window_start=value("window_start", "runtime_window_start"),
                 window_end=value("window_end", "runtime_window_end"),
+                artifact_refs=_runtime_window_target_artifact_refs(payload),
+                target_metadata=_runtime_window_target_metadata(payload),
                 source_account_label=value(
                     "source_account_label",
                     "runtime_window_source_account_label",

@@ -2219,23 +2219,24 @@ def _runtime_window_import_proof_hygiene_blockers(
     drift_ok: str,
 ) -> list[str]:
     blockers: list[str] = []
+    normalized_source_kind = source_kind.strip().lower().replace("-", "_")
     if not target_metadata and not _runtime_window_source_kind_is_informational(
         source_kind=source_kind,
         target_metadata=target_metadata,
     ):
         blockers.append("runtime_window_target_metadata_missing")
-    if (
-        source_kind.strip().lower().replace("-", "_")
-        == "runtime_ledger_source_collection_candidate"
-    ):
+    source_collection_candidate = (
+        normalized_source_kind == "runtime_ledger_source_collection_candidate"
+    )
+    if source_collection_candidate:
         blockers.extend(
             _source_collection_target_authorization_blockers(target_metadata)
         )
-    if not dependency_quorum_decision.strip():
+    if not source_collection_candidate and not dependency_quorum_decision.strip():
         blockers.append("dependency_quorum_decision_missing")
-    if not continuity_ok.strip():
+    if not source_collection_candidate and not continuity_ok.strip():
         blockers.append("continuity_gate_missing")
-    if not drift_ok.strip():
+    if not source_collection_candidate and not drift_ok.strip():
         blockers.append("drift_gate_missing")
     for key in (
         "runtime_ledger_target_metadata_blockers",

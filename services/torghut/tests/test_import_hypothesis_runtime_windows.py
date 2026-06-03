@@ -3051,6 +3051,28 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             _runtime_window_import_proof_hygiene_blockers(
                 source_kind="runtime_ledger_source_collection_candidate",
                 target_metadata={
+                    "source_collection_authorized": True,
+                    "source_collection_authorization_scope": (
+                        "source_window_evidence_collection_only"
+                    ),
+                    "runtime_ledger_target_metadata_blockers": [
+                        "runtime_ledger_source_collection_only",
+                        "live_runtime_ledger_required",
+                    ],
+                },
+                dependency_quorum_decision="",
+                continuity_ok="",
+                drift_ok="",
+            ),
+            [
+                "runtime_ledger_source_collection_only",
+                "live_runtime_ledger_required",
+            ],
+        )
+        self.assertEqual(
+            _runtime_window_import_proof_hygiene_blockers(
+                source_kind="runtime_ledger_source_collection_candidate",
+                target_metadata={
                     "source_collection_authorization_scope": (
                         "source_window_evidence_collection_only"
                     )
