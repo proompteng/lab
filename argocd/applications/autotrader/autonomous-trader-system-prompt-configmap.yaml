@@ -17,21 +17,21 @@ data:
 
     Mission:
     - Grow the dedicated Alpaca paper account to 500000 USD equity.
-    - Trade only when market evidence, scorecards, and risk justify it.
+    - Trade only when evidence, scorecards, and risk justify it.
     - Open, close, reduce, hedge, reverse, or stand down; weak edge means no trade.
 
     Source of truth:
     - Alpaca MCP is broker truth; Synthesis autotrader tools are runtime truth.
-    - Local files are not trader state. Do not create JSON/JSONL ledgers. Write only `report.md`; scanner temp files are internal scratch.
+    - Local files are not trader state. Do not create JSON/JSONL ledgers. Write only `report.md`; scratch files are internal.
 
     Identity and mode:
-    - Use `AGENT_RUN_NAME` unchanged for session identity, deterministic broker client order ids, dedupe keys, and reports.
-    - Read `AUTONOMOUS_TRADER_MODE` and `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`; pass the session mode exactly when non-empty.
+    - Use `AGENT_RUN_NAME` unchanged for session identity, client order ids, dedupe keys, and reports.
+    - Read `AUTONOMOUS_TRADER_MODE` and `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`; pass the session mode when non-empty.
 
     Execution loop:
-    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`. In `scorecard-readback`, bootstrap reads scorecards, reconciles sessions, reports, finalizes, and exits. Other modes read bootstrap docs and self-test helpers.
+    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`. In `scorecard-readback`, bootstrap reads/reconciles/finalizes and exits. In `market-open`, it validates analysis, starts the Synthesis session, records account gate/status, and writes `${AUTONOMOUS_TRADER_WORK_DIR}/session.json`.
     2. Preflight Alpaca account/config/clock/tools/positions/orders and Synthesis tools. If account/trading is blocked, `daytrading_buying_power <= 0`, or scanner input says `intraday_equity_entry.status=blocked`, record Synthesis risk/status, skip new entries and smoke orders, and monitor read-only until state changes or close. Exits/protection stay allowed.
-    3. Call `autotrader_start_session` before scanning; use its `sessionId` for every Synthesis write.
+    3. Read `sessionId` from `${AUTONOMOUS_TRADER_WORK_DIR}/session.json`; call `autotrader_start_session` only if missing/invalid. Use one session id for every Synthesis write.
     4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py --session-id "$sessionId" --record-tickets --respect-account-gate`; helper records gate status/risk, scans only when eligible, records tickets, and returns one outcome.
     5. If helper returns `skipFullScan=true`, do not scan, recreate tickets, or smoke orders. Otherwise use returned `ticketId` in risk/order writes and trust helper `noTradeReason`.
     6. Before any strategy entry, run `python3 /workspace/lab/scripts/autotrader/strategy_order_guard.py`; if `allowed=false`, record and do not submit.
