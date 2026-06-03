@@ -593,6 +593,9 @@ def test_paper_route_target_plan_target_summary_accepts_explicit_quantity_and_sy
             "hypothesis_id": "H-PAIRS-01",
             "candidate_id": "c88421d619759b2cfaa6f4d0",
             "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "runtime_strategy_confirmation_names": [
+                "microbar-cross-sectional-pairs-v1"
+            ],
             "strategy_name": "microbar-cross-sectional-pairs-v1",
             "account_label": "TORGHUT_SIM",
             "target_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
@@ -938,6 +941,70 @@ def test_commit_dynamic_source_collection_plan_skips_without_target_window(
     assert report["source_targets"][0]["target_notional"] == "0"
     assert report["materialized_decision_count"] == 0
     assert report["route_submission_count"] == 0
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_commit_dynamic_plan_confirms_strategy_lookup_alias_before_skip(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(
+                _hpairs_target(
+                    runtime_strategy_name="69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                    strategy_name="69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                )
+            )
+        },
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "25",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--skip-unless-active-target-window",
+            "--now-utc",
+            "2026-06-01T13:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            cli.DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "25",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["skipped"] is True
+    assert report["skip_reason"] == cli.ACTIVE_TARGET_WINDOW_SKIP_REASON
+    assert report["blocked"] is False
+    assert report["source_target_count"] == 1
+    assert report["target_count"] == 1
+    assert report["runtime_strategy_names"] == ["69cf50e3-4815-47c2-b802-1efbaac09ecb"]
+    assert (
+        "microbar-cross-sectional-pairs-v1"
+        in report["targets"][0]["runtime_strategy_confirmation_names"]
+    )
     assert _count_decisions(sqlite_dsn) == 0
 
 
