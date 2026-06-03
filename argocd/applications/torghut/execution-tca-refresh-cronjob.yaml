@@ -23,7 +23,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: refresh-execution-tca
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:86000332af69f65422e57df4330aeb97b224e56d6e4bac3bf91713fe35b05482
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:e12a9bb8e82089ebfbe655fd55641aaf32b7cf2f71f2c1be6e31c7bc128a45f1
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
