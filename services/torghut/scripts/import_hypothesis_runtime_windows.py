@@ -2106,13 +2106,28 @@ def _runtime_ledger_target_metadata_blockers(
             break
 
     expected_candidate_id = _text_or_none(metadata.get("candidate_id"))
+    artifact_metadata_expected = bool(
+        planned_refs
+        or loaded_refs
+        or any(
+            metadata.get(key) is not None
+            for key in (
+                "runtime_ledger_artifact_row_count",
+                "exact_replay_ledger_artifact_row_count",
+                "runtime_ledger_artifact_fill_count",
+                "exact_replay_ledger_artifact_fill_count",
+                "replay_window_weekday_count",
+                "replay_min_window_weekday_count",
+            )
+        )
+    )
     loaded_candidate_ids = _metadata_text_list(
         runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_candidate_ids")
     )
     loaded_candidate_id = _text_or_none(
         runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_candidate_id")
     )
-    if expected_candidate_id is not None:
+    if expected_candidate_id is not None and artifact_metadata_expected:
         if loaded_candidate_ids:
             if expected_candidate_id not in loaded_candidate_ids:
                 blockers.append("runtime_ledger_artifact_candidate_id_mismatch")

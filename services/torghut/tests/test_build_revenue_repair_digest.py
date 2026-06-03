@@ -782,6 +782,9 @@ class TestBuildRevenueRepairDigest(TestCase):
                     "window_start": "2026-06-02T13:30:00+00:00",
                     "window_end": "2026-06-02T20:00:00+00:00",
                     "source_collection_authorized": True,
+                    "source_collection_authorization_scope": (
+                        "source_window_evidence_collection_only"
+                    ),
                     "source_collection_reason_codes": [
                         "paper_probe_runtime_activity_positive"
                     ],
@@ -848,7 +851,12 @@ class TestBuildRevenueRepairDigest(TestCase):
         self.assertEqual(top_targets[0]["candidate_id"], "cand-source-collection")
         self.assertEqual(top_targets[0]["source_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(top_targets[0]["target_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(top_targets[0]["observed_stage"], "paper")
         self.assertTrue(top_targets[0]["source_collection_authorized"])
+        self.assertEqual(
+            top_targets[0]["source_collection_authorization_scope"],
+            "source_window_evidence_collection_only",
+        )
         self.assertEqual(top_targets[0]["max_notional"], "0")
         self.assertFalse(top_targets[0]["promotion_allowed"])
         self.assertFalse(top_targets[0]["final_promotion_allowed"])

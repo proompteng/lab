@@ -809,7 +809,11 @@ def _summarize_runtime_window_import_target(
         "target_dsn_env": _text(target.get("target_dsn_env")),
         "window_start": _text(target.get("window_start")),
         "window_end": _text(target.get("window_end")),
+        "observed_stage": _text(target.get("observed_stage")),
         "source_collection_authorized": _is_source_collection_target(target),
+        "source_collection_authorization_scope": _text(
+            target.get("source_collection_authorization_scope")
+        ),
         "paper_probation_authorized": _bool(target.get("paper_probation_authorized")),
         "evidence_collection_ok": _bool(target.get("evidence_collection_ok")),
         "handoff": _text(target.get("handoff")),
