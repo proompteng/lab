@@ -24,6 +24,8 @@ from scripts.import_hypothesis_runtime_windows import (
     _active_carry_in_ledger_rows,
     _build_realized_strategy_pnl_rows,
     _execution_signed_qty,
+    _flat_start_position_snapshot_authority,
+    _flat_start_position_snapshot_from_cursor,
     _filter_carry_in_source_rows_for_active_lots,
     _fill_quantity_basis,
     _first_bool,
@@ -1568,6 +1570,223 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         bucket = rows[0]["runtime_ledger_bucket"]
         assert isinstance(bucket, dict)
         self.assertNotIn("window-carry-unrelated-order", bucket["source_window_ids"])
+        self.assertNotIn(
+            "route_acquisition_probe",
+            bucket["source_decision_mode_counts"],
+        )
+
+    def test_flat_start_snapshot_authority_requires_clean_flat_account(
+        self,
+    ) -> None:
+        valid = _flat_start_position_snapshot_authority(
+            {
+                "snapshot_id": "snapshot-flat",
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": True,
+                "position_count": 0,
+                "positions": "[]",
+                "blockers": [],
+            }
+        )
+
+        self.assertIsNotNone(valid)
+        assert valid is not None
+        self.assertEqual(valid["flat_start_position_snapshot_id"], "snapshot-flat")
+        self.assertTrue(valid["carry_in_rows_suppressed_by_flat_start_snapshot"])
+
+        for name, snapshot in {
+            "missing_id": {
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": True,
+                "position_count": 0,
+            },
+            "blocked": {
+                "snapshot_id": "snapshot-blocked",
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": True,
+                "position_count": 0,
+                "blockers": ["runtime_ledger_flat_start_position_snapshot_stale"],
+            },
+            "nonflat_count": {
+                "snapshot_id": "snapshot-nonflat-count",
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": True,
+                "position_count": 1,
+            },
+            "nonflat_positions": {
+                "snapshot_id": "snapshot-nonflat-positions",
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": True,
+                "positions": [{"symbol": "AAPL", "qty": "1"}],
+            },
+            "invalid_positions_json": {
+                "snapshot_id": "snapshot-invalid-positions-json",
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": True,
+                "positions": "not-json",
+            },
+            "invalid_positions_bytes": {
+                "snapshot_id": "snapshot-invalid-positions-bytes",
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": True,
+                "positions": b"[]",
+            },
+            "invalid_position_row": {
+                "snapshot_id": "snapshot-invalid-position-row",
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": True,
+                "positions": [{"symbol": "AAPL"}],
+            },
+            "not_explicitly_flat": {
+                "snapshot_id": "snapshot-not-flat",
+                "snapshot_as_of": "2026-06-02T14:30:00+00:00",
+                "flat": False,
+                "position_count": 0,
+            },
+        }.items():
+            with self.subTest(name=name):
+                self.assertIsNone(_flat_start_position_snapshot_authority(snapshot))
+
+    def test_flat_start_snapshot_query_marks_stale_and_nonflat_blockers(
+        self,
+    ) -> None:
+        cursor = _FakeCursor()
+        cursor._results = [
+            [
+                (
+                    "snapshot-stale",
+                    datetime(2026, 6, 2, 14, 0, tzinfo=timezone.utc),
+                    [{"symbol": "AAPL", "qty": "1"}],
+                    "latest_before_window_start",
+                    0,
+                )
+            ]
+        ]
+
+        snapshot = _flat_start_position_snapshot_from_cursor(
+            cursor,
+            account_label="TORGHUT_SIM",
+            window_start=datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot["snapshot_id"], "snapshot-stale")
+        self.assertFalse(snapshot["flat"])
+        self.assertEqual(snapshot["position_count"], 1)
+        self.assertEqual(
+            snapshot["blockers"],
+            [
+                "runtime_ledger_flat_start_position_snapshot_stale",
+                "runtime_ledger_flat_start_position_snapshot_not_flat",
+            ],
+        )
+        query, params = cursor.executed[0]
+        self.assertIn("from position_snapshots", query)
+        self.assertIn("order by snapshot_priority", query)
+        self.assertEqual(params[0], "TORGHUT_SIM")
+
+    def test_flat_start_snapshot_query_rejects_invalid_snapshot_payloads(
+        self,
+    ) -> None:
+        invalid_time_cursor = _FakeCursor()
+        invalid_time_cursor._results = [
+            [
+                (
+                    "snapshot-invalid-time",
+                    "not-a-timestamp",
+                    [],
+                    "latest_before_window_start",
+                    0,
+                )
+            ]
+        ]
+
+        self.assertIsNone(
+            _flat_start_position_snapshot_from_cursor(
+                invalid_time_cursor,
+                account_label="TORGHUT_SIM",
+                window_start=datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc),
+            )
+        )
+
+        invalid_positions_cursor = _FakeCursor()
+        invalid_positions_cursor._results = [
+            [
+                (
+                    "snapshot-invalid-positions",
+                    datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc),
+                    "not-json",
+                    "latest_before_window_start",
+                    0,
+                )
+            ]
+        ]
+
+        snapshot = _flat_start_position_snapshot_from_cursor(
+            invalid_positions_cursor,
+            account_label="TORGHUT_SIM",
+            window_start=datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertFalse(snapshot["flat"])
+        self.assertEqual(
+            snapshot["blockers"],
+            ["runtime_ledger_flat_start_position_snapshot_positions_invalid"],
+        )
+
+    def test_clean_flat_start_snapshot_suppresses_stale_carry_in_rows(
+        self,
+    ) -> None:
+        decision_rows, order_rows, execution_rows = _source_backed_runtime_split_rows()
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=order_rows,
+            carry_in_execution_rows=[
+                {
+                    "execution_id": "stale-route-buy-exec",
+                    "trade_decision_id": "stale-route-buy-decision",
+                    "computed_at": _runtime_split_ts(-60),
+                    "execution_event_at": _runtime_split_ts(-59),
+                    "symbol": "NVDA",
+                    "side": "buy",
+                    "filled_qty": Decimal("2"),
+                    "avg_fill_price": Decimal("90"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "paper",
+                    "strategy_id": "strategy-1",
+                    "decision_hash": "stale-route-buy-hash",
+                    "alpaca_order_id": "stale-route-buy-order",
+                    "execution_policy_hash": "old-route-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                }
+            ],
+            flat_start_position_snapshot={
+                "snapshot_id": "snapshot-flat",
+                "snapshot_as_of": "2026-05-21T14:30:00+00:00",
+                "flat": True,
+                "position_count": 0,
+                "blockers": [],
+            },
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row["carry_in_rows_suppressed_by_flat_start_snapshot"])
+        self.assertEqual(row["flat_start_position_snapshot_id"], "snapshot-flat")
+        bucket = row["runtime_ledger_bucket"]
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["open_position_count"], 0)
+        self.assertNotIn("unclosed_position", bucket["blockers"])
         self.assertNotIn(
             "route_acquisition_probe",
             bucket["source_decision_mode_counts"],
@@ -7967,7 +8186,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 )
             ],
             [],
-            [],
         ]
         connection = _FakeConnection(cursor)
         diagnostics: dict[str, object] = {}
@@ -8264,7 +8482,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 ),
             ],
             [],
-            [],
         ]
         connection = _FakeConnection(cursor)
         diagnostics: dict[str, object] = {}
@@ -8284,7 +8501,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 source_activity_diagnostics=diagnostics,
             )
 
-        self.assertEqual(len(cursor.executed), 7)
+        self.assertEqual(len(cursor.executed), 8)
         carry_decision_query, carry_decision_params = cursor.executed[3]
         carry_execution_query, carry_execution_params = cursor.executed[4]
         carry_order_query, carry_order_params = cursor.executed[5]
@@ -8343,6 +8560,59 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(
             bucket["source_window_end"], "2026-03-06T14:40:00.000001+00:00"
         )
+        self.assertFalse(diagnostics["flat_start_position_snapshot_present"])
+        self.assertEqual(
+            diagnostics["flat_start_position_snapshot_query_error"], "IndexError"
+        )
+
+    def test_query_timestamps_records_clean_flat_start_snapshot_diagnostics(
+        self,
+    ) -> None:
+        cursor = _FakeCursor()
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        cursor._results = [
+            *cursor._results,
+            [],
+            [],
+            [],
+            [
+                (
+                    "snapshot-flat",
+                    window_start,
+                    [],
+                    "latest_before_window_start",
+                    0,
+                )
+            ],
+        ]
+        connection = _FakeConnection(cursor)
+        diagnostics: dict[str, object] = {}
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            _, _, tca_rows = _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=["intraday_tsmom_v1@paper"],
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                allow_authoritative_runtime_ledger_materialization=True,
+                source_activity_diagnostics=diagnostics,
+            )
+
+        self.assertTrue(diagnostics["flat_start_position_snapshot_present"])
+        self.assertEqual(
+            diagnostics["flat_start_position_snapshot_id"], "snapshot-flat"
+        )
+        self.assertTrue(diagnostics["flat_start_position_snapshot_flat"])
+        self.assertTrue(diagnostics["carry_in_rows_suppressed_by_flat_start_snapshot"])
+        self.assertEqual(len(tca_rows), 1)
+        self.assertTrue(tca_rows[0]["carry_in_rows_suppressed_by_flat_start_snapshot"])
+        bucket = tca_rows[0]["runtime_ledger_bucket"]
+        assert isinstance(bucket, dict)
+        self.assertTrue(bucket["carry_in_rows_suppressed_by_flat_start_snapshot"])
 
     def test_source_activity_diagnostic_blockers_classify_materialization_gap(
         self,

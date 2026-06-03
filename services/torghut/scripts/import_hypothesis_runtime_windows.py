@@ -78,6 +78,8 @@ EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS = (
 )
 RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
 RUNTIME_LEDGER_CARRY_IN_LOOKBACK = timedelta(days=5)
+RUNTIME_LEDGER_FLAT_START_SNAPSHOT_STALE_SECONDS = 900
+RUNTIME_LEDGER_FLAT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = 300
 RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
 RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER = (
     "runtime_ledger_execution_tca_refs_missing"
@@ -327,6 +329,20 @@ def _as_mapping(value: Any) -> dict[str, Any]:
     )
 
 
+def _as_sequence(value: Any) -> list[Any] | None:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return None
+        return _as_sequence(parsed)
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        return list(value)
+    return None
+
+
 def _parse_target_metadata(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
     if not text:
@@ -489,6 +505,71 @@ def _first_bool(row: Mapping[str, object], *keys: str) -> bool | None:
             if (parsed := _bool_value(payload.get(key))) is not None:
                 return parsed
     return None
+
+
+def _position_snapshot_open_position_count(positions: object) -> int | None:
+    position_rows = _as_sequence(positions)
+    if position_rows is None:
+        return None
+    count = 0
+    for raw_position in position_rows:
+        position = _as_mapping(raw_position)
+        if not position:
+            return None
+        qty = _decimal_or_none(
+            position.get("qty")
+            or position.get("quantity")
+            or position.get("filled_qty")
+            or position.get("position_qty")
+        )
+        if qty is None:
+            return None
+        if qty != 0:
+            count += 1
+    return count
+
+
+def _flat_start_position_snapshot_authority(
+    snapshot: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if not snapshot:
+        return None
+    snapshot_id = _text_or_none(
+        snapshot.get("snapshot_id")
+        or snapshot.get("position_snapshot_id")
+        or snapshot.get("id")
+    )
+    snapshot_as_of = _text_or_none(
+        snapshot.get("snapshot_as_of")
+        or snapshot.get("position_snapshot_as_of")
+        or snapshot.get("as_of")
+    )
+    if snapshot_id is None or snapshot_as_of is None:
+        return None
+    if _metadata_text_list(snapshot.get("blockers")):
+        return None
+    explicit_flat = _first_bool(
+        snapshot, "flat", "account_flat", "zero_open_position_evidence"
+    )
+    positions = snapshot.get("positions")
+    position_count = _nonnegative_int(snapshot.get("position_count"))
+    if positions is not None:
+        position_count = _position_snapshot_open_position_count(positions)
+        if position_count is None:
+            return None
+    if explicit_flat is not True or position_count != 0:
+        return None
+    return {
+        "flat_start_position_snapshot_id": snapshot_id,
+        "flat_start_position_snapshot_as_of": snapshot_as_of,
+        "flat_start_position_snapshot_source": _text_or_none(
+            snapshot.get("snapshot_source") or snapshot.get("source")
+        )
+        or "position_snapshots",
+        "flat_start_position_snapshot_scope": _text_or_none(snapshot.get("scope"))
+        or "account_position_snapshot_at_runtime_window_start",
+        "carry_in_rows_suppressed_by_flat_start_snapshot": True,
+    }
 
 
 def _source_decision_priority_payloads(
@@ -3335,6 +3416,96 @@ def _filter_carry_in_source_rows_for_active_lots(
     return filtered or None
 
 
+def _flat_start_position_snapshot_from_cursor(
+    cur: Any,
+    *,
+    account_label: str,
+    window_start: datetime,
+) -> dict[str, object] | None:
+    window_start_utc = (
+        window_start.astimezone(timezone.utc)
+        if window_start.tzinfo is not None
+        else window_start.replace(tzinfo=timezone.utc)
+    )
+    cur.execute(
+        """
+        with before_snapshot as (
+            select
+                id::text,
+                as_of,
+                positions,
+                'latest_before_window_start' as snapshot_source
+            from position_snapshots
+            where alpaca_account_label = %s
+              and as_of <= %s
+            order by as_of desc
+            limit 1
+        ),
+        after_snapshot as (
+            select
+                id::text,
+                as_of,
+                positions,
+                'first_after_window_start' as snapshot_source
+            from position_snapshots
+            where alpaca_account_label = %s
+              and as_of > %s
+              and as_of <= %s
+            order by as_of asc
+            limit 1
+        )
+        select id, as_of, positions, snapshot_source, 0 as snapshot_priority
+        from before_snapshot
+        union all
+        select id, as_of, positions, snapshot_source, 1 as snapshot_priority
+        from after_snapshot
+        order by snapshot_priority
+        limit 1
+        """,
+        (
+            account_label,
+            window_start_utc,
+            account_label,
+            window_start_utc,
+            window_start_utc
+            + timedelta(
+                seconds=RUNTIME_LEDGER_FLAT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
+            ),
+        ),
+    )
+    rows = list(cur.fetchall())
+    if not rows:
+        return None
+    snapshot_id, snapshot_as_of, positions, snapshot_source, _snapshot_priority = rows[
+        0
+    ]
+    parsed_as_of = _parse_dt_or_none(snapshot_as_of)
+    if parsed_as_of is None:
+        return None
+    offset_seconds = int((parsed_as_of - window_start_utc).total_seconds())
+    blockers: list[str] = []
+    if offset_seconds < -RUNTIME_LEDGER_FLAT_START_SNAPSHOT_STALE_SECONDS:
+        blockers.append("runtime_ledger_flat_start_position_snapshot_stale")
+    position_count = _position_snapshot_open_position_count(positions)
+    if position_count is None:
+        blockers.append("runtime_ledger_flat_start_position_snapshot_positions_invalid")
+        position_count = 0
+    if position_count > 0:
+        blockers.append("runtime_ledger_flat_start_position_snapshot_not_flat")
+    return {
+        "schema_version": "torghut.runtime-ledger-flat-start-position-snapshot.v1",
+        "scope": "account_position_snapshot_at_runtime_window_start",
+        "account_label": account_label,
+        "snapshot_id": str(snapshot_id),
+        "snapshot_as_of": parsed_as_of.isoformat(),
+        "snapshot_source": str(snapshot_source or "position_snapshots"),
+        "snapshot_offset_seconds": offset_seconds,
+        "flat": position_count == 0 and not blockers,
+        "position_count": position_count,
+        "blockers": blockers,
+    }
+
+
 def _runtime_order_rows_for_bucket(
     *,
     bucket: RuntimeLedgerBucket,
@@ -4139,9 +4310,17 @@ def _build_realized_strategy_pnl_rows(
     carry_in_execution_rows: list[dict[str, object]] | None = None,
     carry_in_decision_lifecycle_rows: list[dict[str, object]] | None = None,
     carry_in_order_lifecycle_rows: list[dict[str, object]] | None = None,
+    flat_start_position_snapshot: Mapping[str, object] | None = None,
     allow_authoritative_runtime_ledger_materialization: bool = False,
     split_mixed_source_decision_modes: bool = True,
 ) -> list[dict[str, object]]:
+    flat_start_authority = _flat_start_position_snapshot_authority(
+        flat_start_position_snapshot
+    )
+    if flat_start_authority is not None:
+        carry_in_execution_rows = None
+        carry_in_decision_lifecycle_rows = None
+        carry_in_order_lifecycle_rows = None
     if split_mixed_source_decision_modes:
         partitions = _partition_runtime_source_rows_by_decision_mode(
             execution_rows=execution_rows,
@@ -4172,6 +4351,7 @@ def _build_realized_strategy_pnl_rows(
                     carry_in_execution_rows=partition_carry_in_execution_rows,
                     carry_in_decision_lifecycle_rows=partition_carry_in_decision_rows,
                     carry_in_order_lifecycle_rows=partition_carry_in_order_rows,
+                    flat_start_position_snapshot=flat_start_position_snapshot,
                     allow_authoritative_runtime_ledger_materialization=(
                         allow_authoritative_runtime_ledger_materialization
                     ),
@@ -4539,6 +4719,13 @@ def _build_realized_strategy_pnl_rows(
         equity_denominator = cast(
             tuple[Decimal, str] | None, source_context["equity_denominator"]
         )
+        if flat_start_authority is not None and isinstance(bucket_payload, Mapping):
+            row.update(flat_start_authority)
+            bucket_payload = {
+                **dict(bucket_payload),
+                **flat_start_authority,
+            }
+            row["runtime_ledger_bucket"] = bucket_payload
         if source_account_labels and isinstance(bucket_payload, Mapping):
             bucket_payload = {
                 **dict(bucket_payload),
@@ -5440,6 +5627,7 @@ def _query_timestamps(
     carry_in_execution_rows: list[dict[str, object]] = []
     carry_in_decision_lifecycle_rows: list[dict[str, object]] = []
     carry_in_order_lifecycle_rows: list[dict[str, object]] = []
+    flat_start_position_snapshot: dict[str, object] | None = None
     carry_in_window_start = window_start - RUNTIME_LEDGER_CARRY_IN_LOOKBACK
     symbol_filter = _metadata_symbol_list(symbols or ())
     if source_activity_diagnostics is not None:
@@ -6339,6 +6527,58 @@ def _query_timestamps(
                 source_activity_diagnostics["order_feed_fill_lifecycle_blockers"] = (
                     lifecycle_blockers
                 )
+            if allow_authoritative_runtime_ledger_materialization:
+                try:
+                    flat_start_position_snapshot = (
+                        _flat_start_position_snapshot_from_cursor(
+                            cur,
+                            account_label=canonical_account_label,
+                            window_start=window_start,
+                        )
+                    )
+                except Exception as exc:
+                    flat_start_position_snapshot = None
+                    if source_activity_diagnostics is not None:
+                        source_activity_diagnostics[
+                            "flat_start_position_snapshot_query_error"
+                        ] = type(exc).__name__
+                if source_activity_diagnostics is not None:
+                    flat_start_authority = _flat_start_position_snapshot_authority(
+                        flat_start_position_snapshot
+                    )
+                    source_activity_diagnostics[
+                        "flat_start_position_snapshot_present"
+                    ] = flat_start_position_snapshot is not None
+                    if flat_start_position_snapshot is not None:
+                        source_activity_diagnostics.update(
+                            {
+                                "flat_start_position_snapshot_id": (
+                                    flat_start_position_snapshot.get("snapshot_id")
+                                ),
+                                "flat_start_position_snapshot_as_of": (
+                                    flat_start_position_snapshot.get("snapshot_as_of")
+                                ),
+                                "flat_start_position_snapshot_source": (
+                                    flat_start_position_snapshot.get("snapshot_source")
+                                ),
+                                "flat_start_position_snapshot_offset_seconds": (
+                                    flat_start_position_snapshot.get(
+                                        "snapshot_offset_seconds"
+                                    )
+                                ),
+                                "flat_start_position_snapshot_flat": (
+                                    flat_start_position_snapshot.get("flat")
+                                ),
+                                "flat_start_position_snapshot_position_count": (
+                                    flat_start_position_snapshot.get("position_count")
+                                ),
+                                "flat_start_position_snapshot_blockers": (
+                                    flat_start_position_snapshot.get("blockers")
+                                ),
+                            }
+                        )
+                    if flat_start_authority is not None:
+                        source_activity_diagnostics.update(flat_start_authority)
     decision_lifecycle_rows = _retarget_source_rows_for_materialization(
         decision_lifecycle_rows,
         target_account_label=materialized_account_label,
@@ -6383,6 +6623,7 @@ def _query_timestamps(
             carry_in_execution_rows=carry_in_execution_rows,
             carry_in_decision_lifecycle_rows=carry_in_decision_lifecycle_rows,
             carry_in_order_lifecycle_rows=carry_in_order_lifecycle_rows,
+            flat_start_position_snapshot=flat_start_position_snapshot,
             allow_authoritative_runtime_ledger_materialization=(
                 allow_authoritative_runtime_ledger_materialization
             ),
