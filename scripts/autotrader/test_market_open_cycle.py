@@ -20,6 +20,11 @@ class FakeSynthesis:
 
 
 class MarketOpenCycleTest(unittest.TestCase):
+    def test_parser_defaults_to_full_scorecard_api_window(self) -> None:
+        args = market_open_cycle.build_parser().parse_args([])
+
+        self.assertEqual(args.scorecard_limit, 100)
+
     def test_loads_session_runs_guarded_scan_records_checkpoint_and_report(self) -> None:
         synthesis = FakeSynthesis()
 
@@ -172,6 +177,7 @@ class MarketOpenCycleTest(unittest.TestCase):
             self.assertEqual(intent["synthesisRecordOrderInput"]["status"], "planned")
             self.assertTrue(captured_args[0].record_tickets)
             self.assertTrue(captured_args[0].respect_account_gate)
+            self.assertEqual(captured_args[0].scorecard_limit, 100)
             self.assertEqual(captured_args[0].watchlist, ["NVDA"])
             self.assertEqual(captured_args[0].analysis_context, str(root / "analysis-context.json"))
             self.assertTrue((root / "last-cycle.json").exists())
