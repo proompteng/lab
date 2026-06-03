@@ -18,7 +18,7 @@ spec:
   implementationSpecRef:
     name: autonomous-trader-v1
   goal:
-    objective: Reach 500000 USD account equity in the dedicated Synthesis Alpaca paper account through autonomous market-open day trading while recording every decision, risk check, broker action, reconciliation result, and scorecard update in Synthesis.
+    objective: Advance the dedicated Synthesis Alpaca paper account toward 500000 USD equity during this market-open session; after market close, finalize the session, record decisions/risk/broker reconciliation/scorecard feedback in Synthesis, write the report, and complete this AgentRun.
   vcsRef:
     name: github
   vcsPolicy:

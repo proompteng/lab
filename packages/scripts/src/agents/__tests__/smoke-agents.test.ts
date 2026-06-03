@@ -781,6 +781,7 @@ describe('autonomous trader provider', () => {
       const scheduleSpec = objectAt(lane.schedule, 'spec')
       const templateSpec = objectAt(lane.template, 'spec')
       const parameters = objectAt(templateSpec, 'parameters')
+      const goalObjective = String(objectAt(objectAt(templateSpec, 'goal'), 'objective') ?? '')
       const role = objectAt(scheduleSpec, 'suspend') === false ? 'active' : 'preview'
       const laneResources = [lane.schedule, lane.template, lane.agent, lane.implementationSpec, lane.systemPrompt]
       const systemPromptText = String(objectAt(objectAt(lane.systemPrompt, 'data'), 'system-prompt.md') ?? '')
@@ -804,10 +805,15 @@ describe('autonomous trader provider', () => {
       expect(objectAt(parameters, 'sessionReconcileEnabled')).toBe(role === 'active' ? 'true' : 'false')
       expect(objectAt(parameters, 'accountType')).toBe('paper')
       expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
+      expect(goalObjective).toContain('Advance the dedicated Synthesis Alpaca paper account toward 500000 USD')
+      expect(goalObjective).toContain('complete this AgentRun')
+      expect(goalObjective).not.toContain('Reach 500000 USD account equity')
       expect(systemPromptText).toContain('Ad hoc Python scripts and scratch files are allowed for immediate analysis')
       expect(systemPromptText).toContain('decisionSummary.bestCandidate.riskDirective')
       expect(systemPromptText).toContain('recommendedRiskDollars')
       expect(systemPromptText).toContain('Positive scorecard edge should be acted on aggressively')
+      expect(systemPromptText).toContain('complete this AgentRun, and stop')
+      expect(systemPromptText).toContain('do not keep post-close heartbeats waiting')
     }
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE')).toBe(

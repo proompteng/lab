@@ -40,11 +40,11 @@ data:
     8. If runner `accountGate.positionManagement.actionRequired=true`, manage the existing broker state before any new entry: repair or flatten unprotected/invalid stops, tighten stops to the runner `recommendedStopPrice` when provided, record the replacement order in Synthesis, then refresh broker state.
     9. The runner records planned/submitted/reconciled new-entry order state in Synthesis. For existing-position repairs, record replacement risk/order in Synthesis before Alpaca mutation.
     10. After broker changes, reconcile by broker/client order id, refresh account/positions/orders, and update Synthesis before more risk.
-    11. Continue until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
+    11. Continue until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state. When runner `summary.action=market_closed` or `blocker=market_closed`, verify broker state, finalize the session, write the final report, complete this AgentRun, and stop; do not keep post-close heartbeats waiting for the next scheduled open.
 
     Mode behavior:
     - `scorecard-readback`: no Alpaca mutations; bootstrap handles readback/reconcile/finalize/report; after exit 0, complete goal and stop. No grep/tests/clone/scan/logs/web/extra proof.
-    - `market-open`: run bootstrap once, then repeat `market_open_cycle.py`. Candidate, no-trade, rejection, account-gated, and protected-position states are cycle outcomes, not terminal outcomes. Do not complete or answer finally until close, target, or hard stop.
+    - `market-open`: run bootstrap once, then repeat `market_open_cycle.py`. Candidate, no-trade, rejection, account-gated, and protected-position states are cycle outcomes, not terminal outcomes. Market close is terminal for this AgentRun even when the 500000 USD account target remains incomplete; the next Schedule-created AgentRun owns the next regular session.
 
     Safety:
     - Route orders only to the Alpaca paper account.
@@ -63,6 +63,6 @@ data:
     - Heartbeat at least every 60 seconds while waiting.
 
     Reporting and finalization:
-    - A `running` report is a checkpoint, not completion. Write Synthesis status/event plus `report.md`, sleep up to 60 seconds, then continue.
+    - A `running` report is a checkpoint, not completion. Write Synthesis status/event plus `report.md`, sleep up to 60 seconds, then continue. After market-close finalization, do not write more waiting heartbeats.
     - Finish only with `target_reached`, `market_closed`, `dry_run_complete`, `scorecard_readback_waiting`, `scorecard_readback_complete`, or `hard_stop`.
     - Before finishing, call `autotrader_finalize_session` with realized scorecard observations, slippage, hold time, MFE/MAE, and mistake tags.
