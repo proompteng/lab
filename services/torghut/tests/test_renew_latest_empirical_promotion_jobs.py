@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 from decimal import Decimal
+import json
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -171,6 +172,60 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
             {("live", "PA3SX7FYNUTF"), ("paper", "TORGHUT_SIM")},
         )
 
+    def test_explicit_runtime_window_target_preserves_metadata_and_gates(self) -> None:
+        args = argparse.Namespace(
+            runtime_window_target=[
+                json.dumps(
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "observed_stage": "paper",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_REPLAY",
+                        "source_account_label": "TORGHUT_REPLAY",
+                        "source_dsn_env": "SIM_DB_DSN",
+                        "target_dsn_env": "SIM_DB_DSN",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_manifest_ref": (
+                            "config/trading/hypotheses/h-pairs-01.json"
+                        ),
+                        "dependency_quorum_decision": "allow",
+                        "continuity_ok": "true",
+                        "drift_ok": "true",
+                        "artifact_refs": ["runtime-ledger-proof.json"],
+                        "source_collection_authorized": True,
+                        "source_collection_reason_codes": [
+                            "runtime_ledger_source_window_missing"
+                        ],
+                    }
+                )
+            ],
+            runtime_window_target_plan_required=False,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+        )
+
+        targets = renew._runtime_window_targets(args)
+
+        self.assertEqual(len(targets), 1)
+        target = targets[0]
+        self.assertEqual(target.dependency_quorum_decision, "allow")
+        self.assertEqual(target.continuity_ok, "true")
+        self.assertEqual(target.drift_ok, "true")
+        self.assertEqual(target.artifact_refs, ("runtime-ledger-proof.json",))
+        assert target.target_metadata is not None
+        self.assertIs(target.target_metadata["source_collection_authorized"], True)
+        self.assertEqual(
+            target.target_metadata["source_collection_authorization_scope"],
+            "source_window_evidence_collection_only",
+        )
+        self.assertEqual(
+            target.target_metadata["source_collection_reason_codes"],
+            ["runtime_ledger_source_window_missing"],
+        )
+
     def test_observed_strategy_source_collection_plan_target_parses_for_import(
         self,
     ) -> None:
@@ -263,19 +318,13 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
                             "strategy_family": "microbar_cross_sectional_pairs",
                             "strategy_name": "microbar-cross-sectional-pairs-v1",
                             "account_label": "TORGHUT_REPLAY",
-                            "source_kind": (
-                                "simulation_exact_replay_runtime_ledger"
-                            ),
+                            "source_kind": ("simulation_exact_replay_runtime_ledger"),
                             "source_manifest_ref": (
                                 "config/trading/hypotheses/h-pairs-01.json"
                             ),
                             "artifact_refs": ["exact-ledger.json"],
-                            "exact_replay_ledger_artifact_refs": [
-                                "exact-ledger.json"
-                            ],
-                            "exact_replay_ledger_artifact_ref": (
-                                "exact-ledger.json"
-                            ),
+                            "exact_replay_ledger_artifact_refs": ["exact-ledger.json"],
+                            "exact_replay_ledger_artifact_ref": ("exact-ledger.json"),
                             "exact_replay_ledger_artifact_row_count": 6,
                             "exact_replay_ledger_artifact_fill_count": 2,
                             "promotion_allowed": False,
