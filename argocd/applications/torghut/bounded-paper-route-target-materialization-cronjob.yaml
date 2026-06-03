@@ -25,7 +25,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: materialize-targets
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:121dd88d7a1f53a7446653d7ccd67eb3414a0ac8f3a2a97939b2fce601bfa8fb
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:24c42500206e31abf8daf92b7e41ba1d74a3197aed970b2051faa2435d4a78da
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
