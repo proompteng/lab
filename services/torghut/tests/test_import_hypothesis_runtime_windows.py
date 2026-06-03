@@ -6508,6 +6508,238 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(signal_bucket))
 
+    def test_build_realized_strategy_pnl_rows_keeps_probe_exit_with_source_entry(
+        self,
+    ) -> None:
+        entry_decision_json = {
+            "params": {
+                "source_decision_mode": "bounded_paper_route_collection",
+                "profit_proof_eligible": True,
+                "account": {"equity": "10000"},
+            }
+        }
+        exit_decision_json = {
+            "params": {
+                "source_decision_mode": "route_acquisition_probe",
+                "paper_route_probe_exit": {
+                    "mode": "paper_route_exit",
+                    "source": "filled_paper_route_probe_executions",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                    "source_candidate_ids": ["ca4e6e3c7d639e3363dc5860"],
+                    "source_hypothesis_ids": ["H-TSMOM-LIQ-01"],
+                    "source_strategy_names": ["intraday-tsmom-profit-v3"],
+                },
+            }
+        }
+
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "execution_id": "entry-exec",
+                    "trade_decision_id": "entry-decision",
+                    "computed_at": datetime(2026, 6, 2, 13, 51, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 6, 2, 13, 51, 2, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "entry-hash",
+                    "decision_json": entry_decision_json,
+                    "alpaca_order_id": "entry-order",
+                    "execution_policy_hash": "entry-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "profit_proof_eligible": True,
+                },
+                {
+                    "execution_id": "exit-exec",
+                    "trade_decision_id": "exit-decision",
+                    "computed_at": datetime(2026, 6, 2, 13, 56, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 6, 2, 13, 56, 2, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "exit-hash",
+                    "decision_json": exit_decision_json,
+                    "alpaca_order_id": "exit-order",
+                    "execution_policy_hash": "exit-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                },
+            ],
+            decision_lifecycle_rows=[
+                {
+                    "trade_decision_id": "entry-decision",
+                    "computed_at": datetime(2026, 6, 2, 13, 51, tzinfo=timezone.utc),
+                    "event_type": "decision",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "entry-hash",
+                    "decision_json": entry_decision_json,
+                    "execution_policy_hash": "entry-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "profit_proof_eligible": True,
+                },
+                {
+                    "trade_decision_id": "exit-decision",
+                    "computed_at": datetime(2026, 6, 2, 13, 56, tzinfo=timezone.utc),
+                    "event_type": "decision",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "exit-hash",
+                    "decision_json": exit_decision_json,
+                    "execution_policy_hash": "exit-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                },
+            ],
+            order_lifecycle_rows=[
+                {
+                    "execution_order_event_id": "entry-new",
+                    "trade_decision_id": "entry-decision",
+                    "execution_id": "entry-exec",
+                    "event_ts": datetime(2026, 6, 2, 13, 51, 1, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "entry-hash",
+                    "decision_json": entry_decision_json,
+                    "alpaca_order_id": "entry-order",
+                    "event_type": "new",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 11,
+                    "source_window_id": "source-window-entry",
+                    "execution_policy_hash": "entry-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "profit_proof_eligible": True,
+                },
+                {
+                    "execution_order_event_id": "entry-fill",
+                    "trade_decision_id": "entry-decision",
+                    "execution_id": "entry-exec",
+                    "event_ts": datetime(2026, 6, 2, 13, 51, 2, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "entry-hash",
+                    "decision_json": entry_decision_json,
+                    "alpaca_order_id": "entry-order",
+                    "event_type": "fill",
+                    "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "filled_notional_delta": Decimal("100"),
+                    "fill_quantity_basis": "cumulative_to_delta",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 12,
+                    "source_window_id": "source-window-entry",
+                    "execution_policy_hash": "entry-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "profit_proof_eligible": True,
+                },
+                {
+                    "execution_order_event_id": "exit-new",
+                    "trade_decision_id": "exit-decision",
+                    "execution_id": "exit-exec",
+                    "event_ts": datetime(2026, 6, 2, 13, 56, 1, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "exit-hash",
+                    "decision_json": exit_decision_json,
+                    "alpaca_order_id": "exit-order",
+                    "event_type": "new",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 13,
+                    "source_window_id": "source-window-exit",
+                    "execution_policy_hash": "exit-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                },
+                {
+                    "execution_order_event_id": "exit-fill",
+                    "trade_decision_id": "exit-decision",
+                    "execution_id": "exit-exec",
+                    "event_ts": datetime(2026, 6, 2, 13, 56, 2, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "intraday-tsmom-profit-v3",
+                    "decision_hash": "exit-hash",
+                    "decision_json": exit_decision_json,
+                    "alpaca_order_id": "exit-order",
+                    "event_type": "fill",
+                    "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "filled_notional_delta": Decimal("101"),
+                    "fill_quantity_basis": "cumulative_to_delta",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 14,
+                    "source_window_id": "source-window-exit",
+                    "execution_policy_hash": "exit-policy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row["post_cost_promotion_eligible"])
+        self.assertEqual(
+            row["authority_reason"],
+            "event_sourced_runtime_ledger_profit_proof",
+        )
+        self.assertEqual(
+            row["source_decision_mode_counts"],
+            {"bounded_paper_route_collection": 4},
+        )
+        bucket = cast(Mapping[str, object], row["runtime_ledger_bucket"])
+        self.assertEqual(bucket["closed_trade_count"], 1)
+        self.assertEqual(bucket["open_position_count"], 0)
+        self.assertNotIn(
+            "source_decision_mode_not_profit_proof_eligible", bucket["blockers"]
+        )
+        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+
     def test_build_realized_strategy_pnl_rows_blocks_unlinked_fill_lifecycle(
         self,
     ) -> None:
