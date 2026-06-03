@@ -45,6 +45,7 @@ spec:
   secrets:
     - autonomous-trader-alpaca-mcp
     - agents-artifacts
+    - codex-auth
     - synthesis-env
   workload:
     volumes:

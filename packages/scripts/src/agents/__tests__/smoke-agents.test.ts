@@ -926,7 +926,12 @@ describe('autonomous trader provider', () => {
     expect(objectAt(objectAt(templateSpec, 'implementationSpecRef'), 'name')).toBe('autonomous-trader-readback-v1')
     expect(objectAt(objectAt(agentSpec, 'providerRef'), 'name')).toBe('autonomous-trader-readback-runner')
     expect(secretBindingSubjects).toEqual([{ kind: 'Agent', name: 'autonomous-trader-readback-agent' }])
-    expect(secretBindingSecrets).toEqual(['autonomous-trader-alpaca-mcp', 'agents-artifacts', 'synthesis-env'])
+    expect(secretBindingSecrets).toEqual([
+      'autonomous-trader-alpaca-mcp',
+      'agents-artifacts',
+      'codex-auth',
+      'synthesis-env',
+    ])
     expect(objectAt(providerSpec, 'binary')).toBe('/usr/local/bin/agent-runner')
     expect(objectAt(adapter, 'type')).toBe('exec')
     expect(objectAt(execAdapter, 'binary')).toBe('/usr/bin/env')
@@ -961,8 +966,8 @@ describe('autonomous trader provider', () => {
     expect(secrets).toContain('synthesis-env')
     expect(secrets).toContain('autonomous-trader-alpaca-mcp')
     expect(secrets).toContain('agents-artifacts')
+    expect(secrets).toContain('codex-auth')
     expect(secrets).not.toContain('alpaca-mcp')
-    expect(secrets).not.toContain('codex-auth')
     expect(secrets).not.toContain('github-token')
   })
 
