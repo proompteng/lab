@@ -16,9 +16,12 @@ from app.trading.models import SignalEnvelope
 def _spec(
     candidate_spec_id: str,
     *,
-    symbol: str,
+    symbol: str = "NVDA",
+    symbols: tuple[str, ...] | None = None,
     family_template_id: str = "microbar_cross_sectional_pairs_v1",
+    selection_mode: str = "continuation",
 ) -> CandidateSpec:
+    universe_symbols = list(symbols or (symbol,))
     return CandidateSpec(
         schema_version="torghut.candidate-spec.v1",
         candidate_spec_id=candidate_spec_id,
@@ -35,9 +38,9 @@ def _spec(
         parameter_space={},
         strategy_overrides={
             "max_notional_per_trade": "5000",
-            "universe_symbols": [symbol],
+            "universe_symbols": universe_symbols,
             "params": {
-                "selection_mode": "continuation",
+                "selection_mode": selection_mode,
                 "signal_motif": "vwap_close_continuation",
                 "rank_feature": "cross_section_vwap_w5m_rank",
             },
@@ -253,4 +256,66 @@ class MicrostructurePrefilterTest(TestCase):
         )
         self.assertEqual(payload["impact_capacity_lineage"]["status"], "available")
         self.assertFalse(payload["impact_capacity_lineage"]["proof_authority"])
+        self.assertEqual(
+            payload["pair_convergence_risk"]["status"],
+            "not_applicable_single_symbol",
+        )
+        self.assertFalse(payload["pair_convergence_risk"]["proof_authority"])
         self.assertEqual(payload["proof_source"], "prefilter_only")
+
+    def test_pair_convergence_risk_ranks_unstable_pair_lower(self) -> None:
+        specs = (
+            _spec("stable-pair", symbols=("AAA", "BBB"), selection_mode="mean_revert"),
+            _spec(
+                "unstable-pair", symbols=("CCC", "DDD"), selection_mode="mean_revert"
+            ),
+        )
+        stable_prices = {
+            "AAA": ("100.00", "100.04", "100.01", "100.03", "100.00", "100.02"),
+            "BBB": ("99.90", "99.93", "99.91", "99.92", "99.90", "99.91"),
+        }
+        unstable_prices = {
+            "CCC": ("100.00", "100.80", "101.90", "103.50", "105.70", "108.40"),
+            "DDD": ("100.00", "100.02", "100.04", "100.05", "100.07", "100.09"),
+        }
+        rows: list[SignalEnvelope] = []
+        for index in range(6):
+            for symbol, prices in {**stable_prices, **unstable_prices}.items():
+                rows.append(
+                    _row(
+                        30 + index,
+                        symbol,
+                        prices[index],
+                        ofi="-0.30",
+                        event_label="mean_reversion_probe",
+                    )
+                )
+
+        result = build_hpairs_microstructure_prefilter(
+            specs=specs,
+            rows=tuple(rows),
+            top_k=2,
+            exploitation_count=1,
+            exploration_count=1,
+        )
+        payloads = {row.candidate_spec_id: row.to_payload() for row in result.rows}
+
+        self.assertEqual(result.rows[0].candidate_spec_id, "stable-pair")
+        stable_risk = float(
+            payloads["stable-pair"]["pair_convergence_risk"]["risk_score"]
+        )
+        unstable_risk = float(
+            payloads["unstable-pair"]["pair_convergence_risk"]["risk_score"]
+        )
+        self.assertLess(stable_risk, unstable_risk)
+        self.assertEqual(
+            payloads["stable-pair"]["pair_convergence_risk"]["status"], "available"
+        )
+        self.assertEqual(
+            payloads["stable-pair"]["pair_convergence_risk"]["common_sample_count"],
+            6,
+        )
+        self.assertFalse(
+            payloads["stable-pair"]["pair_convergence_risk"]["promotion_authority"]
+        )
+        self.assertFalse(payloads["stable-pair"]["final_promotion_allowed"])
