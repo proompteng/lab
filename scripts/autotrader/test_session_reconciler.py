@@ -103,6 +103,120 @@ class SessionReconcilerTest(unittest.TestCase):
         self.assertEqual(payload["realizedPnl"], "-11.17")
         self.assertEqual(payload["summary"]["sourceCounts"]["events"], 1)
         self.assertTrue(payload["summary"]["brokerFlat"])
+        self.assertEqual(payload["scorecardObservations"], [])
+        self.assertEqual(payload["summary"]["scorecardObservationSummary"]["generated"], 0)
+
+    def test_scores_completed_round_trips_for_stale_session_finalization(self) -> None:
+        synthesis = FakeSynthesis(
+            [stale_session()],
+            {
+                "session-1": {
+                    "status": {"equity": "30010.00", "realizedPnl": "10"},
+                    "events": [],
+                    "tradeTickets": [
+                        {
+                            "id": "ticket-win",
+                            "symbol": "AMD",
+                            "setupType": "vwap_reclaim",
+                            "setupGrade": "A",
+                            "regime": "regular_session",
+                            "timeBucket": "mid_session",
+                            "riskDollars": "10",
+                        },
+                        {
+                            "id": "ticket-open",
+                            "symbol": "GOOGL",
+                            "setupType": "opening_range_breakout",
+                            "setupGrade": "B",
+                            "regime": "regular_session",
+                            "timeBucket": "mid_session",
+                            "riskDollars": "5",
+                        },
+                    ],
+                    "riskChecks": [],
+                    "orders": [
+                        {
+                            "ticketId": "ticket-win",
+                            "clientOrderId": "amd-entry",
+                            "symbol": "AMD",
+                            "side": "buy",
+                            "quantity": "10",
+                            "status": "filled",
+                        },
+                        {
+                            "ticketId": "ticket-win",
+                            "clientOrderId": "amd-exit",
+                            "symbol": "AMD",
+                            "side": "sell",
+                            "quantity": "10",
+                            "status": "filled",
+                        },
+                        {
+                            "ticketId": "ticket-open",
+                            "clientOrderId": "googl-entry",
+                            "symbol": "GOOGL",
+                            "side": "buy",
+                            "quantity": "5",
+                            "status": "filled",
+                        },
+                    ],
+                    "fills": [
+                        {
+                            "clientOrderId": "amd-entry",
+                            "brokerFillId": "fill-entry",
+                            "symbol": "AMD",
+                            "side": "buy",
+                            "quantity": "10",
+                            "price": "100",
+                            "filledAt": "2026-06-02T15:00:00Z",
+                        },
+                        {
+                            "clientOrderId": "amd-exit",
+                            "brokerFillId": "fill-exit",
+                            "symbol": "AMD",
+                            "side": "sell",
+                            "quantity": "10",
+                            "price": "101",
+                            "filledAt": "2026-06-02T15:05:00Z",
+                        },
+                        {
+                            "clientOrderId": "googl-entry",
+                            "brokerFillId": "fill-open",
+                            "symbol": "GOOGL",
+                            "side": "buy",
+                            "quantity": "5",
+                            "price": "200",
+                            "filledAt": "2026-06-02T16:00:00Z",
+                        },
+                    ],
+                    "positionSnapshots": [],
+                }
+            },
+        )
+
+        session_reconciler.reconcile_sessions(
+            synthesis=synthesis,  # type: ignore[arg-type]
+            alpaca=FakeAlpaca(account={"equity": "30010.00"}),  # type: ignore[arg-type]
+            now=datetime(2026, 6, 2, 20, 10, tzinfo=UTC),
+            limit=50,
+            grace_minutes=5,
+            finalize_stale_flat=True,
+            current_agent_run="",
+        )
+
+        payload = synthesis.finalized[0]
+        self.assertEqual(len(payload["scorecardObservations"]), 1)
+        observation = payload["scorecardObservations"][0]
+        self.assertEqual(observation["ticketId"], "ticket-win")
+        self.assertEqual(observation["symbol"], "AMD")
+        self.assertEqual(observation["outcome"], "win")
+        self.assertEqual(observation["realizedR"], "1")
+        self.assertEqual(observation["holdSeconds"], "300")
+        self.assertEqual(observation["payload"]["pnlDollars"], "10")
+        self.assertEqual(observation["payload"]["clientOrderIds"], ["amd-entry", "amd-exit"])
+        summary = payload["summary"]["scorecardObservationSummary"]
+        self.assertEqual(summary["generated"], 1)
+        self.assertEqual(summary["skipped"]["missingRoundTripSides"], 1)
 
     def test_does_not_finalize_when_current_broker_state_is_open(self) -> None:
         synthesis = FakeSynthesis([stale_session()], {"session-1": {"status": {}, "events": []}})
