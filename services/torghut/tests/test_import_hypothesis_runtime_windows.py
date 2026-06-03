@@ -3459,6 +3459,71 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
+    def test_build_realized_strategy_pnl_rows_precomputes_event_sourced_orders(
+        self,
+    ) -> None:
+        def execution_row(
+            execution_id: str,
+            event_at: datetime,
+            side: str,
+            price: str,
+            order_id: str,
+        ) -> dict[str, object]:
+            return {
+                "execution_id": execution_id,
+                "computed_at": event_at,
+                "execution_event_at": event_at,
+                "symbol": "AAPL",
+                "side": side,
+                "filled_qty": Decimal("1"),
+                "avg_fill_price": Decimal(price),
+                "cost_amount": Decimal("0.01"),
+                "cost_basis": "broker_reported_commission_and_fees",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "microbar-cross-sectional-pairs-v1",
+                "alpaca_order_id": order_id,
+            }
+
+        current_rows = [
+            execution_row(
+                "execution-current-buy",
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                "buy",
+                "100",
+                "order-current-buy",
+            ),
+            execution_row(
+                "execution-current-sell",
+                datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                "sell",
+                "101",
+                "order-current-sell",
+            ),
+        ]
+        carry_in_rows = [
+            execution_row(
+                f"execution-carry-{index}",
+                datetime(2026, 3, 6, 14, 30 + index, tzinfo=timezone.utc),
+                "buy" if index % 2 == 0 else "sell",
+                "100",
+                f"order-carry-{index}",
+            )
+            for index in range(6)
+        ]
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows._event_sourced_fill_economics_order_ids",
+            return_value=set(),
+        ) as event_sourced_order_ids:
+            rows = _build_realized_strategy_pnl_rows(
+                current_rows,
+                carry_in_execution_rows=carry_in_rows,
+                allow_authoritative_runtime_ledger_materialization=True,
+            )
+
+        self.assertTrue(rows)
+        self.assertLessEqual(event_sourced_order_ids.call_count, 3)
+
     def test_build_realized_strategy_pnl_rows_authorizes_source_backed_short_round_trip(
         self,
     ) -> None:

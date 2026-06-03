@@ -3713,6 +3713,7 @@ def _runtime_execution_ledger_fill_from_row(
     row: Mapping[str, object],
     *,
     order_lifecycle_rows: Sequence[Mapping[str, object]] | None,
+    event_sourced_fill_economics_order_ids: set[str] | None = None,
 ) -> tuple[RuntimeLedgerFill | None, list[datetime]]:
     computed_at = row.get("computed_at")
     execution_event_at = row.get("execution_event_at")
@@ -3797,9 +3798,12 @@ def _runtime_execution_ledger_fill_from_row(
     )
     if price is None or price <= 0 or signed_qty == 0:
         return None, []
-    if order_id is not None and order_id in _event_sourced_fill_economics_order_ids(
-        order_lifecycle_rows or []
-    ):
+    event_sourced_order_ids = (
+        event_sourced_fill_economics_order_ids
+        if event_sourced_fill_economics_order_ids is not None
+        else _event_sourced_fill_economics_order_ids(order_lifecycle_rows or [])
+    )
+    if order_id is not None and order_id in event_sourced_order_ids:
         return None, []
     event_times = [ledger_computed_at]
     if isinstance(fill_event_at, datetime):
@@ -3965,6 +3969,9 @@ def _build_realized_strategy_pnl_rows(
         )
         for row in carry_in_order_lifecycle_rows or []
     ]
+    event_sourced_fill_economics_order_ids = _event_sourced_fill_economics_order_ids(
+        order_lifecycle_rows
+    )
     for row in decision_lifecycle_rows or []:
         lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
         if lifecycle_row is None:
@@ -4041,6 +4048,9 @@ def _build_realized_strategy_pnl_rows(
         ledger_fill, ledger_event_times = _runtime_execution_ledger_fill_from_row(
             row,
             order_lifecycle_rows=order_lifecycle_rows,
+            event_sourced_fill_economics_order_ids=(
+                event_sourced_fill_economics_order_ids
+            ),
         )
         if ledger_fill is None:
             continue
@@ -4110,10 +4120,16 @@ def _build_realized_strategy_pnl_rows(
         *(carry_in_order_lifecycle_rows or []),
         *(order_lifecycle_rows or []),
     ]
+    combined_event_sourced_fill_economics_order_ids = (
+        _event_sourced_fill_economics_order_ids(combined_order_lifecycle_rows)
+    )
     for row in carry_in_execution_rows or []:
         ledger_fill, _ledger_event_times = _runtime_execution_ledger_fill_from_row(
             row,
             order_lifecycle_rows=combined_order_lifecycle_rows,
+            event_sourced_fill_economics_order_ids=(
+                combined_event_sourced_fill_economics_order_ids
+            ),
         )
         if ledger_fill is not None:
             carry_in_ledger_rows.append(ledger_fill)
