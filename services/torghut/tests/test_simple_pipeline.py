@@ -402,13 +402,10 @@ def test_target_notional_budget_and_quote_reference_defensive_paths() -> None:
         )
         is None
     )
-    assert (
-        _quote_snapshot_reference_price(
-            {"bid": "99", "ask": "101"},
-            action="hold",  # type: ignore[arg-type]
-        )
-        == Decimal("100")
-    )
+    assert _quote_snapshot_reference_price(
+        {"bid": "99", "ask": "101"},
+        action="hold",  # type: ignore[arg-type]
+    ) == Decimal("100")
     assert _quote_snapshot_reference_price({}, action="buy") is None
 
 
@@ -491,12 +488,14 @@ def test_target_sizing_price_uses_target_snapshot_and_handles_fetcher_failures()
 ):
     now = datetime(2026, 6, 4, 14, 30, tzinfo=timezone.utc)
     pipeline = object.__new__(SimpleTradingPipeline)
-    reference_price, price_params, price_source = pipeline._paper_route_target_sizing_price(
-        target={"price_snapshot": {"symbol": "AAPL", "bid": "99", "ask": "101"}},
-        symbol="AAPL",
-        action="buy",
-        event_ts=now,
-        timeframe="1Min",
+    reference_price, price_params, price_source = (
+        pipeline._paper_route_target_sizing_price(
+            target={"price_snapshot": {"symbol": "AAPL", "bid": "99", "ask": "101"}},
+            symbol="AAPL",
+            action="buy",
+            event_ts=now,
+            timeframe="1Min",
+        )
     )
     assert reference_price == Decimal("101")
     assert price_params["reference_price"] == Decimal("101")
@@ -535,12 +534,14 @@ def test_target_sizing_price_uses_target_snapshot_and_handles_fetcher_failures()
             source="fixture",
         )
     )
-    reference_price, price_params, price_source = invalid._paper_route_target_sizing_price(
-        target={},
-        symbol="AAPL",
-        action="buy",
-        event_ts=now,
-        timeframe="1Min",
+    reference_price, price_params, price_source = (
+        invalid._paper_route_target_sizing_price(
+            target={},
+            symbol="AAPL",
+            action="buy",
+            event_ts=now,
+            timeframe="1Min",
+        )
     )
     assert reference_price is None
     assert "price_snapshot" in price_params
@@ -661,6 +662,69 @@ def test_target_source_decisions_skip_target_notional_below_min_step(
                 symbol=signal.symbol,
                 as_of=signal.event_ts,
                 price=Decimal("100"),
+                spread=None,
+                source="fixture",
+            )
+        )
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            {"AAPL", "AMZN"},
+            None,
+            [target],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[strategy],
+            allowed_symbols={"AAPL", "AMZN"},
+            positions=[],
+            session=None,
+        )
+
+        assert decisions == []
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_allow_shorts = allow_shorts_before
+
+
+def test_target_source_decisions_fail_closed_without_target_notional_price(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    allow_shorts_before = settings.trading_allow_shorts
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_allow_shorts = True
+        now = datetime(2026, 6, 4, 14, 30, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            target_notional="20000",
+            paper_route_probe_next_session_max_notional="20000",
+            paper_route_probe_window_start="2026-06-04T13:30:00+00:00",
+            paper_route_probe_window_end="2026-06-04T20:00:00+00:00",
+            paper_route_probe_symbol_actions={"AAPL": "buy", "AMZN": "sell"},
+            paper_route_probe_symbol_quantities={"AAPL": "1", "AMZN": "1"},
+        )
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline.price_fetcher = SimpleNamespace(
+            fetch_market_snapshot=lambda signal: MarketSnapshot(
+                symbol=signal.symbol,
+                as_of=signal.event_ts,
+                price=None,
                 spread=None,
                 source="fixture",
             )
@@ -1276,6 +1340,17 @@ def test_bounded_source_collection_authorizes_after_runtime_account_audit_readba
         )
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
+        pipeline.price_fetcher = SimpleNamespace(
+            fetch_market_snapshot=lambda signal: MarketSnapshot(
+                symbol=signal.symbol,
+                as_of=signal.event_ts,
+                price=Decimal("8.3333333333333333333"),
+                spread=Decimal("0"),
+                source="fixture",
+                bid=Decimal("8.3333333333333333333"),
+                ask=Decimal("8.3333333333333333333"),
+            )
+        )
         pipeline._is_market_session_open = lambda _now: True
         pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             {"AAPL", "AMZN"},
@@ -1364,6 +1439,17 @@ def test_local_target_plan_enriches_probe_contract_before_bounded_gate(
         )
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
+        pipeline.price_fetcher = SimpleNamespace(
+            fetch_market_snapshot=lambda signal: MarketSnapshot(
+                symbol=signal.symbol,
+                as_of=signal.event_ts,
+                price=Decimal("8.3333333333333333333"),
+                spread=Decimal("0"),
+                source="fixture",
+                bid=Decimal("8.3333333333333333333"),
+                ask=Decimal("8.3333333333333333333"),
+            )
+        )
         pipeline._is_market_session_open = lambda _now: True
         pipeline._live_submission_gate = lambda **_kwargs: live_gate
         monkeypatch.setattr(
@@ -1465,6 +1551,17 @@ def test_source_collection_authorization_emits_bounded_lineage_decisions_without
         )
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"
+        pipeline.price_fetcher = SimpleNamespace(
+            fetch_market_snapshot=lambda signal: MarketSnapshot(
+                symbol=signal.symbol,
+                as_of=signal.event_ts,
+                price=Decimal("8.3333333333333333333"),
+                spread=Decimal("0"),
+                source="fixture",
+                bid=Decimal("8.3333333333333333333"),
+                ask=Decimal("8.3333333333333333333"),
+            )
+        )
         pipeline._is_market_session_open = lambda _now: True
         pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
             {"AAPL", "AMZN"},

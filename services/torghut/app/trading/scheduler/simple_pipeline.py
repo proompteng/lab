@@ -3238,6 +3238,21 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         if quantity_resolution is None:
             return None
+        if quantity_resolution.audit.get("sizing_source") != "target_notional":
+            blockers = quantity_resolution.audit.get("blockers")
+            blocker_items = (
+                cast(list[object], blockers) if isinstance(blockers, list) else []
+            )
+            blocker_text = ",".join(str(item) for item in blocker_items)
+            logger.warning(
+                "Skipping materialized paper-route target source decision because "
+                "target-notional sizing is not authoritative decision_id=%s "
+                "symbol=%s blockers=%s",
+                decision_row.id,
+                symbol,
+                blocker_text,
+            )
+            return None
         qty = quantity_resolution.qty
         metadata["paper_route_target_notional_sizing"] = quantity_resolution.audit
         simple_lane["paper_route_target_notional_sizing"] = quantity_resolution.audit
@@ -5933,6 +5948,23 @@ class SimpleTradingPipeline(TradingPipeline):
                     timeframe=timeframe,
                 )
                 if quantity_resolution is None:
+                    continue
+                if quantity_resolution.audit.get("sizing_source") != "target_notional":
+                    blockers = quantity_resolution.audit.get("blockers")
+                    blocker_items = (
+                        cast(list[object], blockers)
+                        if isinstance(blockers, list)
+                        else []
+                    )
+                    blocker_text = ",".join(str(item) for item in blocker_items)
+                    logger.warning(
+                        "Skipping paper-route target source decision because "
+                        "target-notional sizing is not authoritative strategy=%s "
+                        "symbol=%s blockers=%s",
+                        strategy.name,
+                        symbol,
+                        blocker_text,
+                    )
                     continue
                 qty = quantity_resolution.qty
                 metadata["paper_route_target_notional_sizing"] = (
