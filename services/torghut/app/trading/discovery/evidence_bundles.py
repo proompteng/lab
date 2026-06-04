@@ -205,6 +205,27 @@ BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS = (
     "out_of_sample_generalization_passed",
     "bootstrap_robust_optimization_source_markers",
 )
+OFI_RESPONSE_HORIZON_SCORECARD_KEYS = (
+    "requires_ofi_response_horizon_selection",
+    "required_ofi_response_horizon_selection",
+    "required_min_ofi_response_sample_count",
+    "required_min_ofi_response_stable_split_pass_rate",
+    "required_max_ofi_response_best_split_share",
+    "requires_executable_quote_evidence",
+    "required_executable_quote_evidence",
+    "rejects_ohlcv_only_ofi_proxies",
+    "ofi_response_horizon_passed",
+    "ofi_response_horizon_artifact_ref",
+    "ofi_response_horizon_artifact_refs",
+    "ofi_response_sample_count",
+    "ofi_response_stable_split_pass_rate",
+    "ofi_response_best_split_share",
+    "executable_quote_evidence_present",
+    "quote_evidence_present",
+    "quote_evidence_sample_count",
+    "post_cost_net_pnl_after_ofi_response_horizon",
+    "ofi_response_horizon_source_markers",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -1048,6 +1069,13 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for key in OFI_RESPONSE_HORIZON_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
     for source in (candidate, summary, full_window):
         for key, value in _order_type_execution_metrics(source).items():
             if key not in scorecard:
@@ -1105,7 +1133,10 @@ def evidence_bundle_from_frontier_candidate(
         _mapping(candidate.get("hard_vetoes")),
         _mapping(candidate.get("promotion_contract")),
     ):
-        for key in BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS:
+        for key in (
+            *BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS,
+            *OFI_RESPONSE_HORIZON_SCORECARD_KEYS,
+        ):
             if key in nested_contract and key not in scorecard:
                 scorecard = {**scorecard, key: nested_contract[key]}
     replay_params = _frontier_replay_params(candidate)
@@ -1765,6 +1796,100 @@ def _bootstrap_robust_optimization_blockers(
     return blockers
 
 
+def _ofi_response_horizon_required(scorecard: Mapping[str, Any]) -> bool:
+    if any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_ofi_response_horizon_selection",
+            "required_ofi_response_horizon_selection",
+            "requires_executable_quote_evidence",
+            "required_executable_quote_evidence",
+            "rejects_ohlcv_only_ofi_proxies",
+        )
+    ):
+        return True
+    hard_vetoes = {veto.lower() for veto in _string_list(scorecard.get("hard_vetoes"))}
+    if hard_vetoes.intersection(
+        {
+            "required_min_ofi_response_sample_count",
+            "required_min_ofi_response_stable_split_pass_rate",
+            "required_max_ofi_response_best_split_share",
+            "required_executable_quote_evidence",
+        }
+    ):
+        return True
+    return bool(
+        {
+            marker.lower()
+            for marker in _string_list(
+                scorecard.get("ofi_response_horizon_source_markers")
+            )
+        }.intersection(
+            {
+                "ofi_response_horizon_arxiv_2505_17388_2025",
+                "intraday_ofi_macro_news_arxiv_2508_06788_2025",
+            }
+        )
+    )
+
+
+def _route_tca_present(scorecard: Mapping[str, Any]) -> bool:
+    return (
+        _bool(scorecard.get("route_tca_evidence_present"))
+        or _string(scorecard.get("route_tca_artifact_ref")) != ""
+        or bool(_string_list(scorecard.get("route_tca_artifact_refs")))
+    )
+
+
+def _ofi_response_horizon_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    if not _ofi_response_horizon_required(scorecard):
+        return []
+
+    blockers: list[str] = []
+    if not _bool(scorecard.get("ofi_response_horizon_passed")):
+        blockers.append("ofi_response_horizon_missing_or_failed")
+    if not _has_artifact_ref(
+        scorecard,
+        "ofi_response_horizon_artifact_ref",
+        "ofi_response_horizon_artifact_refs",
+    ):
+        blockers.append("ofi_response_horizon_artifact_missing")
+    required_sample_count = max(
+        1,
+        _int(scorecard.get("required_min_ofi_response_sample_count") or 120),
+    )
+    if _int(scorecard.get("ofi_response_sample_count")) < required_sample_count:
+        blockers.append("ofi_response_sample_count_below_min")
+    required_split_rate = _decimal(
+        scorecard.get("required_min_ofi_response_stable_split_pass_rate") or "0.60"
+    )
+    if (
+        _decimal(scorecard.get("ofi_response_stable_split_pass_rate"))
+        < required_split_rate
+    ):
+        blockers.append("ofi_response_stable_split_pass_rate_below_min")
+    max_best_split_share = _decimal(
+        scorecard.get("required_max_ofi_response_best_split_share") or "0.35"
+    )
+    raw_best_split_share = scorecard.get("ofi_response_best_split_share")
+    if raw_best_split_share is None:
+        blockers.append("ofi_response_best_split_share_missing")
+    elif _decimal(raw_best_split_share) > max_best_split_share:
+        blockers.append("ofi_response_best_split_share_above_max")
+    quote_sample_count = _int(scorecard.get("quote_evidence_sample_count"))
+    if not (
+        _bool(scorecard.get("executable_quote_evidence_present"))
+        or _bool(scorecard.get("quote_evidence_present"))
+        or quote_sample_count > 0
+    ):
+        blockers.append("executable_quote_evidence_missing")
+    if not _route_tca_present(scorecard):
+        blockers.append("ofi_route_tca_evidence_missing")
+    if _decimal(scorecard.get("post_cost_net_pnl_after_ofi_response_horizon")) <= 0:
+        blockers.append("ofi_response_horizon_net_pnl_non_positive")
+    return blockers
+
+
 def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     requires_conformal_tail_risk = _bool(
         scorecard.get("conformal_tail_risk_required")
@@ -1847,6 +1972,7 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         blockers.extend(_implementation_uncertainty_blockers(scorecard))
         blockers.extend(_implementation_risk_backtest_stability_blockers(scorecard))
         blockers.extend(_bootstrap_robust_optimization_blockers(scorecard))
+        blockers.extend(_ofi_response_horizon_blockers(scorecard))
         blockers.extend(_conformal_tail_risk_blockers(scorecard))
         blockers.extend(_delay_depth_survival_blockers(scorecard))
     return tuple(dict.fromkeys(blockers))

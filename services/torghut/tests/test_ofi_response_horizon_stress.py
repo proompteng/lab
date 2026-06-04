@@ -123,6 +123,14 @@ class TestOfiResponseHorizonStress(TestCase):
         self.assertFalse(payload["proof_authority"])
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["final_authority_ok"])
+        self.assertIn(
+            "ofi_response_horizon_arxiv_2505_17388_2025",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "intraday_ofi_macro_news_arxiv_2508_06788_2025",
+            payload["source_markers"],
+        )
 
     def test_missing_ofi_fails_closed_with_source_gap_and_contract_sources(
         self,
@@ -143,6 +151,22 @@ class TestOfiResponseHorizonStress(TestCase):
         )
         self.assertIn("arxiv-2505.17388", source_ids)
         self.assertIn("arxiv-2508.06788", source_ids)
+        self.assertIn(
+            "ofi_response_horizon_arxiv_2505_17388_2025",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "intraday_ofi_macro_news_arxiv_2508_06788_2025",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "ofi_response_horizon_arxiv_2505_17388_2025",
+            contract["source_markers"],
+        )
+        self.assertIn(
+            "intraday_ofi_macro_news_arxiv_2508_06788_2025",
+            contract["source_markers"],
+        )
         self.assertIn(
             "missing_order_flow_imbalance_for_response_horizon", payload["warnings"]
         )

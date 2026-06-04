@@ -610,6 +610,99 @@ def test_promotion_ready_bundle_accepts_materialized_bootstrap_robust_evidence()
     assert "out_of_sample_generalization_missing_or_failed" not in blockers
 
 
+def test_promotion_ready_bundle_blocks_required_ofi_response_gaps() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-ofi-response-gap",
+        candidate_id="candidate-ofi-response-gap",
+        candidate_spec_id="spec-ofi-response-gap",
+        dataset_snapshot_id="snapshot-ofi-response-gap",
+        feature_spec_hash="feature-ofi-response-gap",
+        code_commit="commit-ofi-response-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_ofi_response_horizon_selection": True,
+            "required_min_ofi_response_sample_count": "120",
+            "required_min_ofi_response_stable_split_pass_rate": "0.60",
+            "required_max_ofi_response_best_split_share": "0.35",
+            "ofi_response_horizon_source_markers": [
+                "ofi_response_horizon_arxiv_2505_17388_2025",
+                "intraday_ofi_macro_news_arxiv_2508_06788_2025",
+            ],
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "ofi_response_horizon_missing_or_failed" in blockers
+    assert "ofi_response_horizon_artifact_missing" in blockers
+    assert "ofi_response_sample_count_below_min" in blockers
+    assert "ofi_response_stable_split_pass_rate_below_min" in blockers
+    assert "ofi_response_best_split_share_missing" in blockers
+    assert "executable_quote_evidence_missing" in blockers
+    assert "ofi_route_tca_evidence_missing" in blockers
+    assert "ofi_response_horizon_net_pnl_non_positive" in blockers
+
+
+def test_promotion_ready_bundle_accepts_materialized_ofi_response_evidence() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-ofi-response-ready",
+        candidate_id="candidate-ofi-response-ready",
+        candidate_spec_id="spec-ofi-response-ready",
+        dataset_snapshot_id="snapshot-ofi-response-ready",
+        feature_spec_hash="feature-ofi-response-ready",
+        code_commit="commit-ofi-response-ready",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_ofi_response_horizon_selection": True,
+            "required_min_ofi_response_sample_count": "120",
+            "required_min_ofi_response_stable_split_pass_rate": "0.60",
+            "required_max_ofi_response_best_split_share": "0.35",
+            "ofi_response_horizon_passed": True,
+            "ofi_response_horizon_artifact_ref": "artifact://ofi-response",
+            "ofi_response_sample_count": 120,
+            "ofi_response_stable_split_pass_rate": "0.65",
+            "ofi_response_best_split_share": "0.30",
+            "executable_quote_evidence_present": True,
+            "quote_evidence_sample_count": 120,
+            "route_tca_artifact_ref": "artifact://route-tca",
+            "post_cost_net_pnl_after_ofi_response_horizon": "540",
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "ofi_response_horizon_missing_or_failed" not in blockers
+    assert "ofi_response_horizon_artifact_missing" not in blockers
+    assert "ofi_response_sample_count_below_min" not in blockers
+    assert "ofi_response_stable_split_pass_rate_below_min" not in blockers
+    assert "ofi_response_best_split_share_missing" not in blockers
+    assert "executable_quote_evidence_missing" not in blockers
+    assert "ofi_route_tca_evidence_missing" not in blockers
+    assert "ofi_response_horizon_net_pnl_non_positive" not in blockers
+
+
 def test_frontier_candidate_preserves_order_type_tca_fields() -> None:
     bundle = evidence_bundle_from_frontier_candidate(
         candidate_spec_id="spec-order-type-preserved",
@@ -702,6 +795,53 @@ def test_frontier_candidate_preserves_bootstrap_robust_fields() -> None:
     )
     blockers = evidence_bundle_blockers(bundle)
     assert "bootstrap_robust_optimization_artifact_missing" not in blockers
+
+
+def test_frontier_candidate_preserves_ofi_response_fields() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-ofi-response-preserved",
+        candidate={
+            "candidate_id": "candidate-ofi-response-preserved",
+            "objective_scorecard": _promotion_quality_scorecard(),
+            "hard_vetoes": {
+                "required_min_ofi_response_sample_count": "120",
+                "required_min_ofi_response_stable_split_pass_rate": "0.60",
+                "required_max_ofi_response_best_split_share": "0.35",
+                "required_executable_quote_evidence": True,
+            },
+            "promotion_contract": {
+                "requires_ofi_response_horizon_selection": True,
+            },
+            "ofi_response_horizon_passed": True,
+            "ofi_response_horizon_artifact_ref": "artifact://ofi-response",
+            "ofi_response_sample_count": 120,
+            "ofi_response_stable_split_pass_rate": "0.65",
+            "ofi_response_best_split_share": "0.30",
+            "executable_quote_evidence_present": True,
+            "quote_evidence_sample_count": 120,
+            "route_tca_artifact_ref": "artifact://route-tca",
+            "post_cost_net_pnl_after_ofi_response_horizon": "540",
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-ofi-response-preserved",
+        result_path="artifact://replay",
+        code_commit="commit-ofi-response-preserved",
+    )
+
+    assert bundle.objective_scorecard["requires_ofi_response_horizon_selection"] is True
+    assert bundle.objective_scorecard["required_executable_quote_evidence"] is True
+    assert (
+        bundle.objective_scorecard["ofi_response_horizon_artifact_ref"]
+        == "artifact://ofi-response"
+    )
+    blockers = evidence_bundle_blockers(bundle)
+    assert "ofi_response_horizon_artifact_missing" not in blockers
+    assert "ofi_route_tca_evidence_missing" not in blockers
 
 
 def test_frontier_candidate_preserves_implementation_risk_parity_fields() -> None:
