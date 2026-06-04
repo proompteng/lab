@@ -19,10 +19,10 @@ from typing import Any
 from app.trading.models import SignalEnvelope
 
 ADAPTIVE_MARKET_LIMIT_ALLOCATION_STRESS_SCHEMA_VERSION = (
-    "torghut.adaptive-market-limit-allocation-stress.v1"
+    "torghut.adaptive-market-limit-allocation-stress.v2"
 )
 ADAPTIVE_MARKET_LIMIT_ALLOCATION_STRESS_CONTRACT_SCHEMA_VERSION = (
-    "torghut.adaptive-market-limit-allocation-stress-contract.v1"
+    "torghut.adaptive-market-limit-allocation-stress-contract.v2"
 )
 ADAPTIVE_MARKET_LIMIT_ALLOCATION_STRESS_PROOF_SEMANTICS_LABEL = (
     "adaptive_market_limit_allocation_preview_only_exact_replay_route_tca_"
@@ -37,6 +37,13 @@ ADAPTIVE_MARKET_LIMIT_ALLOCATION_STRESS_PRIMARY_SOURCES: tuple[
         "title": "Reinforcement Learning for Trade Execution with Market and Limit Orders",
         "date": "2026-01-26",
         "mechanism": "dynamic_market_limit_allocation_with_fill_uncertainty_and_tactical_imbalance",
+    },
+    {
+        "source_id": "arxiv-2605.24242",
+        "url": "https://arxiv.org/abs/2605.24242",
+        "title": "Explicit Signal-Adaptive Sequential Optimal Execution Quotes",
+        "date": "2026-05-22",
+        "mechanism": "signal_adaptive_limit_quote_execution_with_inventory_and_execution_risk_penalties",
     },
     {
         "source_id": "arxiv-2603.29086",
@@ -73,6 +80,34 @@ _IMBALANCE_FIELDS = (
     "ofi",
     "order_flow_imbalance",
 )
+_REMAINING_INVENTORY_QTY_FIELDS = (
+    "remaining_inventory_qty",
+    "leftover_inventory_qty",
+    "unexecuted_inventory_qty",
+    "unfilled_inventory_qty",
+    "inventory_remaining_qty",
+    "held_outside_book_qty",
+    "withheld_inventory_qty",
+    "remaining_parent_qty",
+)
+_PARENT_QTY_FIELDS = (
+    "parent_order_qty",
+    "metaorder_qty",
+    "arrival_qty",
+    "target_inventory_qty",
+    "target_parent_qty",
+    "target_qty",
+    "order_qty",
+    "quantity",
+    "qty",
+)
+_DEADLINE_PROGRESS_FIELDS = (
+    "execution_progress",
+    "schedule_progress",
+    "time_progress",
+    "deadline_progress",
+    "session_progress",
+)
 _WIDE_SPREAD_BPS = 8.0
 _ADVERSE_IMBALANCE_THRESHOLD = -0.05
 _SUPPORTIVE_IMBALANCE_THRESHOLD = 0.05
@@ -90,11 +125,15 @@ class AdaptiveMarketLimitAllocationStressSummary:
     limit_fill_rate: float
     market_unfilled_share: float
     unfilled_limit_share: float
+    explicit_withhold_order_share: float
+    terminal_inventory_gap_share: float
+    terminal_inventory_urgency_score: float
     adverse_market_order_share: float
     wide_spread_market_order_share: float
     supportive_limit_order_share: float
     nonfill_opportunity_cost_bps: float
     allocation_impact_cost_bps: float
+    terminal_inventory_penalty_bps: float
     allocation_reality_gap_score: float
     replay_rank_penalty_bps: float
     warnings: tuple[str, ...]
@@ -119,6 +158,15 @@ class AdaptiveMarketLimitAllocationStressSummary:
             "limit_fill_rate": _stable_float(self.limit_fill_rate),
             "market_unfilled_share": _stable_float(self.market_unfilled_share),
             "unfilled_limit_share": _stable_float(self.unfilled_limit_share),
+            "explicit_withhold_order_share": _stable_float(
+                self.explicit_withhold_order_share
+            ),
+            "terminal_inventory_gap_share": _stable_float(
+                self.terminal_inventory_gap_share
+            ),
+            "terminal_inventory_urgency_score": _stable_float(
+                self.terminal_inventory_urgency_score
+            ),
             "adverse_market_order_share": _stable_float(
                 self.adverse_market_order_share
             ),
@@ -134,6 +182,9 @@ class AdaptiveMarketLimitAllocationStressSummary:
             "allocation_impact_cost_bps": _stable_float(
                 self.allocation_impact_cost_bps
             ),
+            "terminal_inventory_penalty_bps": _stable_float(
+                self.terminal_inventory_penalty_bps
+            ),
             "allocation_reality_gap_score": _stable_float(
                 self.allocation_reality_gap_score
             ),
@@ -146,6 +197,15 @@ class AdaptiveMarketLimitAllocationStressSummary:
                 "limit_fill_rate": _stable_float(self.limit_fill_rate),
                 "market_unfilled_share": _stable_float(self.market_unfilled_share),
                 "unfilled_limit_share": _stable_float(self.unfilled_limit_share),
+                "explicit_withhold_order_share": _stable_float(
+                    self.explicit_withhold_order_share
+                ),
+                "terminal_inventory_gap_share": _stable_float(
+                    self.terminal_inventory_gap_share
+                ),
+                "terminal_inventory_urgency_score": _stable_float(
+                    self.terminal_inventory_urgency_score
+                ),
                 "adverse_market_order_share": _stable_float(
                     self.adverse_market_order_share
                 ),
@@ -161,6 +221,9 @@ class AdaptiveMarketLimitAllocationStressSummary:
                 "allocation_impact_cost_bps": _stable_float(
                     self.allocation_impact_cost_bps
                 ),
+                "terminal_inventory_penalty_bps": _stable_float(
+                    self.terminal_inventory_penalty_bps
+                ),
                 "allocation_reality_gap_score": _stable_float(
                     self.allocation_reality_gap_score
                 ),
@@ -170,6 +233,7 @@ class AdaptiveMarketLimitAllocationStressSummary:
             "market_limit_allocation_preview": True,
             "fill_uncertainty_preview": True,
             "tactical_imbalance_allocation_preview": True,
+            "terminal_inventory_risk_preview": True,
             "trade_level_cost_logging_required_downstream": True,
             "research_ranking_only": True,
             "prefilter_only": True,
@@ -200,8 +264,12 @@ def adaptive_market_limit_allocation_stress_contract() -> dict[str, Any]:
             "unfilled_limit_share",
             "adverse_market_order_share",
             "wide_spread_market_order_share",
+            "explicit_withhold_order_share",
+            "terminal_inventory_gap_share",
+            "terminal_inventory_urgency_score",
             "nonfill_opportunity_cost_bps",
             "allocation_impact_cost_bps",
+            "terminal_inventory_penalty_bps",
             "allocation_reality_gap_score",
         ],
         "output_scope": "preview_replay_ranking_only",
@@ -214,9 +282,12 @@ def adaptive_market_limit_allocation_stress_contract() -> dict[str, Any]:
             "requires_exact_replay": True,
             "requires_route_tca": True,
             "requires_order_lifecycle_fill_evidence": True,
+            "requires_terminal_inventory_reconciliation": True,
             "requires_runtime_ledger": True,
             "requires_trade_level_cost_logging": True,
             "rejects_model_allocation_as_fill_authority": True,
+            "rejects_withheld_inventory_proxy_as_position_authority": True,
+            "rejects_terminal_inventory_penalty_as_realized_loss_authority": True,
             "rejects_synthetic_fill_authority": True,
             "rejects_modeled_cost_as_realized_pnl_authority": True,
         },
@@ -245,10 +316,13 @@ def extract_adaptive_market_limit_allocation_stress(
     limit_fill_evidence_count = 0
     limit_filled_count = 0
     limit_unfilled_count = 0
+    explicit_withhold_count = 0
     adverse_market_count = 0
     wide_spread_market_count = 0
     supportive_limit_count = 0
     tactical_imbalance_count = 0
+    terminal_inventory_gap_share = 0.0
+    terminal_inventory_urgency_score = 0.0
     nonfill_costs: list[float] = []
     spread_values: list[float] = []
 
@@ -268,6 +342,17 @@ def extract_adaptive_market_limit_allocation_stress(
             spread_values.append(max(0.0, spread_bps))
         if signed_imbalance is not None:
             tactical_imbalance_count += 1
+        inventory_gap_share = _inventory_gap_share(row.payload)
+        if inventory_gap_share is not None:
+            terminal_inventory_gap_share = inventory_gap_share
+            deadline_progress = _first_float(row.payload, _DEADLINE_PROGRESS_FIELDS)
+            if deadline_progress is None:
+                deadline_progress = (index + 1.0) / max(1.0, float(len(ordered)))
+            terminal_inventory_urgency_score = max(
+                terminal_inventory_urgency_score,
+                inventory_gap_share
+                * _clamped_float(deadline_progress, low=0.0, high=1.0),
+            )
 
         if order_type is None:
             continue
@@ -302,10 +387,15 @@ def extract_adaptive_market_limit_allocation_stress(
                 signed_imbalance >= _SUPPORTIVE_IMBALANCE_THRESHOLD
             ):
                 supportive_limit_count += 1
+        elif order_type == "withheld":
+            explicit_withhold_count += 1
 
     observed_order_type_count = len(order_types)
     market_order_count = sum(1 for item in order_types if item == "market")
     limit_order_count = sum(1 for item in order_types if item == "limit")
+    explicit_withhold_order_share = _share(
+        explicit_withhold_count, observed_order_type_count
+    )
     if len(ordered) < 2:
         warnings.append("insufficient_allocation_replay_rows")
     if observed_order_type_count == 0:
@@ -333,6 +423,15 @@ def extract_adaptive_market_limit_allocation_stress(
         + wide_spread_market_order_share * _WIDE_SPREAD_BPS * 0.5
         + adverse_market_order_share * 6.0
     )
+    terminal_inventory_gap_share = max(
+        terminal_inventory_gap_share,
+        explicit_withhold_order_share * 0.50,
+    )
+    terminal_inventory_penalty_bps = (
+        terminal_inventory_gap_share * 14.0
+        + terminal_inventory_urgency_score * 18.0
+        + explicit_withhold_order_share * 6.0
+    )
 
     evidence_gap_score = (
         (0.0 if observed_order_type_count > 0 else 1.0)
@@ -344,6 +443,8 @@ def extract_adaptive_market_limit_allocation_stress(
         1.0,
         evidence_gap_score * 0.35
         + unfilled_limit_share * 0.25
+        + terminal_inventory_gap_share * 0.25
+        + terminal_inventory_urgency_score * 0.15
         + adverse_market_order_share * 0.20
         + wide_spread_market_order_share * 0.15
         + concentration_gap * 0.20,
@@ -352,6 +453,7 @@ def extract_adaptive_market_limit_allocation_stress(
     replay_rank_penalty_bps = (
         missing_penalty_bps
         + allocation_impact_cost_bps
+        + terminal_inventory_penalty_bps
         + nonfill_opportunity_cost_bps * 0.60
         + unfilled_limit_share * 10.0
         + adverse_market_order_share * 8.0
@@ -370,11 +472,15 @@ def extract_adaptive_market_limit_allocation_stress(
         limit_fill_rate=limit_fill_rate,
         market_unfilled_share=market_unfilled_share,
         unfilled_limit_share=unfilled_limit_share,
+        explicit_withhold_order_share=explicit_withhold_order_share,
+        terminal_inventory_gap_share=terminal_inventory_gap_share,
+        terminal_inventory_urgency_score=terminal_inventory_urgency_score,
         adverse_market_order_share=adverse_market_order_share,
         wide_spread_market_order_share=wide_spread_market_order_share,
         supportive_limit_order_share=supportive_limit_order_share,
         nonfill_opportunity_cost_bps=nonfill_opportunity_cost_bps,
         allocation_impact_cost_bps=allocation_impact_cost_bps,
+        terminal_inventory_penalty_bps=terminal_inventory_penalty_bps,
         allocation_reality_gap_score=allocation_reality_gap_score,
         replay_rank_penalty_bps=replay_rank_penalty_bps,
         warnings=tuple(dict.fromkeys(warnings)),
@@ -391,6 +497,18 @@ def _extract_order_type(payload: Mapping[str, Any]) -> str | None:
         return "market"
     if "limit" in normalized or normalized in {"lmt", "post", "maker"}:
         return "limit"
+    if normalized in {
+        "hold",
+        "held",
+        "withhold",
+        "withheld",
+        "wait",
+        "outside_book",
+        "outside_order_book",
+        "no_order",
+        "none",
+    }:
+        return "withheld"
     return None
 
 
@@ -438,6 +556,20 @@ def _share(numerator: int | float, denominator: int | float) -> float:
     if denominator <= 0:
         return 0.0
     return min(1.0, max(0.0, float(numerator) / float(denominator)))
+
+
+def _inventory_gap_share(payload: Mapping[str, Any]) -> float | None:
+    remaining_qty = _first_float(payload, _REMAINING_INVENTORY_QTY_FIELDS)
+    parent_qty = _first_float(payload, _PARENT_QTY_FIELDS)
+    if remaining_qty is None or parent_qty is None or parent_qty <= 0.0:
+        return None
+    return _clamped_float(remaining_qty / parent_qty, low=0.0, high=1.0)
+
+
+def _clamped_float(value: float, *, low: float, high: float) -> float:
+    if not isfinite(value):
+        return low
+    return min(high, max(low, float(value)))
 
 
 def _binary_entropy(probability: float) -> float:

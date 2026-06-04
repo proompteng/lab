@@ -882,8 +882,21 @@ class TestFastReplayPreview(TestCase):
                 ]
             },
         )
+        self.assertIn(
+            "arxiv-2605.24242",
+            {
+                source["source_id"]
+                for source in row_payload["adaptive_market_limit_allocation_stress"][
+                    "source_papers"
+                ]
+            },
+        )
         self.assertFalse(
             row_payload["adaptive_market_limit_allocation_stress"]["proof_authority"]
+        )
+        self.assertIn(
+            "terminal_inventory_penalty_bps",
+            row_payload["adaptive_market_limit_allocation_stress"]["ranking_features"],
         )
         self.assertFalse(
             row_payload["adaptive_market_limit_allocation_stress"][
