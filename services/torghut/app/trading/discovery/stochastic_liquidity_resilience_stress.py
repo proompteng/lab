@@ -51,6 +51,10 @@ STOCHASTIC_LIQUIDITY_RESILIENCE_STRESS_PRIMARY_SOURCES: tuple[
         ),
     },
 )
+STOCHASTIC_LIQUIDITY_RESILIENCE_STRESS_SOURCE_MARKERS: tuple[str, ...] = (
+    "optimal_execution_liquidity_uncertainty_arxiv_2506_11813_2025",
+    "stochastic_market_depth_ssrn_3798235_2025",
+)
 
 _PRICE_FIELDS = ("price", "mid_price", "mid", "mark", "last_price", "close")
 _SPREAD_BPS_FIELDS = ("spread_bps", "quoted_spread_bps", "effective_spread_bps")
@@ -127,6 +131,9 @@ class StochasticLiquidityResilienceStressSummary:
                 dict(item)
                 for item in STOCHASTIC_LIQUIDITY_RESILIENCE_STRESS_PRIMARY_SOURCES
             ],
+            "source_markers": list(
+                STOCHASTIC_LIQUIDITY_RESILIENCE_STRESS_SOURCE_MARKERS
+            ),
             "row_count": self.row_count,
             "observed_price_count": self.observed_price_count,
             "observed_depth_count": self.observed_depth_count,
@@ -214,6 +221,7 @@ def stochastic_liquidity_resilience_stress_contract() -> dict[str, Any]:
             dict(item)
             for item in STOCHASTIC_LIQUIDITY_RESILIENCE_STRESS_PRIMARY_SOURCES
         ],
+        "source_markers": list(STOCHASTIC_LIQUIDITY_RESILIENCE_STRESS_SOURCE_MARKERS),
         "stress_policy": (
             "stochastic_market_depth_regime_lob_shape_and_resilience_ranking"
         ),

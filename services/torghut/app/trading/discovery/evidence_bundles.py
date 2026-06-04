@@ -260,6 +260,45 @@ ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS = (
     "predictability_decay_stress_net_pnl_per_day",
     "alpha_decay_predictability_source_markers",
 )
+STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS = (
+    "requires_stochastic_liquidity_resilience_execution_grid",
+    "required_stochastic_liquidity_resilience_execution_grid",
+    "requires_liquidity_regime_transition_trace",
+    "required_liquidity_regime_transition_trace",
+    "requires_stochastic_market_depth_state",
+    "required_stochastic_market_depth_state",
+    "requires_lob_shape_parameter_history",
+    "required_lob_shape_parameter_history",
+    "requires_depth_recovery_after_child_order",
+    "required_depth_recovery_after_child_order",
+    "requires_execution_shortfall_by_liquidity_regime",
+    "required_execution_shortfall_by_liquidity_regime",
+    "required_resilience_decay_half_life",
+    "required_max_liquidity_regime_shortfall_bps",
+    "rejects_modeled_liquidity_resilience_as_profit_proof",
+    "rejects_synthetic_depth_recovery_as_fill_authority",
+    "stochastic_liquidity_resilience_stress_passed",
+    "stochastic_liquidity_resilience_stress_artifact_ref",
+    "stochastic_liquidity_resilience_stress_artifact_refs",
+    "liquidity_regime_transition_trace_present",
+    "liquidity_regime_transition_count",
+    "stochastic_market_depth_state_present",
+    "stochastic_market_depth_state_count",
+    "observed_depth_count",
+    "lob_shape_parameter_history_present",
+    "lob_shape_parameter_sample_count",
+    "resilience_decay_half_life_present",
+    "median_resilience_half_life_seconds",
+    "depth_recovery_after_child_order_present",
+    "depth_recovery_sample_count",
+    "execution_shortfall_by_liquidity_regime_present",
+    "execution_shortfall_by_liquidity_regime_sample_count",
+    "observed_shortfall_count",
+    "shortfall_by_liquidity_regime_bps",
+    "post_cost_net_pnl_after_liquidity_regime_resilience_shortfall_stress",
+    "liquidity_regime_resilience_shortfall_stress_net_pnl_per_day",
+    "stochastic_liquidity_resilience_source_markers",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -1117,6 +1156,13 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for key in STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
     for source in (candidate, summary, full_window):
         for key, value in _order_type_execution_metrics(source).items():
             if key not in scorecard:
@@ -1178,6 +1224,7 @@ def evidence_bundle_from_frontier_candidate(
             *BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS,
             *OFI_RESPONSE_HORIZON_SCORECARD_KEYS,
             *ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS,
+            *STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS,
         ):
             if key in nested_contract and key not in scorecard:
                 scorecard = {**scorecard, key: nested_contract[key]}
@@ -2060,6 +2107,139 @@ def _alpha_decay_predictability_blockers(scorecard: Mapping[str, Any]) -> list[s
     return blockers
 
 
+def _stochastic_liquidity_resilience_required(scorecard: Mapping[str, Any]) -> bool:
+    if any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_stochastic_liquidity_resilience_execution_grid",
+            "required_stochastic_liquidity_resilience_execution_grid",
+            "requires_liquidity_regime_transition_trace",
+            "required_liquidity_regime_transition_trace",
+            "requires_stochastic_market_depth_state",
+            "required_stochastic_market_depth_state",
+            "requires_lob_shape_parameter_history",
+            "required_lob_shape_parameter_history",
+            "requires_depth_recovery_after_child_order",
+            "required_depth_recovery_after_child_order",
+            "requires_execution_shortfall_by_liquidity_regime",
+            "required_execution_shortfall_by_liquidity_regime",
+            "required_resilience_decay_half_life",
+            "rejects_modeled_liquidity_resilience_as_profit_proof",
+            "rejects_synthetic_depth_recovery_as_fill_authority",
+        )
+    ):
+        return True
+    hard_vetoes = {veto.lower() for veto in _string_list(scorecard.get("hard_vetoes"))}
+    if hard_vetoes.intersection(
+        {
+            "required_stochastic_liquidity_resilience_execution_grid",
+            "required_liquidity_regime_transition_trace",
+            "required_stochastic_market_depth_state",
+            "required_lob_shape_parameter_history",
+            "required_resilience_decay_half_life",
+            "required_depth_recovery_after_child_order",
+            "required_execution_shortfall_by_liquidity_regime",
+            "required_max_liquidity_regime_shortfall_bps",
+        }
+    ):
+        return True
+    return bool(
+        {
+            marker.lower()
+            for marker in _string_list(
+                scorecard.get("stochastic_liquidity_resilience_source_markers")
+            )
+        }.intersection(
+            {
+                "optimal_execution_liquidity_uncertainty_arxiv_2506_11813_2025",
+                "stochastic_market_depth_ssrn_3798235_2025",
+            }
+        )
+    )
+
+
+def _stochastic_liquidity_resilience_blockers(
+    scorecard: Mapping[str, Any],
+) -> list[str]:
+    if not _stochastic_liquidity_resilience_required(scorecard):
+        return []
+
+    blockers: list[str] = []
+    if not _bool(scorecard.get("stochastic_liquidity_resilience_stress_passed")):
+        blockers.append("stochastic_liquidity_resilience_missing_or_failed")
+    if not _has_artifact_ref(
+        scorecard,
+        "stochastic_liquidity_resilience_stress_artifact_ref",
+        "stochastic_liquidity_resilience_stress_artifact_refs",
+    ):
+        blockers.append("stochastic_liquidity_resilience_artifact_missing")
+    transition_count = _int(scorecard.get("liquidity_regime_transition_count"))
+    if not (
+        _bool(scorecard.get("liquidity_regime_transition_trace_present"))
+        or transition_count > 0
+    ):
+        blockers.append("liquidity_regime_transition_trace_missing")
+    market_depth_count = max(
+        _int(scorecard.get("stochastic_market_depth_state_count")),
+        _int(scorecard.get("observed_depth_count")),
+    )
+    if not (
+        _bool(scorecard.get("stochastic_market_depth_state_present"))
+        or market_depth_count > 0
+    ):
+        blockers.append("stochastic_market_depth_state_missing")
+    lob_shape_count = _int(scorecard.get("lob_shape_parameter_sample_count"))
+    if not (
+        _bool(scorecard.get("lob_shape_parameter_history_present"))
+        or lob_shape_count > 0
+    ):
+        blockers.append("lob_shape_parameter_history_missing")
+    raw_resilience_half_life = scorecard.get("median_resilience_half_life_seconds")
+    if not (
+        _bool(scorecard.get("resilience_decay_half_life_present"))
+        or _decimal(raw_resilience_half_life) > 0
+    ):
+        blockers.append("resilience_decay_half_life_missing")
+    depth_recovery_sample_count = _int(scorecard.get("depth_recovery_sample_count"))
+    if not (
+        _bool(scorecard.get("depth_recovery_after_child_order_present"))
+        or depth_recovery_sample_count > 0
+    ):
+        blockers.append("depth_recovery_after_child_order_missing")
+    shortfall_sample_count = max(
+        _int(scorecard.get("execution_shortfall_by_liquidity_regime_sample_count")),
+        _int(scorecard.get("observed_shortfall_count")),
+    )
+    if not (
+        _bool(scorecard.get("execution_shortfall_by_liquidity_regime_present"))
+        or shortfall_sample_count > 0
+    ):
+        blockers.append("execution_shortfall_by_liquidity_regime_missing")
+    required_max_shortfall_bps = _decimal(
+        scorecard.get("required_max_liquidity_regime_shortfall_bps") or "10"
+    )
+    if (
+        _decimal(scorecard.get("shortfall_by_liquidity_regime_bps"))
+        > required_max_shortfall_bps
+    ):
+        blockers.append("liquidity_regime_shortfall_above_max")
+    if not _route_tca_present(scorecard):
+        blockers.append("liquidity_resilience_route_tca_evidence_missing")
+    if (
+        _decimal(
+            scorecard.get(
+                "post_cost_net_pnl_after_liquidity_regime_resilience_shortfall_stress"
+            )
+            or scorecard.get(
+                "liquidity_regime_resilience_shortfall_stress_net_pnl_per_day"
+            )
+        )
+        <= 0
+    ):
+        blockers.append("liquidity_resilience_net_pnl_non_positive")
+    return blockers
+
+
 def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     requires_conformal_tail_risk = _bool(
         scorecard.get("conformal_tail_risk_required")
@@ -2144,6 +2324,7 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         blockers.extend(_bootstrap_robust_optimization_blockers(scorecard))
         blockers.extend(_ofi_response_horizon_blockers(scorecard))
         blockers.extend(_alpha_decay_predictability_blockers(scorecard))
+        blockers.extend(_stochastic_liquidity_resilience_blockers(scorecard))
         blockers.extend(_conformal_tail_risk_blockers(scorecard))
         blockers.extend(_delay_depth_survival_blockers(scorecard))
     return tuple(dict.fromkeys(blockers))

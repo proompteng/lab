@@ -671,6 +671,14 @@ class TestFastReplayPreview(TestCase):
                 ]
             },
         )
+        self.assertIn(
+            "optimal_execution_liquidity_uncertainty_arxiv_2506_11813_2025",
+            row_payload["stochastic_liquidity_resilience_stress"]["source_markers"],
+        )
+        self.assertIn(
+            "stochastic_market_depth_ssrn_3798235_2025",
+            row_payload["stochastic_liquidity_resilience_stress"]["source_markers"],
+        )
         self.assertFalse(
             row_payload["stochastic_liquidity_resilience_stress"]["proof_authority"]
         )
