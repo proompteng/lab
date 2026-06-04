@@ -1848,10 +1848,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "'http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
             args,
         )
-        self.assertIn(
+        self.assertNotIn(
             "--runtime-window-target-plan-url "
             "http://torghut.torghut.svc.cluster.local/trading/status",
             args,
@@ -1869,12 +1869,12 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
             args,
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)
@@ -1898,24 +1898,21 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertNotIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
-        self.assertIn('--runtime-window-target \'{"hypothesis_id":"H-PAIRS-01"', args)
+        self.assertNotIn("--runtime-window-target '{\"hypothesis_id\"", args)
+        self.assertNotIn("PA3SX7FYNUTF", args)
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
         self.assertIn("--runtime-window-observed-stage paper", args)
         self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)
         self.assertIn("--runtime-window-target-dsn-env SIM_DB_DSN", args)
-        self.assertIn(
+        self.assertNotIn(
             '"source_kind":"live_runtime_observed"',
             args,
         )
-        self.assertIn('"dependency_quorum_decision":"allow"', args)
-        self.assertIn('"continuity_ok":"true"', args)
-        self.assertIn('"drift_ok":"false"', args)
-        self.assertIn(
+        self.assertNotIn('"evidence_collection_stage":"live"', args)
+        self.assertNotIn(
             '"runtime_window_import_promotion_blockers":["drift_checks_not_ok"]',
             args,
         )
-        self.assertIn('"evidence_collection_stage":"live"', args)
-        self.assertIn('"promotion_allowed":false', args)
         self.assertIn(
             "RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json",
             args,
