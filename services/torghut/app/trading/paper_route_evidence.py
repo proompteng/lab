@@ -3310,6 +3310,52 @@ def _trade_decision_is_target_plan_source_decision(row: TradeDecision) -> bool:
     return _safe_text(metadata.get("mode")) == "paper_route_target_plan_source_decision"
 
 
+def _trade_decision_materialized_unsubmitted_reason(
+    row: TradeDecision,
+    *,
+    window_end: datetime,
+) -> str | None:
+    payload = _as_mapping(row.decision_json)
+    params = _as_mapping(payload.get("params"))
+    metadata = _as_mapping(params.get("paper_route_target_plan_source_decision"))
+    if not metadata:
+        metadata = _as_mapping(params.get("paper_route_target_plan"))
+    expiry = _as_mapping(payload.get("paper_route_materialized_unsubmitted"))
+    if not expiry:
+        expiry = _as_mapping(params.get("paper_route_materialized_unsubmitted"))
+    expired_reason = _safe_text(expiry.get("reason"))
+    if expired_reason:
+        if expired_reason == "paper_route_materialized_window_expired_unsubmitted":
+            return "source_materialized_window_expired_unsubmitted"
+        return expired_reason
+
+    materialized = (
+        _safe_text(payload.get("submission_stage"))
+        == "bounded_paper_route_materialized"
+        or _safe_text(metadata.get("source")) == "paper_route_target_plan_materializer"
+        or str(params.get("paper_route_target_plan_materialized") or "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    if not materialized or _safe_text(row.status) != "planned":
+        return None
+    raw_window_end = (
+        metadata.get("paper_route_probe_window_end")
+        or metadata.get("window_end")
+        or payload.get("window_end")
+    )
+    materialized_window_end = _parse_datetime(raw_window_end)
+    if materialized_window_end is None:
+        return None
+    normalized_audit_end = (
+        window_end
+        if window_end.tzinfo is not None
+        else window_end.replace(tzinfo=timezone.utc)
+    ).astimezone(timezone.utc)
+    if materialized_window_end.astimezone(timezone.utc) <= normalized_audit_end:
+        return "source_materialized_window_expired_unsubmitted"
+    return None
+
+
 def _trade_decision_is_paper_route_closeout(row: TradeDecision) -> bool:
     payload = _as_mapping(row.decision_json)
     params = _as_mapping(payload.get("params"))
@@ -4469,6 +4515,28 @@ def _strategy_source_activity(
         int(_trade_decision_is_target_plan_source_decision(row))
         for row in decision_rows
     )
+    materialized_unsubmitted_reasons = _unique_text_items(
+        [
+            reason
+            for row in decision_rows
+            if (
+                reason := _trade_decision_materialized_unsubmitted_reason(
+                    row,
+                    window_end=window_end,
+                )
+            )
+        ]
+    )
+    materialized_unsubmitted_decision_count = sum(
+        int(
+            _trade_decision_materialized_unsubmitted_reason(
+                row,
+                window_end=window_end,
+            )
+            is not None
+        )
+        for row in decision_rows
+    )
     decision_rejection_summary = _source_decision_rejection_summary(decision_rows)
     decision_reject_blockers = _unique_text_items(
         decision_rejection_summary.get("blockers")
@@ -4484,6 +4552,7 @@ def _strategy_source_activity(
         missing_reasons.append("source_decisions_missing")
     if execution_count <= 0 and not quote_quality_only_rejects:
         missing_reasons.append("source_executions_missing")
+    missing_reasons.extend(materialized_unsubmitted_reasons)
     if decision_reject_blockers:
         missing_reasons.extend(decision_reject_blockers)
     if (
@@ -4557,6 +4626,7 @@ def _strategy_source_activity(
         [
             *_unique_text_items(lifecycle_summary.get("submitted_order_blockers")),
             *(["source_execution_refs_missing"] if not execution_refs else []),
+            *materialized_unsubmitted_reasons,
             *(
                 decision_reject_blockers
                 if execution_count <= 0 and decision_reject_blockers
@@ -4569,6 +4639,7 @@ def _strategy_source_activity(
             *_unique_text_items(lifecycle_summary.get("blockers")),
             *_unique_text_items(closeout_fillability.get("blockers")),
             *source_reference_blockers,
+            *materialized_unsubmitted_reasons,
             *(
                 decision_reject_blockers
                 if execution_count <= 0 and decision_reject_blockers
@@ -4637,6 +4708,10 @@ def _strategy_source_activity(
         "decision_count": decision_count,
         "source_decision_count": decision_count,
         "target_plan_source_decision_count": target_plan_source_decision_count,
+        "materialized_unsubmitted_decision_count": (
+            materialized_unsubmitted_decision_count
+        ),
+        "materialized_unsubmitted_reasons": materialized_unsubmitted_reasons,
         "source_decision_mode_counts": _source_decision_mode_counts(decision_rows),
         "execution_count": execution_count,
         "linked_execution_count": execution_count,
