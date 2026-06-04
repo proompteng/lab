@@ -1361,6 +1361,91 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             ["H-SOURCE-COLLECTION", "H-PAPER-ROUTE"],
         )
 
+    def test_runtime_window_target_plan_payload_keeps_sim_gate_source_collection(
+        self,
+    ) -> None:
+        plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-paper-route",
+                            "hypothesis_id": "H-PAPER-ROUTE",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "window_start": "2026-06-04T13:30:00+00:00",
+                            "window_end": "2026-06-04T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "live_submission_gate": {
+                    "allowed": True,
+                    "reason": "non_live_mode",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "candidate_id": "cand-source-collection",
+                                "hypothesis_id": "H-SOURCE-COLLECTION",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "source-collection-candidate-v1",
+                                "account_label": "TORGHUT_REPLAY",
+                                "source_kind": "runtime_ledger_source_collection_candidate",
+                                "source_collection_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_allowed": False,
+                                "window_start": "2026-05-13T17:00:00+00:00",
+                                "window_end": "2026-05-13T17:30:00+00:00",
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+
+        self.assertTrue(plan["merged_live_submission_gate_source_collection"])
+        self.assertEqual(plan["source_collection_target_count"], 1)
+        self.assertEqual(plan["paper_route_target_count"], 1)
+        self.assertEqual(plan["target_count"], 2)
+        self.assertEqual(
+            [target["hypothesis_id"] for target in plan["targets"]],
+            ["H-SOURCE-COLLECTION", "H-PAPER-ROUTE"],
+        )
+        self.assertFalse(plan["targets"][0]["promotion_allowed"])
+        self.assertFalse(plan["targets"][0]["final_promotion_allowed"])
+
+    def test_runtime_window_gate_source_collection_merge_requires_pending_or_sim_count(
+        self,
+    ) -> None:
+        self.assertFalse(
+            renewal._runtime_window_gate_allows_source_collection_merge(
+                gate={"reason": "non_live_mode", "blocked_reasons": []},
+                gate_plan={"source_collection_target_count": "not-an-int"},
+            )
+        )
+        self.assertFalse(
+            renewal._runtime_window_gate_allows_source_collection_merge(
+                gate={"reason": "promotion_certificate_valid", "blocked_reasons": []},
+                gate_plan={"source_collection_target_count": 1},
+            )
+        )
+        self.assertTrue(
+            renewal._runtime_window_gate_allows_source_collection_merge(
+                gate={
+                    "reason": "simple_submit_disabled",
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                },
+                gate_plan={"source_collection_target_count": "not-an-int"},
+            )
+        )
+
     def test_runtime_window_target_plan_url_failures_are_fail_closed(self) -> None:
         with self.assertRaisesRegex(
             RuntimeError, "runtime_window_target_plan_url_empty"
