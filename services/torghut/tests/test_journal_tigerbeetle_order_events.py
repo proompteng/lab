@@ -867,7 +867,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 cron_runner._argv_for_command(
                     command,
                     json_output=True,
-                    supervise_timeout_seconds=45.0,
+                    supervise_timeout_seconds=180.0,
                 )
                 for command in commands
             ]

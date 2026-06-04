@@ -37,6 +37,10 @@ LIVE_RUNTIME_LEDGER_BATCH_SIZE = 100
 LIVE_RECONCILE_LIMIT = 500
 LIVE_JOURNAL_BATCH_CHUNK_SIZE = 25
 LIVE_SUPERVISE_TIMEOUT_SECONDS = 120.0
+LIVE_JOURNAL_SOURCE_TIMEOUT_HEADROOM_SECONDS = 30.0
+LIVE_JOURNAL_SOURCE_TIMEOUT_PER_CHUNK_SECONDS = 30.0
+LIVE_JOURNAL_SOURCE_TIMEOUT_MIN_SECONDS = LIVE_SUPERVISE_TIMEOUT_SECONDS
+LIVE_JOURNAL_SOURCE_TIMEOUT_MAX_SECONDS = 300.0
 SIM_SOURCE_BATCH_SIZE = 100
 SIM_RUNTIME_LEDGER_BATCH_SIZE = 100
 SIM_ORDER_EVENT_SCAN_LIMIT = 5000
@@ -107,6 +111,27 @@ def _bounded_batch_size(value: object) -> int:
     return max(1, min(int(value), MAX_TIGERBEETLE_BATCH_SIZE))
 
 
+def _journal_source_timeout_seconds(
+    *,
+    batch_size: int,
+    journal_batch_chunk_size: int,
+) -> float:
+    bounded_batch_size = _bounded_batch_size(batch_size)
+    bounded_chunk_size = _bounded_batch_size(journal_batch_chunk_size)
+    chunk_count = max(
+        1,
+        (bounded_batch_size + bounded_chunk_size - 1) // bounded_chunk_size,
+    )
+    return min(
+        LIVE_JOURNAL_SOURCE_TIMEOUT_MAX_SECONDS,
+        max(
+            LIVE_JOURNAL_SOURCE_TIMEOUT_MIN_SECONDS,
+            LIVE_JOURNAL_SOURCE_TIMEOUT_HEADROOM_SECONDS
+            + (chunk_count * LIVE_JOURNAL_SOURCE_TIMEOUT_PER_CHUNK_SECONDS),
+        ),
+    )
+
+
 def _live_commands(
     *,
     execution_batch_size: int,
@@ -128,6 +153,10 @@ def _live_commands(
             progress_interval=LIVE_EXECUTION_PROGRESS_INTERVAL,
             journal_batch_chunk_size=journal_batch_chunk_size,
             repeat_count=LIVE_EXECUTION_SLICE_COUNT,
+            supervise_timeout_seconds=_journal_source_timeout_seconds(
+                batch_size=execution_batch_size,
+                journal_batch_chunk_size=journal_batch_chunk_size,
+            ),
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
@@ -139,6 +168,10 @@ def _live_commands(
             commit_each_row=True,
             progress_interval=LIVE_EXECUTION_PROGRESS_INTERVAL,
             journal_batch_chunk_size=journal_batch_chunk_size,
+            supervise_timeout_seconds=_journal_source_timeout_seconds(
+                batch_size=tca_metric_batch_size,
+                journal_batch_chunk_size=journal_batch_chunk_size,
+            ),
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
@@ -149,7 +182,12 @@ def _live_commands(
             event_scan_limit=LIVE_ORDER_EVENT_SCAN_LIMIT,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
+            commit_each_row=True,
             journal_batch_chunk_size=journal_batch_chunk_size,
+            supervise_timeout_seconds=_journal_source_timeout_seconds(
+                batch_size=order_event_batch_size,
+                journal_batch_chunk_size=journal_batch_chunk_size,
+            ),
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
@@ -160,7 +198,13 @@ def _live_commands(
             reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
             journal_batch_chunk_size=journal_batch_chunk_size,
-            supervise_timeout_seconds=RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+            supervise_timeout_seconds=max(
+                RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                _journal_source_timeout_seconds(
+                    batch_size=runtime_ledger_batch_size,
+                    journal_batch_chunk_size=journal_batch_chunk_size,
+                ),
+            ),
         ),
     ]
 
@@ -186,6 +230,10 @@ def _sim_commands(
             skip_reconcile=True,
             allow_data_quality_degraded=True,
             journal_batch_chunk_size=journal_batch_chunk_size,
+            supervise_timeout_seconds=_journal_source_timeout_seconds(
+                batch_size=batch_size,
+                journal_batch_chunk_size=journal_batch_chunk_size,
+            ),
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
@@ -198,6 +246,10 @@ def _sim_commands(
             commit_each_row=True,
             progress_interval=LIVE_EXECUTION_PROGRESS_INTERVAL,
             journal_batch_chunk_size=journal_batch_chunk_size,
+            supervise_timeout_seconds=_journal_source_timeout_seconds(
+                batch_size=batch_size,
+                journal_batch_chunk_size=journal_batch_chunk_size,
+            ),
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
@@ -209,7 +261,12 @@ def _sim_commands(
             event_scan_limit=SIM_ORDER_EVENT_SCAN_LIMIT,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
+            commit_each_row=True,
             journal_batch_chunk_size=journal_batch_chunk_size,
+            supervise_timeout_seconds=_journal_source_timeout_seconds(
+                batch_size=batch_size,
+                journal_batch_chunk_size=journal_batch_chunk_size,
+            ),
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
@@ -221,7 +278,13 @@ def _sim_commands(
             reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
             journal_batch_chunk_size=journal_batch_chunk_size,
-            supervise_timeout_seconds=RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+            supervise_timeout_seconds=max(
+                RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                _journal_source_timeout_seconds(
+                    batch_size=runtime_ledger_batch_size,
+                    journal_batch_chunk_size=journal_batch_chunk_size,
+                ),
+            ),
         ),
     ]
 
