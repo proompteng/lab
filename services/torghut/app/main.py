@@ -499,6 +499,22 @@ def _deferred_hypothesis_payload_for_live_submission_gate() -> dict[str, object]
             reason="hypothesis_runtime_deferred_until_after_live_submission_gate"
         )
     )
+    dependency_quorum = payload.get("dependency_quorum")
+    if not isinstance(dependency_quorum, Mapping):
+        return payload
+
+    nested_summary = payload.get("summary")
+    summary_payload: dict[str, object] = (
+        dict(cast(Mapping[str, object], nested_summary))
+        if isinstance(nested_summary, Mapping)
+        else {}
+    )
+    if "dependency_quorum" not in summary_payload:
+        payload = dict(payload)
+        summary_payload["dependency_quorum"] = dict(
+            cast(Mapping[str, object], dependency_quorum)
+        )
+        payload["summary"] = summary_payload
     return payload
 
 
