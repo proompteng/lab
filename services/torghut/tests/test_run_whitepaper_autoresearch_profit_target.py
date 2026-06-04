@@ -8624,6 +8624,63 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             runner._candidate_board_runtime_ledger_required_materialized_artifacts({}),
             [],
         )
+        self.assertEqual(
+            runner._candidate_board_runtime_ledger_required_materialized_artifacts(
+                {"required_materialized_artifacts": "runtime-ledger/string.json"}
+            ),
+            ["runtime-ledger/string.json"],
+        )
+        self.assertEqual(
+            runner._candidate_board_runtime_ledger_required_materialized_artifacts(
+                {
+                    "required_materialized_artifacts": [
+                        {"path": "runtime-ledger/path.json"},
+                        {"name": "runtime-ledger/name.json"},
+                        {"artifact": "runtime-ledger/artifact.json"},
+                        "runtime-ledger/raw.json",
+                        {"kind": "missing-ref"},
+                    ]
+                }
+            ),
+            [
+                "runtime-ledger/path.json",
+                "runtime-ledger/name.json",
+                "runtime-ledger/artifact.json",
+                "runtime-ledger/raw.json",
+            ],
+        )
+
+        scorecard_handoff = {
+            "status": "requires_runtime_ledger_materialization_before_authority",
+            "zero_authoritative_daily_pnl_until_materialized": True,
+            "required_materialized_artifacts": [
+                {"ref": "runtime-ledger/scorecard-ref.json"}
+            ],
+        }
+        scorecard_proof_handoff = runner._candidate_sleeve_goal_proof_handoff_fields(
+            selection={},
+            spec=None,
+            scorecard={
+                "runtime_ledger_lineage_materialization_handoff": scorecard_handoff
+            },
+            evidence=None,
+            selected_for_replay=False,
+        )
+        self.assertEqual(
+            scorecard_proof_handoff["runtime_ledger_lineage_materialization_handoff"],
+            scorecard_handoff,
+        )
+        self.assertEqual(
+            scorecard_proof_handoff["runtime_ledger_required_materialized_artifacts"],
+            ["runtime-ledger/scorecard-ref.json"],
+        )
+        self.assertEqual(
+            scorecard_proof_handoff["runtime_ledger_materialization_status"],
+            "requires_runtime_ledger_materialization_before_authority",
+        )
+        self.assertTrue(
+            scorecard_proof_handoff["zero_authoritative_daily_pnl_until_materialized"]
+        )
 
     def test_candidate_board_surfaces_paper_probation_without_promotion(
         self,
