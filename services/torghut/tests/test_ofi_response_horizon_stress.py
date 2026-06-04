@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest import TestCase
 
+import app.trading.discovery.ofi_response_horizon_stress as stress
 from app.trading.discovery.ofi_response_horizon_stress import (
     build_ofi_response_horizon_stress_schema_hash,
     extract_ofi_response_horizon_stress,
@@ -150,3 +151,56 @@ class TestOfiResponseHorizonStress(TestCase):
         self.assertTrue(
             contract["proof_neutrality"]["rejects_ofi_response_as_pnl_authority"]
         )
+
+    def test_edge_case_helpers_keep_stress_fail_closed_and_bounded(self) -> None:
+        self.assertEqual(
+            stress._horizon_responses(
+                prices=(0.0, 100.0),
+                ofi_values=(0.9, 0.8),
+                direction=1.0,
+                horizon_steps=1,
+            ),
+            [],
+        )
+        self.assertEqual(stress._alignment_score((0.0, 0.0)), 0.0)
+        self.assertEqual(stress._reversal_share((0.0, 0.0), (1.0, 2.0)), 0.0)
+        self.assertEqual(stress._response_instability((0.0, 0.0, 0.0)), 0.0)
+        self.assertEqual(
+            stress._source_gap_score(
+                row_count=0,
+                observed_ofi_count=0,
+                observed_price_count=0,
+                observed_spread_count=0,
+                observed_volume_count=0,
+            ),
+            1.0,
+        )
+        self.assertEqual(
+            stress._shock_dissipation_gap(
+                prices=(100.0, 103.0, 103.0, 103.0, 103.0),
+                ofi_values=(0.9, 0.8, 0.7, 0.6, 0.5),
+                direction=1.0,
+            ),
+            0.0,
+        )
+
+        self.assertEqual(
+            stress._extract_macro_value({"macro_event_window": "0.25"}), 0.25
+        )
+        self.assertEqual(
+            stress._extract_macro_value({"macro_event_window": "news"}), 1.0
+        )
+        self.assertEqual(
+            stress._extract_macro_value({"macro_event_window": "normal"}), 0.0
+        )
+        self.assertEqual(
+            stress._first_finite(
+                {"features": {"mid_price": "101.25"}}, ("price", "mid_price")
+            ),
+            101.25,
+        )
+        self.assertIsNone(stress._float_or_none(None))
+        self.assertIsNone(stress._float_or_none("not-a-number"))
+        self.assertIsNone(stress._float_or_none("nan"))
+        self.assertEqual(stress._median(()), 0.0)
+        self.assertEqual(stress._stable_float(float("nan")), 0.0)
