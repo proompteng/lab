@@ -14,6 +14,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.trading.discovery.candidate_specs import CandidateSpec
+from app.trading.discovery.adaptive_signal_falsification_stress import (
+    extract_adaptive_signal_falsification_stress,
+)
 from app.trading.discovery.bootstrap_robust_optimization_stress import (
     extract_bootstrap_robust_optimization_stress,
 )
@@ -146,6 +149,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "conformal_tail_risk_prefilter",
     "bootstrap_lower_percentile_utility_prefilter",
     "bootstrap_robust_optimization_stress",
+    "adaptive_signal_falsification_stress",
     "implementation_risk_preview_exact_runtime_parity_reporting",
 )
 FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION = (
@@ -325,6 +329,9 @@ class FastReplayPreviewRow:
     bootstrap_robust_optimization_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
+    adaptive_signal_falsification_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
     candidate_frontier_hash: str = ""
     exact_replay_frontier_key: str = ""
@@ -467,6 +474,9 @@ class FastReplayPreviewRow:
             "hawkes_transient_impact_stress": dict(self.hawkes_transient_impact_stress),
             "bootstrap_robust_optimization_stress": dict(
                 self.bootstrap_robust_optimization_stress
+            ),
+            "adaptive_signal_falsification_stress": dict(
+                self.adaptive_signal_falsification_stress
             ),
             "ranking_only_reasons": list(ranking_only_reasons),
             "risk_veto_reasons": list(risk_veto_reasons),
@@ -677,6 +687,7 @@ class FastReplayPreviewResult:
                 "adaptive_market_limit_allocation_stress": "deterministic observed market/limit allocation, fill-uncertainty, tactical-imbalance, and trade-level cost logging stress from arXiv:2507.06345 and arXiv:2603.29086; allocation models are not fill or PnL authority; preview ranking only",
                 "metaorder_adverse_selection_stress": "deterministic Hawkes-style event clustering, same-direction metaorder footprint, adverse-selection drift, and liquidity-replenishment gap stress from arXiv:2510.27334 and DOI:10.1007/s10203-026-00570-z; metaorder footprints and Hawkes intensity are not fill or PnL authority; preview ranking only",
                 "bootstrap_robust_optimization_stress": "deterministic stationary-block bootstrap percentile utility, parameter-instability, and adaptive-search selection-bias stress from arXiv:2510.12725 and arXiv:2604.15531; model utility is not PnL authority; preview ranking only",
+                "adaptive_signal_falsification_stress": "deterministic research-only adaptive-signal falsification artifact wiring from arXiv:2604.15531 and arXiv:2605.05580; explicit null references, leakage probes, exact replay, route TCA, and runtime ledger remain required; no synthetic fills or PnL authority",
                 "hawkes_transient_impact_execution_stress": "deterministic event-time Hawkes burst/self-excitation, transient-impact pressure, and square-root impact pressure stress from arXiv:2504.10282 and arXiv:2603.29086; intensity and modeled impact are not fill or PnL authority; preview ranking only",
                 "ofi_response_horizon_execution_stress": "deterministic one-second and multi-horizon OFI response-ratio, memory-reversal, shock-dissipation, and macro-news distortion stress from arXiv:2505.17388 and arXiv:2508.06788; OFI response is not PnL or promotion authority; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
@@ -1732,6 +1743,17 @@ def _score_candidate_spec(
         candidate_count=len(spec.strategy_overrides.get("universe_symbols", ()))
         or None,
     ).to_payload()
+    adaptive_signal_falsification_stress = extract_adaptive_signal_falsification_stress(
+        tuple(float(value) / 10000.0 for value in signed_returns),
+        null_model_record_sets=(),
+        incumbent_records=(),
+        candidate_id=spec.candidate_spec_id,
+        effective_test_count=max(
+            len(spec.strategy_overrides.get("universe_symbols", ())) or 1,
+            1,
+        ),
+        leakage_probe_passed=False,
+    ).to_payload()
     bootstrap_robust_optimization_rank_penalty_bps = (
         _float_or_none(
             _mapping(bootstrap_robust_optimization_stress.get("ranking_features")).get(
@@ -1918,6 +1940,7 @@ def _score_candidate_spec(
         hawkes_transient_impact_stress=dict(hawkes_transient_impact_stress),
         ofi_response_horizon_stress=dict(ofi_response_horizon_stress),
         bootstrap_robust_optimization_stress=dict(bootstrap_robust_optimization_stress),
+        adaptive_signal_falsification_stress=dict(adaptive_signal_falsification_stress),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
@@ -2391,6 +2414,9 @@ def _row_with_rank_and_selection(
         bootstrap_robust_optimization_stress=dict(
             row.bootstrap_robust_optimization_stress
         ),
+        adaptive_signal_falsification_stress=dict(
+            row.adaptive_signal_falsification_stress
+        ),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -2488,6 +2514,9 @@ def _row_with_frontier_dedupe(
         ofi_response_horizon_stress=dict(row.ofi_response_horizon_stress),
         bootstrap_robust_optimization_stress=dict(
             row.bootstrap_robust_optimization_stress
+        ),
+        adaptive_signal_falsification_stress=dict(
+            row.adaptive_signal_falsification_stress
         ),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
@@ -3433,6 +3462,11 @@ def _risk_flags_for_row(
         flags.add("ofi_response_horizon_stress_penalty_active")
     if _bootstrap_robust_optimization_rank_penalty_bps(row) > 0:
         flags.add("bootstrap_robust_optimization_stress_penalty_active")
+    adaptive_signal_falsification = _mapping(row.adaptive_signal_falsification_stress)
+    if adaptive_signal_falsification and not bool(
+        adaptive_signal_falsification.get("adaptive_signal_falsification_passed")
+    ):
+        flags.add("adaptive_signal_falsification_incomplete_or_failed")
     if row.matched_symbol_count < row.requested_symbol_count:
         flags.add("partial_symbol_coverage")
     if row.trading_day_count <= 0:
@@ -3509,6 +3543,13 @@ def _ranking_only_reasons_for_row(
         reasons.add("ofi_response_horizon_stress_downranks_only")
     if _bootstrap_robust_optimization_rank_penalty_bps(row) > 0:
         reasons.add("bootstrap_robust_optimization_stress_downranks_only")
+    adaptive_signal_falsification = _mapping(row.adaptive_signal_falsification_stress)
+    if adaptive_signal_falsification:
+        reasons.add("adaptive_signal_falsification_evidence_collection_only")
+        if not bool(
+            adaptive_signal_falsification.get("adaptive_signal_falsification_passed")
+        ):
+            reasons.add("adaptive_signal_falsification_incomplete_blocks_promotion")
     if row.selection_reason == "insufficient_replay_tape_rows":
         reasons.add("missing_replay_tape_source_data_explicit_blocker")
     if lineage_blockers:
@@ -3578,6 +3619,11 @@ def _risk_veto_reasons_for_row(
         vetoes.add("ofi_response_horizon_stress_penalty")
     if _bootstrap_robust_optimization_rank_penalty_bps(row) > 0:
         vetoes.add("bootstrap_robust_optimization_stress_penalty")
+    adaptive_signal_falsification = _mapping(row.adaptive_signal_falsification_stress)
+    if adaptive_signal_falsification and not bool(
+        adaptive_signal_falsification.get("adaptive_signal_falsification_passed")
+    ):
+        vetoes.add("adaptive_signal_falsification_incomplete_or_failed")
     if row.robust_lower_percentile_post_cost_utility_bps <= 0:
         vetoes.add("robust_lower_percentile_post_cost_utility_not_positive")
     return tuple(sorted(vetoes))
