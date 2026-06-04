@@ -3197,6 +3197,77 @@ def _source_decision_rejection_summary(
     }
 
 
+_QUOTE_QUALITY_REJECT_REASON_TOKENS = (
+    "quote",
+    "bid",
+    "ask",
+    "spread",
+    "executable",
+    "routeability",
+    "fillability",
+    "stale",
+    "crossed",
+    "missing",
+)
+
+
+def _is_quote_quality_source_reject_reason(reason: object) -> bool:
+    normalized_text = _safe_text(reason)
+    if not normalized_text:
+        return False
+    normalized = normalized_text.lower()
+    normalized = normalized.removeprefix("source_reject_")
+    if normalized.startswith("missing_"):
+        normalized = normalized.removeprefix("missing_")
+    if normalized in {"quote_quality", "quote_quality_gate"}:
+        return True
+    return any(token in normalized for token in _QUOTE_QUALITY_REJECT_REASON_TOKENS)
+
+
+def _source_reject_blockers_are_quote_quality_only(
+    blockers: Sequence[object],
+) -> bool:
+    reason_blockers: list[str] = []
+    for item in blockers:
+        reason = _safe_text(item)
+        if reason and str(item).strip().lower().startswith("source_reject_"):
+            reason_blockers.append(reason)
+    return bool(reason_blockers) and all(
+        _is_quote_quality_source_reject_reason(reason)
+        for reason in reason_blockers
+    )
+
+
+def _source_activity_missing_reasons_are_quote_quality_only(
+    missing_reasons: Sequence[object],
+) -> bool:
+    reasons: list[str] = []
+    for item in missing_reasons:
+        reason = _safe_text(item)
+        if reason:
+            reasons.append(reason)
+    if not reasons:
+        return False
+    non_source_reject_blockers = [
+        reason
+        for reason in reasons
+        if not reason.startswith("source_reject_")
+    ]
+    if non_source_reject_blockers:
+        return False
+    return _source_reject_blockers_are_quote_quality_only(reasons)
+
+
+def _source_activity_effectively_present_for_runtime_window(
+    source_activity: Mapping[str, object],
+) -> bool:
+    if not bool(source_activity.get("missing")):
+        return True
+    return _source_activity_missing_reasons_are_quote_quality_only(
+        _as_sequence(source_activity.get("missing_reasons"))
+    )
+
+
 def _trade_decision_source_decision_mode(row: TradeDecision) -> str:
     payload = _as_mapping(row.decision_json)
     params = _as_mapping(payload.get("params"))
@@ -4383,13 +4454,24 @@ def _strategy_source_activity(
     decision_reject_blockers = _unique_text_items(
         decision_rejection_summary.get("blockers")
     )
+    quote_quality_only_rejects = (
+        bool(decision_reject_blockers)
+        and _safe_int(decision_rejection_summary.get("rejected_decision_count"))
+        == decision_count
+        and _source_reject_blockers_are_quote_quality_only(decision_reject_blockers)
+    )
     missing_reasons: list[str] = []
     if decision_count <= 0:
         missing_reasons.append("source_decisions_missing")
-    if execution_count <= 0:
+    if execution_count <= 0 and not quote_quality_only_rejects:
         missing_reasons.append("source_executions_missing")
+    if decision_reject_blockers:
         missing_reasons.extend(decision_reject_blockers)
-    if tca_sample_count <= 0 and complete_fill_order_event_count <= 0:
+    if (
+        tca_sample_count <= 0
+        and complete_fill_order_event_count <= 0
+        and not quote_quality_only_rejects
+    ):
         missing_reasons.append("source_tca_missing")
     missing_reasons.extend(lineage_blockers)
     if decision_count <= 0:
@@ -4501,6 +4583,13 @@ def _strategy_source_activity(
         complete_fill_order_event_count=complete_fill_order_event_count,
         tca_sample_count=tca_sample_count,
     )
+    is_effectively_present_for_runtime_window = _source_activity_effectively_present_for_runtime_window(
+        {
+            "missing": bool(missing_reasons),
+            "missing_reasons": missing_reasons,
+        },
+    )
+    missing = not is_effectively_present_for_runtime_window
     return {
         "strategy_name": strategy_name,
         "strategy_lookup_names": strategy_filters,
@@ -4581,7 +4670,7 @@ def _strategy_source_activity(
             _order_event_activity_at(order_event_rows[0]) if order_event_rows else None
         ),
         "last_tca_at": _isoformat(tca_rows[0].computed_at if tca_rows else None),
-        "missing": bool(missing_reasons),
+        "missing": missing,
         "missing_reasons": missing_reasons,
     }
 

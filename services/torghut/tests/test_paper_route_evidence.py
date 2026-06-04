@@ -5987,6 +5987,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         source_activity = target_audit["source_activity"]
         self.assertEqual(source_activity["decision_count"], 1)
         self.assertEqual(source_activity["submitted_order_count"], 0)
+        self.assertFalse(source_activity["missing"])
         self.assertIn(
             "source_reject_missing_executable_quote",
             source_activity["submitted_order_blockers"],
@@ -5995,10 +5996,20 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "source_reject_missing_executable_quote",
             source_activity["missing_reasons"],
         )
+        self.assertNotIn(
+            "source_executions_missing",
+            source_activity["missing_reasons"],
+        )
+        self.assertNotIn("source_tca_missing", source_activity["missing_reasons"])
         self.assertIn(
             "source_reject_missing_executable_quote",
             target_audit["readiness"]["blockers"],
         )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "import_due_source_lifecycle_incomplete")
+        self.assertNotIn("paper_route_source_activity_missing", import_audit["blockers"])
+        self.assertNotIn("source_executions_missing", import_audit["blockers"])
+        self.assertNotIn("source_tca_missing", import_audit["blockers"])
 
     def test_hpairs_zero_activity_diagnostics_report_market_window_blocker(
         self,
