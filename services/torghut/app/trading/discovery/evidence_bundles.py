@@ -1463,6 +1463,10 @@ def _order_type_execution_validation_required(scorecard: Mapping[str, Any]) -> b
             "retail_order_flow_segmentation_ssrn_6414558_2026",
             "payment_for_order_flow_ssrn_6704839_2026",
             "mpc_execution_schedule_arxiv_2603_28898_2026",
+            "reinforcement_learning_trade_execution_market_limit_orders_2026",
+            "arxiv_2507_06345_2026",
+            "arxiv-2507.06345",
+            "paper-arxiv-2507.06345",
         }
     )
 

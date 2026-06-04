@@ -213,6 +213,44 @@ def test_promotion_ready_bundle_infers_order_type_validation_from_mix_sample() -
     assert "route_tca_evidence_missing" in blockers
 
 
+def test_promotion_ready_bundle_infers_order_type_validation_from_2026_source_marker() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-order-type-source-marker",
+        candidate_id="candidate-order-type-source-marker",
+        candidate_spec_id="spec-order-type-source-marker",
+        dataset_snapshot_id="snapshot-order-type-source-marker",
+        feature_spec_hash="feature-order-type-source-marker",
+        code_commit="commit-order-type-source-marker",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "order_type_execution_source_markers": [
+                "paper-arxiv-2507.06345",
+            ],
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "market_limit_order_mix_evidence_missing" in blockers
+    assert "route_tca_evidence_missing" in blockers
+    assert "order_type_ablation_artifact_missing" in blockers
+    assert "price_improvement_evidence_missing" in blockers
+    assert blockers.count("price_improvement_evidence_missing") == 1
+
+
 def test_promotion_ready_bundle_infers_order_type_validation_from_ablation_ref() -> (
     None
 ):
