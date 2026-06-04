@@ -33,12 +33,15 @@ from app.trading.tigerbeetle_journal import (
     TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
     TigerBeetleLedgerJournal,
     _account_specs,
+    _dedupe_account_specs,
     _event_amount_usd,
     _lookup_payload_decimal,
     _order_event_precedes,
     _persist_account_refs,
     _positive_payload_count,
+    _result_index,
     _result_status,
+    _result_statuses_by_index,
     _transfer_attr,
     _transfer_flag,
     _transfer_ref_mismatches,
@@ -82,6 +85,26 @@ class NumericExistsFakeTigerBeetleClient(FakeTigerBeetleClient):
     def create_transfers(self, transfers: Sequence[object]) -> list[SimpleNamespace]:
         del transfers
         return [SimpleNamespace(status=46)]
+
+
+class AccountFailureFakeTigerBeetleClient(FakeTigerBeetleClient):
+    def create_accounts(self, accounts: Sequence[object]) -> Sequence[object]:
+        return [{"index": 0, "status": "linked_event_failed"} for _ in accounts[:1]]
+
+
+class BatchCountingFakeTigerBeetleClient(FakeTigerBeetleClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.account_call_sizes: list[int] = []
+        self.transfer_call_sizes: list[int] = []
+
+    def create_accounts(self, accounts: Sequence[object]) -> Sequence[object]:
+        self.account_call_sizes.append(len(accounts))
+        return super().create_accounts(accounts)
+
+    def create_transfers(self, transfers: Sequence[object]) -> Sequence[object]:
+        self.transfer_call_sizes.append(len(transfers))
+        return super().create_transfers(transfers)
 
 
 class _ScalarResult:
@@ -312,9 +335,31 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertIsNone(disabled.journal_execution(session, execution))
             self.assertIsNone(disabled.journal_execution_tca_metric(session, metric))
             self.assertIsNone(disabled.journal_runtime_ledger_bucket(session, bucket))
+            self.assertEqual(disabled.journal_order_events(session, [event]), [None])
+            self.assertEqual(disabled.journal_executions(session, [execution]), [None])
+            self.assertEqual(
+                disabled.journal_execution_tca_metrics(session, [metric]),
+                [None],
+            )
+            self.assertEqual(
+                disabled.journal_runtime_ledger_buckets(session, [bucket]),
+                [None],
+            )
 
             enabled = TigerBeetleLedgerJournal(settings_obj=_settings(), client=client)
+            event.avg_fill_price = None
+            event.filled_qty = None
             execution.avg_fill_price = None
+            self.assertEqual(enabled.journal_order_events(session, [event]), [None])
+            self.assertEqual(enabled.journal_executions(session, [execution]), [None])
+            self.assertEqual(
+                enabled.journal_execution_tca_metrics(session, [metric]),
+                [None],
+            )
+            self.assertEqual(
+                enabled.journal_runtime_ledger_buckets(session, [bucket]),
+                [None],
+            )
             self.assertIsNone(enabled.journal_execution(session, execution))
             self.assertIsNone(enabled.journal_execution_tca_metric(session, metric))
             self.assertIsNone(enabled.journal_runtime_ledger_bucket(session, bucket))
@@ -579,6 +624,113 @@ class TestTigerBeetleLedgerJournal(TestCase):
             refs = session.execute(select(TigerBeetleTransferRef)).scalars().all()
             self.assertEqual(len(refs), 1)
             self.assertEqual(len(client.transfers), 1)
+
+    def test_cost_source_batch_uses_single_native_transfer_request(self) -> None:
+        with Session(self.engine) as session:
+            metrics: list[ExecutionTCAMetric] = []
+            for index in range(3):
+                event = _create_fill_event(
+                    session,
+                    fingerprint=f"fingerprint-cost-batch-{index}",
+                )
+                metric = ExecutionTCAMetric(
+                    execution_id=event.execution_id,
+                    trade_decision_id=event.trade_decision_id,
+                    strategy_id=event.trade_decision.strategy_id
+                    if event.trade_decision
+                    else None,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    side="buy",
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("1"),
+                    shortfall_notional=Decimal("0.25"),
+                    realized_shortfall_bps=Decimal("1.3"),
+                    computed_at=datetime.now(timezone.utc),
+                )
+                session.add(metric)
+                session.flush()
+                metrics.append(metric)
+            client = BatchCountingFakeTigerBeetleClient()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            refs = journal.journal_execution_tca_metrics(session, metrics)
+            second_refs = journal.journal_execution_tca_metrics(session, metrics)
+
+            self.assertEqual(len([ref for ref in refs if ref is not None]), 3)
+            self.assertEqual(len([ref for ref in second_refs if ref is not None]), 3)
+            self.assertEqual(client.transfer_call_sizes, [3])
+            self.assertEqual(len(client.account_call_sizes), 1)
+            self.assertGreater(client.account_call_sizes[0], 0)
+            self.assertEqual(len(client.transfers), 3)
+            persisted = session.execute(select(TigerBeetleTransferRef)).scalars().all()
+            self.assertEqual(len(persisted), 3)
+
+    def test_source_batches_cover_order_execution_and_runtime_paths(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-source-batch")
+            execution = event.execution
+            self.assertIsNotNone(execution)
+            assert execution is not None
+            bucket = _runtime_bucket()
+            session.add(bucket)
+            session.flush()
+            client = BatchCountingFakeTigerBeetleClient()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            order_refs = journal.journal_order_events(session, [event])
+            execution_refs = journal.journal_executions(session, [execution])
+            runtime_refs = journal.journal_runtime_ledger_buckets(session, [bucket])
+
+            self.assertEqual(len([ref for ref in order_refs if ref is not None]), 1)
+            self.assertEqual(len([ref for ref in execution_refs if ref is not None]), 1)
+            self.assertEqual(len([ref for ref in runtime_refs if ref is not None]), 1)
+            self.assertEqual(client.transfer_call_sizes, [1, 1, 1])
+            runtime_ref = runtime_refs[0]
+            self.assertIsNotNone(runtime_ref)
+            assert runtime_ref is not None
+            self.assertEqual(
+                runtime_ref.payload_json["source_refs"],
+                [f"postgres:strategy_runtime_ledger_buckets:{bucket.id}"],
+            )
+            self.assertIn("runtime-run-1", runtime_ref.payload_json["runtime_key"])
+
+    def test_batch_account_failures_are_reported_with_account_id(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-account-fail")
+            metric = ExecutionTCAMetric(
+                execution_id=event.execution_id,
+                trade_decision_id=event.trade_decision_id,
+                strategy_id=event.trade_decision.strategy_id
+                if event.trade_decision
+                else None,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                realized_shortfall_bps=Decimal("1.3"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            session.add(metric)
+            session.flush()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=AccountFailureFakeTigerBeetleClient(),
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "tigerbeetle_create_account_failed:.*:linked_event_failed",
+            ):
+                journal.journal_execution_tca_metrics(session, [metric])
 
     def test_cost_source_changed_economics_create_distinct_revision_ref(
         self,
@@ -1240,11 +1392,61 @@ class TestTigerBeetleLedgerJournal(TestCase):
         ):
             self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
             self.assertEqual(_result_status(SimpleNamespace(status=1)), "1")
+        self.assertEqual(_result_index({"index": "2"}, 0), 2)
+        self.assertEqual(
+            _result_statuses_by_index(
+                [{"index": "1", "status": "exists"}],
+                count=3,
+                default_status="created",
+            ),
+            {0: "created", 1: "exists", 2: "created"},
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "tigerbeetle_result_index_invalid:not-int",
+        ):
+            _result_index({"index": "not-int"}, 0)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "tigerbeetle_result_index_out_of_range:3",
+        ):
+            _result_statuses_by_index(
+                [{"index": 3, "status": "exists"}],
+                count=1,
+                default_status="created",
+            )
         self.assertEqual(_transfer_attr({"transfer_id": 123}, "id"), 123)
         self.assertEqual(_transfer_attr(SimpleNamespace(transfer_id=456), "id"), 456)
         with self.assertRaises(AttributeError):
             _transfer_attr(object(), "id")
         self.assertIsNone(_lookup_payload_decimal({"amount": "bad"}, ("amount",)))
+        base_account = TigerBeetleAccountSpec(
+            account_id=101,
+            account_key="paper:AAPL:cash",
+            ledger=LEDGER_USD_MICRO,
+            code=1001,
+        )
+        duplicate_account = TigerBeetleAccountSpec(
+            account_id=101,
+            account_key="paper:AAPL:cash",
+            ledger=LEDGER_USD_MICRO,
+            code=1001,
+        )
+        self.assertEqual(
+            _dedupe_account_specs([base_account, duplicate_account]),
+            [base_account],
+        )
+        conflicting_account = TigerBeetleAccountSpec(
+            account_id=101,
+            account_key="paper:AAPL:cash",
+            ledger=LEDGER_USD_MICRO,
+            code=1002,
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "tigerbeetle_account_spec_conflict",
+        ):
+            _dedupe_account_specs([base_account, conflicting_account])
 
     def test_event_amount_uses_notional_and_payload_fallbacks(self) -> None:
         notional_event = ExecutionOrderEvent(

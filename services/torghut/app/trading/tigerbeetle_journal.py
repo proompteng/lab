@@ -119,6 +119,35 @@ def _result_status(result: object) -> str:
     return _normalize_result_status(getattr(result, "status", ""))
 
 
+def _result_index(result: object, fallback: int) -> int:
+    if isinstance(result, Mapping):
+        result_mapping = cast(Mapping[str, object], result)
+        raw_index = result_mapping.get("index")
+    else:
+        raw_index = getattr(result, "index", None)
+    if raw_index is None:
+        return fallback
+    try:
+        return raw_index if isinstance(raw_index, int) else int(str(raw_index))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"tigerbeetle_result_index_invalid:{raw_index}") from exc
+
+
+def _result_statuses_by_index(
+    results: Sequence[object],
+    *,
+    count: int,
+    default_status: str,
+) -> dict[int, str]:
+    statuses = {index: default_status for index in range(count)}
+    for fallback_index, result in enumerate(results):
+        index = _result_index(result, fallback_index)
+        if index < 0 or index >= count:
+            raise RuntimeError(f"tigerbeetle_result_index_out_of_range:{index}")
+        statuses[index] = _result_status(result)
+    return statuses
+
+
 def _transfer_attr(transfer: object, name: str) -> Any:
     if isinstance(transfer, Mapping):
         transfer_mapping = cast(Mapping[str, Any], transfer)
@@ -585,6 +614,21 @@ class TigerBeetleSourceTransferPlan:
     account_specs: tuple[TigerBeetleAccountSpec, ...]
     transfer_spec: TigerBeetleTransferSpec
     amount_source: Decimal
+
+
+@dataclass(frozen=True)
+class _PreparedTigerBeetleTransferWrite:
+    account_specs: tuple[TigerBeetleAccountSpec, ...]
+    transfer_spec: TigerBeetleTransferSpec
+    trade_decision_id: object | None
+    execution_id: object | None
+    execution_order_event_id: object | None
+    execution_tca_metric_id: object | None
+    runtime_ledger_bucket_id: object | None
+    event_fingerprint: str | None
+    source_type: str
+    source_id: str
+    payload_json: Mapping[str, object]
 
 
 def _submitted_pending_key(event: ExecutionOrderEvent) -> str:
@@ -1079,6 +1123,30 @@ def _persist_account_refs(
                 raise RuntimeError("tigerbeetle_account_ref_conflict") from None
 
 
+def _dedupe_account_specs(
+    account_specs: Sequence[TigerBeetleAccountSpec],
+) -> list[TigerBeetleAccountSpec]:
+    by_key: dict[str, TigerBeetleAccountSpec] = {}
+    by_id: dict[str, TigerBeetleAccountSpec] = {}
+    ordered: list[TigerBeetleAccountSpec] = []
+    for spec in account_specs:
+        account_id = u128_decimal(spec.account_id)
+        existing = by_key.get(spec.account_key) or by_id.get(account_id)
+        if existing is not None:
+            if (
+                existing.account_id != spec.account_id
+                or existing.account_key != spec.account_key
+                or existing.ledger != spec.ledger
+                or existing.code != spec.code
+            ):
+                raise RuntimeError("tigerbeetle_account_spec_conflict")
+            continue
+        by_key[spec.account_key] = spec
+        by_id[account_id] = spec
+        ordered.append(spec)
+    return ordered
+
+
 def _transfer_matches(
     actual: object,
     expected: TigerBeetleTransferSpec,
@@ -1397,6 +1465,180 @@ class TigerBeetleLedgerJournal:
             close()
         self._client = None
 
+    def _payload_with_stable_ref(
+        self,
+        prepared: _PreparedTigerBeetleTransferWrite,
+    ) -> dict[str, object]:
+        cluster_id = self._settings.tigerbeetle_cluster_id
+        return {
+            **prepared.payload_json,
+            **tigerbeetle_stable_ref_payload(
+                cluster_id=cluster_id,
+                account_specs=prepared.account_specs,
+                transfer_spec=prepared.transfer_spec,
+                source_type=prepared.source_type,
+                source_id=prepared.source_id,
+                payload_json=prepared.payload_json,
+                event_fingerprint=prepared.event_fingerprint,
+            ),
+        }
+
+    def _persist_written_transfer_ref(
+        self,
+        session: Session,
+        *,
+        prepared: _PreparedTigerBeetleTransferWrite,
+        payload_json: Mapping[str, object],
+        status: str,
+    ) -> TigerBeetleTransferRef:
+        cluster_id = self._settings.tigerbeetle_cluster_id
+        transfer_spec = prepared.transfer_spec
+        transfer_id_text = u128_decimal(transfer_spec.transfer_id)
+        ref = TigerBeetleTransferRef(
+            cluster_id=cluster_id,
+            transfer_id=transfer_id_text,
+            transfer_kind=transfer_spec.transfer_kind,
+            ledger=transfer_spec.ledger,
+            code=transfer_spec.code,
+            amount=Decimal(transfer_spec.amount),
+            status=status,
+            result_code=status,
+            trade_decision_id=cast(Any, prepared.trade_decision_id),
+            execution_id=cast(Any, prepared.execution_id),
+            execution_order_event_id=cast(Any, prepared.execution_order_event_id),
+            execution_tca_metric_id=cast(Any, prepared.execution_tca_metric_id),
+            runtime_ledger_bucket_id=cast(Any, prepared.runtime_ledger_bucket_id),
+            source_type=prepared.source_type,
+            source_id=prepared.source_id,
+            event_fingerprint=prepared.event_fingerprint,
+            payload_json=coerce_json_payload(payload_json),
+        )
+        try:
+            with session.begin_nested():
+                session.add(ref)
+                session.flush()
+        except IntegrityError:
+            existing = _find_transfer_ref(
+                session,
+                cluster_id=cluster_id,
+                transfer_id_text=transfer_id_text,
+                source_type=prepared.source_type,
+                source_id=prepared.source_id,
+                transfer_kind=transfer_spec.transfer_kind,
+            )
+            if existing is None:
+                raise
+            return _merge_existing_transfer_ref(
+                session,
+                existing,
+                transfer_spec=transfer_spec,
+                trade_decision_id=prepared.trade_decision_id,
+                execution_id=prepared.execution_id,
+                execution_order_event_id=prepared.execution_order_event_id,
+                execution_tca_metric_id=prepared.execution_tca_metric_id,
+                runtime_ledger_bucket_id=prepared.runtime_ledger_bucket_id,
+                event_fingerprint=prepared.event_fingerprint,
+                source_type=prepared.source_type,
+                source_id=prepared.source_id,
+                payload_json=payload_json,
+            )
+        return ref
+
+    def _persist_transfer_batch(
+        self,
+        session: Session,
+        prepared_writes: Sequence[_PreparedTigerBeetleTransferWrite],
+    ) -> list[TigerBeetleTransferRef]:
+        cluster_id = self._settings.tigerbeetle_cluster_id
+        refs: list[TigerBeetleTransferRef | None] = [None] * len(prepared_writes)
+        new_writes: list[
+            tuple[int, _PreparedTigerBeetleTransferWrite, dict[str, object]]
+        ] = []
+
+        for index, prepared in enumerate(prepared_writes):
+            transfer_spec = prepared.transfer_spec
+            transfer_id_text = u128_decimal(transfer_spec.transfer_id)
+            payload_json = self._payload_with_stable_ref(prepared)
+            existing = _find_transfer_ref(
+                session,
+                cluster_id=cluster_id,
+                transfer_id_text=transfer_id_text,
+                source_type=prepared.source_type,
+                source_id=prepared.source_id,
+                transfer_kind=transfer_spec.transfer_kind,
+            )
+            if existing is not None:
+                refs[index] = _merge_existing_transfer_ref(
+                    session,
+                    existing,
+                    transfer_spec=transfer_spec,
+                    trade_decision_id=prepared.trade_decision_id,
+                    execution_id=prepared.execution_id,
+                    execution_order_event_id=prepared.execution_order_event_id,
+                    execution_tca_metric_id=prepared.execution_tca_metric_id,
+                    runtime_ledger_bucket_id=prepared.runtime_ledger_bucket_id,
+                    event_fingerprint=prepared.event_fingerprint,
+                    source_type=prepared.source_type,
+                    source_id=prepared.source_id,
+                    payload_json=payload_json,
+                )
+                continue
+            new_writes.append((index, prepared, payload_json))
+
+        if not new_writes:
+            return [cast(TigerBeetleTransferRef, ref) for ref in refs]
+
+        account_specs = _dedupe_account_specs(
+            [spec for _, prepared, _ in new_writes for spec in prepared.account_specs]
+        )
+        _persist_account_refs(
+            session,
+            cluster_id=cluster_id,
+            account_specs=account_specs,
+        )
+        client = self._client_for_write()
+        account_statuses = _result_statuses_by_index(
+            client.create_accounts(account_specs),
+            count=len(account_specs),
+            default_status="created",
+        )
+        for index, status in account_statuses.items():
+            if status not in {"created", "exists"}:
+                account_id = u128_decimal(account_specs[index].account_id)
+                raise RuntimeError(
+                    f"tigerbeetle_create_account_failed:{account_id}:{status}"
+                )
+
+        transfer_specs = [prepared.transfer_spec for _, prepared, _ in new_writes]
+        transfer_statuses = _result_statuses_by_index(
+            client.create_transfers(transfer_specs),
+            count=len(transfer_specs),
+            default_status="created",
+        )
+        for batch_index, (original_index, prepared, payload_json) in enumerate(
+            new_writes
+        ):
+            transfer_spec = prepared.transfer_spec
+            status = transfer_statuses[batch_index]
+            if status not in {"created", "exists"}:
+                raise RuntimeError(f"tigerbeetle_create_transfer_failed:{status}")
+            if status == "exists":
+                matches = [
+                    item
+                    for item in client.lookup_transfers([transfer_spec.transfer_id])
+                    if _transfer_matches(item, transfer_spec)
+                ]
+                if not matches:
+                    raise RuntimeError("tigerbeetle_duplicate_transfer_conflict")
+            refs[original_index] = self._persist_written_transfer_ref(
+                session,
+                prepared=prepared,
+                payload_json=payload_json,
+                status=status,
+            )
+
+        return [cast(TigerBeetleTransferRef, ref) for ref in refs]
+
     def _persist_transfer(
         self,
         session: Session,
@@ -1413,113 +1655,24 @@ class TigerBeetleLedgerJournal:
         source_id: str,
         payload_json: Mapping[str, object],
     ) -> TigerBeetleTransferRef:
-        cluster_id = self._settings.tigerbeetle_cluster_id
-        transfer_id_text = u128_decimal(transfer_spec.transfer_id)
-        payload_json = {
-            **payload_json,
-            **tigerbeetle_stable_ref_payload(
-                cluster_id=cluster_id,
-                account_specs=account_specs,
-                transfer_spec=transfer_spec,
-                source_type=source_type,
-                source_id=source_id,
-                payload_json=payload_json,
-                event_fingerprint=event_fingerprint,
-            ),
-        }
-        existing = _find_transfer_ref(
+        return self._persist_transfer_batch(
             session,
-            cluster_id=cluster_id,
-            transfer_id_text=transfer_id_text,
-            source_type=source_type,
-            source_id=source_id,
-            transfer_kind=transfer_spec.transfer_kind,
-        )
-        if existing is not None:
-            return _merge_existing_transfer_ref(
-                session,
-                existing,
-                transfer_spec=transfer_spec,
-                trade_decision_id=trade_decision_id,
-                execution_id=execution_id,
-                execution_order_event_id=execution_order_event_id,
-                execution_tca_metric_id=execution_tca_metric_id,
-                runtime_ledger_bucket_id=runtime_ledger_bucket_id,
-                event_fingerprint=event_fingerprint,
-                source_type=source_type,
-                source_id=source_id,
-                payload_json=payload_json,
-            )
-
-        _persist_account_refs(
-            session,
-            cluster_id=cluster_id,
-            account_specs=account_specs,
-        )
-        client = self._client_for_write()
-        client.create_accounts(account_specs)
-        transfer_results = client.create_transfers([transfer_spec])
-        status = _result_status(transfer_results[0]) if transfer_results else "created"
-        if status not in {"created", "exists"}:
-            raise RuntimeError(f"tigerbeetle_create_transfer_failed:{status}")
-        if status == "exists":
-            matches = [
-                item
-                for item in client.lookup_transfers([transfer_spec.transfer_id])
-                if _transfer_matches(item, transfer_spec)
-            ]
-            if not matches:
-                raise RuntimeError("tigerbeetle_duplicate_transfer_conflict")
-
-        ref = TigerBeetleTransferRef(
-            cluster_id=cluster_id,
-            transfer_id=transfer_id_text,
-            transfer_kind=transfer_spec.transfer_kind,
-            ledger=transfer_spec.ledger,
-            code=transfer_spec.code,
-            amount=Decimal(transfer_spec.amount),
-            status=status,
-            result_code=status,
-            trade_decision_id=trade_decision_id,
-            execution_id=execution_id,
-            execution_order_event_id=execution_order_event_id,
-            execution_tca_metric_id=execution_tca_metric_id,
-            runtime_ledger_bucket_id=runtime_ledger_bucket_id,
-            source_type=source_type,
-            source_id=source_id,
-            event_fingerprint=event_fingerprint,
-            payload_json=coerce_json_payload(payload_json),
-        )
-        try:
-            with session.begin_nested():
-                session.add(ref)
-                session.flush()
-        except IntegrityError:
-            existing = _find_transfer_ref(
-                session,
-                cluster_id=cluster_id,
-                transfer_id_text=transfer_id_text,
-                source_type=source_type,
-                source_id=source_id,
-                transfer_kind=transfer_spec.transfer_kind,
-            )
-            if existing is None:
-                raise
-            return _merge_existing_transfer_ref(
-                session,
-                existing,
-                transfer_spec=transfer_spec,
-                trade_decision_id=trade_decision_id,
-                execution_id=execution_id,
-                execution_order_event_id=execution_order_event_id,
-                execution_tca_metric_id=execution_tca_metric_id,
-                runtime_ledger_bucket_id=runtime_ledger_bucket_id,
-                event_fingerprint=event_fingerprint,
-                source_type=source_type,
-                source_id=source_id,
-                payload_json=payload_json,
-            )
-        return ref
+            [
+                _PreparedTigerBeetleTransferWrite(
+                    account_specs=tuple(account_specs),
+                    transfer_spec=transfer_spec,
+                    trade_decision_id=trade_decision_id,
+                    execution_id=execution_id,
+                    execution_order_event_id=execution_order_event_id,
+                    execution_tca_metric_id=execution_tca_metric_id,
+                    runtime_ledger_bucket_id=runtime_ledger_bucket_id,
+                    event_fingerprint=event_fingerprint,
+                    source_type=source_type,
+                    source_id=source_id,
+                    payload_json=payload_json,
+                )
+            ],
+        )[0]
 
     def backfill_stable_ref_payloads(
         self,
@@ -1590,6 +1743,271 @@ class TigerBeetleLedgerJournal:
         if updated:
             session.flush()
         return {"selected": len(refs), "updated": updated, "skipped": skipped}
+
+    def journal_order_events(
+        self,
+        session: Session,
+        events: Sequence[ExecutionOrderEvent],
+    ) -> list[TigerBeetleTransferRef | None]:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return [None for _ in events]
+
+        indexes: list[int] = []
+        prepared: list[_PreparedTigerBeetleTransferWrite] = []
+        refs: list[TigerBeetleTransferRef | None] = [None for _ in events]
+        for index, event in enumerate(events):
+            plan = build_order_event_transfer_plan(
+                session,
+                event,
+                settings_obj=self._settings,
+            )
+            if plan is None:
+                continue
+            transfer_spec = plan.transfer_spec
+            indexes.append(index)
+            prepared.append(
+                _PreparedTigerBeetleTransferWrite(
+                    account_specs=plan.account_specs,
+                    transfer_spec=transfer_spec,
+                    trade_decision_id=event.trade_decision_id,
+                    execution_id=event.execution_id,
+                    execution_order_event_id=event.id,
+                    execution_tca_metric_id=None,
+                    runtime_ledger_bucket_id=None,
+                    event_fingerprint=event.event_fingerprint,
+                    source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    source_id=str(event.id),
+                    payload_json={
+                        "debit_account_id": u128_decimal(
+                            transfer_spec.debit_account_id
+                        ),
+                        "credit_account_id": u128_decimal(
+                            transfer_spec.credit_account_id
+                        ),
+                        "pending_id": u128_decimal(transfer_spec.pending_id)
+                        if transfer_spec.pending_id
+                        else None,
+                        "pending_mode": plan.pending_mode,
+                        "source": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    },
+                )
+            )
+        for index, ref in zip(indexes, self._persist_transfer_batch(session, prepared)):
+            refs[index] = ref
+        return refs
+
+    def journal_executions(
+        self,
+        session: Session,
+        executions: Sequence[Execution],
+    ) -> list[TigerBeetleTransferRef | None]:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return [None for _ in executions]
+
+        indexes: list[int] = []
+        prepared: list[_PreparedTigerBeetleTransferWrite] = []
+        refs: list[TigerBeetleTransferRef | None] = [None for _ in executions]
+        for index, execution in enumerate(executions):
+            plan = build_execution_transfer_plan(execution)
+            if plan is None:
+                continue
+            transfer_spec = plan.transfer_spec
+            indexes.append(index)
+            prepared.append(
+                _PreparedTigerBeetleTransferWrite(
+                    account_specs=plan.account_specs,
+                    transfer_spec=transfer_spec,
+                    trade_decision_id=execution.trade_decision_id,
+                    execution_id=execution.id,
+                    execution_order_event_id=None,
+                    execution_tca_metric_id=None,
+                    runtime_ledger_bucket_id=None,
+                    event_fingerprint=None,
+                    source_type=SOURCE_TYPE_EXECUTION,
+                    source_id=str(execution.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_EXECUTION,
+                        "source_refs": [
+                            f"postgres:executions:{execution.id}",
+                        ],
+                        "source_row_id": str(execution.id),
+                        "source_economic_fingerprint": execution_source_id(
+                            execution
+                        ).split(":", 1)[1],
+                        "economic_event_key": execution_economic_event_key(execution),
+                        "alpaca_order_id": execution.alpaca_order_id,
+                        "client_order_id": execution.client_order_id,
+                        "filled_qty": str(execution.filled_qty),
+                        "avg_fill_price": str(execution.avg_fill_price),
+                        "amount_source": str(plan.amount_source),
+                        "notional_micros": transfer_spec.amount,
+                        "transfer_id": u128_decimal(transfer_spec.transfer_id),
+                        "ledger": transfer_spec.ledger,
+                        "code": transfer_spec.code,
+                        "debit_account_id": u128_decimal(
+                            transfer_spec.debit_account_id
+                        ),
+                        "credit_account_id": u128_decimal(
+                            transfer_spec.credit_account_id
+                        ),
+                    },
+                )
+            )
+        for index, ref in zip(indexes, self._persist_transfer_batch(session, prepared)):
+            refs[index] = ref
+        return refs
+
+    def journal_execution_tca_metrics(
+        self,
+        session: Session,
+        metrics: Sequence[ExecutionTCAMetric],
+    ) -> list[TigerBeetleTransferRef | None]:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return [None for _ in metrics]
+
+        indexes: list[int] = []
+        prepared: list[_PreparedTigerBeetleTransferWrite] = []
+        refs: list[TigerBeetleTransferRef | None] = [None for _ in metrics]
+        for index, metric in enumerate(metrics):
+            plan = build_execution_tca_metric_transfer_plan(metric)
+            if plan is None:
+                continue
+            transfer_spec = plan.transfer_spec
+            indexes.append(index)
+            prepared.append(
+                _PreparedTigerBeetleTransferWrite(
+                    account_specs=plan.account_specs,
+                    transfer_spec=transfer_spec,
+                    trade_decision_id=metric.trade_decision_id,
+                    execution_id=metric.execution_id,
+                    execution_order_event_id=None,
+                    execution_tca_metric_id=metric.id,
+                    runtime_ledger_bucket_id=None,
+                    event_fingerprint=None,
+                    source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                    source_id=execution_tca_metric_source_id(metric),
+                    payload_json={
+                        "source": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                        "source_refs": [
+                            f"postgres:execution_tca_metrics:{metric.id}",
+                            f"postgres:executions:{metric.execution_id}",
+                        ],
+                        "source_row_id": str(metric.id),
+                        "source_economic_fingerprint": (
+                            execution_tca_metric_source_id(metric).split(":", 1)[1]
+                        ),
+                        "economic_event_key": (
+                            execution_tca_metric_economic_event_key(metric)
+                        ),
+                        "shortfall_notional": str(metric.shortfall_notional),
+                        "realized_shortfall_bps": str(metric.realized_shortfall_bps),
+                        "simulator_version": metric.simulator_version,
+                        "amount_source": str(plan.amount_source),
+                        "cost_micros": transfer_spec.amount,
+                        "transfer_id": u128_decimal(transfer_spec.transfer_id),
+                        "ledger": transfer_spec.ledger,
+                        "code": transfer_spec.code,
+                        "debit_account_id": u128_decimal(
+                            transfer_spec.debit_account_id
+                        ),
+                        "credit_account_id": u128_decimal(
+                            transfer_spec.credit_account_id
+                        ),
+                        "account_ids": [
+                            u128_decimal(spec.account_id) for spec in plan.account_specs
+                        ],
+                        "account_keys": [
+                            spec.account_key for spec in plan.account_specs
+                        ],
+                        "authority": "accounting_parity_only",
+                        "promotion_authority": False,
+                        "overrides_runtime_ledger_authority": False,
+                    },
+                )
+            )
+        for index, ref in zip(indexes, self._persist_transfer_batch(session, prepared)):
+            refs[index] = ref
+        return refs
+
+    def journal_runtime_ledger_buckets(
+        self,
+        session: Session,
+        buckets: Sequence[StrategyRuntimeLedgerBucket],
+    ) -> list[TigerBeetleTransferRef | None]:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return [None for _ in buckets]
+
+        indexes: list[int] = []
+        prepared: list[_PreparedTigerBeetleTransferWrite] = []
+        refs: list[TigerBeetleTransferRef | None] = [None for _ in buckets]
+        for index, bucket in enumerate(buckets):
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            if plan is None:
+                continue
+            transfer_spec = plan.transfer_spec
+            indexes.append(index)
+            prepared.append(
+                _PreparedTigerBeetleTransferWrite(
+                    account_specs=plan.account_specs,
+                    transfer_spec=transfer_spec,
+                    trade_decision_id=None,
+                    execution_id=None,
+                    execution_order_event_id=None,
+                    execution_tca_metric_id=None,
+                    runtime_ledger_bucket_id=bucket.id,
+                    event_fingerprint=None,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "source_refs": [
+                            f"postgres:strategy_runtime_ledger_buckets:{bucket.id}",
+                        ],
+                        "source_row_id": str(bucket.id),
+                        "run_id": bucket.run_id,
+                        "candidate_id": bucket.candidate_id,
+                        "hypothesis_id": bucket.hypothesis_id,
+                        "observed_stage": bucket.observed_stage,
+                        "pnl_basis": bucket.pnl_basis,
+                        "ledger_schema_version": bucket.ledger_schema_version,
+                        "filled_notional": str(bucket.filled_notional),
+                        "gross_strategy_pnl": str(bucket.gross_strategy_pnl),
+                        "cost_amount": str(bucket.cost_amount),
+                        "net_strategy_pnl_after_costs": str(
+                            bucket.net_strategy_pnl_after_costs
+                        ),
+                        "amount_source": str(plan.amount_source),
+                        "amount_micros": transfer_spec.amount,
+                        "signed_amount_micros": plan.signed_amount_micros,
+                        "pnl_direction": plan.pnl_direction,
+                        "runtime_key": plan.runtime_key,
+                        "transfer_id": u128_decimal(transfer_spec.transfer_id),
+                        "ledger": transfer_spec.ledger,
+                        "code": transfer_spec.code,
+                        "debit_account_id": u128_decimal(
+                            transfer_spec.debit_account_id
+                        ),
+                        "credit_account_id": u128_decimal(
+                            transfer_spec.credit_account_id
+                        ),
+                    },
+                )
+            )
+        for index, ref in zip(indexes, self._persist_transfer_batch(session, prepared)):
+            refs[index] = ref
+        return refs
 
     def journal_order_event(
         self, session: Session, event: ExecutionOrderEvent
