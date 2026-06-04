@@ -31,10 +31,11 @@ LIVE_ORDER_EVENT_SCAN_LIMIT = 5000
 LIVE_EXECUTION_BATCH_SIZE = 250
 LIVE_EXECUTION_SLICE_COUNT = 1
 LIVE_EXECUTION_PROGRESS_INTERVAL = 25
-LIVE_TCA_METRIC_BATCH_SIZE = 250
+LIVE_TCA_METRIC_BATCH_SIZE = 100
 LIVE_TCA_METRIC_MAX_BATCHES = 1
 LIVE_RUNTIME_LEDGER_BATCH_SIZE = 100
 LIVE_RECONCILE_LIMIT = 500
+LIVE_JOURNAL_BATCH_CHUNK_SIZE = 25
 SIM_SOURCE_BATCH_SIZE = 250
 SIM_RUNTIME_LEDGER_BATCH_SIZE = 100
 SIM_ORDER_EVENT_SCAN_LIMIT = 5000
@@ -55,6 +56,7 @@ class JournalCronCommand:
     allow_data_quality_degraded: bool = False
     commit_each_row: bool = False
     progress_interval: int | None = None
+    journal_batch_chunk_size: int = LIVE_JOURNAL_BATCH_CHUNK_SIZE
     repeat_count: int = 1
     supervise_timeout_seconds: float | None = None
 
@@ -86,6 +88,11 @@ def _parse_args() -> argparse.Namespace:
         default=LIVE_RUNTIME_LEDGER_BATCH_SIZE,
     )
     parser.add_argument("--sim-batch-size", type=int, default=SIM_SOURCE_BATCH_SIZE)
+    parser.add_argument(
+        "--journal-batch-chunk-size",
+        type=int,
+        default=LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+    )
     parser.add_argument("--supervise-timeout-seconds", type=float, default=45.0)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
@@ -101,6 +108,7 @@ def _live_commands(
     tca_metric_batch_size: int = LIVE_TCA_METRIC_BATCH_SIZE,
     order_event_batch_size: int = LIVE_ORDER_EVENT_BATCH_SIZE,
     runtime_ledger_batch_size: int = LIVE_RUNTIME_LEDGER_BATCH_SIZE,
+    journal_batch_chunk_size: int = LIVE_JOURNAL_BATCH_CHUNK_SIZE,
 ) -> list[JournalCronCommand]:
     return [
         JournalCronCommand(
@@ -113,6 +121,7 @@ def _live_commands(
             allow_data_quality_degraded=True,
             commit_each_row=True,
             progress_interval=LIVE_EXECUTION_PROGRESS_INTERVAL,
+            journal_batch_chunk_size=journal_batch_chunk_size,
             repeat_count=LIVE_EXECUTION_SLICE_COUNT,
         ),
         JournalCronCommand(
@@ -122,6 +131,9 @@ def _live_commands(
             max_batches=LIVE_TCA_METRIC_MAX_BATCHES,
             reconcile_limit=1000,
             skip_reconcile=True,
+            commit_each_row=True,
+            progress_interval=LIVE_EXECUTION_PROGRESS_INTERVAL,
+            journal_batch_chunk_size=journal_batch_chunk_size,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
@@ -132,6 +144,7 @@ def _live_commands(
             event_scan_limit=LIVE_ORDER_EVENT_SCAN_LIMIT,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
+            journal_batch_chunk_size=journal_batch_chunk_size,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
@@ -141,6 +154,7 @@ def _live_commands(
             reconcile_limit=LIVE_RECONCILE_LIMIT,
             reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
+            journal_batch_chunk_size=journal_batch_chunk_size,
             supervise_timeout_seconds=RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
         ),
     ]
@@ -150,6 +164,7 @@ def _sim_commands(
     *,
     batch_size: int = SIM_SOURCE_BATCH_SIZE,
     runtime_ledger_batch_size: int = SIM_RUNTIME_LEDGER_BATCH_SIZE,
+    journal_batch_chunk_size: int = LIVE_JOURNAL_BATCH_CHUNK_SIZE,
 ) -> list[JournalCronCommand]:
     dsn_env = "SIM_DB_DSN"
     max_batches = 1
@@ -165,6 +180,7 @@ def _sim_commands(
             account_label=account_label,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
+            journal_batch_chunk_size=journal_batch_chunk_size,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
@@ -174,6 +190,9 @@ def _sim_commands(
             reconcile_limit=reconcile_limit,
             account_label=account_label,
             skip_reconcile=True,
+            commit_each_row=True,
+            progress_interval=LIVE_EXECUTION_PROGRESS_INTERVAL,
+            journal_batch_chunk_size=journal_batch_chunk_size,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
@@ -185,6 +204,7 @@ def _sim_commands(
             event_scan_limit=SIM_ORDER_EVENT_SCAN_LIMIT,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
+            journal_batch_chunk_size=journal_batch_chunk_size,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
@@ -195,6 +215,7 @@ def _sim_commands(
             account_label=account_label,
             reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
+            journal_batch_chunk_size=journal_batch_chunk_size,
             supervise_timeout_seconds=RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
         ),
     ]
@@ -219,6 +240,13 @@ def _commands_for_preset(args: argparse.Namespace) -> list[JournalCronCommand]:
                     LIVE_RUNTIME_LEDGER_BATCH_SIZE,
                 )
             ),
+            journal_batch_chunk_size=_bounded_batch_size(
+                getattr(
+                    args,
+                    "journal_batch_chunk_size",
+                    LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+                )
+            ),
         )
     return _sim_commands(
         batch_size=_bounded_batch_size(
@@ -226,6 +254,9 @@ def _commands_for_preset(args: argparse.Namespace) -> list[JournalCronCommand]:
         ),
         runtime_ledger_batch_size=_bounded_batch_size(
             getattr(args, "runtime_ledger_batch_size", SIM_RUNTIME_LEDGER_BATCH_SIZE)
+        ),
+        journal_batch_chunk_size=_bounded_batch_size(
+            getattr(args, "journal_batch_chunk_size", LIVE_JOURNAL_BATCH_CHUNK_SIZE)
         ),
     )
 
@@ -272,6 +303,12 @@ def _argv_for_command(
         argv.append("--commit-each-row")
     if command.progress_interval is not None:
         argv.extend(["--progress-interval", str(max(0, command.progress_interval))])
+    argv.extend(
+        [
+            "--journal-batch-chunk-size",
+            str(_bounded_batch_size(command.journal_batch_chunk_size)),
+        ]
+    )
     effective_supervise_timeout_seconds = max(
         float(supervise_timeout_seconds),
         float(command.supervise_timeout_seconds or 0.0),

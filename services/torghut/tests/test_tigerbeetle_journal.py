@@ -1368,14 +1368,42 @@ class TestTigerBeetleLedgerJournal(TestCase):
 
     def test_helper_edge_paths_are_deterministic(self) -> None:
         self.assertEqual(
-            _result_status(SimpleNamespace(status="Result.CREATED")), "created"
+            _result_status(
+                SimpleNamespace(status="Result.CREATED"),
+                status_type_names=("CreateTransferStatus",),
+            ),
+            "created",
         )
-        self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
-        self.assertEqual(_result_status(SimpleNamespace(status=4294967295)), "created")
+        self.assertEqual(
+            _result_status(
+                SimpleNamespace(status=46),
+                status_type_names=("CreateTransferStatus",),
+            ),
+            "exists",
+        )
+        self.assertEqual(
+            _result_status(
+                SimpleNamespace(status=4294967295),
+                status_type_names=("CreateTransferStatus",),
+            ),
+            "created",
+        )
         with patch.dict(sys.modules, {"tigerbeetle": None}):
-            self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
+            self.assertEqual(
+                _result_status(
+                    SimpleNamespace(status=46),
+                    status_type_names=("CreateTransferStatus",),
+                ),
+                "exists",
+            )
         with patch.dict(sys.modules, {"tigerbeetle": SimpleNamespace()}):
-            self.assertEqual(_result_status(SimpleNamespace(status=1234)), "1234")
+            self.assertEqual(
+                _result_status(
+                    SimpleNamespace(status=1234),
+                    status_type_names=("CreateTransferStatus",),
+                ),
+                "1234",
+            )
 
         class FakeTransferStatuses:
             _IGNORED = 1
@@ -1390,14 +1418,27 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 )
             },
         ):
-            self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
-            self.assertEqual(_result_status(SimpleNamespace(status=1)), "1")
+            self.assertEqual(
+                _result_status(
+                    SimpleNamespace(status=46),
+                    status_type_names=("CreateTransferStatus",),
+                ),
+                "exists",
+            )
+            self.assertEqual(
+                _result_status(
+                    SimpleNamespace(status=1),
+                    status_type_names=("CreateTransferStatus",),
+                ),
+                "1",
+            )
         self.assertEqual(_result_index({"index": "2"}, 0), 2)
         self.assertEqual(
             _result_statuses_by_index(
                 [{"index": "1", "status": "exists"}],
                 count=3,
                 default_status="created",
+                status_type_names=("CreateTransferStatus",),
             ),
             {0: "created", 1: "exists", 2: "created"},
         )
@@ -1414,6 +1455,7 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 [{"index": 3, "status": "exists"}],
                 count=1,
                 default_status="created",
+                status_type_names=("CreateTransferStatus",),
             )
         self.assertEqual(_transfer_attr({"transfer_id": 123}, "id"), 123)
         self.assertEqual(_transfer_attr(SimpleNamespace(transfer_id=456), "id"), 456)
@@ -1957,8 +1999,17 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertIsNotNone(ref)
             assert ref is not None
             self.assertEqual(ref.status, "exists")
-            self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
             self.assertEqual(
-                _result_status(SimpleNamespace(status=4294967295)),
+                _result_status(
+                    SimpleNamespace(status=46),
+                    status_type_names=("CreateTransferStatus",),
+                ),
+                "exists",
+            )
+            self.assertEqual(
+                _result_status(
+                    SimpleNamespace(status=4294967295),
+                    status_type_names=("CreateTransferStatus",),
+                ),
                 "created",
             )

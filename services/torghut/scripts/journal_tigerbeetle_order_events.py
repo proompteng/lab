@@ -76,6 +76,9 @@ SOURCE_ALIASES = {
     "strategy_runtime_ledger_buckets": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
 }
 
+DEFAULT_JOURNAL_BATCH_CHUNK_SIZE = 25
+MAX_JOURNAL_BATCH_CHUNK_SIZE = 5000
+
 
 @dataclass(frozen=True)
 class OrderEventSelection:
@@ -141,6 +144,15 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=100,
         help="Emit stderr progress every N processed source rows; set 0 to disable.",
+    )
+    parser.add_argument(
+        "--journal-batch-chunk-size",
+        type=int,
+        default=DEFAULT_JOURNAL_BATCH_CHUNK_SIZE,
+        help=(
+            "Maximum rows passed to one native TigerBeetle batch call inside a "
+            "selected source batch."
+        ),
     )
     parser.add_argument(
         "--commit-each-row",
@@ -454,6 +466,21 @@ def _journal_source_batch(
         "sample_errors": [],
         "stopped_early": False,
         "stop_reason": None,
+        "journal_batch_chunk_size": max(
+            1,
+            min(
+                int(
+                    getattr(
+                        args,
+                        "journal_batch_chunk_size",
+                        DEFAULT_JOURNAL_BATCH_CHUNK_SIZE,
+                    )
+                    or DEFAULT_JOURNAL_BATCH_CHUNK_SIZE
+                ),
+                MAX_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        ),
+        "journal_batch_chunks": 0,
     }
     progress_interval = max(0, int(getattr(args, "progress_interval", 100) or 0))
     _emit_progress(
@@ -463,19 +490,38 @@ def _journal_source_batch(
     )
     if journal_many is not None and rows and not args.dry_run:
         try:
-            with session.begin_nested():
-                refs = list(journal_many(rows))
-            if len(refs) != len(rows):
-                raise RuntimeError("tigerbeetle_journal_batch_result_count_mismatch")
-            for row, ref in zip(rows, refs):
-                if ref is None:
-                    batch["skipped"] = int(batch["skipped"]) + 1
-                    continue
-                if source == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET and isinstance(
-                    ref, TigerBeetleTransferRef
-                ):
-                    _attach_runtime_bucket_journal_payload(row, ref)
-                batch["journaled"] = int(batch["journaled"]) + 1
+            chunk_size = int(batch["journal_batch_chunk_size"])
+            for chunk_index, chunk_start in enumerate(range(0, len(rows), chunk_size)):
+                chunk_rows = rows[chunk_start : chunk_start + chunk_size]
+                with session.begin_nested():
+                    refs = list(journal_many(chunk_rows))
+                if len(refs) != len(chunk_rows):
+                    raise RuntimeError(
+                        "tigerbeetle_journal_batch_result_count_mismatch"
+                    )
+                for row, ref in zip(chunk_rows, refs):
+                    if ref is None:
+                        batch["skipped"] = int(batch["skipped"]) + 1
+                        continue
+                    if source == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET and isinstance(
+                        ref, TigerBeetleTransferRef
+                    ):
+                        _attach_runtime_bucket_journal_payload(row, ref)
+                    batch["journaled"] = int(batch["journaled"]) + 1
+                batch["journal_batch_chunks"] = int(batch["journal_batch_chunks"]) + 1
+                if bool(getattr(args, "commit_each_row", False)):
+                    session.commit()
+                    _reset_session_identity_map(session)
+                _emit_progress(
+                    "source_batch_chunk_complete",
+                    source=source,
+                    chunk_index=chunk_index,
+                    chunk_size=len(chunk_rows),
+                    selected=batch["selected"],
+                    journaled=batch["journaled"],
+                    skipped=batch["skipped"],
+                    failed=batch["failed"],
+                )
         except Exception as exc:
             if not isinstance(exc, TigerBeetleClientTimeoutError):
                 _emit_progress(
