@@ -493,6 +493,27 @@ def _budget_unavailable_hypothesis_runtime_payload(
     )
 
 
+def _deferred_hypothesis_payload_for_live_submission_gate() -> dict[str, object]:
+    payload, _summary, _dependency_quorum = (
+        _budget_unavailable_hypothesis_runtime_payload(
+            reason="hypothesis_runtime_deferred_until_after_live_submission_gate"
+        )
+    )
+    return payload
+
+
+def _hypothesis_payload_read_model_unavailable(
+    payload: Mapping[str, object] | None,
+) -> bool:
+    if not isinstance(payload, Mapping):
+        return True
+    summary = payload.get("summary")
+    if not isinstance(summary, Mapping):
+        return True
+    summary_payload = cast(Mapping[str, object], summary)
+    return bool(summary_payload.get("read_model_unavailable"))
+
+
 def _load_trading_status_llm_evaluation(
     status_read_budget: _TradingStatusReadBudget,
 ) -> dict[str, object]:
@@ -3999,12 +4020,39 @@ def trading_status() -> dict[str, object]:
     clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
     status_observed_at = datetime.now(timezone.utc)
     status_stage_scope = "live" if settings.trading_mode == "live" else "paper"
+    market_context_status = scheduler.market_context_status()
+    gate_hypothesis_payload = _deferred_hypothesis_payload_for_live_submission_gate()
+    live_submission_gate_skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "live_submission_gate",
+        min_remaining_seconds=2.0,
+    )
+    if live_submission_gate_skip_reason is not None:
+        live_submission_gate = _budget_exhausted_live_submission_gate_payload(
+            reason=live_submission_gate_skip_reason,
+            empirical_jobs_status=empirical_jobs,
+            quant_health_status=quant_evidence,
+        )
+    else:
+        with SessionLocal() as session:
+            live_submission_gate = _build_live_submission_gate_payload(
+                state,
+                session=session,
+                hypothesis_summary=gate_hypothesis_payload,
+                empirical_jobs_status=empirical_jobs,
+                dspy_runtime_status=cast(
+                    dict[str, object],
+                    scheduler.llm_status().get("dspy_runtime", {}),
+                ),
+                quant_health_status=quant_evidence,
+                clickhouse_ta_status=clickhouse_ta_status,
+            )
+        if not bool(live_submission_gate.get("read_model_unavailable")):
+            setattr(scheduler, "_last_live_submission_gate", dict(live_submission_gate))
     llm_evaluation = _load_trading_status_llm_evaluation(status_read_budget)
     tca_summary = _load_trading_status_tca_summary(
         status_read_budget,
         scheduler=scheduler,
     )
-    market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _load_trading_status_hypothesis_runtime(
             status_read_budget,
@@ -4014,28 +4062,11 @@ def trading_status() -> dict[str, object]:
             feature_readiness=clickhouse_ta_status,
         )
     )
-    shadow_first_runtime = _build_shadow_first_runtime_payload(
-        state=state,
-        hypothesis_summary=hypothesis_summary,
-    )
-    control_plane_contract = _build_control_plane_contract(
-        state,
-        hypothesis_summary=hypothesis_summary,
-        dependency_quorum=hypothesis_dependency_quorum,
-    )
-    shorting_metadata_status = scheduler.shorting_metadata_status()
-    rejection_alert_status = scheduler.rejection_alert_status()
-    live_submission_gate_skip_reason = status_read_budget.skip_reason_if_unavailable(
-        "live_submission_gate",
-        min_remaining_seconds=4.0,
-    )
-    if live_submission_gate_skip_reason is not None:
-        live_submission_gate = _budget_exhausted_live_submission_gate_payload(
-            reason=live_submission_gate_skip_reason,
-            empirical_jobs_status=empirical_jobs,
-            quant_health_status=quant_evidence,
-        )
-    else:
+    if (
+        live_submission_gate_skip_reason is None
+        and not _hypothesis_payload_read_model_unavailable(hypothesis_payload)
+        and status_read_budget.remaining_seconds() >= 2.0
+    ):
         with SessionLocal() as session:
             live_submission_gate = _build_live_submission_gate_payload(
                 state,
@@ -4049,6 +4080,19 @@ def trading_status() -> dict[str, object]:
                 quant_health_status=quant_evidence,
                 clickhouse_ta_status=clickhouse_ta_status,
             )
+        if not bool(live_submission_gate.get("read_model_unavailable")):
+            setattr(scheduler, "_last_live_submission_gate", dict(live_submission_gate))
+    shadow_first_runtime = _build_shadow_first_runtime_payload(
+        state=state,
+        hypothesis_summary=hypothesis_summary,
+    )
+    control_plane_contract = _build_control_plane_contract(
+        state,
+        hypothesis_summary=hypothesis_summary,
+        dependency_quorum=hypothesis_dependency_quorum,
+    )
+    shorting_metadata_status = scheduler.shorting_metadata_status()
+    rejection_alert_status = scheduler.rejection_alert_status()
     tigerbeetle_ledger = _load_trading_status_tigerbeetle_ledger(status_read_budget)
     runtime_ledger_portfolio_summary = (
         _load_trading_status_runtime_ledger_portfolio_summary(
@@ -6083,21 +6127,12 @@ def trading_paper_route_evidence(
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
     )
-    with SessionLocal() as session:
-        tca_summary = _load_tca_summary(session, scheduler=scheduler)
-    market_context_status = scheduler.market_context_status()
-    hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
-        _build_hypothesis_runtime_payload(
-            scheduler,
-            tca_summary=tca_summary,
-            market_context_status=market_context_status,
-        )
-    )
+    gate_hypothesis_payload = _deferred_hypothesis_payload_for_live_submission_gate()
     with SessionLocal() as session:
         live_submission_gate = _build_live_submission_gate_payload(
             scheduler.state,
             session=session,
-            hypothesis_summary=hypothesis_payload,
+            hypothesis_summary=gate_hypothesis_payload,
             empirical_jobs_status=empirical_jobs,
             dspy_runtime_status=cast(
                 dict[str, object],
@@ -6105,6 +6140,8 @@ def trading_paper_route_evidence(
             ),
             quant_health_status=quant_evidence,
         )
+    if not bool(live_submission_gate.get("read_model_unavailable")):
+        setattr(scheduler, "_last_live_submission_gate", dict(live_submission_gate))
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
     )
@@ -6117,6 +6154,16 @@ def trading_paper_route_evidence(
             session=session,
         )
     if route_reacquisition_book is None:
+        with SessionLocal() as session:
+            tca_summary = _load_tca_summary(session, scheduler=scheduler)
+        market_context_status = scheduler.market_context_status()
+        hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
+            _build_hypothesis_runtime_payload(
+                scheduler,
+                tca_summary=tca_summary,
+                market_context_status=market_context_status,
+            )
+        )
         proof_floor = _build_profitability_proof_floor_payload(
             state=scheduler.state,
             torghut_revision=BUILD_VERSION,
@@ -6171,21 +6218,14 @@ def trading_paper_route_target_plan() -> JSONResponse:
         quant_evidence = load_quant_evidence_status(
             account_label=settings.trading_account_label,
         )
-        with SessionLocal() as session:
-            tca_summary = _load_tca_summary(session, scheduler=scheduler)
-        market_context_status = scheduler.market_context_status()
-        hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
-            _build_hypothesis_runtime_payload(
-                scheduler,
-                tca_summary=tca_summary,
-                market_context_status=market_context_status,
-            )
+        gate_hypothesis_payload = (
+            _deferred_hypothesis_payload_for_live_submission_gate()
         )
         with SessionLocal() as session:
             live_submission_gate = _build_live_submission_gate_payload(
                 scheduler.state,
                 session=session,
-                hypothesis_summary=hypothesis_payload,
+                hypothesis_summary=gate_hypothesis_payload,
                 empirical_jobs_status=empirical_jobs,
                 dspy_runtime_status=cast(
                     dict[str, object],
@@ -6193,6 +6233,8 @@ def trading_paper_route_target_plan() -> JSONResponse:
                 ),
                 quant_health_status=quant_evidence,
             )
+        if not bool(live_submission_gate.get("read_model_unavailable")):
+            setattr(scheduler, "_last_live_submission_gate", dict(live_submission_gate))
         loaded_full_live_gate = True
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
@@ -6205,12 +6247,23 @@ def trading_paper_route_target_plan() -> JSONResponse:
             state=scheduler.state,
             session=session,
         )
-    if settings.trading_mode == "live" and loaded_full_live_gate:
+    if (
+        settings.trading_mode == "live"
+        and loaded_full_live_gate
+        and route_reacquisition_book is None
+    ):
         assert empirical_jobs is not None
         assert quant_evidence is not None
-        assert tca_summary is not None
-        assert market_context_status is not None
-        assert hypothesis_payload is not None
+        with SessionLocal() as session:
+            tca_summary = _load_tca_summary(session, scheduler=scheduler)
+        market_context_status = scheduler.market_context_status()
+        hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
+            _build_hypothesis_runtime_payload(
+                scheduler,
+                tca_summary=tca_summary,
+                market_context_status=market_context_status,
+            )
+        )
         proof_floor = _build_profitability_proof_floor_payload(
             state=scheduler.state,
             torghut_revision=BUILD_VERSION,

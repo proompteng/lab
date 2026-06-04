@@ -64,6 +64,72 @@
 4. The fixed image is live now, but no post-rollout decisions exist yet because the account is not flat. Open AAPL and AMZN positions correctly block bounded source collection.
 5. The `75000` target is a bounded paper collection cap, not automatic `$75k per symbol`. The matched strategy snapshot still reports `max_notional_per_trade=3750`, so scaling must be explicit and source-backed.
 
+## Current Evidence At 2026-06-04T19:10Z
+
+- Deployment and TigerBeetle are operational, but not profitability proof:
+  - Argo app `torghut`: `Synced`, `Healthy`, operation `Succeeded`, revision `9aa90dbd85c8e2d6a40cb66319e6bcae17b6195b`.
+  - `torghut` revision `torghut-01081` and `torghut-sim` revision `torghut-sim-01168` are ready.
+  - `torghut-sim-01168` runs image digest `sha256:10d333b85b2dd2f00cd5e60c26a932b5994e2ee75ea1ecb867e5bdf89cfb0357` with `TORGHUT_COMMIT=3498443e31502173f6eaf7e4dbc0e3efbbf2c3b3`.
+  - `TigerBeetleCluster/torghut-tigerbeetle`: `Ready=True`, `ClientProtocolHealthy=True`, `Degraded=False`.
+- The current persisted June 4 app-DB performance is zero:
+  - DB: `torghut`, not the old simulation DB.
+  - `trade_decisions` since `2026-06-04T13:30:00Z`: `23` rows under source account label `PA3SX7FYNUTF`, all `blocked`.
+  - `executions` since `2026-06-04T13:30:00Z`: `0`; filled notional `$0`.
+  - `strategy_runtime_ledger_buckets` since `2026-06-04T00:00:00Z`: `0`.
+- The current target-notional math is no longer tiny:
+  - Latest rows use `params.sizing.method=runtime_target_notional`.
+  - Most rows request about `$50,000` notional: AAPL around `160` shares, AMZN around `197`, INTC around `448`, NVDA around `228`.
+  - The 14:30 pair rows request about `$74.8k` each for AAPL/AMZN.
+  - All are blocked at `submission_stage=blocked_live_submission_gate` with `submission_block_reason=simple_submit_disabled`.
+- The live submission gate is still shut:
+  - `/trading/status` reports `live_submission_gate.allowed=false`.
+  - `simple_lane.submit_enabled=true`, but shared gate blockers include `live_submission_gate_status_read_budget_insufficient_remaining`.
+  - Capital remains `zero_notional`/`observe`.
+  - Empirical proof jobs are stale/ineligible.
+  - TCA fill quality is missing because there are no current fills.
+  - Route readiness is blocked by `route_universe_empty`, `forecast_registry_degraded`, route identity admission gaps, and read-model degradation.
+  - Sim is correctly paper-mode, but status still reports a live-toggle parity divergence on `TRADING_MODE` when evaluating promotion.
+- The proof/evidence surface itself is too slow:
+  - `/trading/paper-route-evidence?target_limit=5` timed out after a 30s in-pod request.
+  - Live logs show statement timeouts in TCA summary, LLM evaluation summary, and paper-route source activity.
+  - Source-activity read models query logical account `TORGHUT_SIM`, while June 4 decisions are persisted under source account `PA3SX7FYNUTF`; the alias path has to be made explicit for proof queries.
+- Scheduler logs still repeat:
+  - `Skipping paper-route target source collection because account is not flat for bounded SIM evidence`.
+  - `Skipping materialized paper-route target source decision because account is not flat for bounded SIM evidence`.
+
+## Revised Issue List
+
+1. **Small sizing is fixed for new rows, but not proven through fills.** Current decisions are target-notional sized; all are blocked before submission.
+2. **Submission/profitability is blocked by gate state, not order quantity.** `simple_submit_disabled` is coming from the shared live-submission gate, zero-notional capital state, stale empirical proof, missing TCA, route readiness, and read-model timeout debt.
+3. **The account lifecycle is jammed.** Bounded source collection is correctly blocked while the paper account is non-flat, so flatten/closed-window import is required before the next clean proof cycle.
+4. **Account identity is split.** The logical account is `TORGHUT_SIM`, but current source rows are persisted under Alpaca account id `PA3SX7FYNUTF`; proof/read-model queries must include the source-account alias or canonicalize rows before promotion decisions.
+5. **Read-model latency blocks operations.** A status/evidence surface that times out cannot be the authority packet for profitability or promotion.
+6. **There is no June 4 runtime-ledger PnL authority yet.** Zero fills and zero buckets means profitability today is not established.
+
+## Implementation Checkpoint At 2026-06-04T19:28Z
+
+- Fresh branch: `codex/torghut-gate-first-read-model-20260604` from current `origin/main`.
+- Local fix:
+  - `/trading/status` now builds a live-submission gate before TCA, LLM evaluation, and hypothesis-runtime reads.
+  - The early gate receives an explicit deferred hypothesis payload with `hypothesis_runtime_deferred_until_after_live_submission_gate`.
+  - If the full hypothesis runtime read completes with enough budget remaining, `/trading/status` refreshes the gate with the full payload so specific blockers such as quant-store and lineage failures are not masked by the deferred fallback.
+  - `/trading/paper-route-evidence` and `/trading/paper-route-target-plan` now build/cache the gate before optional proof-floor/TCA/hypothesis expansion, and defer those expensive reads when a route-reacquisition book is already available.
+- Regression coverage:
+  - Budget-pressure status tests assert the live gate is still built once and is no longer skipped by late status-budget exhaustion.
+  - Existing blocker-priority tests still pass, proving deferred hypothesis fallback does not mask `quant_latest_metrics_empty` or lineage/table blockers when full read models are healthy.
+- Local validation:
+  - `uv run --frozen pytest tests/test_trading_api.py -q` -> `175 passed`.
+  - `uv run --frozen ruff check app/main.py tests/test_trading_api.py` -> clean.
+  - `uv run --frozen ruff format --check app/main.py tests/test_trading_api.py` -> clean.
+  - `uv sync --frozen --extra dev` -> clean.
+  - `uv run --frozen pyright --project pyrightconfig.json` -> clean.
+  - `uv run --frozen pyright --project pyrightconfig.alpha.json` -> clean.
+  - `uv run --frozen pyright --project pyrightconfig.scripts.json` -> clean.
+- Proof boundary:
+  - This is not profitability proof yet.
+  - It only removes a status/evidence read-path bottleneck that was preventing the live submission gate and target-plan proof surfaces from becoming useful authority surfaces.
+  - Remaining required proof: deploy via GitOps, verify `/trading/status` and target-plan/evidence endpoints return on the live pod, clear account-alias/proof-query misses, flatten/import the June 4 window after settlement readiness, reconcile runtime-ledger/TigerBeetle, and prove post-cost closed/flat PnL.
+
 ## File Map
 
 - Modify: `services/torghut/app/trading/scheduler/simple_pipeline.py`
@@ -99,29 +165,29 @@ Image digest `sha256:061605fcfad253fe24c07c8e0c8823e7606d15e6725aa198e3a45720e1f
 
 **Files:** none unless verification fails.
 
-- [ ] **Step 1: Query for fresh post-rollout decisions**
+- [x] **Step 1: Query for fresh post-rollout decisions**
 
 Run:
 
 ```bash
-kubectl cnpg psql -n torghut torghut-db -- -d torghut_sim_default -P pager=off -c "select count(*) filter (where decision_json::text like '%paper_route_target_notional_sizing%') as with_sizing, count(*) filter (where created_at >= timestamptz '2026-06-04 17:49:00+00') as after_rollout, count(*) as total_today from trade_decisions where alpaca_account_label='TORGHUT_SIM' and created_at >= timestamptz '2026-06-04 13:30:00+00';"
+kubectl cnpg psql -n torghut torghut-db -- -d torghut -P pager=off -c "select created_at, symbol, decision_json->>'action' as action, (decision_json->>'qty')::numeric as qty, (decision_json#>>'{params,price}')::numeric as price, round(((decision_json->>'qty')::numeric * (decision_json#>>'{params,price}')::numeric), 2) as requested_notional, decision_json->>'submission_block_reason' as submission_block_reason, decision_json->>'submission_stage' as submission_stage from trade_decisions where alpaca_account_label='PA3SX7FYNUTF' and created_at >= timestamptz '2026-06-04 13:30:00+00' order by created_at desc;"
 ```
 
-Expected before flatten: `after_rollout=0` or no source rows while open AAPL/AMZN positions exist.
+Observed at `2026-06-04T19:10Z`: `23` fresh target-notional decisions, requested notional about `$50k` to `$75k`, all blocked by `simple_submit_disabled`.
 
-- [ ] **Step 2: Confirm account-flat blocker**
+- [x] **Step 2: Confirm account-flat blocker**
 
 Run:
 
 ```bash
-kubectl logs -n torghut deploy/torghut-sim-01165-deployment -c user-container --tail=200 | rg "account is not flat|target source collection"
+kubectl logs -n torghut -l serving.knative.dev/revision=torghut-sim-01168 --since=2h --tail=400 | rg "account is not flat|target source collection"
 ```
 
-Expected while AAPL/AMZN remain open: account-flat skip messages.
+Observed while AAPL/AMZN remain open: account-flat skip messages.
 
 - [ ] **Step 3: Re-run after flatten**
 
-Expected after controlled flatten/import readiness: at least one fresh target-source decision carries `paper_route_target_notional_sizing.sizing_source == "target_notional"` before any scale claim.
+Expected after controlled flatten/import readiness: at least one fresh target-source decision carries runtime target-notional sizing and reaches submission/fill, not merely blocked decision persistence.
 
 ### Task 3: Fail Closed On Unaudited Target-Notional Source Submissions
 
@@ -196,17 +262,39 @@ Expected: positive bucket count, explicit filled notional, explicit post-cost Pn
 
 **Files:** code only if the blocker is a false-positive readback bug.
 
-- [ ] **Step 1: Continuity**
+- [ ] **Step 1: Make read models fast enough to be authority surfaces**
+
+Fix the timeout debt before trusting status/proof output:
+
+```text
+/trading/paper-route-evidence?target_limit=5 must return inside its bounded budget.
+/trading/status must not degrade live_submission_gate on status_read_budget_insufficient_remaining for ordinary proof reads.
+TCA, LLM evaluation, and source-activity summaries must fail closed independently without poisoning unrelated gate checks.
+```
+
+- [ ] **Step 2: Canonicalize or alias account labels in proof queries**
+
+All proof queries that evaluate `TORGHUT_SIM` must include the current source account label `PA3SX7FYNUTF` or use the existing alias metadata. Promotion gates must not miss current source rows because they filter only on the logical label.
+
+- [ ] **Step 3: Continuity**
 
 Clear `cursor_tail_stable` by proving the market data cursor is moving or by diagnosing the feed stall. Do not bypass this gate.
 
-- [ ] **Step 2: Rejection drag**
+- [ ] **Step 4: Rejection drag**
 
 After the stale-exit fix has live rows, verify seven-day rejection drag drops. If stale exit retries still appear after commit `107a3d179`, treat that as a regression.
 
-- [ ] **Step 3: Empirical jobs**
+- [ ] **Step 5: Empirical jobs**
 
 Repair stale/ineligible empirical jobs only through source-linked jobs. Do not mark empirical readiness from old replay-only candidates.
+
+- [ ] **Step 6: Route identity and universe admission**
+
+Clear `route_identity_admission_account_missing`, `route_identity_admission_window_missing`, `route_identity_admission_trading_mode_missing`, `route_universe_empty`, and `forecast_registry_degraded` from source-backed state. Do not bypass routeability acceptance.
+
+- [ ] **Step 7: Capital posture**
+
+Keep `repair_only` and `zero_notional` until closed-window source evidence, TCA, and runtime-ledger buckets show positive post-cost expectancy. Then move only to bounded paper collection, not live promotion.
 
 ### Task 7: Scale From Runtime-Ledger Expectancy
 
