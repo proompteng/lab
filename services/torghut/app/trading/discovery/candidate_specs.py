@@ -3501,6 +3501,7 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
     haystack = _paper_mechanism_haystack(card)
     overlay_ids: list[str] = []
     overlay_contracts: list[dict[str, Any]] = []
+    parameter_space: dict[str, Any] = {}
     hard_vetoes: dict[str, Any] = {}
     promotion_contract: dict[str, Any] = {}
 
@@ -3523,6 +3524,7 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
         )
     ):
         overlay_ids.append("cluster_lob_event_clustering")
+        overlay_ids.append("hawkes_lob_event_replay_harness")
         overlay_contracts.append(
             {
                 "overlay_id": "cluster_lob_event_clustering",
@@ -3534,10 +3536,96 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 "evidence_policy": "event_stream_required_not_ohlcv_only",
             }
         )
+        overlay_contracts.append(
+            {
+                "overlay_id": "hawkes_lob_event_replay_harness",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2502.17417",
+                        "url": "https://arxiv.org/abs/2502.17417",
+                        "title": "Event-Based Limit Order Book Simulation under a Neural Hawkes Process: Application in Market-Making",
+                        "mechanism": "twelve_event_neural_hawkes_lob_replay_fill_distribution_parity",
+                    },
+                    {
+                        "source_id": "arxiv-2510.08085",
+                        "url": "https://arxiv.org/abs/2510.08085",
+                        "title": "A Deterministic Limit Order Book Simulator with Hawkes-Driven Order Flow",
+                        "mechanism": "deterministic_marked_hawkes_lob_time_rescaling_goodness_of_fit",
+                    },
+                ],
+                "required_evidence": [
+                    "twelve_event_lob_taxonomy_coverage",
+                    "interarrival_time_rescaling_diagnostics",
+                    "hawkes_branching_ratio_stability",
+                    "fill_distribution_real_data_parity",
+                    "deterministic_replay_seed",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_event_taxonomy_and_hawkes_residual_stress"
+                ),
+                "evidence_policy": (
+                    "hawkes_lob_event_replay_requires_real_event_tape_and_"
+                    "diagnostic_residuals_not_ohlcv_or_synthetic_fill_authority"
+                ),
+            }
+        )
+        parameter_space["hawkes_lob_event_replay_harness"] = {
+            "schema_version": "torghut.hawkes-lob-event-replay-harness.v1",
+            "source_ids": ["arxiv-2502.17417", "arxiv-2510.08085"],
+            "required_event_taxonomy": [
+                "limit_add_bid",
+                "limit_add_ask",
+                "limit_cancel_bid",
+                "limit_cancel_ask",
+                "limit_delete_bid",
+                "limit_delete_ask",
+                "market_buy",
+                "market_sell",
+                "partial_fill_bid",
+                "partial_fill_ask",
+                "full_fill_bid",
+                "full_fill_ask",
+            ],
+            "candidate_search_inputs": {
+                "event_window_seconds_grid": ["1", "5", "15", "60"],
+                "excitation_kernel_family_grid": [
+                    "exponential",
+                    "power_law",
+                    "neural_lstm",
+                ],
+                "branching_ratio_cap_grid": ["0.85", "0.95", "0.98"],
+                "time_rescaling_ks_pvalue_floor_grid": ["0.01", "0.05"],
+                "fill_distribution_wasserstein_cap_grid": ["0.12", "0.20"],
+            },
+            "diagnostics_required": [
+                "time_rescaling_ks_pvalue",
+                "event_type_residual_autocorrelation",
+                "branching_ratio",
+                "fill_distribution_wasserstein_distance",
+                "real_vs_replayed_event_mix_l1",
+            ],
+            "proof_neutrality": {
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "requires_exact_replay": True,
+                "requires_real_lob_event_tape": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_hawkes_simulated_fills_as_authority": True,
+            },
+        }
         hard_vetoes.update(
             {
                 "required_min_event_cluster_stability_score": "0.60",
                 "required_max_event_stream_latency_ms": "250",
+                "required_hawkes_lob_event_replay_harness": True,
+                "required_lob_event_taxonomy_coverage": True,
+                "required_min_lob_event_taxonomy_type_count": "8",
+                "required_time_rescaling_diagnostics": True,
+                "required_hawkes_branching_ratio_below_one": True,
+                "required_fill_distribution_real_data_parity": True,
             }
         )
         promotion_contract.update(
@@ -3545,6 +3633,10 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 "requires_lob_event_stream_parity": True,
                 "requires_event_cluster_stability": True,
                 "rejects_ohlcv_only_evidence": True,
+                "requires_hawkes_lob_event_diagnostics": True,
+                "requires_lob_event_taxonomy_coverage": True,
+                "requires_fill_distribution_real_data_parity": True,
+                "rejects_hawkes_simulated_fills_as_pnl_authority": True,
             }
         )
 
@@ -3571,6 +3663,7 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
         )
     ):
         overlay_ids.append("mixed_market_limit_execution_policy")
+        overlay_ids.append("logistic_normal_market_limit_allocation_grid")
         overlay_contracts.append(
             {
                 "overlay_id": "mixed_market_limit_execution_policy",
@@ -3587,10 +3680,87 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 "evidence_policy": "market_limit_mix_requires_real_fill_evidence",
             }
         )
+        overlay_contracts.append(
+            {
+                "overlay_id": "logistic_normal_market_limit_allocation_grid",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2507.06345",
+                        "url": "https://arxiv.org/abs/2507.06345",
+                        "title": "Reinforcement Learning for Trade Execution with Market and Limit Orders",
+                        "mechanism": "multivariate_logistic_normal_market_limit_allocation_search",
+                    },
+                    {
+                        "source_id": "arxiv-2502.17417",
+                        "url": "https://arxiv.org/abs/2502.17417",
+                        "title": "Event-Based Limit Order Book Simulation under a Neural Hawkes Process: Application in Market-Making",
+                        "mechanism": "replay_fill_distribution_parity_for_market_limit_mix",
+                    },
+                ],
+                "required_evidence": [
+                    "market_limit_allocation_vector",
+                    "allocation_entropy",
+                    "limit_fill_probability",
+                    "nonfill_opportunity_cost",
+                    "tactical_imbalance_response",
+                    "route_tca",
+                    "order_lifecycle_fill_evidence",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_logistic_normal_allocation_shortfall_stress"
+                ),
+                "evidence_policy": (
+                    "logistic_normal_allocation_grid_is_candidate_search_input_only_"
+                    "and_requires_real_fill_evidence_for_promotion"
+                ),
+            }
+        )
+        parameter_space["logistic_normal_market_limit_allocation_grid"] = {
+            "schema_version": "torghut.logistic-normal-market-limit-allocation-grid.v1",
+            "source_ids": ["arxiv-2507.06345", "arxiv-2502.17417"],
+            "allocation_dimensions": [
+                "market_order_share",
+                "best_limit_share",
+                "passive_limit_share",
+            ],
+            "candidate_search_inputs": {
+                "allocation_mean_grid": [
+                    ["0.15", "0.70", "0.15"],
+                    ["0.30", "0.55", "0.15"],
+                    ["0.45", "0.40", "0.15"],
+                ],
+                "allocation_covariance_scale_grid": ["0.02", "0.08", "0.18"],
+                "imbalance_response_slope_grid": ["0.0", "0.4", "0.8"],
+                "urgency_response_slope_grid": ["0.2", "0.6", "1.0"],
+                "limit_fill_probability_floor_grid": ["0.35", "0.50", "0.65"],
+                "max_nonfill_opportunity_cost_bps_grid": ["4", "8", "12"],
+            },
+            "stress_inputs_required": [
+                "spread_bps",
+                "order_book_imbalance",
+                "limit_fill_probability",
+                "execution_shortfall_bps",
+                "nonfill_opportunity_cost_bps",
+                "route_tca_bps",
+            ],
+            "proof_neutrality": {
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "requires_exact_replay": True,
+                "requires_order_lifecycle_fill_evidence": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_model_allocation_as_fill_authority": True,
+            },
+        }
         hard_vetoes.update(
             {
                 "required_market_limit_order_mix_evidence": True,
                 "required_limit_fill_probability_evidence": True,
+                "required_logistic_normal_allocation_grid": True,
+                "required_market_limit_allocation_vector": True,
                 "required_order_type_ablation_passed": True,
                 "required_min_order_type_ablation_sample_count": "60",
                 "required_opportunity_cost_evidence": True,
@@ -3609,6 +3779,8 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 "requires_execution_shortfall": True,
                 "requires_opportunity_cost": True,
                 "requires_price_improvement": True,
+                "requires_logistic_normal_allocation_grid": True,
+                "rejects_logistic_normal_allocation_without_fill_evidence": True,
                 "execution_policy": "candidate_local_market_limit_mix",
             }
         )
@@ -4901,13 +5073,13 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if not overlay_ids:
         return {}
+    parameter_space_payload = dict(parameter_space)
+    parameter_space_payload["mechanism_overlay_ids"] = overlay_ids
     return {
         "feature_contract": {
             "mechanism_overlays": overlay_contracts,
         },
-        "parameter_space": {
-            "mechanism_overlay_ids": overlay_ids,
-        },
+        "parameter_space": parameter_space_payload,
         "hard_vetoes": hard_vetoes,
         "promotion_contract": promotion_contract,
     }
