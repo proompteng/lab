@@ -13475,7 +13475,9 @@ class TestTradingPipeline(TestCase):
                 )
             )
             setattr(pipeline, "_is_market_session_open", lambda _now: True)
-            self.assertFalse(
+            # An active bounded H-PAIRS owner reserves the whole paper account,
+            # not just symbols that overlap the candidate target.
+            self.assertTrue(
                 pipeline._paper_route_target_plan_reserves_account(
                     allowed_symbols={"MSFT"}
                 )
