@@ -62,6 +62,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _source_activity_missing_summary,
     _source_backed_fill_lifecycle_rows,
     _source_backed_order_lifecycle_rows,
+    _source_decision_target_notional_sizing_summary,
     _source_decision_mode,
     _source_decision_mode_counts,
     _source_decision_rows_profit_proof_eligible,
@@ -1366,6 +1367,111 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             _runtime_ledger_bucket_profit_proof_blockers(bucket),
         )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
+
+    def test_target_notional_sizing_summary_requires_authoritative_runtime_audit(
+        self,
+    ) -> None:
+        summary = _source_decision_target_notional_sizing_summary(
+            [
+                {
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "paper_route_probe_target_notional": "150",
+                    "decision_json": {
+                        "paper_route_target_notional_sizing": {
+                            "sizing_source": "target_notional",
+                            "blockers": [],
+                        }
+                    },
+                },
+                {
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "paper_route_probe_target_notional": "150",
+                },
+                {
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "paper_route_probe_target_notional": "150",
+                    "decision_json": {
+                        "paper_route_target_notional_sizing": {
+                            "sizing_source": "max_notional",
+                            "blockers": [
+                                "paper_route_target_notional_qty_below_min_step"
+                            ],
+                        }
+                    },
+                },
+            ]
+        )
+
+        self.assertTrue(summary["requires_target_notional_sizing"])
+        self.assertEqual(summary["audit_count"], 2)
+        self.assertEqual(summary["authoritative_target_notional_sizing_count"], 1)
+        self.assertEqual(summary["missing_target_notional_sizing_count"], 1)
+        self.assertEqual(
+            summary["non_authoritative_sizing_source_counts"],
+            {"max_notional": 1},
+        )
+        self.assertEqual(
+            summary["sizing_blocker_counts"],
+            {"paper_route_target_notional_qty_below_min_step": 1},
+        )
+        self.assertEqual(
+            summary["blockers"],
+            [
+                "paper_route_target_notional_sizing_missing",
+                "paper_route_target_notional_sizing_not_authoritative",
+                "paper_route_target_notional_qty_below_min_step",
+            ],
+        )
+
+    def test_runtime_rows_fail_closed_on_non_authoritative_target_notional_sizing(
+        self,
+    ) -> None:
+        decision_rows, order_rows, execution_rows = _source_backed_runtime_split_rows()
+        for row in decision_rows:
+            row["source_decision_mode"] = "bounded_paper_route_collection"
+            row["paper_route_probe_target_notional"] = "150"
+            row["decision_json"] = {
+                "source_decision_mode": "bounded_paper_route_collection",
+                "paper_route_probe_target_notional": "150",
+                "paper_route_target_notional_sizing": {
+                    "sizing_source": "max_notional",
+                    "blockers": ["paper_route_target_notional_qty_below_min_step"],
+                },
+            }
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=order_rows,
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertFalse(row["post_cost_promotion_eligible"])
+            self.assertIn("promotion_blocker", row)
+        rows_with_sizing = [
+            row for row in rows if "paper_route_target_notional_sizing" in row
+        ]
+        self.assertTrue(rows_with_sizing)
+        for row in rows_with_sizing:
+            self.assertIn(
+                "paper_route_target_notional_sizing_not_authoritative",
+                row["runtime_ledger_blockers"],
+            )
+            self.assertIn(
+                "paper_route_target_notional_qty_below_min_step",
+                row["runtime_ledger_blockers"],
+            )
+            sizing = row["paper_route_target_notional_sizing"]
+            self.assertEqual(sizing["authoritative_target_notional_sizing_count"], 0)
+            self.assertEqual(
+                sizing["non_authoritative_sizing_source_counts"],
+                {"max_notional": 2},
+            )
+            bucket = row["runtime_ledger_bucket"]
+            assert isinstance(bucket, dict)
+            self.assertEqual(bucket["paper_route_target_notional_sizing"], sizing)
 
     def test_runtime_ledger_tca_refs_accept_readback_aliases(self) -> None:
         readback_alias_bucket = _complete_runtime_ledger_bucket(
@@ -7375,16 +7481,25 @@ class TestImportHypothesisRuntimeWindows(TestCase):
     def test_build_realized_strategy_pnl_rows_keeps_probe_exit_with_source_entry(
         self,
     ) -> None:
+        target_notional_sizing_json = {
+            "sizing_source": "target_notional",
+            "target_notional": "100",
+            "reference_price": "100",
+            "computed_qty": "1",
+            "blockers": [],
+        }
         entry_decision_json = {
             "params": {
                 "source_decision_mode": "bounded_paper_route_collection",
                 "profit_proof_eligible": True,
                 "account": {"equity": "10000"},
+                "paper_route_target_notional_sizing": target_notional_sizing_json,
             }
         }
         exit_decision_json = {
             "params": {
                 "source_decision_mode": "route_acquisition_probe",
+                "paper_route_target_notional_sizing": target_notional_sizing_json,
                 "paper_route_probe_exit": {
                     "mode": "paper_route_exit",
                     "source": "filled_paper_route_probe_executions",
@@ -7400,6 +7515,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             "params": {
                 "source_decision_mode": "route_acquisition_probe",
                 "profit_proof_eligible": False,
+                "paper_route_target_notional_sizing": target_notional_sizing_json,
             }
         }
 

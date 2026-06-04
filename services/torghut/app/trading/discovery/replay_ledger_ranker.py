@@ -26,6 +26,12 @@ _LIVE_PROMOTION_AUTHORITIES = frozenset(
 )
 _EXECUTION_QUALITY_SOURCE_PAPERS = (
     {
+        "source_id": "arxiv-2601.17247",
+        "url": "https://arxiv.org/abs/2601.17247",
+        "title": "Learning Market Making with Closing Auctions",
+        "mechanism": "closing_auction_projection_clearing_price_terminal_inventory_path",
+    },
+    {
         "source_id": "rof-rfaf049",
         "url": "https://doi.org/10.1093/rof/rfaf049",
         "title": "Retail Limit Orders",
@@ -95,6 +101,36 @@ _LIMIT_FILL_PROBABILITY_FIELDS = (
     "fill_probability",
     "estimated_limit_fill_probability",
     "survival_fill_probability",
+)
+_CLOSING_WINDOW_FIELDS = (
+    "closing_window",
+    "is_closing_window",
+    "close_window",
+    "late_session_window",
+)
+_CLOSING_AUCTION_FIELDS = (
+    "closing_auction",
+    "is_closing_auction",
+    "closing_auction_participation",
+    "close_auction",
+)
+_CLOSING_AUCTION_PROJECTION_FIELDS = (
+    "closing_auction_projection",
+    "closing_auction_projected_price",
+    "closing_auction_projected_imbalance",
+    "projected_closing_auction_price",
+)
+_CLOSING_AUCTION_CLEARING_PRICE_FIELDS = (
+    "closing_auction_clearing_price",
+    "closing_auction_reference_price",
+    "closing_auction_match_price",
+    "closing_price",
+)
+_TERMINAL_INVENTORY_PATH_FIELDS = (
+    "terminal_inventory_path",
+    "terminal_inventory_qty",
+    "terminal_position_qty",
+    "terminal_inventory_gap_share",
 )
 
 
@@ -755,6 +791,23 @@ def _execution_quality_summary(
         for row in rows
         if (value := _first_decimal(row, _LIMIT_FILL_PROBABILITY_FIELDS)) is not None
     ]
+    closing_window_sample_count = sum(
+        1 for row in rows if _first_evidence(row, _CLOSING_WINDOW_FIELDS)
+    )
+    closing_auction_sample_count = sum(
+        1 for row in rows if _first_evidence(row, _CLOSING_AUCTION_FIELDS)
+    )
+    closing_auction_projection_sample_count = sum(
+        1 for row in rows if _first_evidence(row, _CLOSING_AUCTION_PROJECTION_FIELDS)
+    )
+    closing_auction_clearing_price_sample_count = sum(
+        1
+        for row in rows
+        if _first_evidence(row, _CLOSING_AUCTION_CLEARING_PRICE_FIELDS)
+    )
+    terminal_inventory_path_sample_count = sum(
+        1 for row in rows if _first_evidence(row, _TERMINAL_INVENTORY_PATH_FIELDS)
+    )
     filled_status_count = sum(1 for row in rows if _row_has_fill_status(row))
     blockers: list[str] = []
     penalty_bps = Decimal("0")
@@ -782,6 +835,21 @@ def _execution_quality_summary(
     if limit_order_count > 0 and not opportunity_cost_samples:
         blockers.append("nonfill_opportunity_cost_evidence_incomplete")
         penalty_bps += Decimal("2")
+    if submitted_rows and closing_window_sample_count == 0:
+        blockers.append("closing_window_evidence_incomplete")
+        penalty_bps += Decimal("4")
+    if submitted_rows and closing_auction_sample_count == 0:
+        blockers.append("closing_auction_evidence_incomplete")
+        penalty_bps += Decimal("4")
+    if submitted_rows and closing_auction_projection_sample_count == 0:
+        blockers.append("closing_auction_projection_evidence_incomplete")
+        penalty_bps += Decimal("6")
+    if submitted_rows and closing_auction_clearing_price_sample_count == 0:
+        blockers.append("closing_auction_clearing_price_evidence_incomplete")
+        penalty_bps += Decimal("6")
+    if fill_rows and terminal_inventory_path_sample_count == 0:
+        blockers.append("terminal_inventory_path_evidence_incomplete")
+        penalty_bps += Decimal("6")
     limit_fill_rate = (
         _safe_divide(Decimal(limit_fill_count), Decimal(limit_order_count))
         if limit_order_count > 0
@@ -810,8 +878,12 @@ def _execution_quality_summary(
             "requires_exact_replay": True,
             "requires_route_tca": True,
             "requires_order_lifecycle_fill_evidence": True,
+            "requires_closing_auction_mechanism_evidence": True,
+            "requires_terminal_inventory_path_evidence": True,
             "requires_runtime_ledger": True,
             "rejects_model_fill_probability_as_fill_authority": True,
+            "rejects_closing_auction_projection_as_price_authority": True,
+            "rejects_terminal_inventory_path_as_position_authority": True,
             "rejects_adjusted_pnl_as_promotion_authority": True,
         },
         "submitted_order_count": len(submitted_rows),
@@ -834,6 +906,15 @@ def _execution_quality_summary(
         "queue_position_sample_count": queue_position_sample_count,
         "limit_fill_probability_sample_count": len(limit_fill_probability_samples),
         "avg_limit_fill_probability": _average_decimal(limit_fill_probability_samples),
+        "closing_window_sample_count": closing_window_sample_count,
+        "closing_auction_sample_count": closing_auction_sample_count,
+        "closing_auction_projection_sample_count": (
+            closing_auction_projection_sample_count
+        ),
+        "closing_auction_clearing_price_sample_count": (
+            closing_auction_clearing_price_sample_count
+        ),
+        "terminal_inventory_path_sample_count": terminal_inventory_path_sample_count,
         "execution_quality_blockers": tuple(_dedupe(blockers)),
         "execution_quality_penalty_bps": penalty_bps,
         "execution_quality_penalty_amount": penalty_amount,
@@ -926,6 +1007,29 @@ def _first_decimal(
         if value is not None:
             return value
     return None
+
+
+def _first_evidence(row: Mapping[str, object], fields: Sequence[str]) -> bool:
+    for field in fields:
+        if _evidence_present(row.get(field)):
+            return True
+    return False
+
+
+def _evidence_present(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Decimal):
+        return True
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, Mapping):
+        return bool(cast(Mapping[object, object], value))
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return bool(cast(Sequence[object], value))
+    return bool(str(value).strip())
 
 
 def _decimal(value: object) -> Decimal | None:
