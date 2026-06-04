@@ -58,9 +58,10 @@ spec:
                   exec /opt/venv/bin/python scripts/run_tigerbeetle_journal_cron.py \
                     --preset live \
                     --execution-batch-size 250 \
-                    --tca-metric-batch-size 250 \
+                    --tca-metric-batch-size 100 \
                     --order-event-batch-size 50 \
                     --runtime-ledger-batch-size 100 \
+                    --journal-batch-chunk-size 25 \
                     --supervise-timeout-seconds 45 \
                     --json
               env:
@@ -151,6 +152,7 @@ spec:
                     --preset sim \
                     --sim-batch-size 250 \
                     --runtime-ledger-batch-size 100 \
+                    --journal-batch-chunk-size 25 \
                     --supervise-timeout-seconds 45 \
                     --json
               env:

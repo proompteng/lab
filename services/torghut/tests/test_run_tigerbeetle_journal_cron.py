@@ -33,6 +33,8 @@ class RunTigerBeetleJournalCronTest(TestCase):
                 "50000",
                 "--runtime-ledger-batch-size",
                 "0",
+                "--journal-batch-chunk-size",
+                "0",
                 "--sim-batch-size",
                 "0",
                 "--supervise-timeout-seconds",
@@ -47,6 +49,10 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(args.supervise_timeout_seconds, 3.5)
         self.assertEqual(
             runner._commands_for_preset(args)[0].batch_size,
+            1,
+        )
+        self.assertEqual(
+            runner._commands_for_preset(args)[0].journal_batch_chunk_size,
             1,
         )
         self.assertEqual(runner._commands_for_preset(args)[1].batch_size, 1)
@@ -118,6 +124,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
             tca_metric_batch_size=20,
             order_event_batch_size=30,
             runtime_ledger_batch_size=40,
+            journal_batch_chunk_size=6,
         )
 
         self.assertEqual(commands[0].source, SOURCE_TYPE_EXECUTION)
@@ -135,6 +142,8 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(commands[1].max_batches, runner.LIVE_TCA_METRIC_MAX_BATCHES)
         self.assertEqual(commands[1].max_batches, 1)
         self.assertTrue(commands[1].skip_reconcile)
+        self.assertTrue(commands[1].commit_each_row)
+        self.assertEqual(commands[1].journal_batch_chunk_size, 6)
         self.assertEqual(commands[2].source, SOURCE_TYPE_EXECUTION_ORDER_EVENT)
         self.assertEqual(commands[2].batch_size, 30)
         self.assertEqual(commands[2].max_batches, runner.LIVE_ORDER_EVENT_MAX_BATCHES)
@@ -264,7 +273,12 @@ class RunTigerBeetleJournalCronTest(TestCase):
         )
         self.assertEqual(int(argv[argv.index("--max-batches") + 1]), 1)
         self.assertEqual(argv[argv.index("--supervise-timeout-seconds") + 1], "45.0")
+        self.assertEqual(
+            argv[argv.index("--journal-batch-chunk-size") + 1],
+            str(runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE),
+        )
         self.assertIn("--skip-reconcile", argv)
+        self.assertIn("--commit-each-row", argv)
         self.assertIn("--fail-on-degraded", argv)
         self.assertIn("--json", argv)
 

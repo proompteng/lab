@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -1001,6 +1001,54 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             payload["tigerbeetle_transfer_ids"],
             [ref.transfer_id],
         )
+
+    def test_source_batch_chunks_batch_refs_and_commits_between_chunks(self) -> None:
+        rows = [
+            SimpleNamespace(id="row-1"),
+            SimpleNamespace(id="row-2"),
+            SimpleNamespace(id="row-3"),
+        ]
+        calls: list[list[str]] = []
+
+        class ChunkSession:
+            commits = 0
+
+            def begin_nested(self) -> object:
+                return nullcontext()
+
+            def commit(self) -> None:
+                self.commits += 1
+
+            def expunge_all(self) -> None:
+                return None
+
+        session = ChunkSession()
+
+        batch = script._journal_source_batch(
+            session,
+            args=argparse.Namespace(
+                dry_run=False,
+                progress_interval=0,
+                commit_each_row=True,
+                journal_batch_chunk_size=2,
+            ),
+            source=script.SOURCE_TYPE_EXECUTION_TCA_METRIC,
+            rows=rows,
+            journal_one=lambda row: (_ for _ in ()).throw(
+                AssertionError(f"unexpected row fallback: {row!r}")
+            ),
+            journal_many=lambda chunk: (
+                calls.append([str(getattr(row, "id")) for row in chunk])
+                or [object() for _ in chunk]
+            ),
+        )
+
+        self.assertEqual(calls, [["row-1", "row-2"], ["row-3"]])
+        self.assertEqual(session.commits, 2)
+        self.assertEqual(batch["journaled"], 3)
+        self.assertEqual(batch["failed"], 0)
+        self.assertEqual(batch["journal_batch_chunk_size"], 2)
+        self.assertEqual(batch["journal_batch_chunks"], 2)
 
     def test_source_batch_falls_back_from_count_mismatch_and_stops_on_timeout(
         self,
