@@ -5140,6 +5140,21 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         "strategy_family": "microbar_cross_sectional_pairs",
                         "strategy_name": "microbar-cross-sectional-pairs-v1",
                         "source_collection_authorized": "true",
+                        "source_collection_priority": (
+                            "profit_target_source_materialization"
+                        ),
+                        "source_collection_profit_target_candidate": "true",
+                        "source_collection_profit_target_net_pnl_after_costs": (
+                            "567.44720578"
+                        ),
+                        "source_collection_filled_notional": "127090.02495200",
+                        "source_collection_net_strategy_pnl_after_costs": (
+                            "567.44720578"
+                        ),
+                        "source_collection_post_cost_expectancy_bps": "44.64923238",
+                        "source_collection_next_action": (
+                            "materialize_runtime_ledger_source_window_refs"
+                        ),
                         "source_account_label": "TORGHUT_REPLAY",
                         "source_dsn_env": "DB_DSN",
                         "target_dsn_env": "SIM_DB_DSN",
@@ -5174,6 +5189,28 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "strategy_runtime_ledger_buckets:run-1:start:end",
         )
         self.assertEqual(target["artifact_refs"], ["runtime-ledger/proof.json"])
+        self.assertEqual(
+            target["source_collection_priority"],
+            "profit_target_source_materialization",
+        )
+        self.assertTrue(target["source_collection_profit_target_candidate"])
+        self.assertEqual(
+            target["source_collection_profit_target_net_pnl_after_costs"],
+            "567.44720578",
+        )
+        self.assertEqual(target["source_collection_filled_notional"], "127090.02495200")
+        self.assertEqual(
+            target["source_collection_net_strategy_pnl_after_costs"],
+            "567.44720578",
+        )
+        self.assertEqual(
+            target["source_collection_post_cost_expectancy_bps"],
+            "44.64923238",
+        )
+        self.assertEqual(
+            target["source_collection_next_action"],
+            "materialize_runtime_ledger_source_window_refs",
+        )
         self.assertEqual(target["max_notional"], "0")
         self.assertFalse(target["promotion_allowed"])
 
