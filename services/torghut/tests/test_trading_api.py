@@ -10513,6 +10513,93 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_deferred_live_gate_payload_preserves_dependency_quorum_for_target_plan(
+        self,
+    ) -> None:
+        dependency_quorum = {
+            "schema_version": "torghut.jangar-dependency-quorum.v1",
+            "decision": "allow",
+            "reason": "cached_quorum_allow",
+        }
+
+        with patch(
+            "app.main._budget_unavailable_hypothesis_runtime_payload",
+            return_value=(
+                {
+                    "registry_loaded": True,
+                    "dependency_quorum": dependency_quorum,
+                    "summary": {
+                        "read_model_unavailable": True,
+                        "reason_codes": [
+                            "hypothesis_runtime_deferred_until_after_live_submission_gate"
+                        ],
+                    },
+                    "items": [],
+                },
+                {},
+                SimpleNamespace(as_payload=lambda: dependency_quorum),
+            ),
+        ):
+            payload = (
+                main_module._deferred_hypothesis_payload_for_live_submission_gate()
+            )
+
+        summary = payload["summary"]
+        self.assertIsInstance(summary, dict)
+        self.assertEqual(summary["dependency_quorum"], dependency_quorum)
+
+        gate = _build_live_submission_gate_payload(
+            SimpleNamespace(
+                drift_live_promotion_eligible=True,
+                last_signal_continuity_state="signals_present",
+                last_signal_continuity_actionable=False,
+            ),
+            hypothesis_summary=payload,
+            empirical_jobs_status={"ready": True},
+            quant_health_status={
+                "required": False,
+                "ok": True,
+                "status": "not_required",
+                "blocking_reasons": [],
+            },
+            clickhouse_ta_status={
+                "state": "current",
+                "latest_signal_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        self.assertEqual(gate["dependency_quorum_decision"], "allow")
+        self.assertEqual(gate["runtime_window_import_health_gate"]["blockers"], [])
+        self.assertTrue(gate["runtime_window_import_health_gate"]["ready"])
+
+    def test_deferred_live_gate_payload_leaves_missing_dependency_quorum_fail_closed(
+        self,
+    ) -> None:
+        with patch(
+            "app.main._budget_unavailable_hypothesis_runtime_payload",
+            return_value=(
+                {
+                    "registry_loaded": True,
+                    "summary": {
+                        "read_model_unavailable": True,
+                        "reason_codes": [
+                            "hypothesis_runtime_deferred_until_after_live_submission_gate"
+                        ],
+                    },
+                    "items": [],
+                },
+                {},
+                SimpleNamespace(as_payload=lambda: {}),
+            ),
+        ):
+            payload = (
+                main_module._deferred_hypothesis_payload_for_live_submission_gate()
+            )
+
+        summary = payload["summary"]
+        self.assertIsInstance(summary, dict)
+        self.assertNotIn("dependency_quorum", summary)
+
     def test_trading_paper_route_evidence_uses_external_plan_when_url_configured(
         self,
     ) -> None:
