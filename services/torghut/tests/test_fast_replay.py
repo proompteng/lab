@@ -312,6 +312,10 @@ class TestFastReplayPreview(TestCase):
             payload["implemented_mechanisms"],
         )
         self.assertIn(
+            "adaptive_signal_falsification_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
             "hawkes_transient_impact_execution_stress",
             payload["implemented_mechanisms"],
         )
@@ -975,6 +979,64 @@ class TestFastReplayPreview(TestCase):
         self.assertIn(
             "bootstrap_robust_optimization_stress_downranks_only",
             row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("adaptive_signal_falsification_stress", row_payload)
+        adaptive_falsification_payload = row_payload[
+            "adaptive_signal_falsification_stress"
+        ]
+        self.assertEqual(
+            adaptive_falsification_payload["status"],
+            "research_only_adaptive_signal_falsification_evidence_collection",
+        )
+        self.assertIn(
+            "spurious_predictability_arxiv_2604_15531_2026",
+            adaptive_falsification_payload["source_markers"],
+        )
+        self.assertIn(
+            "adaptive_factor_to_execution_alphacrafter_arxiv_2605_05580_2026",
+            adaptive_falsification_payload["source_markers"],
+        )
+        self.assertEqual(adaptive_falsification_payload["null_model_sample_count"], 0)
+        self.assertFalse(
+            adaptive_falsification_payload["adaptive_signal_falsification_passed"]
+        )
+        self.assertFalse(adaptive_falsification_payload["proof_authority"])
+        self.assertFalse(adaptive_falsification_payload["promotion_authority"])
+        self.assertFalse(adaptive_falsification_payload["promotion_allowed"])
+        self.assertFalse(adaptive_falsification_payload["final_authority_ok"])
+        self.assertTrue(
+            adaptive_falsification_payload["objective_scorecard_patch"][
+                "required_adaptive_signal_falsification"
+            ]
+        )
+        self.assertFalse(
+            adaptive_falsification_payload["objective_scorecard_patch"][
+                "adaptive_signal_falsification_passed"
+            ]
+        )
+        self.assertIn(
+            "null_model_sample_count_below_min",
+            adaptive_falsification_payload["warnings"],
+        )
+        self.assertIn(
+            "leakage_probe_missing_or_failed",
+            adaptive_falsification_payload["warnings"],
+        )
+        self.assertIn(
+            "adaptive_signal_falsification_incomplete_or_failed",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "adaptive_signal_falsification_evidence_collection_only",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn(
+            "adaptive_signal_falsification_incomplete_blocks_promotion",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn(
+            "adaptive_signal_falsification_incomplete_or_failed",
+            row_payload["risk_veto_reasons"],
         )
         self.assertIn(
             "intraday_jump_burst_stress_penalty_active",
