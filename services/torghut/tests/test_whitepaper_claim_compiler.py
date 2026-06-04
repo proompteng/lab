@@ -289,6 +289,10 @@ class TestWhitepaperClaimCompiler(TestCase):
             source_by_id["paper-arxiv-2605.05580"].title,
             "AlphaCrafter: A Full-Stack Multi-Agent Framework for Cross-Sectional Quantitative Trading",
         )
+        self.assertEqual(
+            source_by_id["paper-arxiv-2507.06345"].title,
+            "Reinforcement Learning for Trade Execution with Market and Limit Orders",
+        )
         self.assertTrue(
             any(
                 claim.get("claim_type") == "portfolio_construction"
@@ -299,6 +303,12 @@ class TestWhitepaperClaimCompiler(TestCase):
             any(
                 claim.get("claim_id") == "adaptive-factor-to-execution-loop"
                 for claim in source_by_id["paper-arxiv-2605.05580"].claims
+            )
+        )
+        self.assertTrue(
+            any(
+                claim.get("claim_id") == "market-limit-allocation-proof-neutrality"
+                for claim in source_by_id["paper-arxiv-2507.06345"].claims
             )
         )
 
