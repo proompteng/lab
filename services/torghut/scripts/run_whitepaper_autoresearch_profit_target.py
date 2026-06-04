@@ -8914,6 +8914,13 @@ def _runtime_report_source_markers(report: Mapping[str, Any]) -> list[str]:
     return sorted(set(_string_list_from_value(report.get("source_markers"))))
 
 
+def _market_impact_default_source_markers() -> list[str]:
+    return [
+        "double_square_root_impact_arxiv_2502_16246_2025",
+        "realistic_market_impact_arxiv_2603_29086_2026",
+    ]
+
+
 def _runtime_closure_start_equity(runtime_closure: Mapping[str, Any]) -> Decimal:
     replay_plan = _load_json_mapping_artifact(runtime_closure.get("replay_plan_path"))
     execution_context = _mapping(replay_plan.get("execution_context"))
@@ -8974,21 +8981,29 @@ def _runtime_closure_market_impact_stress_update(
         )
     )
     components = _mapping(market_impact_report.get("market_impact_stress_components"))
+    source_markers = _runtime_report_source_markers(market_impact_report)
+    if not source_markers:
+        source_markers = sorted(
+            set(_string_list_from_value(components.get("source_markers")))
+        )
+    if not source_markers and (components or model):
+        source_markers = _market_impact_default_source_markers()
     if not components and model and _decimal(cost_bps) > 0:
         components = {
             "selected_model": model,
             "selected_cost_bps": cost_bps,
             "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+            "source_markers": source_markers,
         }
+    elif components and source_markers and "source_markers" not in components:
+        components = {**components, "source_markers": source_markers}
     return {
         "market_impact_stress_passed": _boolish(
             market_impact_report.get("objective_met")
             or market_impact_report.get("passed")
         ),
         "market_impact_stress_artifact_ref": market_impact_report_path,
-        "market_impact_stress_source_markers": _runtime_report_source_markers(
-            market_impact_report
-        ),
+        "market_impact_stress_source_markers": source_markers,
         "market_impact_stress_model": model,
         "market_impact_stress_cost_bps": cost_bps,
         "market_impact_stress_components": components,
@@ -10184,6 +10199,12 @@ def _candidate_board_market_impact_proof_summary(
 ) -> dict[str, Any]:
     components = _mapping(scorecard.get("market_impact_stress_components"))
     source_marker = _string(components.get("source_marker"))
+    source_marker_candidates = [
+        *_string_list_from_value(scorecard.get("market_impact_stress_source_markers")),
+        *_string_list_from_value(components.get("source_markers")),
+        *([source_marker] if source_marker else []),
+    ]
+    source_markers = sorted({marker for marker in source_marker_candidates if marker})
     model = _string(
         scorecard.get("nonlinear_market_impact_stress_model")
         or scorecard.get("market_impact_stress_model")
@@ -10232,6 +10253,7 @@ def _candidate_board_market_impact_proof_summary(
         "net_pnl_per_day": net_pnl_per_day,
         "artifact_ref": artifact_ref,
         "component_source_marker": source_marker,
+        "source_markers": source_markers,
         "selected_component_model": _string(components.get("selected_model")),
         "selected_component_cost_bps": _string(components.get("selected_cost_bps")),
         "blockers": blockers,

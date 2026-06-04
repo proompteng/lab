@@ -43,6 +43,10 @@ NONLINEAR_IMPACT_EXECUTION_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...]
         "mechanism": "child_order_square_root_impact_with_inverse_square_root_time_decay",
     },
 )
+NONLINEAR_IMPACT_EXECUTION_STRESS_SOURCE_MARKERS: tuple[str, ...] = (
+    "realistic_market_impact_arxiv_2603_29086_2026",
+    "double_square_root_impact_arxiv_2502_16246_2025",
+)
 
 _PRICE_FIELDS = ("price", "mid_price", "mid", "mark", "last_price", "close")
 _SPREAD_BPS_FIELDS = ("spread_bps", "quoted_spread_bps", "effective_spread_bps")
@@ -112,6 +116,7 @@ class NonlinearImpactExecutionStressSummary:
             "source_papers": [
                 dict(item) for item in NONLINEAR_IMPACT_EXECUTION_STRESS_PRIMARY_SOURCES
             ],
+            "source_markers": list(NONLINEAR_IMPACT_EXECUTION_STRESS_SOURCE_MARKERS),
             "row_count": self.row_count,
             "observed_price_count": self.observed_price_count,
             "observed_volume_count": self.observed_volume_count,
@@ -197,6 +202,7 @@ def nonlinear_impact_execution_stress_contract() -> dict[str, Any]:
         "source_papers": [
             dict(item) for item in NONLINEAR_IMPACT_EXECUTION_STRESS_PRIMARY_SOURCES
         ],
+        "source_markers": list(NONLINEAR_IMPACT_EXECUTION_STRESS_SOURCE_MARKERS),
         "stress_policy": "nonlinear_market_impact_participation_and_permanent_decay_stress",
         "stress_components": [
             "square_root_impact_cost_bps",
