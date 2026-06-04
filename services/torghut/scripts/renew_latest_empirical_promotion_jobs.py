@@ -2007,6 +2007,7 @@ def _latest_source_activity_window(
     )
     if not strategy_names:
         return None
+    source_account_label = target.source_account_label or target.account_label
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -2020,7 +2021,7 @@ def _latest_source_activity_window(
                 """,
                 (
                     strategy_names,
-                    target.account_label,
+                    source_account_label,
                     list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
                 ),
             )

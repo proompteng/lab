@@ -172,6 +172,68 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
             {("live", "PA3SX7FYNUTF"), ("paper", "TORGHUT_SIM")},
         )
 
+    def test_latest_source_activity_window_queries_source_account_alias(self) -> None:
+        target = renew.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="c88421d619759b2cfaa6f4d0",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            target_dsn_env="SIM_DB_DSN",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            account_label="TORGHUT_SIM",
+            source_account_label="PA3SX7FYNUTF",
+            dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+            source_kind="paper_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+        executed_params: list[object] = []
+        earliest = datetime(2026, 6, 4, 13, 31, tzinfo=timezone.utc)
+        latest = datetime(2026, 6, 4, 19, 59, tzinfo=timezone.utc)
+
+        class Cursor:
+            def __enter__(self) -> "Cursor":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def execute(self, _query: str, params: tuple[object, ...]) -> None:
+                executed_params.extend(params)
+
+            def fetchone(self) -> tuple[datetime, datetime]:
+                return earliest, latest
+
+        class Connection:
+            def __enter__(self) -> "Connection":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def cursor(self) -> Cursor:
+                return Cursor()
+
+        with (
+            patch.dict("os.environ", {"SIM_DB_DSN": "postgresql://torghut/source"}),
+            patch.object(renew.psycopg, "connect", return_value=Connection()),
+        ):
+            window = renew._latest_source_activity_window(
+                target=target,
+                runtime_manifest={"strategy_name": "microbar-cross-sectional-pairs-v1"},
+            )
+
+        self.assertEqual(
+            window,
+            (
+                datetime(2026, 6, 4, 13, 30, tzinfo=timezone.utc),
+                datetime(2026, 6, 4, 20, 0, tzinfo=timezone.utc),
+            ),
+        )
+        self.assertEqual(executed_params[1], "PA3SX7FYNUTF")
+        self.assertEqual(target.account_label, "TORGHUT_SIM")
+
     def test_explicit_runtime_window_target_preserves_metadata_and_gates(self) -> None:
         args = argparse.Namespace(
             runtime_window_target=[
