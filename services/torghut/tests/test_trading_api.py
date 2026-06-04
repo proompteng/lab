@@ -3122,6 +3122,15 @@ class TestTradingApi(TestCase):
                 return self.current_elapsed
 
         budget = ManualBudget()
+        live_submission_gate_payload = {
+            "allowed": False,
+            "reason": "alpha_readiness_not_promotion_eligible",
+            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "read_model_unavailable": False,
+            "promotion_authority": False,
+            "final_authority_ok": False,
+            "final_promotion_allowed": False,
+        }
 
         def _load_hypothesis_runtime(
             *_args: object,
@@ -3150,23 +3159,35 @@ class TestTradingApi(TestCase):
                 "app.main._load_trading_status_hypothesis_runtime",
                 side_effect=_load_hypothesis_runtime,
             ),
-            patch("app.main._build_live_submission_gate_payload") as live_gate,
+            patch(
+                "app.main._build_live_submission_gate_payload",
+                return_value=live_submission_gate_payload,
+            ) as live_gate,
         ):
             response = self.client.get("/trading/status")
 
         self.assertEqual(response.status_code, 200)
-        live_gate.assert_not_called()
+        live_gate.assert_called_once()
+        gate_hypothesis = live_gate.call_args.kwargs["hypothesis_summary"]
+        self.assertIn(
+            "hypothesis_runtime_deferred_until_after_live_submission_gate",
+            gate_hypothesis["summary"]["reason_codes"],
+        )
         payload = response.json()
         self.assertFalse(payload["live_submission_gate"]["allowed"])
         self.assertEqual(
             payload["live_submission_gate"]["reason"],
-            "live_submission_gate_status_read_budget_insufficient_remaining",
+            "alpha_readiness_not_promotion_eligible",
         )
-        self.assertTrue(payload["live_submission_gate"]["read_model_unavailable"])
+        self.assertFalse(payload["live_submission_gate"]["read_model_unavailable"])
         self.assertFalse(payload["status_read_budget"]["exhausted"])
         self.assertEqual(payload["status_read_budget"]["remaining_seconds"], 1.5)
-        self.assertIn(
+        self.assertNotIn(
             "live_submission_gate",
+            payload["status_read_budget"]["skipped_reads"],
+        )
+        self.assertIn(
+            "tigerbeetle_ledger",
             payload["status_read_budget"]["skipped_reads"],
         )
         self.assertIn(
@@ -3186,6 +3207,15 @@ class TestTradingApi(TestCase):
                 return self.current_elapsed
 
         budget = ManualBudget()
+        live_submission_gate_payload = {
+            "allowed": False,
+            "reason": "alpha_readiness_not_promotion_eligible",
+            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "read_model_unavailable": False,
+            "promotion_authority": False,
+            "final_authority_ok": False,
+            "final_promotion_allowed": False,
+        }
 
         def _load_tca(_session: Session, **_kwargs: object) -> dict[str, object]:
             budget.current_elapsed = 9.2
@@ -3207,7 +3237,10 @@ class TestTradingApi(TestCase):
                 "app.main._daily_runtime_ledger_portfolio_summary"
             ) as portfolio_summary,
             patch("app.main._build_hypothesis_runtime_payload") as hypothesis_runtime,
-            patch("app.main._build_live_submission_gate_payload") as live_gate,
+            patch(
+                "app.main._build_live_submission_gate_payload",
+                return_value=live_submission_gate_payload,
+            ) as live_gate,
         ):
             response = self.client.get("/trading/status")
 
@@ -3215,13 +3248,13 @@ class TestTradingApi(TestCase):
         tigerbeetle_status.assert_not_called()
         portfolio_summary.assert_not_called()
         hypothesis_runtime.assert_not_called()
-        live_gate.assert_not_called()
+        live_gate.assert_called_once()
         payload = response.json()
         skipped_reads = payload["status_read_budget"]["skipped_reads"]
         self.assertIn("tigerbeetle_ledger", skipped_reads)
         self.assertIn("runtime_ledger_portfolio_summary", skipped_reads)
         self.assertIn("hypothesis_runtime", skipped_reads)
-        self.assertIn("live_submission_gate", skipped_reads)
+        self.assertNotIn("live_submission_gate", skipped_reads)
         self.assertIn(
             "tigerbeetle_ledger_status_read_budget_insufficient_remaining",
             payload["tigerbeetle_ledger"]["blockers"],
@@ -3232,7 +3265,7 @@ class TestTradingApi(TestCase):
         self.assertTrue(payload["hypotheses"]["summary"]["read_model_unavailable"])
         self.assertEqual(
             payload["live_submission_gate"]["reason"],
-            "live_submission_gate_status_read_budget_insufficient_remaining",
+            "alpha_readiness_not_promotion_eligible",
         )
 
     def test_readiness_checks_external_dependencies_before_postgres_session(
