@@ -2120,7 +2120,10 @@ class TestSubmissionCouncil(TestCase):
                     "closed_trade_count": 2,
                     "open_position_count": 0,
                     "filled_notional": "127090.02495200",
+                    "cost_amount": "12.42289104",
                     "net_strategy_pnl_after_costs": "567.44720578",
+                    "post_cost_expectancy_bps": "44.64923238",
+                    "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
                     "reason_codes": [
                         "runtime_ledger_source_window_missing",
                         "runtime_ledger_source_refs_missing",
@@ -2131,9 +2134,15 @@ class TestSubmissionCouncil(TestCase):
         )
 
         self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0]["source_collection_profit_target_candidate"])
+        self.assertEqual(
+            candidates[0]["source_collection_priority"],
+            "profit_target_source_materialization",
+        )
         plan = _runtime_ledger_paper_probation_import_plan(candidates)
 
         self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["source_collection_profit_target_count"], 1)
         target = plan["targets"][0]
         self.assertEqual(target["source_dsn_env"], "DB_DSN")
         self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
@@ -2146,6 +2155,13 @@ class TestSubmissionCouncil(TestCase):
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_allowed"])
         self.assertEqual(target["max_notional"], "0")
+        self.assertEqual(
+            target["selection_reason"], "profit_target_source_window_evidence_pending"
+        )
+        self.assertEqual(
+            target["source_collection_next_action"],
+            "materialize_runtime_ledger_source_window_refs",
+        )
 
     def test_runtime_ledger_source_collection_bucket_without_account_uses_sim_source(
         self,
@@ -2329,14 +2345,14 @@ class TestSubmissionCouncil(TestCase):
                     rejected_order_count=0,
                     unfilled_order_count=0,
                     closed_trade_count=12,
-                    open_position_count=4,
+                    open_position_count=0,
                     filled_notional=Decimal("157941.50000000"),
                     gross_strategy_pnl=Decimal("5530.86354020"),
                     cost_amount=Decimal("16"),
                     net_strategy_pnl_after_costs=Decimal("5514.86354020"),
-                    post_cost_expectancy_bps=None,
+                    post_cost_expectancy_bps=Decimal("349.15976763"),
                     ledger_schema_version="torghut.runtime-ledger-bucket.v1",
-                    pnl_basis="runtime_reconstructed_pnl",
+                    pnl_basis="realized_strategy_pnl_after_explicit_costs",
                     execution_policy_hash_counts={},
                     cost_model_hash_counts={},
                     lineage_hash_counts={},
@@ -2388,20 +2404,39 @@ class TestSubmissionCouncil(TestCase):
         self.assertIn(
             "runtime_ledger_source_collection_pending", gate["blocked_reasons"]
         )
+        self.assertIn(
+            "runtime_ledger_profit_target_source_collection_pending",
+            gate["blocked_reasons"],
+        )
         self.assertEqual(gate["runtime_ledger_source_collection_candidate_total"], 1)
+        self.assertEqual(
+            gate["runtime_ledger_source_collection_profit_target_candidate_total"], 1
+        )
         source_candidates = gate["runtime_ledger_source_collection_candidates"]
         self.assertEqual(len(source_candidates), 1)
         self.assertEqual(
             source_candidates[0]["source_collection_scope"],
             "source_window_evidence_collection_only",
         )
+        self.assertTrue(
+            source_candidates[0]["source_collection_profit_target_candidate"]
+        )
+        self.assertEqual(
+            source_candidates[0]["source_collection_priority"],
+            "profit_target_source_materialization",
+        )
         import_plan = gate["runtime_ledger_paper_probation_import_plan"]
         self.assertEqual(import_plan["paper_probation_target_count"], 0)
         self.assertEqual(import_plan["source_collection_target_count"], 1)
+        self.assertEqual(import_plan["source_collection_profit_target_count"], 1)
         target = import_plan["targets"][0]
         self.assertFalse(target["paper_probation_authorized"])
         self.assertTrue(target["source_collection_authorized"])
         self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertEqual(
+            target["selection_reason"], "profit_target_source_window_evidence_pending"
+        )
 
     def test_live_gate_seeds_hpairs_bounded_collection_target_without_source_rows(
         self,
