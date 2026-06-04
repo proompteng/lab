@@ -754,7 +754,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 order_event_argv = command_argvs[2]
                 self.assertEqual(
                     order_event_argv[order_event_argv.index("--batch-size") + 1],
-                    "1",
+                    str(cron_runner.LIVE_ORDER_EVENT_BATCH_SIZE),
                 )
                 self.assertEqual(
                     order_event_argv[order_event_argv.index("--max-batches") + 1],

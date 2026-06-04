@@ -27,6 +27,14 @@ class RunTigerBeetleJournalCronTest(TestCase):
                 "live",
                 "--execution-batch-size",
                 "0",
+                "--tca-metric-batch-size",
+                "0",
+                "--order-event-batch-size",
+                "50000",
+                "--runtime-ledger-batch-size",
+                "0",
+                "--sim-batch-size",
+                "0",
                 "--supervise-timeout-seconds",
                 "3.5",
                 "--json",
@@ -41,9 +49,38 @@ class RunTigerBeetleJournalCronTest(TestCase):
             runner._commands_for_preset(args)[0].batch_size,
             1,
         )
+        self.assertEqual(runner._commands_for_preset(args)[1].batch_size, 1)
+        self.assertEqual(runner._commands_for_preset(args)[2].batch_size, 5000)
+        self.assertEqual(runner._commands_for_preset(args)[3].batch_size, 1)
         self.assertEqual(
-            runner._commands_for_preset(argparse.Namespace(preset="sim"))[0].dsn_env,
+            runner._commands_for_preset(
+                argparse.Namespace(
+                    preset="sim",
+                    sim_batch_size=0,
+                    runtime_ledger_batch_size=50_000,
+                )
+            )[0].dsn_env,
             "SIM_DB_DSN",
+        )
+        self.assertEqual(
+            runner._commands_for_preset(
+                argparse.Namespace(
+                    preset="sim",
+                    sim_batch_size=0,
+                    runtime_ledger_batch_size=50_000,
+                )
+            )[0].batch_size,
+            1,
+        )
+        self.assertEqual(
+            runner._commands_for_preset(
+                argparse.Namespace(
+                    preset="sim",
+                    sim_batch_size=0,
+                    runtime_ledger_batch_size=50_000,
+                )
+            )[-1].batch_size,
+            5000,
         )
 
     def test_default_live_execution_slices_drain_source_ref_backlog(self) -> None:
@@ -63,36 +100,43 @@ class RunTigerBeetleJournalCronTest(TestCase):
             if item.source == SOURCE_TYPE_EXECUTION
         ]
 
-        self.assertEqual(runner.LIVE_EXECUTION_BATCH_SIZE, 5)
-        self.assertEqual(runner.LIVE_EXECUTION_SLICE_COUNT, 5)
+        self.assertEqual(runner.LIVE_EXECUTION_BATCH_SIZE, 250)
+        self.assertEqual(runner.LIVE_EXECUTION_SLICE_COUNT, 1)
         self.assertEqual(command.batch_size, runner.LIVE_EXECUTION_BATCH_SIZE)
         self.assertEqual(command.max_batches, 1)
         self.assertEqual(command.repeat_count, runner.LIVE_EXECUTION_SLICE_COUNT)
         self.assertTrue(command.commit_each_row)
-        self.assertEqual(command.progress_interval, 1)
+        self.assertEqual(
+            command.progress_interval, runner.LIVE_EXECUTION_PROGRESS_INTERVAL
+        )
         self.assertTrue(command.skip_reconcile)
         self.assertTrue(command.allow_data_quality_degraded)
 
-    def test_live_preset_raises_only_execution_batch_size(self) -> None:
-        commands = runner._live_commands(execution_batch_size=10)
+    def test_live_preset_can_tune_source_batch_sizes_independently(self) -> None:
+        commands = runner._live_commands(
+            execution_batch_size=10,
+            tca_metric_batch_size=20,
+            order_event_batch_size=30,
+            runtime_ledger_batch_size=40,
+        )
 
         self.assertEqual(commands[0].source, SOURCE_TYPE_EXECUTION)
         self.assertEqual(commands[0].batch_size, 10)
         self.assertEqual(commands[0].max_batches, 1)
         self.assertEqual(commands[0].repeat_count, runner.LIVE_EXECUTION_SLICE_COUNT)
         self.assertTrue(commands[0].commit_each_row)
-        self.assertEqual(commands[0].progress_interval, 1)
+        self.assertEqual(
+            commands[0].progress_interval, runner.LIVE_EXECUTION_PROGRESS_INTERVAL
+        )
         self.assertTrue(commands[0].skip_reconcile)
         self.assertTrue(commands[0].allow_data_quality_degraded)
         self.assertEqual(commands[1].source, SOURCE_TYPE_EXECUTION_TCA_METRIC)
-        self.assertEqual(commands[1].batch_size, runner.LIVE_TCA_METRIC_BATCH_SIZE)
-        self.assertEqual(commands[1].batch_size, 5)
+        self.assertEqual(commands[1].batch_size, 20)
         self.assertEqual(commands[1].max_batches, runner.LIVE_TCA_METRIC_MAX_BATCHES)
         self.assertEqual(commands[1].max_batches, 1)
         self.assertTrue(commands[1].skip_reconcile)
         self.assertEqual(commands[2].source, SOURCE_TYPE_EXECUTION_ORDER_EVENT)
-        self.assertEqual(commands[2].batch_size, runner.LIVE_ORDER_EVENT_BATCH_SIZE)
-        self.assertEqual(commands[2].batch_size, 1)
+        self.assertEqual(commands[2].batch_size, 30)
         self.assertEqual(commands[2].max_batches, runner.LIVE_ORDER_EVENT_MAX_BATCHES)
         self.assertEqual(commands[2].max_batches, 1)
         self.assertLessEqual(commands[2].max_batches, 2)
@@ -101,6 +145,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
             runner.LIVE_ORDER_EVENT_SCAN_LIMIT,
         )
         self.assertEqual(commands[3].source, SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
+        self.assertEqual(commands[3].batch_size, 40)
         self.assertFalse(commands[3].skip_reconcile)
         self.assertTrue(commands[3].reconcile_empty_selection)
         self.assertEqual(commands[3].reconcile_limit, runner.LIVE_RECONCILE_LIMIT)
@@ -181,8 +226,11 @@ class RunTigerBeetleJournalCronTest(TestCase):
             str(runner.LIVE_ORDER_EVENT_MAX_BATCHES),
         )
         self.assertLessEqual(int(argv[argv.index("--max-batches") + 1]), 2)
-        self.assertEqual(int(argv[argv.index("--batch-size") + 1]), 1)
         self.assertEqual(int(argv[argv.index("--max-batches") + 1]), 1)
+        self.assertEqual(
+            int(argv[argv.index("--batch-size") + 1]),
+            runner.LIVE_ORDER_EVENT_BATCH_SIZE,
+        )
         self.assertEqual(
             argv[argv.index("--event-scan-limit") + 1],
             str(runner.LIVE_ORDER_EVENT_SCAN_LIMIT),
@@ -393,11 +441,14 @@ class RunTigerBeetleJournalCronTest(TestCase):
             exit_code = runner.main()
 
         self.assertEqual(exit_code, 1)
-        self.assertEqual(len(observed), 8)
+        self.assertEqual(len(observed), 4)
         first_argv = observed[0][0]
         self.assertEqual(first_argv[first_argv.index("--batch-size") + 1], "5000")
         self.assertIn("--commit-each-row", first_argv)
-        self.assertEqual(first_argv[first_argv.index("--progress-interval") + 1], "1")
+        self.assertEqual(
+            first_argv[first_argv.index("--progress-interval") + 1],
+            str(runner.LIVE_EXECUTION_PROGRESS_INTERVAL),
+        )
         self.assertEqual(
             first_argv[first_argv.index("--supervise-timeout-seconds") + 1],
             "0.001",
