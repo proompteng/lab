@@ -25,6 +25,23 @@ from app.trading.scheduler.safety import (
 )
 
 
+def _target_price_snapshots(
+    *symbols: str, price: str = "100"
+) -> dict[str, dict[str, str]]:
+    return {
+        symbol: {
+            "symbol": symbol,
+            "price": price,
+            "bid": price,
+            "ask": price,
+            "spread": "0",
+            "source": "test_executable_quote",
+            "quote_source": "test_executable_quote",
+        }
+        for symbol in symbols
+    }
+
+
 class _OrderFirewallStub:
     def __init__(self) -> None:
         self.cancel_all_calls = 0
@@ -367,6 +384,7 @@ class TestTradingSchedulerSafety(TestCase):
             "paper_route_probe_next_session_max_notional": "1000",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
+            "price_snapshots": _target_price_snapshots("AAPL", "AMZN"),
         }
         strategy = Strategy(
             name="microbar-cross-sectional-pairs-v1",
@@ -428,6 +446,7 @@ class TestTradingSchedulerSafety(TestCase):
             "paper_route_probe_next_session_max_notional": "1000",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
+            "price_snapshots": _target_price_snapshots("AAPL", "AMZN"),
         }
         strategy = Strategy(
             name="microbar-cross-sectional-pairs-v1",
