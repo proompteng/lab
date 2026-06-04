@@ -145,6 +145,14 @@ class TestQueueSurvivalFillStress(TestCase):
         )
         self.assertGreater(stressed.nonfill_opportunity_cost_bps, 0.0)
         self.assertGreaterEqual(stressed.visible_depth_notional_shortfall_share, 0.75)
+        self.assertGreater(
+            fillable.state_dependent_fill_before_move_probability,
+            stressed.state_dependent_fill_before_move_probability,
+        )
+        self.assertGreater(
+            stressed.state_dependent_fill_risk_penalty_bps,
+            fillable.state_dependent_fill_risk_penalty_bps,
+        )
 
         stressed_payload = stressed.to_payload()
         self.assertEqual(
@@ -161,6 +169,110 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertIn(
             "queue_reactive_event_mix_l1", stressed_payload["ranking_features"]
         )
+        self.assertIn(
+            "state_dependent_fill_before_move_probability",
+            stressed_payload["ranking_features"],
+        )
+        self.assertTrue(stressed_payload["state_dependent_fill_before_move_preview"])
+
+    def test_state_dependent_fill_before_move_downranks_missed_momentum(
+        self,
+    ) -> None:
+        fill_before_move = extract_queue_survival_fill_stress(
+            (
+                self._row(
+                    offset=1,
+                    price="100.00",
+                    queue_ratio="0.10",
+                    bid_size="1000",
+                    volume="500",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=2,
+                    price="100.01",
+                    queue_ratio="0.10",
+                    bid_size="1000",
+                    volume="500",
+                    event_type="trade",
+                    fill_qty="500",
+                    status="filled",
+                ),
+                self._row(
+                    offset=3,
+                    price="100.04",
+                    queue_ratio="0.12",
+                    bid_size="980",
+                    volume="450",
+                    event_type="trade",
+                    fill_qty="500",
+                    status="filled",
+                ),
+            ),
+            direction=1,
+            max_notional=5_000,
+        ).to_payload()
+        moved_before_fill = extract_queue_survival_fill_stress(
+            (
+                self._row(
+                    offset=1,
+                    price="100.00",
+                    queue_ratio="0.10",
+                    bid_size="1000",
+                    volume="10",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=2,
+                    price="100.12",
+                    queue_ratio="0.18",
+                    bid_size="700",
+                    volume="10",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=3,
+                    price="100.24",
+                    queue_ratio="0.25",
+                    bid_size="600",
+                    volume="10",
+                    event_type="cancel",
+                    status="cancelled",
+                ),
+            ),
+            direction=1,
+            max_notional=5_000,
+        ).to_payload()
+
+        self.assertGreater(
+            float(fill_before_move["state_dependent_fill_before_move_probability"]),
+            float(moved_before_fill["state_dependent_fill_before_move_probability"]),
+        )
+        self.assertGreater(
+            float(moved_before_fill["opportunity_midprice_move_before_fill_share"]),
+            float(fill_before_move["opportunity_midprice_move_before_fill_share"]),
+        )
+        self.assertGreater(
+            float(
+                moved_before_fill["ranking_features"][
+                    "state_dependent_fill_risk_penalty_bps"
+                ]
+            ),
+            float(
+                fill_before_move["ranking_features"][
+                    "state_dependent_fill_risk_penalty_bps"
+                ]
+            ),
+        )
+        self.assertIn(
+            "arxiv-2403.02572v2",
+            {source["source_id"] for source in moved_before_fill["source_papers"]},
+        )
+        self.assertIn(
+            "arxiv-2507.06345v2",
+            {source["source_id"] for source in moved_before_fill["source_papers"]},
+        )
+        self.assertFalse(moved_before_fill["promotion_authority"])
 
     def test_queue_reactive_event_mix_and_order_size_parity_penalize_bad_replay(
         self,
@@ -536,6 +648,8 @@ class TestQueueSurvivalFillStress(TestCase):
             build_queue_survival_fill_stress_schema_hash(),
         )
         self.assertIn("arxiv-2512.05734", source_ids)
+        self.assertIn("arxiv-2403.02572v2", source_ids)
+        self.assertIn("arxiv-2507.06345v2", source_ids)
         self.assertIn("arxiv-2501.08822", source_ids)
         self.assertIn("arxiv-2511.15262", source_ids)
         self.assertIn("ssrn-6440898", source_ids)
@@ -556,6 +670,11 @@ class TestQueueSurvivalFillStress(TestCase):
             contract["proof_neutrality"]["requires_queue_allocation_rule_audit"]
         )
         self.assertTrue(
+            contract["proof_neutrality"][
+                "requires_state_dependent_fill_before_move_audit"
+            ]
+        )
+        self.assertTrue(
             contract["proof_neutrality"]["requires_maker_fill_return_tradeoff_audit"]
         )
         self.assertTrue(
@@ -572,6 +691,16 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertTrue(
             contract["proof_neutrality"][
                 "rejects_time_priority_edge_as_mechanism_neutral_pnl_proof"
+            ]
+        )
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_state_dependent_fill_probability_as_fill_authority"
+            ]
+        )
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_opportunity_move_proxy_as_pnl_or_promotion_authority"
             ]
         )
         self.assertTrue(
