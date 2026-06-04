@@ -69,6 +69,9 @@ from app.trading.discovery.queue_survival_fill_stress import (
 from app.trading.discovery.rough_flow_volatility_stress import (
     extract_rough_flow_volatility_stress,
 )
+from app.trading.discovery.signal_adaptive_execution_resilience_stress import (
+    extract_signal_adaptive_execution_resilience_stress,
+)
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
@@ -101,6 +104,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "intraday_jump_burst_stress",
     "rough_flow_volatility_impact_stress",
     "institutional_mechanism_fidelity_stress",
+    "signal_adaptive_execution_resilience_stress",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -209,6 +213,9 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     institutional_mechanism_fidelity_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    signal_adaptive_execution_resilience_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
@@ -324,6 +331,9 @@ class FastReplayPreviewRow:
             "rough_flow_volatility_stress": dict(self.rough_flow_volatility_stress),
             "institutional_mechanism_fidelity_stress": dict(
                 self.institutional_mechanism_fidelity_stress
+            ),
+            "signal_adaptive_execution_resilience_stress": dict(
+                self.signal_adaptive_execution_resilience_stress
             ),
             "ranking_only_reasons": list(ranking_only_reasons),
             "risk_veto_reasons": list(risk_veto_reasons),
@@ -520,6 +530,7 @@ class FastReplayPreviewResult:
                 "intraday_jump_burst_stress": "deterministic replay-row intraday jump, volatility burst, and spurious-jump source-gap stress from SSRN:5223127, SSRN:5199540, and arXiv:2602.10925; jump proxies are not PnL authority; preview ranking only",
                 "rough_flow_volatility_impact_stress": "deterministic persistent signed-flow, rough traded-volume/volatility, Poisson-arrival, and power-law impact consistency stress from arXiv:2601.23172 and arXiv:2603.13170; roughness proxies are not PnL authority; preview ranking only",
                 "institutional_mechanism_fidelity_stress": "deterministic market-calendar, auction/session-boundary, price-limit, tick-size, latency, and asynchronous cross-asset mechanism-fidelity stress from arXiv:2604.18046 and arXiv:2511.02016; simulator realism proxies are not PnL authority; preview ranking only",
+                "signal_adaptive_execution_resilience_stress": "deterministic signal-adaptive quote, fill-intensity, inventory-risk, stochastic liquidity-resilience, and regime-switch stress from arXiv:2605.24242 and arXiv:2506.11813; signal drift and modeled fill intensity are not PnL authority; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -1184,6 +1195,7 @@ def _score_candidate_spec(
             intraday_jump_burst_stress={},
             rough_flow_volatility_stress={},
             institutional_mechanism_fidelity_stress={},
+            signal_adaptive_execution_resilience_stress={},
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
             candidate_lineage=_candidate_lineage(spec),
@@ -1413,6 +1425,20 @@ def _score_candidate_spec(
         )
         or 0.0
     )
+    signal_adaptive_execution_resilience_stress = (
+        extract_signal_adaptive_execution_resilience_stress(
+            matched_source_rows,
+            direction=direction,
+        ).to_payload()
+    )
+    signal_adaptive_execution_resilience_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(
+                signal_adaptive_execution_resilience_stress.get("ranking_features")
+            ).get("replay_rank_penalty_bps")
+        )
+        or 0.0
+    )
     impact_liquidity_penalty_bps = _impact_liquidity_penalty_bps(
         median_spread_bps=median_spread_bps,
         spread_tail_bps=spread_tail_bps,
@@ -1472,6 +1498,7 @@ def _score_candidate_spec(
         - intraday_jump_burst_rank_penalty_bps * 0.05
         - rough_flow_volatility_rank_penalty_bps * 0.06
         - institutional_mechanism_fidelity_rank_penalty_bps * 0.05
+        - signal_adaptive_execution_resilience_rank_penalty_bps * 0.05
         - conformal_tail_risk_penalty_bps * 0.12
         - macro_stress_veto_score * 18.0
     )
@@ -1516,6 +1543,7 @@ def _score_candidate_spec(
         - intraday_jump_burst_rank_penalty_bps * 0.03
         - rough_flow_volatility_rank_penalty_bps * 0.03
         - institutional_mechanism_fidelity_rank_penalty_bps * 0.03
+        - signal_adaptive_execution_resilience_rank_penalty_bps * 0.03
     )
     return FastReplayPreviewRow(
         candidate_spec_id=spec.candidate_spec_id,
@@ -1568,6 +1596,9 @@ def _score_candidate_spec(
         institutional_mechanism_fidelity_stress=dict(
             institutional_mechanism_fidelity_stress
         ),
+        signal_adaptive_execution_resilience_stress=dict(
+            signal_adaptive_execution_resilience_stress
+        ),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
@@ -1617,6 +1648,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _intraday_jump_burst_rank_penalty_bps(row) * 0.04
         - _rough_flow_volatility_rank_penalty_bps(row) * 0.04
         - _institutional_mechanism_fidelity_rank_penalty_bps(row) * 0.04
+        - _signal_adaptive_execution_resilience_rank_penalty_bps(row) * 0.04
         - float(row.conformal_tail_risk_penalty_bps) * 0.10
     )
 
@@ -1712,6 +1744,15 @@ def _institutional_mechanism_fidelity_rank_penalty_bps(
 ) -> float:
     ranking_features = _mapping(
         row.institutional_mechanism_fidelity_stress.get("ranking_features")
+    )
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _signal_adaptive_execution_resilience_rank_penalty_bps(
+    row: FastReplayPreviewRow,
+) -> float:
+    ranking_features = _mapping(
+        row.signal_adaptive_execution_resilience_stress.get("ranking_features")
     )
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
@@ -1921,6 +1962,9 @@ def _row_with_rank_and_selection(
         institutional_mechanism_fidelity_stress=dict(
             row.institutional_mechanism_fidelity_stress
         ),
+        signal_adaptive_execution_resilience_stress=dict(
+            row.signal_adaptive_execution_resilience_stress
+        ),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -1996,6 +2040,9 @@ def _row_with_frontier_dedupe(
         rough_flow_volatility_stress=dict(row.rough_flow_volatility_stress),
         institutional_mechanism_fidelity_stress=dict(
             row.institutional_mechanism_fidelity_stress
+        ),
+        signal_adaptive_execution_resilience_stress=dict(
+            row.signal_adaptive_execution_resilience_stress
         ),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
@@ -2820,6 +2867,8 @@ def _risk_flags_for_row(
         flags.add("rough_flow_volatility_stress_penalty_active")
     if _institutional_mechanism_fidelity_rank_penalty_bps(row) > 0:
         flags.add("institutional_mechanism_fidelity_stress_penalty_active")
+    if _signal_adaptive_execution_resilience_rank_penalty_bps(row) > 0:
+        flags.add("signal_adaptive_execution_resilience_stress_penalty_active")
     if row.matched_symbol_count < row.requested_symbol_count:
         flags.add("partial_symbol_coverage")
     if row.trading_day_count <= 0:
@@ -2876,6 +2925,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("rough_flow_volatility_stress_downranks_only")
     if _institutional_mechanism_fidelity_rank_penalty_bps(row) > 0:
         reasons.add("institutional_mechanism_fidelity_stress_downranks_only")
+    if _signal_adaptive_execution_resilience_rank_penalty_bps(row) > 0:
+        reasons.add("signal_adaptive_execution_resilience_stress_downranks_only")
     if row.selection_reason == "insufficient_replay_tape_rows":
         reasons.add("missing_replay_tape_source_data_explicit_blocker")
     if lineage_blockers:
@@ -2925,6 +2976,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("rough_flow_volatility_stress_penalty")
     if _institutional_mechanism_fidelity_rank_penalty_bps(row) > 0:
         vetoes.add("institutional_mechanism_fidelity_stress_penalty")
+    if _signal_adaptive_execution_resilience_rank_penalty_bps(row) > 0:
+        vetoes.add("signal_adaptive_execution_resilience_stress_penalty")
     if row.robust_lower_percentile_post_cost_utility_bps <= 0:
         vetoes.add("robust_lower_percentile_post_cost_utility_not_positive")
     return tuple(sorted(vetoes))
