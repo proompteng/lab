@@ -28,6 +28,13 @@ def _promotion_quality_scorecard() -> dict[str, object]:
         "fill_survival_sample_count": 12,
         "queue_ahead_depletion_evidence_present": True,
         "queue_ahead_depletion_sample_count": 12,
+        "queue_position_survival_fill_curve_evidence_present": True,
+        "queue_position_survival_sample_count": 12,
+        "queue_position_survival_fill_rate": "0.85",
+        "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+        "queue_position_survival_queue_ahead_depletion_sample_count": 12,
+        "queue_position_survival_adjusted_fillable_ratio": "0.80",
+        "post_cost_net_pnl_after_queue_position_survival_fill_stress": "600",
     }
 
 
@@ -289,6 +296,54 @@ def test_promotion_ready_bundle_accepts_materialized_order_type_tca_evidence() -
     assert "price_improvement_evidence_missing" not in blockers
     assert "execution_shortfall_evidence_missing" not in blockers
     assert "opportunity_cost_evidence_missing" not in blockers
+
+
+def test_promotion_ready_bundle_blocks_generic_fill_survival_without_queue_position_curve() -> (
+    None
+):
+    scorecard = _promotion_quality_scorecard()
+    for key in (
+        "queue_position_survival_fill_curve_evidence_present",
+        "queue_position_survival_sample_count",
+        "queue_position_survival_fill_rate",
+        "queue_position_survival_queue_ahead_depletion_evidence_present",
+        "queue_position_survival_queue_ahead_depletion_sample_count",
+        "queue_position_survival_adjusted_fillable_ratio",
+        "post_cost_net_pnl_after_queue_position_survival_fill_stress",
+    ):
+        scorecard.pop(key)
+
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-generic-fill-only",
+        candidate_id="candidate-generic-fill-only",
+        candidate_spec_id="spec-generic-fill-only",
+        dataset_snapshot_id="snapshot-generic-fill-only",
+        feature_spec_hash="feature-generic-fill-only",
+        code_commit="commit-generic-fill-only",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard=scorecard,
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "fill_survival_evidence_missing" not in blockers
+    assert "queue_ahead_depletion_evidence_missing" not in blockers
+    assert "queue_position_survival_fill_curve_evidence_missing" in blockers
+    assert "queue_position_survival_sample_count_zero" in blockers
+    assert "queue_position_survival_fill_rate_non_positive" in blockers
+    assert "queue_position_survival_queue_ahead_depletion_evidence_missing" in blockers
+    assert "queue_position_survival_adjusted_fillable_ratio_non_positive" in blockers
+    assert "queue_position_survival_stress_net_pnl_non_positive" in blockers
 
 
 def test_promotion_ready_bundle_blocks_missing_implementation_risk_parity() -> None:

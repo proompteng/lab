@@ -1383,6 +1383,38 @@ def _delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         <= 0
     ):
         blockers.append("queue_ahead_depletion_sample_count_zero")
+
+    if not _bool(scorecard.get("queue_position_survival_fill_curve_evidence_present")):
+        blockers.append("queue_position_survival_fill_curve_evidence_missing")
+    if _int(scorecard.get("queue_position_survival_sample_count")) <= 0:
+        blockers.append("queue_position_survival_sample_count_zero")
+    if _decimal(scorecard.get("queue_position_survival_fill_rate")) <= 0:
+        blockers.append("queue_position_survival_fill_rate_non_positive")
+    if not _bool(
+        scorecard.get("queue_position_survival_queue_ahead_depletion_evidence_present")
+    ):
+        blockers.append(
+            "queue_position_survival_queue_ahead_depletion_evidence_missing"
+        )
+    if (
+        _int(
+            scorecard.get("queue_position_survival_queue_ahead_depletion_sample_count")
+        )
+        <= 0
+    ):
+        blockers.append(
+            "queue_position_survival_queue_ahead_depletion_sample_count_zero"
+        )
+    if _decimal(scorecard.get("queue_position_survival_adjusted_fillable_ratio")) <= 0:
+        blockers.append("queue_position_survival_adjusted_fillable_ratio_non_positive")
+    if (
+        _decimal(
+            scorecard.get("post_cost_net_pnl_after_queue_position_survival_fill_stress")
+            or scorecard.get("queue_position_survival_stress_net_pnl_per_day")
+        )
+        <= 0
+    ):
+        blockers.append("queue_position_survival_stress_net_pnl_non_positive")
     return blockers
 
 

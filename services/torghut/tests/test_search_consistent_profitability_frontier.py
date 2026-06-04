@@ -2749,6 +2749,27 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             item["required_actions_before_or_during_probation"],
         )
 
+    def test_paper_probation_actions_collect_queue_position_survival_for_fill_vetoes(
+        self,
+    ) -> None:
+        actions = frontier._paper_probation_required_actions(
+            ["fill_survival_rate_below_min"]
+        )
+
+        self.assertIn("collect_tail_risk_and_fill_survival_evidence", actions)
+        self.assertIn("collect_queue_position_survival_fill_curve_evidence", actions)
+
+    def test_paper_probation_repair_actions_collect_queue_position_survival_for_bundle_blockers(
+        self,
+    ) -> None:
+        actions = frontier._paper_probation_repair_actions(
+            blockers=["queue_position_survival_fill_curve_evidence_missing"],
+            hard_vetoes=[],
+        )
+
+        self.assertIn("collect_queue_position_survival_fill_curve_evidence", actions)
+        self.assertIn("keep_final_promotion_gates_fail_closed", actions)
+
     def test_paper_probation_shortlist_prioritizes_handoff_ready_candidate(
         self,
     ) -> None:
