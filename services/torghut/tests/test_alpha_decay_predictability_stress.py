@@ -133,6 +133,14 @@ class TestAlphaDecayPredictabilityStress(TestCase):
         self.assertFalse(payload["proof_authority"])
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["final_authority_ok"])
+        self.assertIn(
+            "alpha_decay_predictability_arxiv_2601_02310_2026",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "short_run_market_efficiency_ssrn_6608199_2026",
+            payload["source_markers"],
+        )
 
     def test_contract_embeds_sources_and_keeps_proof_fail_closed(self) -> None:
         contract = alpha_decay_predictability_stress_contract()
@@ -151,6 +159,22 @@ class TestAlphaDecayPredictabilityStress(TestCase):
         )
         self.assertIn("arxiv-2601.02310", source_ids)
         self.assertIn("ssrn-6608199", source_ids)
+        self.assertIn(
+            "alpha_decay_predictability_arxiv_2601_02310_2026",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "short_run_market_efficiency_ssrn_6608199_2026",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "alpha_decay_predictability_arxiv_2601_02310_2026",
+            contract["source_markers"],
+        )
+        self.assertIn(
+            "short_run_market_efficiency_ssrn_6608199_2026",
+            contract["source_markers"],
+        )
         self.assertTrue(contract["proof_neutrality"]["requires_exact_replay"])
         self.assertTrue(contract["proof_neutrality"]["requires_route_tca"])
         self.assertTrue(

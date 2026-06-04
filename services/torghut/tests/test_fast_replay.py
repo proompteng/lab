@@ -483,6 +483,14 @@ class TestFastReplayPreview(TestCase):
                 ]
             },
         )
+        self.assertIn(
+            "alpha_decay_predictability_arxiv_2601_02310_2026",
+            row_payload["alpha_decay_predictability_stress"]["source_markers"],
+        )
+        self.assertIn(
+            "short_run_market_efficiency_ssrn_6608199_2026",
+            row_payload["alpha_decay_predictability_stress"]["source_markers"],
+        )
         self.assertIn("counterfactual_regime_replay_stress", row_payload)
         self.assertFalse(
             row_payload["counterfactual_regime_replay_stress"]["proof_authority"]
