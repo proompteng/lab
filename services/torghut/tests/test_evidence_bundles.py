@@ -610,6 +610,196 @@ def test_promotion_ready_bundle_accepts_materialized_bootstrap_robust_evidence()
     assert "out_of_sample_generalization_missing_or_failed" not in blockers
 
 
+def test_promotion_ready_bundle_blocks_required_adaptive_signal_falsification_gaps() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-adaptive-falsification-gap",
+        candidate_id="candidate-adaptive-falsification-gap",
+        candidate_spec_id="spec-adaptive-falsification-gap",
+        dataset_snapshot_id="snapshot-adaptive-falsification-gap",
+        feature_spec_hash="feature-adaptive-falsification-gap",
+        code_commit="commit-adaptive-falsification-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_adaptive_signal_falsification": True,
+            "required_min_null_model_sample_count": "100",
+            "required_max_effective_multiplicity_adjusted_p_value": "0.05",
+            "bootstrap_robust_optimization_source_markers": [
+                "spurious_predictability_arxiv_2604_15531_2026",
+            ],
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": False},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "adaptive_signal_falsification_missing_or_failed" in blockers
+    assert "adaptive_signal_falsification_artifact_missing" in blockers
+    assert "adaptive_signal_baseline_not_outperformed" in blockers
+    assert "candidate_vs_null_return_delta_missing" in blockers
+    assert "candidate_vs_incumbent_return_delta_missing" in blockers
+    assert "null_model_sample_count_below_min" in blockers
+    assert "effective_multiplicity_adjusted_p_value_missing" in blockers
+    assert "negative_control_missing_or_failed" in blockers
+    assert "placebo_label_test_missing_or_failed" in blockers
+    assert "label_permutation_test_missing_or_failed" in blockers
+    assert "feature_permutation_stability_missing_or_failed" in blockers
+    assert "leakage_probe_missing_or_failed" in blockers
+    assert "walk_forward_falsification_missing_or_failed" in blockers
+
+
+def test_promotion_ready_bundle_accepts_materialized_adaptive_signal_falsification() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-adaptive-falsification-ready",
+        candidate_id="candidate-adaptive-falsification-ready",
+        candidate_spec_id="spec-adaptive-falsification-ready",
+        dataset_snapshot_id="snapshot-adaptive-falsification-ready",
+        feature_spec_hash="feature-adaptive-falsification-ready",
+        code_commit="commit-adaptive-falsification-ready",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_adaptive_signal_falsification": True,
+            "required_min_null_model_sample_count": "100",
+            "required_max_effective_multiplicity_adjusted_p_value": "0.05",
+            "adaptive_signal_falsification_passed": True,
+            "adaptive_signal_falsification_artifact_ref": (
+                "artifact://adaptive-falsification"
+            ),
+            "negative_control_passed": True,
+            "placebo_label_test_passed": True,
+            "label_permutation_test_passed": True,
+            "feature_permutation_stability_passed": True,
+            "leakage_probe_passed": True,
+            "walk_forward_falsification_passed": True,
+            "null_model_sample_count": 128,
+            "effective_multiplicity_adjusted_p_value": "0.02",
+            "candidate_vs_null_return_delta": "0.025",
+            "candidate_vs_incumbent_return_delta": "0.004",
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={
+            "baseline_outperformed": True,
+        },
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "adaptive_signal_falsification_missing_or_failed" not in blockers
+    assert "adaptive_signal_falsification_artifact_missing" not in blockers
+    assert "adaptive_signal_baseline_not_outperformed" not in blockers
+    assert "candidate_vs_null_return_delta_missing" not in blockers
+    assert "candidate_vs_incumbent_return_delta_missing" not in blockers
+    assert "null_model_sample_count_below_min" not in blockers
+    assert "effective_multiplicity_adjusted_p_value_missing" not in blockers
+    assert "negative_control_missing_or_failed" not in blockers
+    assert "placebo_label_test_missing_or_failed" not in blockers
+    assert "label_permutation_test_missing_or_failed" not in blockers
+    assert "feature_permutation_stability_missing_or_failed" not in blockers
+    assert "leakage_probe_missing_or_failed" not in blockers
+    assert "walk_forward_falsification_missing_or_failed" not in blockers
+
+
+def test_promotion_ready_bundle_blocks_weak_adaptive_signal_comparator_values() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-adaptive-falsification-weak-comparator",
+        candidate_id="candidate-adaptive-falsification-weak-comparator",
+        candidate_spec_id="spec-adaptive-falsification-weak-comparator",
+        dataset_snapshot_id="snapshot-adaptive-falsification-weak-comparator",
+        feature_spec_hash="feature-adaptive-falsification-weak-comparator",
+        code_commit="commit-adaptive-falsification-weak-comparator",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_adaptive_signal_falsification": True,
+            "adaptive_signal_falsification_passed": True,
+            "adaptive_signal_falsification_artifact_ref": (
+                "artifact://adaptive-falsification"
+            ),
+            "negative_control_passed": True,
+            "placebo_label_test_passed": True,
+            "label_permutation_test_passed": True,
+            "feature_permutation_stability_passed": True,
+            "leakage_probe_passed": True,
+            "walk_forward_falsification_passed": True,
+            "null_model_sample_count": 128,
+            "effective_multiplicity_adjusted_p_value": "0.10",
+            "candidate_vs_null_return_delta": "0",
+            "candidate_vs_incumbent_return_delta": "-0.001",
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "adaptive_signal_null_comparator_missing" in blockers
+    assert "candidate_vs_null_return_delta_non_positive" in blockers
+    assert "candidate_vs_incumbent_return_delta_negative" in blockers
+    assert "effective_multiplicity_adjusted_p_value_above_max" in blockers
+
+
+def test_promotion_ready_bundle_infers_adaptive_signal_falsification_from_hard_veto() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-adaptive-falsification-hard-veto",
+        candidate_id="candidate-adaptive-falsification-hard-veto",
+        candidate_spec_id="spec-adaptive-falsification-hard-veto",
+        dataset_snapshot_id="snapshot-adaptive-falsification-hard-veto",
+        feature_spec_hash="feature-adaptive-falsification-hard-veto",
+        code_commit="commit-adaptive-falsification-hard-veto",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "hard_vetoes": ["required_adaptive_signal_falsification"],
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "adaptive_signal_falsification_missing_or_failed" in blockers
+
+
 def test_promotion_ready_bundle_blocks_required_ofi_response_gaps() -> None:
     bundle = CandidateEvidenceBundle(
         schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
@@ -795,6 +985,71 @@ def test_frontier_candidate_preserves_bootstrap_robust_fields() -> None:
     )
     blockers = evidence_bundle_blockers(bundle)
     assert "bootstrap_robust_optimization_artifact_missing" not in blockers
+
+
+def test_frontier_candidate_preserves_adaptive_signal_falsification_fields() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-adaptive-falsification-preserved",
+        candidate={
+            "candidate_id": "candidate-adaptive-falsification-preserved",
+            "objective_scorecard": {
+                **_promotion_quality_scorecard(),
+                "requires_adaptive_signal_falsification": True,
+            },
+            "hard_vetoes": {
+                "required_adaptive_signal_falsification": True,
+                "required_min_null_model_sample_count": "100",
+                "required_max_effective_multiplicity_adjusted_p_value": "0.05",
+            },
+            "promotion_contract": {
+                "requires_negative_control_falsification": True,
+                "requires_effective_multiplicity_adjustment": True,
+            },
+            "adaptive_signal_falsification_passed": True,
+            "adaptive_signal_falsification_artifact_ref": (
+                "artifact://adaptive-falsification"
+            ),
+            "negative_control_passed": True,
+            "placebo_label_test_passed": True,
+            "label_permutation_test_passed": True,
+            "feature_permutation_stability_passed": True,
+            "leakage_probe_passed": True,
+            "walk_forward_falsification_passed": True,
+            "null_model_sample_count": 128,
+            "effective_multiplicity_adjusted_p_value": "0.02",
+            "adaptive_signal_falsification_source_markers": [
+                "spurious_predictability_arxiv_2604_15531_2026",
+            ],
+            "null_comparator": {
+                "baseline_outperformed": True,
+                "candidate_vs_null_return_delta": "0.025",
+                "candidate_vs_incumbent_return_delta": "0.004",
+            },
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-adaptive-falsification-preserved",
+        result_path="artifact://replay",
+        code_commit="commit-adaptive-falsification-preserved",
+    )
+
+    assert bundle.objective_scorecard["required_adaptive_signal_falsification"] is True
+    assert bundle.objective_scorecard["requires_negative_control_falsification"] is True
+    assert (
+        bundle.objective_scorecard["requires_effective_multiplicity_adjustment"] is True
+    )
+    assert (
+        bundle.objective_scorecard["adaptive_signal_falsification_artifact_ref"]
+        == "artifact://adaptive-falsification"
+    )
+    assert bundle.null_comparator["baseline_outperformed"] is True
+    blockers = evidence_bundle_blockers(bundle)
+    assert "adaptive_signal_falsification_artifact_missing" not in blockers
+    assert "adaptive_signal_baseline_not_outperformed" not in blockers
 
 
 def test_frontier_candidate_preserves_ofi_response_fields() -> None:
