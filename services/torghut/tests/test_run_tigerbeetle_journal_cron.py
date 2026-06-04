@@ -102,10 +102,10 @@ class RunTigerBeetleJournalCronTest(TestCase):
         )
         self.assertEqual(commands[3].source, SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
         self.assertFalse(commands[3].skip_reconcile)
-        self.assertFalse(commands[3].reconcile_empty_selection)
+        self.assertTrue(commands[3].reconcile_empty_selection)
         self.assertEqual(commands[3].reconcile_limit, runner.LIVE_RECONCILE_LIMIT)
 
-    def test_live_runtime_ledger_command_reconciles_only_selected_rows(
+    def test_live_runtime_ledger_command_refreshes_empty_selection_reconciliation(
         self,
     ) -> None:
         command = runner._live_commands(execution_batch_size=5)[-1]
@@ -116,7 +116,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
             supervise_timeout_seconds=45.0,
         )
 
-        self.assertNotIn("--reconcile-empty-selection", argv)
+        self.assertIn("--reconcile-empty-selection", argv)
         self.assertNotIn("--skip-reconcile", argv)
         self.assertEqual(
             argv[argv.index("--supervise-timeout-seconds") + 1],
@@ -127,7 +127,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
             str(runner.LIVE_RECONCILE_LIMIT),
         )
 
-    def test_sim_runtime_ledger_command_reconciles_only_selected_rows(
+    def test_sim_runtime_ledger_command_refreshes_empty_selection_reconciliation(
         self,
     ) -> None:
         command = runner._sim_commands()[-1]
@@ -138,7 +138,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
             supervise_timeout_seconds=45.0,
         )
 
-        self.assertNotIn("--reconcile-empty-selection", argv)
+        self.assertIn("--reconcile-empty-selection", argv)
         self.assertNotIn("--skip-reconcile", argv)
         self.assertEqual(
             argv[argv.index("--supervise-timeout-seconds") + 1],

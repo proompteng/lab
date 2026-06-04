@@ -1731,7 +1731,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(len(live_runtime_commands), 1)
         live_runtime_command = live_runtime_commands[0]
         self.assertFalse(live_runtime_command.skip_reconcile)
-        self.assertFalse(live_runtime_command.reconcile_empty_selection)
+        self.assertTrue(live_runtime_command.reconcile_empty_selection)
         self.assertEqual(
             live_runtime_command.reconcile_limit,
             tigerbeetle_journal_runner.LIVE_RECONCILE_LIMIT,
@@ -1775,7 +1775,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(len(sim_runtime_commands), 1)
         sim_runtime_command = sim_runtime_commands[0]
         self.assertFalse(sim_runtime_command.skip_reconcile)
-        self.assertFalse(sim_runtime_command.reconcile_empty_selection)
+        self.assertTrue(sim_runtime_command.reconcile_empty_selection)
 
     def test_empirical_promotion_renewal_imports_authoritative_sim_paper_plan_and_sim_db(
         self,
