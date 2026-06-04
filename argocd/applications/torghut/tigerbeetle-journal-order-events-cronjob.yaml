@@ -62,7 +62,7 @@ spec:
                     --order-event-batch-size 50 \
                     --runtime-ledger-batch-size 100 \
                     --journal-batch-chunk-size 25 \
-                    --supervise-timeout-seconds 45 \
+                    --supervise-timeout-seconds 120 \
                     --json
               env:
                 - name: DB_DSN
@@ -150,10 +150,10 @@ spec:
                   cd /app
                   exec /opt/venv/bin/python scripts/run_tigerbeetle_journal_cron.py \
                     --preset sim \
-                    --sim-batch-size 250 \
+                    --sim-batch-size 100 \
                     --runtime-ledger-batch-size 100 \
                     --journal-batch-chunk-size 25 \
-                    --supervise-timeout-seconds 45 \
+                    --supervise-timeout-seconds 120 \
                     --json
               env:
                 - name: TORGHUT_SIM_DB_HOST

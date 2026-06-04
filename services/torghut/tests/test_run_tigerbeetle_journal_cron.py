@@ -117,6 +117,10 @@ class RunTigerBeetleJournalCronTest(TestCase):
         )
         self.assertTrue(command.skip_reconcile)
         self.assertTrue(command.allow_data_quality_degraded)
+        self.assertEqual(
+            args.supervise_timeout_seconds,
+            runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
+        )
 
     def test_live_preset_can_tune_source_batch_sizes_independently(self) -> None:
         commands = runner._live_commands(
@@ -222,7 +226,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
         argv = runner._argv_for_command(
             command,
             json_output=True,
-            supervise_timeout_seconds=45.0,
+            supervise_timeout_seconds=runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(argv[argv.index("--sources") + 1], "execution_order_event")
@@ -244,7 +248,14 @@ class RunTigerBeetleJournalCronTest(TestCase):
             argv[argv.index("--event-scan-limit") + 1],
             str(runner.LIVE_ORDER_EVENT_SCAN_LIMIT),
         )
-        self.assertEqual(argv[argv.index("--supervise-timeout-seconds") + 1], "45.0")
+        self.assertEqual(
+            argv[argv.index("--supervise-timeout-seconds") + 1],
+            str(runner.LIVE_SUPERVISE_TIMEOUT_SECONDS),
+        )
+        self.assertGreaterEqual(
+            runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
+            2 * 45.0,
+        )
         self.assertIn("--fail-on-degraded", argv)
         self.assertIn("--allow-data-quality-degraded", argv)
         self.assertIn("--json", argv)
@@ -259,7 +270,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
         argv = runner._argv_for_command(
             command,
             json_output=True,
-            supervise_timeout_seconds=45.0,
+            supervise_timeout_seconds=runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(argv[argv.index("--sources") + 1], "execution_tca_metric")
@@ -272,7 +283,10 @@ class RunTigerBeetleJournalCronTest(TestCase):
             str(runner.LIVE_TCA_METRIC_MAX_BATCHES),
         )
         self.assertEqual(int(argv[argv.index("--max-batches") + 1]), 1)
-        self.assertEqual(argv[argv.index("--supervise-timeout-seconds") + 1], "45.0")
+        self.assertEqual(
+            argv[argv.index("--supervise-timeout-seconds") + 1],
+            str(runner.LIVE_SUPERVISE_TIMEOUT_SECONDS),
+        )
         self.assertEqual(
             argv[argv.index("--journal-batch-chunk-size") + 1],
             str(runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE),

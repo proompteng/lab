@@ -1634,7 +1634,7 @@ class TestLiveConfigManifestContract(TestCase):
             self.assertNotIn("|| status=1", args)
             self.assertNotIn('exit "$status"', args)
             self.assertIn("--preset", args)
-            self.assertIn("--supervise-timeout-seconds 45", args)
+            self.assertIn("--supervise-timeout-seconds 120", args)
             self.assertIn("--json", args)
             security_context = cast(
                 Mapping[str, object],
@@ -1667,7 +1667,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--order-event-batch-size 50", live_args)
         self.assertIn("--runtime-ledger-batch-size 100", live_args)
         self.assertIn("--journal-batch-chunk-size 25", live_args)
-        self.assertIn("--supervise-timeout-seconds 45", live_args)
+        self.assertIn("--supervise-timeout-seconds 120", live_args)
         self.assertNotIn("--dsn-env DB_DSN", live_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
         self.assertNotIn("--account-label TORGHUT_SIM", live_args)
@@ -1718,12 +1718,12 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertLessEqual(
             live_order_event_command.max_batches,
             2,
-            "live order-event slices must not run PR #9799's unsafe 3-batch shape under the 45s watchdog",
+            "live order-event slices must not run PR #9799's unsafe 3-batch shape under the bounded watchdog",
         )
         self.assertLessEqual(
             live_order_event_command.batch_size * live_order_event_command.max_batches,
             tigerbeetle_journal_runner.LIVE_ORDER_EVENT_BATCH_SIZE,
-            "live order-event slices must stay to one bounded batch under the 45s watchdog",
+            "live order-event slices must stay to one bounded batch under the bounded watchdog",
         )
         self.assertTrue(live_order_event_command.skip_reconcile)
         self.assertTrue(live_order_event_command.allow_data_quality_degraded)
@@ -1767,7 +1767,7 @@ class TestLiveConfigManifestContract(TestCase):
             )
         sim_args = "\n".join(str(item) for item in sim_container.get("args", []))
         self.assertIn("--preset sim", sim_args)
-        self.assertIn("--sim-batch-size 250", sim_args)
+        self.assertIn("--sim-batch-size 100", sim_args)
         self.assertIn("--runtime-ledger-batch-size 100", sim_args)
         self.assertIn("--journal-batch-chunk-size 25", sim_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", sim_args)
