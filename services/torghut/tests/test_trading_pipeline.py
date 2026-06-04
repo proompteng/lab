@@ -8353,6 +8353,34 @@ class TestTradingPipeline(TestCase):
         )
         self.assertIsNone(rejected)
 
+        pipeline.price_fetcher = cast(
+            PriceFetcher,
+            SimpleNamespace(
+                fetch_market_snapshot=lambda signal: MarketSnapshot(
+                    symbol=signal.symbol,
+                    as_of=signal.event_ts,
+                    price=None,
+                    spread=None,
+                    source="fixture_missing_price",
+                )
+            ),
+        )
+        missing_price = (
+            pipeline._paper_route_materialized_decision_with_execution_metadata(
+                decision_row=decision_row,
+                payload={"params": {}},
+                target=target,
+                strategy=strategy,
+                symbol="AAPL",
+                action="buy",
+                window_start=window_start,
+                window_end=window_end,
+                max_notional=Decimal("200"),
+                now=window_start,
+            )
+        )
+        self.assertIsNone(missing_price)
+
     def test_materialized_target_plan_planned_decisions_skip_unsafe_rows(
         self,
     ) -> None:
