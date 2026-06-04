@@ -288,6 +288,10 @@ class TestFastReplayPreview(TestCase):
             payload["implemented_mechanisms"],
         )
         self.assertIn(
+            "stochastic_liquidity_resilience_execution_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
             "microstructure_regime_tokenization_stress",
             payload["implemented_mechanisms"],
         )
@@ -634,6 +638,43 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "signal_adaptive_execution_resilience_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("stochastic_liquidity_resilience_stress", row_payload)
+        self.assertEqual(
+            row_payload["stochastic_liquidity_resilience_stress"]["status"],
+            "preview_only_stochastic_liquidity_resilience_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2506.11813",
+            {
+                source["source_id"]
+                for source in row_payload["stochastic_liquidity_resilience_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn(
+            "ssrn-3798235",
+            {
+                source["source_id"]
+                for source in row_payload["stochastic_liquidity_resilience_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["stochastic_liquidity_resilience_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["stochastic_liquidity_resilience_stress"]["promotion_authority"]
+        )
+        self.assertIn(
+            "stochastic_liquidity_resilience_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "stochastic_liquidity_resilience_stress_downranks_only",
             row_payload["ranking_only_reasons"],
         )
         self.assertIn("microstructure_regime_tokenization_stress", row_payload)
