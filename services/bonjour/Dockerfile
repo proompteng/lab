@@ -7,7 +7,6 @@ WORKDIR /app
 
 # Copy workspace manifests required for dependency installation
 COPY package.json bun.lock tsconfig.base.json tsconfig.json ./
-COPY scripts/run-husky-install.mjs scripts/run-husky-install.mjs
 COPY apps apps
 COPY packages packages
 COPY services services
@@ -24,7 +23,6 @@ FROM oven/bun:${BUN_VERSION} AS prod-deps
 WORKDIR /app
 
 COPY package.json bun.lock ./
-COPY scripts/run-husky-install.mjs scripts/run-husky-install.mjs
 COPY apps apps
 COPY packages packages
 COPY services services

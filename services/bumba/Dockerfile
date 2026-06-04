@@ -7,7 +7,6 @@ ARG LAB_GIT_SHA=dev
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps
 WORKDIR /app
-ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
 # Turbo prune leaves the root workspace list intact; drop missing explicit entries.
@@ -22,7 +21,6 @@ RUN bun --cwd=packages/temporal-bun-sdk run build
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps-prod
 WORKDIR /app
-ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
 RUN bun -e "const fs = require('fs'); const path = 'package.json'; const pkg = JSON.parse(fs.readFileSync(path, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/agentctl'); fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\\n'); }"

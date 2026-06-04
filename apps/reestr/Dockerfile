@@ -7,8 +7,6 @@ WORKDIR /app
 COPY json/ ./
 COPY tsconfig.base.json ./tsconfig.base.json
 
-ENV HUSKY=0
-ENV SKIP_HUSKY=1
 RUN bun install --no-save --frozen-lockfile --ignore-scripts --filter reestr
 
 FROM deps AS builder

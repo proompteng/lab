@@ -11,12 +11,10 @@ RUN apk add --no-cache bash curl python3 make g++
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
 
 COPY package.json bun.lock .npmrc* turbo.json tsconfig.base.json tsconfig.json ./
-COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY apps ./apps
 COPY packages ./packages
 COPY services ./services
 
-ENV HUSKY=0
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM deps AS builder

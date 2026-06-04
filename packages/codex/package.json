@@ -6,12 +6,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.json",
     "example": "bun run examples/run-example.ts",
     "test": "vitest run",
     "generate:app-server-types": "codex app-server generate-ts --experimental --out src/app-server",
     "check:app-server-types": "bash -lc 'tmp=$(mktemp -d); trap \"rm -rf \\\"$tmp\\\"\" EXIT; codex app-server generate-ts --experimental --out \"$tmp\" >/dev/null; diff -qr src/app-server \"$tmp\"'",
-    "prepare": "bun run build",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
