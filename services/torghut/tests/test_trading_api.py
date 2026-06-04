@@ -10600,6 +10600,36 @@ class TestTradingApi(TestCase):
         self.assertIsInstance(summary, dict)
         self.assertNotIn("dependency_quorum", summary)
 
+    def test_deferred_live_gate_payload_ignores_malformed_dependency_quorum(
+        self,
+    ) -> None:
+        with patch(
+            "app.main._budget_unavailable_hypothesis_runtime_payload",
+            return_value=(
+                {
+                    "registry_loaded": True,
+                    "dependency_quorum": "cached_quorum_allow",
+                    "summary": {
+                        "read_model_unavailable": True,
+                        "reason_codes": [
+                            "hypothesis_runtime_deferred_until_after_live_submission_gate"
+                        ],
+                    },
+                    "items": [],
+                },
+                {},
+                SimpleNamespace(as_payload=lambda: {}),
+            ),
+        ):
+            payload = (
+                main_module._deferred_hypothesis_payload_for_live_submission_gate()
+            )
+
+        summary = payload["summary"]
+        self.assertIsInstance(summary, dict)
+        self.assertEqual(payload["dependency_quorum"], "cached_quorum_allow")
+        self.assertNotIn("dependency_quorum", summary)
+
     def test_trading_paper_route_evidence_uses_external_plan_when_url_configured(
         self,
     ) -> None:
