@@ -433,12 +433,39 @@ class TestFastReplayPreview(TestCase):
             },
         )
         self.assertIn(
+            "arxiv-2502.18625",
+            {
+                source["source_id"]
+                for source in row_payload["queue_survival_fill_stress"]["source_papers"]
+            },
+        )
+        self.assertIn(
+            "arxiv-2605.25527",
+            {
+                source["source_id"]
+                for source in row_payload["queue_survival_fill_stress"]["source_papers"]
+            },
+        )
+        self.assertIn(
             "queue_allocation_rule_sensitivity_penalty_bps",
+            row_payload["queue_survival_fill_stress"]["ranking_features"],
+        )
+        self.assertIn(
+            "maker_fill_return_tradeoff_penalty_bps",
+            row_payload["queue_survival_fill_stress"]["ranking_features"],
+        )
+        self.assertIn(
+            "group_normalized_downside_reward_penalty_bps",
             row_payload["queue_survival_fill_stress"]["ranking_features"],
         )
         self.assertTrue(
             row_payload["queue_survival_fill_stress"][
                 "queue_allocation_rule_sensitivity_preview"
+            ]
+        )
+        self.assertTrue(
+            row_payload["queue_survival_fill_stress"][
+                "maker_fill_return_tradeoff_preview"
             ]
         )
         self.assertIn("feed_lag_liquidity_stress", row_payload)

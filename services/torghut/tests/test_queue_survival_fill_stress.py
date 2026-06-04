@@ -379,6 +379,143 @@ class TestQueueSurvivalFillStress(TestCase):
             payload["ranking_features"],
         )
 
+    def test_maker_fill_tradeoff_and_group_downside_reward_are_rank_inputs(
+        self,
+    ) -> None:
+        same_direction_crowded_fill = extract_queue_survival_fill_stress(
+            (
+                self._row(
+                    offset=1,
+                    price="100.00",
+                    queue_ratio="0.02",
+                    bid_size="1800",
+                    ask_size="120",
+                    volume="900",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=2,
+                    price="100.05",
+                    queue_ratio="0.03",
+                    bid_size="1700",
+                    ask_size="130",
+                    volume="1000",
+                    event_type="trade",
+                    fill_qty="700",
+                    status="filled",
+                ),
+                self._row(
+                    offset=3,
+                    price="99.60",
+                    queue_ratio="0.04",
+                    bid_size="1650",
+                    ask_size="150",
+                    volume="950",
+                    event_type="trade",
+                    fill_qty="650",
+                    status="filled",
+                ),
+                self._row(
+                    offset=4,
+                    price="99.40",
+                    queue_ratio="0.04",
+                    bid_size="1600",
+                    ask_size="140",
+                    volume="850",
+                    event_type="trade",
+                    fill_qty="600",
+                    status="filled",
+                ),
+            ),
+            direction=1,
+            max_notional=10_000,
+        )
+        contrarian_reversal = extract_queue_survival_fill_stress(
+            (
+                self._row(
+                    offset=1,
+                    price="100.00",
+                    queue_ratio="0.04",
+                    bid_size="120",
+                    ask_size="1800",
+                    volume="850",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=2,
+                    price="99.95",
+                    queue_ratio="0.05",
+                    bid_size="130",
+                    ask_size="1700",
+                    volume="900",
+                    event_type="trade",
+                    fill_qty="500",
+                    status="filled",
+                ),
+                self._row(
+                    offset=3,
+                    price="100.20",
+                    queue_ratio="0.06",
+                    bid_size="150",
+                    ask_size="1650",
+                    volume="950",
+                    event_type="trade",
+                    fill_qty="450",
+                    status="filled",
+                ),
+                self._row(
+                    offset=4,
+                    price="100.40",
+                    queue_ratio="0.05",
+                    bid_size="140",
+                    ask_size="1600",
+                    volume="800",
+                    event_type="trade",
+                    fill_qty="400",
+                    status="filled",
+                ),
+            ),
+            direction=1,
+            max_notional=10_000,
+        )
+
+        self.assertGreater(
+            same_direction_crowded_fill.median_directional_order_book_imbalance,
+            0.0,
+        )
+        self.assertLess(
+            contrarian_reversal.median_directional_order_book_imbalance, 0.0
+        )
+        self.assertGreater(
+            contrarian_reversal.contrarian_reversal_support_score,
+            same_direction_crowded_fill.contrarian_reversal_support_score,
+        )
+        self.assertGreater(
+            same_direction_crowded_fill.maker_fill_return_tradeoff_penalty_bps,
+            contrarian_reversal.maker_fill_return_tradeoff_penalty_bps,
+        )
+        self.assertGreater(
+            same_direction_crowded_fill.group_normalized_downside_reward_penalty_bps,
+            contrarian_reversal.group_normalized_downside_reward_penalty_bps,
+        )
+
+        payload = same_direction_crowded_fill.to_payload()
+        source_ids = {source["source_id"] for source in payload["source_papers"]}
+        self.assertIn("arxiv-2502.18625", source_ids)
+        self.assertIn("arxiv-2605.25527", source_ids)
+        self.assertTrue(payload["maker_fill_return_tradeoff_preview"])
+        self.assertTrue(payload["group_normalized_downside_reward_preview"])
+        self.assertIn(
+            "maker_fill_return_tradeoff_penalty_bps",
+            payload["ranking_features"],
+        )
+        self.assertIn(
+            "group_normalized_downside_reward_penalty_bps",
+            payload["ranking_features"],
+        )
+        self.assertFalse(payload["proof_authority"])
+        self.assertFalse(payload["promotion_authority"])
+
     def test_contract_embeds_recent_sources_and_requires_authoritative_proof(
         self,
     ) -> None:
@@ -405,6 +542,8 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertIn("ssrn-6730443", source_ids)
         self.assertIn("ssrn-6574208", source_ids)
         self.assertIn("ssrn-6578978", source_ids)
+        self.assertIn("arxiv-2502.18625", source_ids)
+        self.assertIn("arxiv-2605.25527", source_ids)
         self.assertTrue(contract["proof_neutrality"]["requires_exact_replay"])
         self.assertTrue(contract["proof_neutrality"]["requires_route_tca"])
         self.assertTrue(
@@ -416,6 +555,14 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertTrue(
             contract["proof_neutrality"]["requires_queue_allocation_rule_audit"]
         )
+        self.assertTrue(
+            contract["proof_neutrality"]["requires_maker_fill_return_tradeoff_audit"]
+        )
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "requires_group_downside_reward_out_of_sample_audit"
+            ]
+        )
         self.assertTrue(contract["proof_neutrality"]["requires_runtime_ledger"])
         self.assertTrue(
             contract["proof_neutrality"][
@@ -425,6 +572,16 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertTrue(
             contract["proof_neutrality"][
                 "rejects_time_priority_edge_as_mechanism_neutral_pnl_proof"
+            ]
+        )
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_contrarian_reversal_proxy_as_promotion_authority"
+            ]
+        )
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_order_flow_policy_reward_as_pnl_proof"
             ]
         )
         self.assertFalse(contract["proof_neutrality"]["promotion_proof"])
