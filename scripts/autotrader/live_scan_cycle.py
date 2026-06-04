@@ -2162,6 +2162,180 @@ def decision_summary_for_scan(
     }
 
 
+def june3_losing_round_trip_session(*, include_avgo: bool) -> dict[str, Any]:
+    tickets: list[dict[str, Any]] = [
+        {
+            "id": "ticket-amd-june3",
+            "symbol": "AMD",
+            "setupType": "vwap_reclaim",
+            "setupGrade": "A",
+        }
+    ]
+    orders: list[dict[str, Any]] = [
+        {
+            "ticketId": "ticket-amd-june3",
+            "clientOrderId": "autonomous-trader-market-open-28hn6-c131-AMD-entry",
+            "symbol": "AMD",
+            "side": "buy",
+            "status": "filled",
+            "brokerPayload": {"filled_avg_price": "533.37"},
+        },
+        {
+            "ticketId": "ticket-amd-june3",
+            "clientOrderId": "amd-june3-stop",
+            "symbol": "AMD",
+            "side": "sell",
+            "status": "filled",
+            "brokerPayload": {
+                "parentClientOrderId": "autonomous-trader-market-open-28hn6-c131-AMD-entry",
+                "filled_avg_price": "532.590054",
+            },
+        },
+    ]
+    if include_avgo:
+        tickets.append(
+            {
+                "id": "ticket-avgo-june3",
+                "symbol": "AVGO",
+                "setupType": "vwap_reclaim",
+                "setupGrade": "B",
+            }
+        )
+        orders.extend(
+            [
+                {
+                    "ticketId": "ticket-avgo-june3",
+                    "clientOrderId": "autonomous-trader-market-open-28hn6-c147-AVGO-entry",
+                    "symbol": "AVGO",
+                    "side": "buy",
+                    "status": "filled",
+                    "brokerPayload": {"filled_avg_price": "486.14"},
+                },
+                {
+                    "ticketId": "ticket-avgo-june3",
+                    "clientOrderId": "avgo-june3-stop",
+                    "symbol": "AVGO",
+                    "side": "sell",
+                    "status": "filled",
+                    "brokerPayload": {
+                        "parentClientOrderId": "autonomous-trader-market-open-28hn6-c147-AVGO-entry",
+                        "filled_avg_price": "482.90",
+                    },
+                },
+            ]
+        )
+    return {"tradeTickets": tickets, "orders": orders}
+
+
+def june3_failure_replay_cases() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "amd_cycle_131_one_sample_positive_scorecard",
+            "cycle": 131,
+            "index": 1,
+            "currentSession": {"tradeTickets": [], "orders": []},
+            "expectedNoTradeReason": "positive_scorecard_repeat_sample_required",
+            "result": {
+                "symbol": "AMD",
+                "setup_type": "vwap_reclaim",
+                "setup_grade": "A",
+                "expected_r": "5.9481",
+                "last": "534.345",
+                "support": "532.74",
+                "resistance": "543.88",
+                "scorecard_sample_size": 1,
+                "scorecard_avg_realized_r": "3.0429",
+                "scorecard_confidence": "0.0909",
+            },
+        },
+        {
+            "name": "avgo_cycle_147_post_amd_loss_b_grade_single_sample",
+            "cycle": 147,
+            "index": 1,
+            "currentSession": june3_losing_round_trip_session(include_avgo=False),
+            "expectedNoTradeReason": "current_session_post_loss_requires_a_grade",
+            "result": {
+                "symbol": "AVGO",
+                "setup_type": "vwap_reclaim",
+                "setup_grade": "B",
+                "expected_r": "2.5058",
+                "last": "486.395",
+                "support": "482.96",
+                "resistance": "495.00",
+                "scorecard_sample_size": 1,
+                "scorecard_avg_realized_r": "0.3811",
+                "scorecard_confidence": "0.0909",
+            },
+        },
+        {
+            "name": "avgo_cycle_309_after_two_losing_round_trips",
+            "cycle": 309,
+            "index": 1,
+            "currentSession": june3_losing_round_trip_session(include_avgo=True),
+            "expectedNoTradeReason": "current_session_loss_limit_reached",
+            "result": {
+                "symbol": "AVGO",
+                "setup_type": "vwap_reclaim",
+                "setup_grade": "B",
+                "expected_r": "2.1719",
+                "last": "487.645",
+                "support": "484.26",
+                "resistance": "495.00",
+                "scorecard_sample_size": 1,
+                "scorecard_avg_realized_r": "0.3811",
+                "scorecard_confidence": "0.0909",
+            },
+        },
+    ]
+
+
+def run_june3_failure_path_replay() -> dict[str, Any]:
+    cases: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for case in june3_failure_replay_cases():
+        scan = overlay_current_session_loss_lockout(
+            {"results": [dict(case["result"])]},
+            case["currentSession"],
+        )
+        result = scan["results"][0]
+        payload = ticket_payload_for_scan_result(
+            session_id="june3-replay",
+            cycle=case["cycle"],
+            index=case["index"],
+            result=result,
+        )
+        summary = decision_summary_for_scan(
+            cycle=case["cycle"],
+            scan=scan,
+            recorded_tickets=[],
+        )
+        no_trade_reason = payload.get("noTradeReason") if isinstance(payload, dict) else None
+        blocked = isinstance(payload, dict) and payload.get("status") == "blocked"
+        summary_blocked = summary.get("action") == "no_actionable_candidate"
+        ok = blocked and summary_blocked and no_trade_reason == case["expectedNoTradeReason"]
+        case_result = {
+            "name": case["name"],
+            "cycle": case["cycle"],
+            "symbol": case["result"]["symbol"],
+            "expectedNoTradeReason": case["expectedNoTradeReason"],
+            "actualNoTradeReason": no_trade_reason,
+            "ticketStatus": payload.get("status") if isinstance(payload, dict) else None,
+            "decisionAction": summary.get("action"),
+            "ok": ok,
+        }
+        cases.append(case_result)
+        if not ok:
+            failures.append(case_result)
+    return {
+        "ok": not failures,
+        "name": "june3_failure_path_replay",
+        "caseCount": len(cases),
+        "blockedCaseCount": len([case for case in cases if case.get("ok")]),
+        "failures": failures,
+        "cases": cases,
+    }
+
+
 def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     cycle_started_at = time.monotonic()
     stage_timings: dict[str, Any] = {}

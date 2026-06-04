@@ -90,6 +90,12 @@ def run_bootstrap(
     analysis_dir: Path,
     analysis_context_path: Path,
 ) -> dict[str, Any]:
+    june3_replay_gate = live_scan_cycle.run_june3_failure_path_replay()
+    if not june3_replay_gate.get("ok"):
+        raise RuntimeError(
+            "market-open safety regression failed: "
+            + json.dumps(june3_replay_gate.get("failures", []), sort_keys=True)
+        )
     broker_state = live_scan_cycle.fetch_broker_state(alpaca)
     account = broker_state.get("account")
     if not isinstance(account, dict):
@@ -125,6 +131,7 @@ def run_bootstrap(
             "accountGate": account_gate,
             "analysisHead": analysis_head,
             "analysisContextHash": analysis_context_hash,
+            "june3FailurePathReplayGate": june3_replay_gate,
         },
     }
     synthesis.post("/api/autotrader/status", status_payload)
@@ -148,6 +155,7 @@ def run_bootstrap(
         "accountGate": account_gate,
         "analysisHead": analysis_head,
         "analysisContextHash": analysis_context_hash,
+        "june3FailurePathReplayGate": june3_replay_gate,
         "nextCommand": (
             "python3 /workspace/lab/scripts/autotrader/market_open_cycle.py"
         ),
@@ -179,6 +187,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.self_test:
+        june3_replay_gate = live_scan_cycle.run_june3_failure_path_replay()
+        if not june3_replay_gate.get("ok"):
+            raise RuntimeError(
+                "market-open safety regression failed: "
+                + json.dumps(june3_replay_gate.get("failures", []), sort_keys=True)
+            )
         print(
             json.dumps(
                 {
@@ -187,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
                     "sessionMode": args.session_mode,
                     "workDir": args.work_dir,
                     "analysisContext": args.analysis_context,
+                    "june3FailurePathReplayGate": june3_replay_gate,
                 },
                 sort_keys=True,
                 indent=2,
