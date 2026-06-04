@@ -769,6 +769,17 @@ def _paper_route_decision_payload(
         "paper_route_probe_pair_balance_state",
         "runtime_window_import_health_gate_blockers",
         "bounded_evidence_collection_blockers",
+        "price_snapshot",
+        "executable_quote",
+        "quote",
+        "nbbo",
+        "market_snapshot",
+        "paper_route_probe_symbol_quotes",
+        "source_symbol_quotes",
+        "symbol_quotes",
+        "executable_quotes",
+        "price_snapshots",
+        "latest_quotes",
     ):
         if key in target:
             source_decision_metadata[key] = target[key]

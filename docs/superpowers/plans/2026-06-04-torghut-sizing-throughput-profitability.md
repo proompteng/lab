@@ -2,246 +2,249 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove the blockers that kept June 4 paper-route sizing tiny, then prove source-backed post-cost profitability before any larger capital promotion.
+**Goal:** Fix the causes of undersized June 4 paper-route trading, then prove source-backed post-cost profitability before any larger capital promotion.
 
-**Architecture:** Keep the route safe: broker-position truth wins over cached state, target-notional sizing must be visible in decision payloads, closed-window runtime-ledger import creates the authoritative PnL buckets, and scale only follows positive post-cost expectancy. TigerBeetle is accounting parity, not profitability authority.
+**Architecture:** Broker/account truth controls the paper route. Target-notional orders must carry explicit sizing audit, the account must be flat before bounded source collection, closed-window runtime-ledger import is the PnL authority, and scale increases only from source-backed positive expectancy. TigerBeetle is an accounting and journal dependency here; it does not by itself prove profitability.
 
-**Tech Stack:** Python, FastAPI Torghut service, SQLAlchemy models, CNPG Postgres, Alpaca paper adapter, TigerBeetle refs, pytest, Pyright.
+**Tech Stack:** Python, FastAPI Torghut service, SQLAlchemy models, CNPG Postgres, Alpaca paper adapter, TigerBeetle refs, pytest, Pyright, GitOps/Argo CD.
 
 ---
 
-## Current Evidence
+## Current Evidence At 2026-06-04T17:58Z
 
-- Live service: `torghut-sim-01161`, `TORGHUT_COMMIT=ea5e179e1f8c7caa3ae24a0974c0c2fe1cb14860`, image digest `sha256:3d3c4554f1b110a22815418b36c06e435b9ffc5601df7e6ef8ceb8b75b63e46f`.
-- June 4 `TORGHUT_SIM` decisions since `2026-06-04T04:00:00Z`: `filled=8`, `planned=3`, `rejected=88`.
-- Reject reasons: `invalid_qty_increment=56`, `broker_submit_failed=32`.
-- Filled notional: `$12,561.7537515069`; TCA shortfall total: `-$9.01797855`; latest open positions: AAPL long `11.9792`, AMZN short `1`.
-- Runtime-ledger buckets for June 4: `0`; proof-distance readback is blocked by missing runtime-ledger rows and zero observed daily net PnL.
-- TigerBeetle reconciliation is healthy and account-scoped: `runtime_ledger_missing_signed_ref_count=0`, `runtime_ledger_missing_account_ref_count=0`.
-- Root cause of tiny sizing: morning decisions had zero `paper_route_target_notional_sizing` audits and used 1-share/static fallback before the current target-notional path could prove a fresh window. Repeated exit retries then wasted cycles on stale inventory.
+- Deployment is no longer the blocker:
+  - Argo app `torghut`: `Synced`, `Healthy`, operation `Succeeded`, revision `7ba3abb4d802ee24a124f92a9e8db48a5364ef38`.
+  - `torghut-post-deploy-verify` run `26969077700` passed.
+  - `torghut` revision `torghut-01078` and `torghut-sim` revision `torghut-sim-01165` both run image digest `sha256:061605fcfad253fe24c07c8e0c8823e7606d15e6725aa198e3a45720e1f64386`.
+  - Runtime build reports `TORGHUT_COMMIT=107a3d1794d72a2b03381d6fba6af73118730a06`.
+- Today before the rollout, `TORGHUT_SIM` produced `99` trade decisions from `2026-06-04T13:30:19Z` through `2026-06-04T13:59:57Z`:
+  - `filled=8`, `planned=3`, `rejected=88`.
+  - `with paper_route_target_notional_sizing=0`.
+  - post-rollout decisions after `2026-06-04T17:49:00Z`: `0`.
+- Execution notional today:
+  - `8` filled executions, filled notional `$12,561.7537515069`.
+  - AAPL buy `2` fills for `$4,048.9108114752`, INTC round trip near `$3,760` each side, then one-share AAPL/AMZN/NVDA legs.
+- Rejection drag today:
+  - `paper-route-probe-exit` rejected `87` rows.
+  - INTC stale exit sell `34.6997` repeated `56` times.
+  - NVDA stale exit sell `1` repeated `29` times.
+  - AAPL stale exit sell `1` repeated `2` times.
+  - One AMZN source buy at qty `1` rejected.
+- TCA today:
+  - `8` TCA rows.
+  - Average realized shortfall `-15.97672608125 bps`.
+  - Total shortfall notional `-$9.01797855`.
+  - Worst source was AAPL buys: `-$14.43795652`.
+- Account state:
+  - Latest position snapshot `2026-06-04T17:57:21Z`: equity `$38,914.51`, cash `$35,439.56`, buying power `$147,693.09`.
+  - Open positions: AAPL long `11.9792`, AMZN short `1`.
+  - Current open mark in the snapshot is about `-$9.49` unrealized.
+- Runtime-ledger authority:
+  - June 4 `strategy_runtime_ledger_buckets` for `TORGHUT_SIM` since `2026-06-04T13:30:00Z`: `0`.
+  - Therefore there is no source-backed June 4 post-cost PnL proof and no profitability conclusion.
+- TigerBeetle:
+  - `TigerBeetleCluster/torghut-tigerbeetle`: `Ready=True`, `ClientProtocolHealthy=True`, ready replicas `1`, `Degraded=False`.
+  - This proves protocol/storage health, not profitable trading.
+- Live logs on `torghut-sim-01165` now show:
+  - `Skipping paper-route target source collection because account is not flat for bounded SIM evidence`.
+  - `Skipping materialized paper-route target source decision because account is not flat for bounded SIM evidence`.
+  - `Skipping generic paper-route probe retries while bounded target-plan evidence collection owns account=TORGHUT_SIM`.
+- `/trading/status` still blocks promotion:
+  - `promotion_eligible_total=0`, `paper_probation_eligible_total=0`.
+  - `continuity_ok=false` because `cursor_tail_stable`.
+  - `empirical_jobs_ready=false`.
+  - `critical_toggle_parity` diverges on `TRADING_MODE` because sim is correctly paper mode.
+  - Rejection drag remains high.
+
+## Why Sizing Was Small
+
+1. The target-notional sizing code path was not live when today’s orders were created. Every June 4 decision row has no `paper_route_target_notional_sizing` audit.
+2. The live morning path used static/materialized source quantities. Several payloads carried `paper_route_probe_symbol_quantities` of `1`, so one-share orders were expected from that path.
+3. Stale exit retries dominated the decision stream. `87/88` rejects were probe-exit retries, including the INTC `34.6997` sell loop.
+4. The fixed image is live now, but no post-rollout decisions exist yet because the account is not flat. Open AAPL and AMZN positions correctly block bounded source collection.
+5. The `75000` target is a bounded paper collection cap, not automatic `$75k per symbol`. The matched strategy snapshot still reports `max_notional_per_trade=3750`, so scaling must be explicit and source-backed.
 
 ## File Map
 
 - Modify: `services/torghut/app/trading/scheduler/simple_pipeline.py`
-  - Broker-position refresh for paper-route exits and retry paths.
-  - Target-notional audit persistence for bounded collection source decisions.
-- Modify: `services/torghut/tests/test_trading_pipeline.py`
-  - Regression tests for stale broker inventory, target-notional sizing audits, and retry behavior.
-- Modify if needed: `services/torghut/app/trading/paper_route_evidence.py`
-  - Scope contamination/readiness to source windows after closed-window import.
-- Modify if needed: `services/torghut/app/trading/execution.py`
-  - Attach unambiguous execution-policy hash/cost lineage to executions if TCA lineage remains blocked.
-- Operational runner: `services/torghut/scripts/renew_latest_empirical_promotion_jobs.py`
-  - Import June 4 closed runtime window after `2026-06-04T21:00:00Z`.
-- Operational runner: `services/torghut/scripts/flatten_paper_account_positions.py`
-  - Flatten paper account after the runtime window closes, then persist zero-position evidence.
+  - Already fixed stale broker-flat exit retry handling.
+  - Target-notional source decisions now fail closed when sizing audit is absent or only quantity fallback.
+- Modify: `services/torghut/tests/test_simple_pipeline.py`
+  - Already contains stale-exit retry regressions.
+  - Added regression for target-notional source decisions refusing unaudited quantity fallback submissions.
+- Operational: `services/torghut/scripts/flatten_paper_account_positions.py`
+  - Flatten the paper account after the target window or controlled exit point.
+- Operational: `services/torghut/scripts/renew_latest_empirical_promotion_jobs.py`
+  - Import the closed June 4 runtime window after settlement readiness.
 
-### Task 1: Stop Stale Exit Retry Spam
+### Task 1: Finish Stale Exit Retry Rollout
+
+**Files:**
+- Modified: `services/torghut/app/trading/scheduler/simple_pipeline.py`
+- Modified: `services/torghut/tests/test_trading_pipeline.py`
+
+- [x] **Step 1: Ship broker-position truth for exits**
+
+Merged PR `#10439`, `fix(torghut): prevent stale paper-route exit retries`.
+
+- [x] **Step 2: Promote a containing image**
+
+Image digest `sha256:061605fcfad253fe24c07c8e0c8823e7606d15e6725aa198e3a45720e1f64386` from commit `107a3d1794d72a2b03381d6fba6af73118730a06` is live on `torghut` and `torghut-sim`.
+
+- [x] **Step 3: Verify post-deploy**
+
+`torghut-post-deploy-verify` run `26969077700` passed.
+
+### Task 2: Prove The New Sizing Path Has A Live Row
+
+**Files:** none unless verification fails.
+
+- [ ] **Step 1: Query for fresh post-rollout decisions**
+
+Run:
+
+```bash
+kubectl cnpg psql -n torghut torghut-db -- -d torghut_sim_default -P pager=off -c "select count(*) filter (where decision_json::text like '%paper_route_target_notional_sizing%') as with_sizing, count(*) filter (where created_at >= timestamptz '2026-06-04 17:49:00+00') as after_rollout, count(*) as total_today from trade_decisions where alpaca_account_label='TORGHUT_SIM' and created_at >= timestamptz '2026-06-04 13:30:00+00';"
+```
+
+Expected before flatten: `after_rollout=0` or no source rows while open AAPL/AMZN positions exist.
+
+- [ ] **Step 2: Confirm account-flat blocker**
+
+Run:
+
+```bash
+kubectl logs -n torghut deploy/torghut-sim-01165-deployment -c user-container --tail=200 | rg "account is not flat|target source collection"
+```
+
+Expected while AAPL/AMZN remain open: account-flat skip messages.
+
+- [ ] **Step 3: Re-run after flatten**
+
+Expected after controlled flatten/import readiness: at least one fresh target-source decision carries `paper_route_target_notional_sizing.sizing_source == "target_notional"` before any scale claim.
+
+### Task 3: Fail Closed On Unaudited Target-Notional Source Submissions
 
 **Files:**
 - Modify: `services/torghut/app/trading/scheduler/simple_pipeline.py`
 - Test: `services/torghut/tests/test_trading_pipeline.py`
 
-- [x] **Step 1: Write the failing regression**
+- [x] **Step 1: Add regression**
 
-Test case added:
+Add a test near the existing paper-route target-source decision tests that builds a target with `target_notional="75000"` and forces missing price/budget resolution. Assert `_paper_route_target_source_decisions` emits no executable decision when `paper_route_target_notional_sizing.sizing_source != "target_notional"`.
 
-```python
-def test_simple_pipeline_skips_probe_exit_retry_without_broker_inventory(self) -> None:
-    decision = StrategyDecision(
-        strategy_id=str(uuid4()),
-        symbol="INTC",
-        event_ts=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
-        timeframe="1Sec",
-        action="sell",
-        qty=Decimal("34.6997"),
-        rationale="paper-route-probe-exit",
-        params={
-            "price": Decimal("108.37"),
-            "paper_route_probe_exit": {
-                "mode": "paper_route_exit",
-                "db_open_qty": "34.69970000",
-                "db_open_side": "long",
-            },
-            "simple_lane": {"quantity_resolution": {"position_qty": "34.6997"}},
-        },
-    )
-    prepared = SimpleTradingPipeline._prepare_paper_route_probe_exit_position(
-        [{"symbol": "INTC", "qty": "34.6997", "side": "long"}],
-        decision,
-        execution_adapter=PositionedAlpacaClient([]),
-        trading_mode="paper",
-    )
-    self.assertIsNone(prepared)
-```
+- [x] **Step 2: Add guard**
 
-- [x] **Step 2: Implement broker-position refresh**
-
-Implementation added:
+After `_paper_route_target_quantity_resolution(...)` returns in both target-source paths, skip the decision unless:
 
 ```python
-broker_positions = SimpleTradingPipeline._execution_adapter_positions(execution_adapter)
-current_qty = position_qty_for_symbol(
-    broker_positions if broker_positions is not None else positions,
-    decision.symbol,
-)
+quantity_resolution.audit.get("sizing_source") == "target_notional"
 ```
 
-- [x] **Step 3: Validate**
+Log the blocker so the next audit can distinguish safe fail-closed behavior from no signal.
+
+- [x] **Step 3: Validate targeted tests**
 
 Run:
 
 ```bash
 cd services/torghut
-uv run --frozen pytest tests/test_trading_pipeline.py::TestTradingPipeline::test_simple_pipeline_skips_probe_exit_retry_without_broker_inventory tests/test_trading_pipeline.py::TestTradingPipeline::test_simple_pipeline_reopens_rejected_paper_route_probe_exit tests/test_trading_pipeline.py::TestTradingPipeline::test_simple_pipeline_does_not_exit_without_broker_inventory tests/test_trading_pipeline.py::TestTradingPipeline::test_simple_pipeline_restores_simulation_exit_position_from_db_open_qty -q
+uv run --frozen pytest tests/test_trading_pipeline.py -k 'target_notional or probe_exit' -q
 ```
 
-Expected: `4 passed`.
+Observed: full `tests/test_simple_pipeline.py` passed; focused materialized target-plan and probe-exit tests in `tests/test_trading_pipeline.py` passed; Ruff and all three Pyright profiles passed.
 
-### Task 2: Make Target-Notional Sizing Auditable In The Next Live Window
+### Task 4: Flatten The Account Without Polluting Proof
 
 **Files:**
-- Modify: `services/torghut/app/trading/scheduler/simple_pipeline.py`
-- Test: `services/torghut/tests/test_trading_pipeline.py`
+- Operational: `services/torghut/scripts/flatten_paper_account_positions.py`
 
-- [ ] **Step 1: Add a regression for source decisions**
+- [ ] **Step 1: Wait for the proof window or configured exit**
 
-Create a test that calls `_paper_route_target_source_decisions` with a target containing `paper_route_probe_next_session_max_notional="75000"` and symbols `["AAPL", "AMZN"]`. Assert each emitted decision contains `params.paper_route_target_notional_sizing.sizing_source == "target_notional"` and non-null `resolved_notional`.
+Do not call profitability complete while AAPL/AMZN are open. If the configured exit closes them before `2026-06-04T20:00:00Z`, use the resulting zero-position snapshot. Otherwise flatten after the regular-session window ends.
 
-- [ ] **Step 2: Fail closed if the audit is missing**
+- [ ] **Step 2: Persist zero-position evidence**
 
-In source-decision creation, reject or skip bounded collection decisions when `quantity_resolution.audit["sizing_source"] != "target_notional"` unless the audit carries an explicit blocker such as `paper_route_target_notional_price_missing`.
+Run the existing flatten runner with persistence enabled for `TORGHUT_SIM`.
 
-- [ ] **Step 3: Validate the next window**
+Expected DB readback: latest `position_snapshots.positions` is an empty array or every position has zero quantity.
 
-After deployment and market activity, run:
-
-```bash
-kubectl cnpg psql -n torghut torghut-db -- -d torghut_sim_default -P pager=off -c "select count(*) filter (where decision_json->'params'->'paper_route_target_notional_sizing' is not null) from trade_decisions where alpaca_account_label='TORGHUT_SIM' and created_at >= now() - interval '1 day';"
-```
-
-Expected: count is positive for fresh target-source decisions.
-
-### Task 3: Import The Closed June 4 Runtime Window
+### Task 5: Import June 4 Runtime-Ledger Window
 
 **Files:**
 - Operational: `services/torghut/scripts/renew_latest_empirical_promotion_jobs.py`
-- Operational: `services/torghut/scripts/flatten_paper_account_positions.py`
 
 - [ ] **Step 1: Wait for import readiness**
 
-Do not import before `2026-06-04T21:00:00Z`; that is one hour after the `2026-06-04T20:00:00Z` market-window close.
+Do not import the June 4 regular-session window before `2026-06-04T21:00:00Z`, one hour after the `2026-06-04T20:00:00Z` market-window close.
 
-- [ ] **Step 2: Flatten and persist zero-position evidence**
+- [ ] **Step 2: Import the runtime window**
 
-Run the existing flatten handoff with `--persist-snapshot --apply` against `TORGHUT_SIM` after the window closes.
+Run the existing runtime-window import path with target-plan required and settlement seconds `3600`.
 
-- [ ] **Step 3: Import runtime window**
-
-Run `renew_latest_empirical_promotion_jobs.py` with `--runtime-window-import --runtime-window-target-plan-url --runtime-window-target-plan-exclusive --runtime-window-target-plan-required --runtime-window-target-plan-settlement-seconds 3600`.
-
-- [ ] **Step 4: Verify proof buckets**
-
-Expected SQL after import:
-
-```sql
-select count(*), sum(filled_notional), sum(net_strategy_pnl_after_costs)
-from strategy_runtime_ledger_buckets
-where account_label='TORGHUT_SIM'
-  and observed_stage='paper'
-  and bucket_started_at >= '2026-06-04T00:00:00Z';
-```
-
-The count must be positive before any profitability claim.
-
-### Task 4: Clear Contamination Without Weakening Gates
-
-**Files:**
-- Modify if evidence shows false-positive contamination: `services/torghut/app/trading/paper_route_evidence.py`
-- Test: `services/torghut/tests/test_paper_route_evidence.py`
-
-- [ ] **Step 1: Inspect contamination rows**
-
-Use `paper-route-evidence` and SQL to list `observed_from_contaminated_target` pairs for H-PAIRS and H-TSMOM.
-
-- [ ] **Step 2: Classify the blocker**
-
-If the same proof window contains cross-strategy source activity, keep `paper_route_account_contamination_detected` and start a clean next window. If old rows outside the selected source window are leaking into the current target, scope the query by selected source refs/window IDs.
-
-- [ ] **Step 3: Add regression**
-
-Create one test where two strategies trade in the same selected proof window and contamination remains blocked, and one test where older foreign rows outside the selected source refs do not contaminate a fresh clean window.
-
-### Task 5: Clear TCA Cost-Lineage Ambiguity
-
-**Files:**
-- Modify: `services/torghut/app/trading/execution.py`
-- Test: `services/torghut/tests/test_trading_pipeline.py` or `services/torghut/tests/test_execution_policy.py`
-
-- [ ] **Step 1: Preserve execution policy identity**
-
-Ensure each execution created from bounded collection decisions persists a stable execution-policy hash in `execution_audit_json` or TCA lineage inputs.
-
-- [ ] **Step 2: Verify lineage**
+- [ ] **Step 3: Verify buckets**
 
 Run:
 
 ```bash
-kubectl -n torghut exec deploy/torghut-sim -- curl -sS http://127.0.0.1:8181/trading/tca
+kubectl cnpg psql -n torghut torghut-db -- -d torghut_sim_default -P pager=off -c "select count(*), sum(filled_notional), sum(net_strategy_pnl_after_costs), sum(closed_trade_count), sum(open_position_count) from strategy_runtime_ledger_buckets where account_label='TORGHUT_SIM' and bucket_started_at >= timestamptz '2026-06-04 13:30:00+00';"
 ```
 
-Expected: `runtime_ledger_lineage.blockers` no longer includes `execution_policy_hash_ambiguous` for fresh fills.
+Expected: positive bucket count, explicit filled notional, explicit post-cost PnL, closed trades or zero open positions.
 
-### Task 6: Scale Only From Source-Backed Positive Expectancy
+### Task 6: Clear Promotion Blockers Before Any Scale Increase
+
+**Files:** code only if the blocker is a false-positive readback bug.
+
+- [ ] **Step 1: Continuity**
+
+Clear `cursor_tail_stable` by proving the market data cursor is moving or by diagnosing the feed stall. Do not bypass this gate.
+
+- [ ] **Step 2: Rejection drag**
+
+After the stale-exit fix has live rows, verify seven-day rejection drag drops. If stale exit retries still appear after commit `107a3d179`, treat that as a regression.
+
+- [ ] **Step 3: Empirical jobs**
+
+Repair stale/ineligible empirical jobs only through source-linked jobs. Do not mark empirical readiness from old replay-only candidates.
+
+### Task 7: Scale From Runtime-Ledger Expectancy
 
 **Files:**
 - Modify if needed: `services/torghut/app/trading/risk.py`
 - Modify if needed: `services/torghut/app/trading/proof_floor.py`
-- Test: `services/torghut/tests/test_profitability_proof_floor.py`
+- Test if modified: `services/torghut/tests/test_profitability_proof_floor.py`
 
-- [ ] **Step 1: Use runtime-ledger expectancy**
+- [ ] **Step 1: Compute required daily notional**
 
-After import, compute:
+After the runtime-ledger bucket exists:
 
 ```text
 required_daily_notional = 500 / (observed_post_cost_expectancy_bps / 10000)
 ```
 
-- [ ] **Step 2: Require drawdown budget**
+- [ ] **Step 2: Bound by account and drawdown**
 
-Keep `target_drawdown_budget_missing` blocking until the imported runtime-ledger bucket provides drawdown evidence within the configured cap.
+Use account equity, buying power, per-symbol liquidity, and drawdown cap. Current account readback is about `$38.9k` equity and `$147.7k` buying power, so a `$75k` collection cap must still be risk-bounded.
 
-- [ ] **Step 3: Produce scale ladder**
+- [ ] **Step 3: Produce the next cap**
 
-Allowed next caps:
+Allowed states:
 
 ```text
-repair_only -> 0 live notional
-bounded paper collection -> target cap from source plan, currently 75000
-promotion candidate -> min(capacity_daily_notional, required_daily_notional) only when post-cost expectancy is positive and source-backed
+repair_only -> no new capital
+bounded paper collection -> source-plan cap with explicit sizing audit
+promotion candidate -> min(capacity_daily_notional, required_daily_notional) only after source-backed positive post-cost expectancy
 ```
 
-### Task 7: Full Validation Before PR
+### Task 8: Completion Gate
 
-**Files:** all changed Torghut files.
+**Files:** none.
 
-- [ ] **Step 1: Run targeted tests**
+- [ ] **Step 1: Build proof packet**
 
-```bash
-cd services/torghut
-uv run --frozen pytest tests/test_trading_pipeline.py::TestTradingPipeline::test_simple_pipeline_skips_probe_exit_retry_without_broker_inventory -q
-```
+The proof packet must include real decisions, executions, fills, TCA/cost refs, runtime-ledger buckets, TigerBeetle reconciliation refs, source-window ids, closed round trips or flat positions, and post-cost net PnL.
 
-- [ ] **Step 2: Run Torghut type checks**
+- [ ] **Step 2: Apply the goal threshold**
 
-```bash
-cd services/torghut
-uv sync --frozen --extra dev
-uv run --frozen pyright --project pyrightconfig.json
-uv run --frozen pyright --project pyrightconfig.alpha.json
-uv run --frozen pyright --project pyrightconfig.scripts.json
-```
-
-- [ ] **Step 3: Open PR**
-
-Use `.github/PULL_REQUEST_TEMPLATE.md`, semantic title `fix(torghut): prevent stale paper-route exit retries`, and include the June 4 SQL evidence above.
+Only mark the active goal complete if the proof packet shows at least `$500/day` post-cost, promotion authority is green, and no gate was weakened to get there.

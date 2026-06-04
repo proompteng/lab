@@ -99,6 +99,23 @@ from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.universe import UniverseResolver
 
 
+def _target_price_snapshots(
+    *symbols: str, price: str = "100"
+) -> dict[str, dict[str, str]]:
+    return {
+        symbol: {
+            "symbol": symbol,
+            "price": price,
+            "bid": price,
+            "ask": price,
+            "spread": "0",
+            "source": "test_executable_quote",
+            "quote_source": "test_executable_quote",
+        }
+        for symbol in symbols
+    }
+
+
 def _with_default_executable_quote(signal: SignalEnvelope) -> SignalEnvelope:
     payload = dict(signal.payload)
     if (
@@ -7586,6 +7603,7 @@ class TestTradingPipeline(TestCase):
                                 "AAPL": "1",
                                 "AMZN": "1",
                             },
+                            "price_snapshots": _target_price_snapshots("AAPL", "AMZN"),
                             "paper_route_probe_pair_balance_state": "balanced",
                             "paper_route_clean_window_baseline_state": {
                                 "state": "clean",
@@ -8335,6 +8353,34 @@ class TestTradingPipeline(TestCase):
         )
         self.assertIsNone(rejected)
 
+        pipeline.price_fetcher = cast(
+            PriceFetcher,
+            SimpleNamespace(
+                fetch_market_snapshot=lambda signal: MarketSnapshot(
+                    symbol=signal.symbol,
+                    as_of=signal.event_ts,
+                    price=None,
+                    spread=None,
+                    source="fixture_missing_price",
+                )
+            ),
+        )
+        missing_price = (
+            pipeline._paper_route_materialized_decision_with_execution_metadata(
+                decision_row=decision_row,
+                payload={"params": {}},
+                target=target,
+                strategy=strategy,
+                symbol="AAPL",
+                action="buy",
+                window_start=window_start,
+                window_end=window_end,
+                max_notional=Decimal("200"),
+                now=window_start,
+            )
+        )
+        self.assertIsNone(missing_price)
+
     def test_materialized_target_plan_planned_decisions_skip_unsafe_rows(
         self,
     ) -> None:
@@ -8381,6 +8427,7 @@ class TestTradingPipeline(TestCase):
                 "paper_route_probe_symbols": ["AAPL"],
                 "paper_route_probe_symbol_actions": {"AAPL": "buy"},
                 "paper_route_probe_symbol_quantities": {"AAPL": "1"},
+                "price_snapshots": _target_price_snapshots("AAPL"),
                 "source_decision_readiness": {"ready": True, "blockers": []},
                 "evidence_collection_ok": True,
                 "bounded_evidence_collection_authorized": True,
@@ -8634,6 +8681,7 @@ class TestTradingPipeline(TestCase):
                                 "AAPL": "1",
                                 "AMZN": "1",
                             },
+                            "price_snapshots": _target_price_snapshots("AAPL", "AMZN"),
                             "paper_route_probe_pair_balance_state": "balanced",
                             "paper_route_clean_window_baseline_state": {
                                 "state": "clean",
@@ -8863,6 +8911,7 @@ class TestTradingPipeline(TestCase):
                 "paper_route_probe_symbols": ["AAPL"],
                 "paper_route_probe_symbol_actions": {"AAPL": "buy"},
                 "paper_route_probe_symbol_quantities": {"AAPL": "1"},
+                "price_snapshots": _target_price_snapshots("AAPL"),
                 "paper_route_probe_pair_balance_state": "not_required",
                 "source_decision_readiness": {"ready": True, "blockers": []},
                 "evidence_collection_ok": True,
@@ -9433,6 +9482,7 @@ class TestTradingPipeline(TestCase):
             "paper_route_probe_next_session_max_notional": "25",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
+            "price_snapshots": _target_price_snapshots("AAPL"),
         }
         alpaca_client = FakeAlpacaClient()
         pipeline = SimpleTradingPipeline(
@@ -9590,6 +9640,7 @@ class TestTradingPipeline(TestCase):
             "paper_route_probe_next_session_max_notional": "25",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
+            "price_snapshots": _target_price_snapshots("AAPL"),
         }
         alpaca_client = FakeAlpacaClient()
         pipeline = SimpleTradingPipeline(
@@ -9705,6 +9756,7 @@ class TestTradingPipeline(TestCase):
             "paper_route_probe_next_session_max_notional": "25",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
+            "price_snapshots": _target_price_snapshots("AAPL", "AMZN"),
         }
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),
@@ -12269,6 +12321,7 @@ class TestTradingPipeline(TestCase):
                 "paper_route_probe_window_start": window_start.isoformat(),
                 "paper_route_probe_window_end": window_end.isoformat(),
                 "paper_route_probe_next_session_max_notional": "1000",
+                "price_snapshots": _target_price_snapshots("AAPL", "AMZN"),
                 "bounded_evidence_collection_authorized": True,
                 "evidence_collection_ok": True,
                 "source_decision_readiness": {"ready": True, "blockers": []},
@@ -12395,6 +12448,7 @@ class TestTradingPipeline(TestCase):
                 "paper_route_probe_window_start": window_start.isoformat(),
                 "paper_route_probe_window_end": window_end.isoformat(),
                 "paper_route_probe_next_session_max_notional": "1000",
+                "price_snapshots": _target_price_snapshots("AAPL", "AMZN"),
                 "bounded_evidence_collection_authorized": True,
                 "evidence_collection_ok": True,
                 "source_decision_readiness": {"ready": True, "blockers": []},
@@ -12493,6 +12547,7 @@ class TestTradingPipeline(TestCase):
                 "paper_route_probe_next_session_max_notional": "0",
                 "bounded_evidence_collection_max_notional": "500",
                 "max_notional": "0",
+                "price_snapshots": _target_price_snapshots("AAPL", "AMZN"),
                 "bounded_evidence_collection_authorized": True,
                 "bounded_live_paper_collection_authorized": True,
                 "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
