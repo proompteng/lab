@@ -1086,7 +1086,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
     def test_source_activity_execution_query_timeout_fails_closed(self) -> None:
         activity, rollback_count = self._source_activity_with_failing_query(
-            failure_call=2
+            failure_call=4
         )
 
         self.assertEqual(rollback_count, 1)
@@ -1258,7 +1258,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
     def test_source_activity_order_event_query_timeout_fails_closed(self) -> None:
         activity, rollback_count = self._source_activity_with_failing_query(
-            failure_call=3
+            failure_call=5
         )
 
         self.assertEqual(rollback_count, 1)
@@ -1272,7 +1272,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
     def test_source_activity_tca_query_timeout_fails_closed(self) -> None:
         activity, rollback_count = self._source_activity_with_failing_query(
-            failure_call=4
+            failure_call=6
         )
 
         self.assertEqual(rollback_count, 1)
@@ -1369,6 +1369,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         event_at = window_start + timedelta(minutes=5)
         strategy_name = "paper-route-exact-lineage-readback"
         trade_decision_selects = 0
+        trade_decision_statements: list[str] = []
 
         def _count_trade_decision_selects(
             _conn: object,
@@ -1385,6 +1386,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 and " from trade_decisions" in normalized
             ):
                 trade_decision_selects += 1
+                trade_decision_statements.append(normalized)
 
         event.listen(
             self.engine,
@@ -1489,6 +1491,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
 
         self.assertEqual(trade_decision_selects, 1)
+        self.assertNotIn(" join strategies ", trade_decision_statements[0])
         self.assertEqual(activity["raw_decision_count"], 1)
         self.assertEqual(activity["lineage_matched_decision_count"], 1)
         self.assertEqual(activity["decision_count"], 1)

@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, contains_eager
+from sqlalchemy.orm import Session, selectinload
 
 from ..config import settings
 from ..models import (
@@ -4221,38 +4221,19 @@ def _strategy_source_activity(
             ],
         }
 
-    decision_stmt = (
-        select(TradeDecision)
-        .join(Strategy, TradeDecision.strategy_id == Strategy.id)
-        .options(contains_eager(TradeDecision.strategy))
-        .where(Strategy.name.in_(strategy_filters))
-        .where(TradeDecision.created_at >= window_start)
-        .where(TradeDecision.created_at <= window_end)
-    )
-    if account_label:
-        decision_stmt = decision_stmt.where(
-            TradeDecision.alpaca_account_label == account_label
-        )
-    if symbol_filters:
-        decision_stmt = decision_stmt.where(TradeDecision.symbol.in_(symbol_filters))
     decision_truncated = False
     try:
         _maybe_set_paper_route_audit_statement_timeout(session)
-        queried_decision_rows = list(
-            session.execute(
-                decision_stmt.order_by(TradeDecision.created_at.desc()).limit(
-                    PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT + 1
-                )
+        strategy_ids = [
+            strategy_id
+            for strategy_id in session.execute(
+                select(Strategy.id).where(Strategy.name.in_(strategy_filters))
             ).scalars()
-        )
-        decision_truncated = (
-            len(queried_decision_rows) > PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
-        )
-        decision_rows = queried_decision_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT]
+        ]
     except SQLAlchemyError as exc:
         _rollback_after_source_activity_error(
             session,
-            source="trade_decisions",
+            source="trade_decision_strategy_lookup",
             exc=exc,
         )
         return _unavailable_source_activity(
@@ -4266,6 +4247,54 @@ def _strategy_source_activity(
             source="trade_decisions",
             missing_reason="source_decisions_unavailable",
         )
+
+    queried_decision_rows: list[TradeDecision] = []
+    if strategy_ids:
+        decision_stmt = (
+            select(TradeDecision)
+            .options(selectinload(TradeDecision.strategy))
+            .where(TradeDecision.strategy_id.in_(strategy_ids))
+            .where(TradeDecision.created_at >= window_start)
+            .where(TradeDecision.created_at <= window_end)
+        )
+        if account_label:
+            decision_stmt = decision_stmt.where(
+                TradeDecision.alpaca_account_label == account_label
+            )
+        if symbol_filters:
+            decision_stmt = decision_stmt.where(
+                TradeDecision.symbol.in_(symbol_filters)
+            )
+        try:
+            _maybe_set_paper_route_audit_statement_timeout(session)
+            queried_decision_rows = list(
+                session.execute(
+                    decision_stmt.order_by(TradeDecision.created_at.desc()).limit(
+                        PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT + 1
+                    )
+                ).scalars()
+            )
+        except SQLAlchemyError as exc:
+            _rollback_after_source_activity_error(
+                session,
+                source="trade_decisions",
+                exc=exc,
+            )
+            return _unavailable_source_activity(
+                strategy_name=strategy_name,
+                strategy_lookup_names=strategy_filters,
+                account_label=account_label,
+                symbols=symbol_filters,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=require_source_lineage,
+                source="trade_decisions",
+                missing_reason="source_decisions_unavailable",
+            )
+    decision_truncated = (
+        len(queried_decision_rows) > PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+    )
+    decision_rows = queried_decision_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT]
     raw_decision_count = len(decision_rows)
     source_lineage_observation: dict[str, object] = {
         "schema_version": SOURCE_LINEAGE_OBSERVATION_SCHEMA_VERSION,
@@ -4516,8 +4545,7 @@ def _strategy_source_activity(
     ):
         lineage_stmt = (
             select(TradeDecision)
-            .outerjoin(Strategy, TradeDecision.strategy_id == Strategy.id)
-            .options(contains_eager(TradeDecision.strategy))
+            .options(selectinload(TradeDecision.strategy))
             .where(TradeDecision.created_at >= window_start)
             .where(TradeDecision.created_at <= window_end)
         )

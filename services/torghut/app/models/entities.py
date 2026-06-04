@@ -132,6 +132,13 @@ class TradeDecision(Base, CreatedAtMixin):
             "symbol",
         ),
         Index(
+            "ix_trade_decisions_account_strategy_symbol_created",
+            "alpaca_account_label",
+            "strategy_id",
+            "symbol",
+            "created_at",
+        ),
+        Index(
             "uq_trade_decisions_account_decision_hash",
             "alpaca_account_label",
             "decision_hash",
