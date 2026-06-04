@@ -311,6 +311,10 @@ class TestFastReplayPreview(TestCase):
             "hawkes_transient_impact_execution_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "ofi_response_horizon_execution_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -815,6 +819,41 @@ class TestFastReplayPreview(TestCase):
         self.assertIn(
             "hawkes_transient_impact_stress_downranks_only",
             row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("ofi_response_horizon_stress", row_payload)
+        self.assertEqual(
+            row_payload["ofi_response_horizon_stress"]["status"],
+            "preview_only_ofi_response_horizon_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2505.17388",
+            {
+                source["source_id"]
+                for source in row_payload["ofi_response_horizon_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn(
+            "arxiv-2508.06788",
+            {
+                source["source_id"]
+                for source in row_payload["ofi_response_horizon_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(row_payload["ofi_response_horizon_stress"]["proof_authority"])
+        self.assertFalse(
+            row_payload["ofi_response_horizon_stress"]["promotion_authority"]
+        )
+        self.assertIn(
+            "ofi_response_horizon_stress_penalty_active",
+            stress_payload["risk_flags"],
+        )
+        self.assertIn(
+            "ofi_response_horizon_stress_downranks_only",
+            stress_payload["ranking_only_reasons"],
         )
         self.assertIn("bootstrap_robust_optimization_stress", row_payload)
         self.assertEqual(
