@@ -915,12 +915,18 @@ class TestCandidateSpecs(TestCase):
                     "claim_type": "execution_assumption",
                     "claim_text": (
                         "KANFormer predicts limit order fill probabilities with "
-                        "queue-position survival analysis and time-to-fill quantiles."
+                        "queue-position survival analysis and time-to-fill quantiles, "
+                        "while queue-reactive replay and order submission latency "
+                        "stress expose nonfill opportunity cost."
                     ),
                     "data_requirements": [
                         "queue_position",
                         "survival_fill_curve",
                         "time_to_fill_quantiles",
+                        "right_censored_time_to_fill_labels",
+                        "fill_probability_calibration_metrics",
+                        "queue_reactive_replay_parity",
+                        "latency_distribution",
                         "nonfill_opportunity_cost",
                         "route_tca",
                     ],
@@ -937,14 +943,81 @@ class TestCandidateSpecs(TestCase):
             "queue_position_survival_fill_curve",
             specs[0].parameter_space["mechanism_overlay_ids"],
         )
+        self.assertIn(
+            "queue_reactive_survival_latency_grid",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        survival_grid = specs[0].parameter_space["queue_reactive_survival_latency_grid"]
+        self.assertEqual(
+            survival_grid["schema_version"],
+            "torghut.queue-reactive-survival-latency-grid.v1",
+        )
+        self.assertEqual(
+            survival_grid["source_ids"],
+            [
+                "arxiv-2501.08822",
+                "arxiv-2511.15262",
+                "arxiv-2512.05734",
+                "arxiv-2504.00846",
+            ],
+        )
+        self.assertIn(
+            "kanformer",
+            survival_grid["candidate_search_inputs"]["survival_model_family_grid"],
+        )
+        self.assertIn(
+            "multidimensional_deep_queue_reactive",
+            survival_grid["candidate_search_inputs"][
+                "queue_reactive_model_family_grid"
+            ],
+        )
+        self.assertIn(
+            "submission_latency_ms",
+            survival_grid["stress_inputs_required"],
+        )
+        self.assertIn(
+            "right_censored_log_likelihood",
+            survival_grid["diagnostics_required"],
+        )
+        self.assertIn(
+            "missed_winner_vs_filled_loser_count",
+            survival_grid["diagnostics_required"],
+        )
+        self.assertTrue(
+            survival_grid["proof_neutrality"][
+                "rejects_survival_model_fill_probability_as_fill_authority"
+            ]
+        )
+        self.assertTrue(
+            survival_grid["proof_neutrality"][
+                "rejects_queue_reactive_counterfactual_pnl_as_profit_proof"
+            ]
+        )
+        self.assertTrue(survival_grid["proof_neutrality"]["requires_runtime_ledger"])
         self.assertTrue(
             specs[0].hard_vetoes["required_queue_position_survival_fill_curve"]
+        )
+        self.assertTrue(
+            specs[0].hard_vetoes["required_queue_reactive_survival_latency_grid"]
         )
         self.assertEqual(
             specs[0].hard_vetoes["required_min_queue_position_survival_sample_count"],
             "60",
         )
         self.assertTrue(specs[0].hard_vetoes["required_time_to_fill_quantiles"])
+        self.assertTrue(
+            specs[0].hard_vetoes["required_right_censored_time_to_fill_labels"]
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_max_fill_probability_calibration_error"],
+            "0.08",
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_min_fill_survival_c_index"],
+            "0.55",
+        )
+        self.assertTrue(specs[0].hard_vetoes["required_latency_distribution"])
+        self.assertTrue(specs[0].hard_vetoes["required_queue_reactive_replay_parity"])
         mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
             cards[0]
         )
@@ -957,8 +1030,39 @@ class TestCandidateSpecs(TestCase):
             queue_contract["rank_metric"],
             "post_cost_net_pnl_after_queue_position_survival_fill_stress",
         )
+        queue_grid_contract = next(
+            contract
+            for contract in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if contract["overlay_id"] == "queue_reactive_survival_latency_grid"
+        )
+        self.assertEqual(
+            queue_grid_contract["source_papers"][0]["source_id"],
+            "arxiv-2501.08822",
+        )
+        self.assertIn(
+            "runtime_ledger",
+            queue_grid_contract["required_evidence"],
+        )
+        self.assertEqual(
+            queue_grid_contract["rank_metric"],
+            "post_cost_net_pnl_after_queue_survival_latency_nonfill_stress",
+        )
         self.assertTrue(
             specs[0].promotion_contract["requires_queue_position_survival_fill_curve"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract["requires_queue_reactive_survival_latency_grid"]
+        )
+        self.assertTrue(specs[0].promotion_contract["requires_runtime_ledger"])
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_survival_model_fill_probability_as_fill_authority"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_queue_reactive_counterfactual_pnl_as_profit_proof"
+            ]
         )
         self.assertTrue(
             specs[0].promotion_contract["rejects_queue_position_free_fill_assumptions"]

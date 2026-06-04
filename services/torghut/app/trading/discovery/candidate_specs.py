@@ -3810,12 +3810,43 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
             "nonfill_opportunity_cost",
             "right-censored",
             "right censored",
+            "queue-reactive",
+            "queue reactive",
+            "mdqr",
+            "multidimensional deep queue-reactive",
+            "deep queue-reactive",
+            "right-censored log-likelihood",
+            "integrated brier score",
+            "time-dependent auc",
+            "time dependent auc",
+            "fill calibration",
+            "fill discrimination",
+            "order submission latency",
+            "submission latency",
+            "ddqn execution",
+            "double deep q-network",
+            "counterfactual lob",
         )
     ):
         overlay_ids.append("queue_position_survival_fill_curve")
+        overlay_ids.append("queue_reactive_survival_latency_grid")
         overlay_contracts.append(
             {
                 "overlay_id": "queue_position_survival_fill_curve",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2512.05734",
+                        "url": "https://arxiv.org/abs/2512.05734",
+                        "title": "KANFormer for Predicting Fill Probabilities via Survival Analysis in Limit Order Books",
+                        "mechanism": "queue_position_agent_lifecycle_survival_fill_probability_calibration",
+                    },
+                    {
+                        "source_id": "arxiv-2504.00846",
+                        "url": "https://arxiv.org/abs/2504.00846",
+                        "title": "The effect of latency on optimal order execution policy",
+                        "mechanism": "latency_limit_price_fill_probability_opportunity_cost_stress",
+                    },
+                ],
                 "required_evidence": [
                     "queue_position",
                     "survival_fill_curve",
@@ -3829,22 +3860,169 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 "evidence_policy": "queue_position_fill_probability_requires_real_order_lifecycle_evidence",
             }
         )
+        overlay_contracts.append(
+            {
+                "overlay_id": "queue_reactive_survival_latency_grid",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2501.08822",
+                        "url": "https://arxiv.org/abs/2501.08822",
+                        "title": "Deep Learning Meets Queue-Reactive: A Framework for Realistic Limit Order Book Simulation",
+                        "mechanism": "multidimensional_deep_queue_reactive_lob_replay_parity_for_fill_stress",
+                    },
+                    {
+                        "source_id": "arxiv-2511.15262",
+                        "url": "https://arxiv.org/abs/2511.15262",
+                        "title": "Reinforcement Learning in Queue-Reactive Models: Application to Optimal Execution",
+                        "mechanism": "queue_reactive_counterfactual_execution_policy_benchmark_stress",
+                    },
+                    {
+                        "source_id": "arxiv-2512.05734",
+                        "url": "https://arxiv.org/abs/2512.05734",
+                        "title": "KANFormer for Predicting Fill Probabilities via Survival Analysis in Limit Order Books",
+                        "mechanism": "right_censored_time_to_fill_survival_probability_grid",
+                    },
+                    {
+                        "source_id": "arxiv-2504.00846",
+                        "url": "https://arxiv.org/abs/2504.00846",
+                        "title": "The effect of latency on optimal order execution policy",
+                        "mechanism": "order_submission_latency_fill_and_adverse_selection_stress",
+                    },
+                ],
+                "required_evidence": [
+                    "order_lifecycle_fill_labels",
+                    "right_censored_time_to_fill_labels",
+                    "queue_depth_state_vector",
+                    "own_order_queue_position",
+                    "survival_fill_curve",
+                    "fill_probability_calibration_metrics",
+                    "latency_distribution",
+                    "missed_fill_opportunity_cost",
+                    "queue_reactive_replay_parity",
+                    "route_tca",
+                    "runtime_ledger",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_queue_survival_latency_nonfill_stress"
+                ),
+                "evidence_policy": (
+                    "queue_reactive_survival_grid_is_candidate_input_only_and_"
+                    "requires_real_order_lifecycle_tca_runtime_ledger_authority"
+                ),
+            }
+        )
+        parameter_space["queue_reactive_survival_latency_grid"] = {
+            "schema_version": "torghut.queue-reactive-survival-latency-grid.v1",
+            "source_ids": [
+                "arxiv-2501.08822",
+                "arxiv-2511.15262",
+                "arxiv-2512.05734",
+                "arxiv-2504.00846",
+            ],
+            "candidate_search_inputs": {
+                "survival_model_family_grid": [
+                    "cox_baseline",
+                    "kanformer",
+                    "dilated_conv_transformer",
+                ],
+                "queue_reactive_model_family_grid": [
+                    "state_dependent_queue_reactive",
+                    "multidimensional_deep_queue_reactive",
+                ],
+                "queue_depth_level_count_grid": ["1", "3", "5", "10"],
+                "time_to_fill_horizon_seconds_grid": ["1", "5", "15", "60", "300"],
+                "latency_quantile_ms_grid": ["25", "50", "100", "250", "500"],
+                "limit_price_offset_ticks_grid": ["0", "1", "2"],
+                "nonfill_opportunity_cost_bps_grid": ["2", "5", "8", "12"],
+                "cancel_replace_age_seconds_grid": ["1", "5", "15", "60"],
+                "queue_position_feature_grid": [
+                    "top_of_queue_fraction",
+                    "estimated_shares_ahead",
+                    "agent_level_lifecycle_state",
+                ],
+                "counterfactual_policy_benchmark_grid": [
+                    "market_order",
+                    "marketable_limit",
+                    "passive_limit",
+                    "cancel_replace",
+                    "twap_child_order",
+                ],
+            },
+            "stress_inputs_required": [
+                "order_lifecycle_events",
+                "queue_depth_state_vector",
+                "own_order_queue_position",
+                "right_censored_fill_labels",
+                "time_to_fill_seconds",
+                "limit_fill_probability",
+                "submission_latency_ms",
+                "missed_fill_opportunity_cost_bps",
+                "adverse_selection_bps",
+                "route_tca_bps",
+                "runtime_ledger_post_cost_pnl",
+            ],
+            "diagnostics_required": [
+                "right_censored_log_likelihood",
+                "integrated_brier_score",
+                "c_index",
+                "time_dependent_auc",
+                "fill_probability_calibration_error",
+                "queue_reactive_event_mix_l1",
+                "order_size_distribution_wasserstein",
+                "latency_adjusted_fill_shortfall_bps",
+                "missed_winner_vs_filled_loser_count",
+            ],
+            "proof_neutrality": {
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "requires_exact_replay": True,
+                "requires_real_order_lifecycle_fill_labels": True,
+                "requires_right_censored_labels": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_survival_model_fill_probability_as_fill_authority": True,
+                "rejects_queue_reactive_counterfactual_pnl_as_profit_proof": True,
+                "rejects_latency_free_fill_assumptions": True,
+            },
+        }
         hard_vetoes.update(
             {
                 "required_queue_position_survival_fill_curve": True,
+                "required_queue_reactive_survival_latency_grid": True,
                 "required_min_queue_position_survival_sample_count": "60",
                 "required_max_queue_position_nonfill_opportunity_cost_bps": "8",
                 "required_time_to_fill_quantiles": True,
                 "required_order_lifecycle_fill_evidence": True,
+                "required_right_censored_time_to_fill_labels": True,
+                "required_fill_probability_calibration_metrics": True,
+                "required_max_fill_probability_calibration_error": "0.08",
+                "required_min_fill_survival_c_index": "0.55",
+                "required_latency_distribution": True,
+                "required_latency_adjusted_fill_shortfall": True,
+                "required_queue_reactive_replay_parity": True,
+                "required_max_queue_reactive_event_mix_l1": "0.20",
             }
         )
         promotion_contract.update(
             {
                 "requires_queue_position_survival_fill_curve": True,
+                "requires_queue_reactive_survival_latency_grid": True,
                 "requires_time_to_fill_quantiles": True,
                 "requires_nonfill_opportunity_cost": True,
                 "requires_order_lifecycle_fill_evidence": True,
+                "requires_right_censored_time_to_fill_labels": True,
+                "requires_fill_probability_calibration_metrics": True,
+                "requires_latency_distribution": True,
+                "requires_latency_adjusted_fill_shortfall": True,
+                "requires_queue_reactive_replay_parity": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
                 "rejects_queue_position_free_fill_assumptions": True,
+                "rejects_survival_model_fill_probability_as_fill_authority": True,
+                "rejects_queue_reactive_counterfactual_pnl_as_profit_proof": True,
+                "rejects_latency_free_fill_assumptions": True,
                 "execution_policy": "queue_position_survival_fill_curve",
             }
         )
