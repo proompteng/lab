@@ -138,6 +138,50 @@ FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION = (
 FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION = (
     "torghut.fast-replay-exact-frontier-key.v1"
 )
+FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION = (
+    "torghut.fast-replay-runtime-ledger-lineage-handoff.v1"
+)
+FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SOURCES: tuple[Mapping[str, str], ...] = (
+    {
+        "source_id": "arxiv-2603.20319",
+        "url": "https://arxiv.org/abs/2603.20319",
+        "title": (
+            "Implementation Risk in Portfolio Backtesting: A Previously "
+            "Unquantified Source of Error"
+        ),
+        "mechanism": (
+            "multi_engine_implementation_trace_and_cost_regime_sensitivity_"
+            "before_capital_gate"
+        ),
+    },
+    {
+        "source_id": "arxiv-2603.21330",
+        "url": "https://arxiv.org/abs/2603.21330",
+        "title": "FinRL-X: An AI-Native Modular Infrastructure for Quantitative Trading",
+        "mechanism": (
+            "replay_paper_live_signal_payload_order_sizing_and_execution_"
+            "semantic_parity"
+        ),
+    },
+    {
+        "source_id": "arxiv-2603.29086",
+        "url": "https://arxiv.org/abs/2603.29086",
+        "title": (
+            "Realistic Market Impact Modeling for Reinforcement Learning "
+            "Trading Environments"
+        ),
+        "mechanism": "trade_level_cost_logging_and_market_impact_trace_materialization",
+    },
+    {
+        "source_id": "doi-10.1093/rof/rfaf049",
+        "url": "https://doi.org/10.1093/rof/rfaf049",
+        "title": "Retail Limit Orders",
+        "mechanism": (
+            "market_limit_order_type_fill_probability_opportunity_cost_and_"
+            "route_tca_ablation"
+        ),
+    },
+)
 FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS = frozenset(
     (
         "missing_price_return_microbar_fields",
@@ -294,6 +338,9 @@ class FastReplayPreviewRow:
         risk_veto_reasons = _risk_veto_reasons_for_row(
             self, risk_flags=risk_flags, lineage_blockers=lineage_blockers
         )
+        runtime_ledger_lineage_handoff = _row_runtime_ledger_lineage_handoff(
+            self, lineage_blockers=lineage_blockers
+        )
         prefilter_capacity_lineage = _mapping(
             self.microstructure_prefilter.get("impact_capacity_lineage")
         )
@@ -398,6 +445,9 @@ class FastReplayPreviewRow:
             "duplicate_candidate_spec_ids": list(self.duplicate_candidate_spec_ids),
             "candidate_lineage": dict(self.candidate_lineage),
             "replay_tape_cache_identity": dict(self.replay_tape_cache_identity),
+            "runtime_ledger_lineage_materialization_handoff": (
+                runtime_ledger_lineage_handoff
+            ),
             "frontier_selection": {
                 "schema_version": "torghut.fast-replay-frontier-selection.v1",
                 "selected": self.selected,
@@ -535,6 +585,9 @@ class FastReplayPreviewResult:
 
     def to_manifest_payload(self) -> dict[str, Any]:
         selected_candidate_ids_by_bucket = _selected_candidate_ids_by_bucket(self.rows)
+        runtime_ledger_lineage_handoff = _runtime_ledger_lineage_handoff_manifest(
+            self.rows
+        )
         return {
             "schema_version": FAST_REPLAY_PREVIEW_SCHEMA_VERSION,
             "status": "preview_only",
@@ -699,6 +752,9 @@ class FastReplayPreviewResult:
                 "exact_replay_required": True,
                 "runtime_ledger_required": True,
                 "source_backed_runtime_ledger_required": True,
+                "runtime_ledger_lineage_materialization_handoff": (
+                    runtime_ledger_lineage_handoff
+                ),
                 "preview_only": True,
                 "research_ranking_only": True,
                 "promotion_proof": False,
@@ -746,6 +802,9 @@ class FastReplayPreviewResult:
                 "proof_packet_upload_allowed": False,
                 "exact_replay_required": True,
                 "source_backed_runtime_ledger_required": True,
+                "runtime_ledger_lineage_materialization_handoff": (
+                    runtime_ledger_lineage_handoff
+                ),
                 "bounded_sim_evidence_collection_allowed": True,
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
@@ -2319,6 +2378,107 @@ def _selected_candidate_ids_by_bucket(
             if row.selected and row.frontier_bucket in bucket_order
         ],
     }
+
+
+def _runtime_ledger_lineage_handoff_manifest(
+    rows: Sequence[FastReplayPreviewRow],
+) -> dict[str, Any]:
+    selected_handoffs = [
+        _row_runtime_ledger_lineage_handoff(
+            row, lineage_blockers=_lineage_blockers_for_row(row)
+        )
+        for row in rows
+        if row.selected
+    ]
+    return {
+        "schema_version": FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION,
+        "status": "metadata_only_not_dispatched",
+        "purpose": (
+            "make the runtime-ledger lineage/materialization proof gap explicit for "
+            "selected exact-replay candidates"
+        ),
+        "source_papers": [
+            dict(source)
+            for source in FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SOURCES
+        ],
+        "candidate_count": len(selected_handoffs),
+        "candidates": selected_handoffs,
+        "required_materialized_artifacts": _runtime_ledger_required_artifacts(),
+        "required_daily_pnl_basis": "post_cost_closed_round_trip_daily_pnl",
+        "zero_authoritative_daily_pnl_until_materialized": True,
+        "command_execution_allowed_here": False,
+        "db_writes_allowed": False,
+        "proof_packet_upload_allowed": False,
+        "preview_only": True,
+        "research_ranking_only": True,
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
+def _row_runtime_ledger_lineage_handoff(
+    row: FastReplayPreviewRow, *, lineage_blockers: Sequence[str]
+) -> dict[str, Any]:
+    return {
+        "schema_version": FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION,
+        "status": "requires_runtime_ledger_materialization_before_authoritative_pnl",
+        "candidate_spec_id": row.candidate_spec_id,
+        "selected_for_exact_replay_evidence_collection": row.selected,
+        "frontier_bucket": row.frontier_bucket,
+        "exact_replay_frontier_key": row.exact_replay_frontier_key,
+        "candidate_frontier_hash": row.candidate_frontier_hash,
+        "candidate_lineage": dict(row.candidate_lineage),
+        "replay_tape_cache_identity": dict(row.replay_tape_cache_identity),
+        "source_papers": [
+            dict(source)
+            for source in FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SOURCES
+        ],
+        "required_materialized_artifacts": _runtime_ledger_required_artifacts(),
+        "required_semantic_parity_checks": [
+            "signal_payload_parity",
+            "order_sizing_parity",
+            "route_constraint_parity",
+            "broker_execution_semantics_parity",
+            "portfolio_risk_overlay_parity",
+        ],
+        "required_daily_pnl_basis": "post_cost_closed_round_trip_daily_pnl",
+        "lineage_blockers": list(lineage_blockers),
+        "zero_authoritative_daily_pnl_until_materialized": True,
+        "runtime_ledger_required": True,
+        "source_backed_runtime_ledger_required": True,
+        "exact_replay_required": True,
+        "preview_only": True,
+        "research_ranking_only": True,
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
+def _runtime_ledger_required_artifacts() -> list[str]:
+    return [
+        "source_backed_runtime_ledger_bucket",
+        "closed_round_trip_ledger",
+        "order_lifecycle_fill_evidence",
+        "route_tca_observations",
+        "execution_shortfall",
+        "market_limit_order_type_ablation",
+        "trade_level_cost_log",
+        "signal_payload_hash",
+        "order_sizing_trace",
+        "broker_execution_semantics_trace",
+        "portfolio_risk_overlay_trace",
+        "dataset_snapshot_ref",
+        "source_query_digest",
+        "feature_schema_hash",
+        "cost_model_hash",
+        "lineage_hash",
+    ]
 
 
 def _discovery_stage_semantics() -> dict[str, Any]:

@@ -1499,6 +1499,34 @@ class TestFastReplayPreview(TestCase):
             "runtime_ledger_required_before_any_profitability_claim",
             payload["ranking_only_reasons"],
         )
+        runtime_handoff = payload["runtime_ledger_lineage_materialization_handoff"]
+        self.assertEqual(
+            runtime_handoff["schema_version"],
+            fast_replay.FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION,
+        )
+        self.assertTrue(runtime_handoff["runtime_ledger_required"])
+        self.assertTrue(runtime_handoff["source_backed_runtime_ledger_required"])
+        self.assertTrue(
+            runtime_handoff["zero_authoritative_daily_pnl_until_materialized"]
+        )
+        self.assertFalse(runtime_handoff["promotion_allowed"])
+        self.assertFalse(runtime_handoff["final_authority_ok"])
+        self.assertIn(
+            "closed_round_trip_ledger",
+            runtime_handoff["required_materialized_artifacts"],
+        )
+        self.assertIn(
+            "route_tca_observations",
+            runtime_handoff["required_materialized_artifacts"],
+        )
+        self.assertIn(
+            "broker_execution_semantics_parity",
+            runtime_handoff["required_semantic_parity_checks"],
+        )
+        self.assertIn(
+            "live_paper_runtime_ledger_required",
+            runtime_handoff["lineage_blockers"],
+        )
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["frontier_selection"]["promotion_allowed"])
         self.assertFalse(payload["frontier_selection"]["final_authority_ok"])
@@ -1529,6 +1557,22 @@ class TestFastReplayPreview(TestCase):
         self.assertTrue(exact_queue["research_ranking_only"])
         self.assertFalse(exact_queue["promotion_authority"])
         self.assertFalse(exact_queue["final_authority_ok"])
+        queue_handoff = exact_queue["runtime_ledger_lineage_materialization_handoff"]
+        self.assertEqual(queue_handoff["candidate_count"], 1)
+        self.assertEqual(
+            queue_handoff["candidates"][0]["candidate_spec_id"], "spec-boundary"
+        )
+        self.assertTrue(
+            queue_handoff["zero_authoritative_daily_pnl_until_materialized"]
+        )
+        self.assertFalse(queue_handoff["command_execution_allowed_here"])
+        self.assertFalse(queue_handoff["db_writes_allowed"])
+        self.assertFalse(queue_handoff["proof_packet_upload_allowed"])
+        self.assertFalse(queue_handoff["promotion_allowed"])
+        self.assertIn(
+            "arxiv-2603.21330",
+            {source["source_id"] for source in queue_handoff["source_papers"]},
+        )
 
     def test_frontier_path_has_no_kubernetes_or_database_execution_imports(
         self,
