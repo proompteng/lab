@@ -2,8 +2,9 @@
 
 This module converts current 2025-2026 market-microstructure papers into
 executable replay-ranking inputs. It checks whether a candidate's local replay
-rows contain enough event-time, scale-invariant, multi-modal order-flow context
-to support early latent-regime detection and realistic trade-flow/token replay.
+rows contain enough event-time, scale-invariant, multi-modal order-flow, and
+structured LOB message-lifecycle context to support early latent-regime
+detection and realistic trade-flow/token replay.
 
 The output is a deterministic offline prefilter only. It never generates
 synthetic market paths, treats model rollouts as PnL proof, writes runtime
@@ -16,6 +17,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from math import isfinite
 from statistics import median
 from typing import Any, cast
@@ -63,6 +65,16 @@ MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_PRIMARY_SOURCES: tuple[
         "mechanism": (
             "raw_orderbook_event_precision_message_sequence_fidelity_"
             "without_lossy_binning"
+        ),
+    },
+    {
+        "source_id": "arxiv-2511.12563",
+        "url": "https://arxiv.org/abs/2511.12563",
+        "title": "LOBERT: Generative AI Foundation Model for Limit Order Book Messages",
+        "date": "2025-11-16",
+        "mechanism": (
+            "message_level_lob_lifecycle_tokenization_continuous_price_"
+            "volume_time_embeddings_irregular_event_timing"
         ),
     },
 )
@@ -128,6 +140,51 @@ _RAW_EVENT_FIELDS = (
     "raw_message",
     "event_payload_bytes",
 )
+_ORDER_ID_FIELDS = (
+    "order_id",
+    "order_ref",
+    "order_reference_number",
+    "lob_order_id",
+    "exchange_order_id",
+    "message_order_id",
+)
+_MESSAGE_TIME_DELTA_FIELDS = (
+    "delta_time_ns",
+    "delta_time_us",
+    "delta_time_ms",
+    "event_time_delta_ns",
+    "event_time_delta_us",
+    "event_time_delta_ms",
+    "inter_event_time_ns",
+    "inter_event_time_us",
+    "inter_event_time_ms",
+)
+_POST_MESSAGE_SNAPSHOT_PRICE_FIELDS = (
+    "best_bid",
+    "best_ask",
+    "bid_price",
+    "ask_price",
+    "best_bid_price",
+    "best_ask_price",
+    "post_message_best_bid",
+    "post_message_best_ask",
+)
+_LOBERT_LIFECYCLE_ACTIONS = (
+    "add",
+    "new",
+    "submit",
+    "limit",
+    "modify",
+    "replace",
+    "update",
+    "cancel",
+    "delete",
+    "remove",
+    "trade",
+    "fill",
+    "execute",
+    "market",
+)
 _BINNED_FIELD_TOKENS = ("bin", "bucket", "quantile", "token")
 _MIN_EARLY_WARNING_ROWS = 4
 _EARLY_WARNING_LOOKAHEAD = 4
@@ -145,11 +202,16 @@ class MicrostructureRegimeTokenizationStressSummary:
     observed_ofi_count: int
     observed_raw_event_count: int
     observed_sequence_count: int
+    observed_order_id_count: int
+    observed_lifecycle_action_count: int
+    observed_time_delta_count: int
+    observed_post_message_snapshot_count: int
     event_alphabet_size: int
     dominant_event_type_share: float
     scale_invariant_feature_coverage_score: float
     universal_tokenization_gap_score: float
     byte_stream_precision_gap_score: float
+    lobert_message_semantics_gap_score: float
     binned_numeric_field_share: float
     latent_regime_trigger_count: int
     latent_regime_stress_event_count: int
@@ -183,6 +245,12 @@ class MicrostructureRegimeTokenizationStressSummary:
             "observed_ofi_count": self.observed_ofi_count,
             "observed_raw_event_count": self.observed_raw_event_count,
             "observed_sequence_count": self.observed_sequence_count,
+            "observed_order_id_count": self.observed_order_id_count,
+            "observed_lifecycle_action_count": self.observed_lifecycle_action_count,
+            "observed_time_delta_count": self.observed_time_delta_count,
+            "observed_post_message_snapshot_count": (
+                self.observed_post_message_snapshot_count
+            ),
             "event_alphabet_size": self.event_alphabet_size,
             "dominant_event_type_share": _stable_float(self.dominant_event_type_share),
             "scale_invariant_feature_coverage_score": _stable_float(
@@ -193,6 +261,9 @@ class MicrostructureRegimeTokenizationStressSummary:
             ),
             "byte_stream_precision_gap_score": _stable_float(
                 self.byte_stream_precision_gap_score
+            ),
+            "lobert_message_semantics_gap_score": _stable_float(
+                self.lobert_message_semantics_gap_score
             ),
             "binned_numeric_field_share": _stable_float(
                 self.binned_numeric_field_share
@@ -223,6 +294,9 @@ class MicrostructureRegimeTokenizationStressSummary:
                 "byte_stream_precision_gap_score": _stable_float(
                     self.byte_stream_precision_gap_score
                 ),
+                "lobert_message_semantics_gap_score": _stable_float(
+                    self.lobert_message_semantics_gap_score
+                ),
                 "binned_numeric_field_share": _stable_float(
                     self.binned_numeric_field_share
                 ),
@@ -245,6 +319,7 @@ class MicrostructureRegimeTokenizationStressSummary:
             "latent_regime_early_warning_preview": True,
             "scale_invariant_tokenization_preview": True,
             "raw_event_precision_fidelity_preview": True,
+            "lobert_message_semantics_preview": True,
             "stylized_fact_replay_alignment_preview": True,
             "synthetic_rollout_generation": False,
             "research_ranking_only": True,
@@ -273,6 +348,7 @@ def microstructure_regime_tokenization_stress_contract() -> dict[str, Any]:
         "stress_components": [
             "universal_tokenization_gap_score",
             "byte_stream_precision_gap_score",
+            "lobert_message_semantics_gap_score",
             "binned_numeric_field_share",
             "dominant_event_type_share",
             "latent_regime_lead_coverage",
@@ -292,6 +368,7 @@ def microstructure_regime_tokenization_stress_contract() -> dict[str, Any]:
             "requires_runtime_ledger": True,
             "rejects_synthetic_rollouts_as_pnl_authority": True,
             "rejects_tokenized_tradeflow_as_runtime_ledger_authority": True,
+            "rejects_lobert_message_model_as_runtime_ledger_authority": True,
             "rejects_latent_regime_trigger_as_promotion_proof": True,
         },
     }
@@ -324,11 +401,16 @@ def extract_microstructure_regime_tokenization_stress(
             observed_ofi_count=0,
             observed_raw_event_count=0,
             observed_sequence_count=0,
+            observed_order_id_count=0,
+            observed_lifecycle_action_count=0,
+            observed_time_delta_count=0,
+            observed_post_message_snapshot_count=0,
             event_alphabet_size=0,
             dominant_event_type_share=0.0,
             scale_invariant_feature_coverage_score=0.0,
             universal_tokenization_gap_score=1.0,
             byte_stream_precision_gap_score=1.0,
+            lobert_message_semantics_gap_score=1.0,
             binned_numeric_field_share=0.0,
             latent_regime_trigger_count=0,
             latent_regime_stress_event_count=0,
@@ -358,10 +440,15 @@ def extract_microstructure_regime_tokenization_stress(
     observed_ofi_count = 0
     observed_raw_event_count = 0
     observed_sequence_count = 0
+    observed_order_id_count = 0
+    observed_lifecycle_action_count = 0
+    observed_time_delta_count = 0
+    observed_post_message_snapshot_count = 0
     binned_numeric_field_count = 0
     numeric_field_count = 0
     returns_bps: list[float] = []
     by_symbol: dict[str, list[_MicrostructureObservation]] = {}
+    prior_event_ts_by_symbol: dict[str, datetime] = {}
     signed_direction = 1.0 if float(direction) >= 0.0 else -1.0
 
     for row in ordered:
@@ -375,6 +462,8 @@ def extract_microstructure_regime_tokenization_stress(
         ofi = _first_number(payload, _OFI_FIELDS)
         explicit_return = _first_number(payload, _RETURN_BPS_FIELDS)
         raw_event = _first_value(payload, _RAW_EVENT_FIELDS)
+        order_id = _first_value(payload, _ORDER_ID_FIELDS)
+        explicit_time_delta = _first_number(payload, _MESSAGE_TIME_DELTA_FIELDS)
 
         if event_type:
             observed_event_type_count += 1
@@ -399,6 +488,19 @@ def extract_microstructure_regime_tokenization_stress(
             is not None
         ):
             observed_sequence_count += 1
+        if order_id is not None:
+            observed_order_id_count += 1
+        if _has_lobert_lifecycle_action(event_type):
+            observed_lifecycle_action_count += 1
+        prior_event_ts = prior_event_ts_by_symbol.get(row.symbol)
+        if explicit_time_delta is not None or (
+            prior_event_ts is not None
+            and (row.event_ts - prior_event_ts).total_seconds() >= 0.0
+        ):
+            observed_time_delta_count += 1
+        prior_event_ts_by_symbol[row.symbol] = row.event_ts
+        if _has_post_message_snapshot(payload, spread=spread, depth=depth):
+            observed_post_message_snapshot_count += 1
 
         for key, value in payload.items():
             number = _number_or_none(value)
@@ -436,6 +538,14 @@ def extract_microstructure_regime_tokenization_stress(
         warnings.add("missing_raw_event_message_bytes_for_byte_stream_fidelity")
     if observed_sequence_count < row_count:
         warnings.add("missing_sequence_numbers_for_event_time_replay_fidelity")
+    if observed_order_id_count < row_count:
+        warnings.add("missing_order_ids_for_lobert_message_lifecycle")
+    if observed_lifecycle_action_count == 0:
+        warnings.add("missing_lifecycle_actions_for_lobert_message_tokens")
+    if observed_time_delta_count < max(1, row_count - len(by_symbol)):
+        warnings.add("missing_time_deltas_for_lobert_irregular_event_timing")
+    if observed_post_message_snapshot_count < row_count:
+        warnings.add("missing_post_message_lob_snapshot_for_lobert_conditioning")
 
     event_alphabet_size = len(event_type_counts)
     dominant_event_type_share = (
@@ -481,6 +591,30 @@ def extract_microstructure_regime_tokenization_stress(
         )
         + binned_numeric_field_share * 0.20,
     )
+    order_id_coverage = observed_order_id_count / row_count
+    lifecycle_action_coverage = observed_lifecycle_action_count / row_count
+    time_delta_coverage = min(
+        1.0,
+        observed_time_delta_count / max(1, row_count - len(by_symbol)),
+    )
+    post_message_snapshot_coverage = observed_post_message_snapshot_count / row_count
+    continuous_price_volume_time_coverage = (
+        observed_price_count + observed_size_count + row_count
+    ) / max(1, row_count * 3)
+    if continuous_price_volume_time_coverage < 1.0:
+        warnings.add("missing_continuous_price_volume_time_for_lobert_embeddings")
+    lobert_message_semantics_gap_score = min(
+        1.0,
+        1.0
+        - (
+            order_id_coverage * 0.25
+            + lifecycle_action_coverage * 0.22
+            + time_delta_coverage * 0.18
+            + continuous_price_volume_time_coverage * 0.20
+            + post_message_snapshot_coverage * 0.15
+        )
+        + binned_numeric_field_share * 0.10,
+    )
 
     early_warning = _latent_regime_early_warning(by_symbol)
     if early_warning.stress_event_count == 0:
@@ -495,11 +629,12 @@ def extract_microstructure_regime_tokenization_stress(
     replay_gap_score = min(
         1.0,
         universal_tokenization_gap_score * 0.24
-        + byte_stream_precision_gap_score * 0.22
-        + binned_numeric_field_share * 0.10
-        + min(1.0, dominant_gap) * 0.08
-        + early_warning.reactive_gap_score * 0.22
-        + stylized.gap_score * 0.14,
+        + byte_stream_precision_gap_score * 0.18
+        + lobert_message_semantics_gap_score * 0.16
+        + binned_numeric_field_share * 0.08
+        + min(1.0, dominant_gap) * 0.06
+        + early_warning.reactive_gap_score * 0.18
+        + stylized.gap_score * 0.10,
     )
     replay_rank_penalty_bps = min(100.0, 6.0 + replay_gap_score * 94.0)
 
@@ -514,11 +649,16 @@ def extract_microstructure_regime_tokenization_stress(
         observed_ofi_count=observed_ofi_count,
         observed_raw_event_count=observed_raw_event_count,
         observed_sequence_count=observed_sequence_count,
+        observed_order_id_count=observed_order_id_count,
+        observed_lifecycle_action_count=observed_lifecycle_action_count,
+        observed_time_delta_count=observed_time_delta_count,
+        observed_post_message_snapshot_count=observed_post_message_snapshot_count,
         event_alphabet_size=event_alphabet_size,
         dominant_event_type_share=dominant_event_type_share,
         scale_invariant_feature_coverage_score=scale_invariant_feature_coverage_score,
         universal_tokenization_gap_score=universal_tokenization_gap_score,
         byte_stream_precision_gap_score=byte_stream_precision_gap_score,
+        lobert_message_semantics_gap_score=lobert_message_semantics_gap_score,
         binned_numeric_field_share=binned_numeric_field_share,
         latent_regime_trigger_count=early_warning.trigger_count,
         latent_regime_stress_event_count=early_warning.stress_event_count,
@@ -773,6 +913,24 @@ def _lag1_corr(values: Sequence[float]) -> float:
 def _event_type(payload: Mapping[str, Any]) -> str:
     value = _first_value(payload, _EVENT_TYPE_FIELDS)
     return str(value).strip().lower() if value is not None else ""
+
+
+def _has_lobert_lifecycle_action(event_type: str) -> bool:
+    normalized = event_type.strip().lower()
+    if not normalized:
+        return False
+    return any(action in normalized for action in _LOBERT_LIFECYCLE_ACTIONS)
+
+
+def _has_post_message_snapshot(
+    payload: Mapping[str, Any], *, spread: float | None, depth: float | None
+) -> bool:
+    if spread is not None and depth is not None:
+        return True
+    return (
+        _first_number(payload, _POST_MESSAGE_SNAPSHOT_PRICE_FIELDS) is not None
+        and _depth_proxy(payload) is not None
+    )
 
 
 def _depth_proxy(payload: Mapping[str, Any]) -> float | None:
