@@ -586,6 +586,50 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_allowed"])
 
+    def test_hpairs_expected_market_closed_staleness_bypasses_current_drift_blocks(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 6, 2, 15, tzinfo=timezone.utc)
+        window_start, _window_end = _next_regular_equities_session_window(generated_at)
+        with Session(self.engine) as session:
+            self._seed_hpairs_strategy_and_flat_snapshot(
+                session,
+                window_start=window_start,
+            )
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate=self._hpairs_live_submission_gate(
+                    candidate_blockers=[
+                        "drift_checks_missing",
+                        "paper_route_runtime_ledger_import_pending",
+                    ],
+                    continuity_ok=True,
+                    continuity_reason="expected_market_closed_staleness",
+                    drift_ok=False,
+                    drift_reason="drift_live_promotion_ineligible",
+                ),
+                route_reacquisition_book=self._hpairs_route_reacquisition_book(),
+                generated_at=generated_at,
+                include_runtime_window_import_audit=False,
+            )
+
+        target = payload["targets"][0]
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertNotIn("drift_checks_missing", target["candidate_blockers"])
+        self.assertIn(
+            "drift_checks_missing",
+            target["stale_collection_blockers_cleared_by_current_inputs"],
+        )
+        self.assertEqual(target["runtime_window_import_health_gate_blockers"], [])
+        self.assertEqual(
+            target["runtime_window_import_promotion_blockers"],
+            ["drift_checks_not_ok"],
+        )
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+
     def test_hpairs_after_hours_market_session_closed_is_not_bypassed(self) -> None:
         generated_at = datetime(2026, 6, 2, 21, tzinfo=timezone.utc)
         window_start, _window_end = _next_regular_equities_session_window(generated_at)
@@ -6006,8 +6050,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target_audit["readiness"]["blockers"],
         )
         import_audit = payload["runtime_window_import_audit"]
-        self.assertEqual(import_audit["state"], "import_due_source_lifecycle_incomplete")
-        self.assertNotIn("paper_route_source_activity_missing", import_audit["blockers"])
+        self.assertEqual(
+            import_audit["state"], "import_due_source_lifecycle_incomplete"
+        )
+        self.assertNotIn(
+            "paper_route_source_activity_missing", import_audit["blockers"]
+        )
         self.assertNotIn("source_executions_missing", import_audit["blockers"])
         self.assertNotIn("source_tca_missing", import_audit["blockers"])
 
