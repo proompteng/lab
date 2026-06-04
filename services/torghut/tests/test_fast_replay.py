@@ -299,6 +299,10 @@ class TestFastReplayPreview(TestCase):
             "adaptive_market_limit_allocation_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "metaorder_adverse_selection_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -733,6 +737,43 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "adaptive_market_limit_allocation_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("metaorder_adverse_selection_stress", row_payload)
+        self.assertEqual(
+            row_payload["metaorder_adverse_selection_stress"]["status"],
+            "preview_only_metaorder_adverse_selection_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2510.27334",
+            {
+                source["source_id"]
+                for source in row_payload["metaorder_adverse_selection_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn(
+            "doi-10.1007/s10203-026-00570-z",
+            {
+                source["source_id"]
+                for source in row_payload["metaorder_adverse_selection_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["metaorder_adverse_selection_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["metaorder_adverse_selection_stress"]["promotion_authority"]
+        )
+        self.assertIn(
+            "metaorder_adverse_selection_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "metaorder_adverse_selection_stress_downranks_only",
             row_payload["ranking_only_reasons"],
         )
         self.assertIn(
