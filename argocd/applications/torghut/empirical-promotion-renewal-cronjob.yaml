@@ -61,7 +61,7 @@ spec:
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
                     --runtime-window-import \
-                    --runtime-window-target-plan-url 'http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5' \
+                    --runtime-window-target-plan-url 'http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5' \
                     --runtime-window-target-plan-url-timeout-seconds 45 \
                     --runtime-window-target-plan-url-attempts 3 \
                     --runtime-window-target-plan-url-retry-backoff-seconds 5 \
@@ -82,7 +82,7 @@ spec:
                     | tee "${RENEWAL_OUTPUT}"
                   /opt/venv/bin/python scripts/assemble_runtime_ledger_proof_packet.py \
                     --status-service-base-url http://torghut.torghut.svc.cluster.local \
-                    --paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local \
+                    --paper-route-service-base-url http://torghut.torghut.svc.cluster.local \
                     --completion-service-base-url http://torghut.torghut.svc.cluster.local \
                     --timeout-seconds 30 \
                     --proof-mode authority \
