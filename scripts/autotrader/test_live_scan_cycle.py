@@ -1769,6 +1769,22 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["blockedResultCount"], 1)
         self.assertIsNone(summary["bestCandidate"])
 
+    def test_june3_failure_path_replay_blocks_losing_decisions(self) -> None:
+        replay = live_scan_cycle.run_june3_failure_path_replay()
+
+        self.assertTrue(replay["ok"], replay["failures"])
+        self.assertEqual(replay["caseCount"], 3)
+        self.assertEqual(replay["blockedCaseCount"], 3)
+        reasons = {case["name"]: case["actualNoTradeReason"] for case in replay["cases"]}
+        self.assertEqual(
+            reasons,
+            {
+                "amd_cycle_131_one_sample_positive_scorecard": "positive_scorecard_repeat_sample_required",
+                "avgo_cycle_147_post_amd_loss_b_grade_single_sample": "current_session_post_loss_requires_a_grade",
+                "avgo_cycle_309_after_two_losing_round_trips": "current_session_loss_limit_reached",
+            },
+        )
+
     def test_decision_summary_reports_no_actionable_candidate(self) -> None:
         summary = live_scan_cycle.decision_summary_for_scan(
             cycle=5,
