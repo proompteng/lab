@@ -1096,6 +1096,18 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(activity["raw_decision_count"], 1)
         self.assertEqual(activity["lineage_matched_decision_count"], 1)
 
+    def test_source_activity_decision_query_timeout_fails_closed(self) -> None:
+        activity, rollback_count = self._source_activity_with_failing_query(
+            failure_call=2
+        )
+
+        self.assertEqual(rollback_count, 1)
+        self.assertTrue(activity["query_unavailable"])
+        self.assertEqual(activity["unavailable_source"], "trade_decisions")
+        self.assertEqual(activity["missing_reasons"], ["source_decisions_unavailable"])
+        self.assertEqual(activity["raw_decision_count"], 0)
+        self.assertEqual(activity["lineage_matched_decision_count"], 0)
+
     def test_source_activity_surfaces_expired_materialized_target_row(self) -> None:
         window_start = datetime(2026, 6, 3, 13, 30, tzinfo=timezone.utc)
         window_end = datetime(2026, 6, 3, 20, 0, tzinfo=timezone.utc)
