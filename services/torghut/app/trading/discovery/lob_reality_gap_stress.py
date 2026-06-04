@@ -16,7 +16,7 @@ from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-LOB_REALITY_GAP_STRESS_SCHEMA_VERSION = "torghut.lob-reality-gap-stress.v1"
+LOB_REALITY_GAP_STRESS_SCHEMA_VERSION = "torghut.lob-reality-gap-stress.v2"
 LOB_REALITY_GAP_STRESS_CONTRACT_SCHEMA_VERSION = (
     "torghut.lob-reality-gap-stress-contract.v1"
 )
@@ -42,6 +42,13 @@ LOB_REALITY_GAP_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
         "title": "Reinforcement Learning for Trade Execution with Market and Limit Orders",
         "date": "2026-01-26",
         "mechanism": "market_limit_allocation_sensitivity_to_order_book_imbalance_tactical_response",
+    },
+    {
+        "source_id": "arxiv-2502.07071",
+        "url": "https://arxiv.org/abs/2502.07071",
+        "title": "TRADES: Tool for Responsive Agent-Based Modeling of Digital Exchange Simulator",
+        "date": "2025-02-11",
+        "mechanism": "responsive_exchange_event_mix_and_state_conditioned_order_response_gap",
     },
 )
 
@@ -89,6 +96,9 @@ _OFF_EXCHANGE_FIELDS = (
     "dark_trade",
 )
 _EVENT_TYPE_FIELDS = ("event_type", "lob_event_type", "order_event_type")
+_MARKET_EVENT_TOKENS = ("trade", "market", "fill", "execute")
+_LIMIT_EVENT_TOKENS = ("add", "insert", "new", "quote", "limit")
+_CANCEL_EVENT_TOKENS = ("cancel", "delete", "remove", "replace")
 _POWER_LAW_DECAY_EXPONENT = 0.60
 _HIGH_IMBALANCE_FLOOR = 0.65
 _ODD_LOT_VANISH_FLOOR = 0.50
@@ -102,10 +112,14 @@ class LobRealityGapStressSummary:
     observed_latency_count: int
     observed_signed_flow_count: int
     observed_odd_lot_count: int
+    observed_responsive_event_count: int
     off_exchange_event_count: int
     median_spread_bps: float
     median_abs_volume_imbalance: float
     high_imbalance_share: float
+    responsive_event_concentration_share: float
+    state_conditioned_response_gap_share: float
+    responsive_simulation_gap_score: float
     latency_mode_ms: float
     latency_mode_share: float
     power_law_signed_flow_impact_bps: float
@@ -131,12 +145,22 @@ class LobRealityGapStressSummary:
             "observed_latency_count": self.observed_latency_count,
             "observed_signed_flow_count": self.observed_signed_flow_count,
             "observed_odd_lot_count": self.observed_odd_lot_count,
+            "observed_responsive_event_count": self.observed_responsive_event_count,
             "off_exchange_event_count": self.off_exchange_event_count,
             "median_spread_bps": _stable_float(self.median_spread_bps),
             "median_abs_volume_imbalance": _stable_float(
                 self.median_abs_volume_imbalance
             ),
             "high_imbalance_share": _stable_float(self.high_imbalance_share),
+            "responsive_event_concentration_share": _stable_float(
+                self.responsive_event_concentration_share
+            ),
+            "state_conditioned_response_gap_share": _stable_float(
+                self.state_conditioned_response_gap_share
+            ),
+            "responsive_simulation_gap_score": _stable_float(
+                self.responsive_simulation_gap_score
+            ),
             "latency_mode_ms": _stable_float(self.latency_mode_ms),
             "latency_mode_share": _stable_float(self.latency_mode_share),
             "power_law_signed_flow_impact_bps": _stable_float(
@@ -157,6 +181,15 @@ class LobRealityGapStressSummary:
                     self.median_abs_volume_imbalance
                 ),
                 "high_imbalance_share": _stable_float(self.high_imbalance_share),
+                "responsive_event_concentration_share": _stable_float(
+                    self.responsive_event_concentration_share
+                ),
+                "state_conditioned_response_gap_share": _stable_float(
+                    self.state_conditioned_response_gap_share
+                ),
+                "responsive_simulation_gap_score": _stable_float(
+                    self.responsive_simulation_gap_score
+                ),
                 "latency_mode_share": _stable_float(self.latency_mode_share),
                 "power_law_signed_flow_impact_bps": _stable_float(
                     self.power_law_signed_flow_impact_bps
@@ -178,6 +211,7 @@ class LobRealityGapStressSummary:
             "latency_race_mode_preview": True,
             "power_law_signed_flow_impact_preview": True,
             "odd_lot_liquidity_reliability_preview": True,
+            "responsive_exchange_simulation_preview": True,
             "research_ranking_only": True,
             "prefilter_only": True,
             "promotion_proof": False,
@@ -205,6 +239,8 @@ def lob_reality_gap_stress_contract() -> dict[str, Any]:
             "impact_reversion_failure_share",
             "odd_lot_vanish_share",
             "off_exchange_cancellation_share",
+            "responsive_event_concentration_share",
+            "state_conditioned_response_gap_share",
         ],
         "output_scope": "preview_replay_ranking_only",
         "proof_neutrality": {
@@ -219,6 +255,7 @@ def lob_reality_gap_stress_contract() -> dict[str, Any]:
             "requires_runtime_ledger": True,
             "rejects_simulator_only_pnl_authority": True,
             "rejects_hidden_or_odd_lot_liquidity_as_fill_authority": True,
+            "rejects_responsive_simulator_only_pnl_authority": True,
         },
     }
 
@@ -244,12 +281,25 @@ def extract_lob_reality_gap_stress(
         value for value in depths if value is not None and value > 0
     )
     depth_median = _median(observed_depths) or 1.0
-    imbalances: list[float] = []
-    for row in ordered:
-        value = _volume_imbalance(row)
-        if value is not None:
-            imbalances.append(value)
+    volume_imbalances = tuple(_volume_imbalance(row) for row in ordered)
+    imbalances = tuple(value for value in volume_imbalances if value is not None)
     abs_imbalances = tuple(abs(value) for value in imbalances)
+    responsive_event_categories = tuple(
+        category for row in ordered if (category := _event_category(row)) is not None
+    )
+    responsive_event_concentration_share = _event_category_concentration(
+        responsive_event_categories
+    )
+    event_mix_gap_score = max(
+        0.0, (responsive_event_concentration_share - (1.0 / 3.0)) / (2.0 / 3.0)
+    )
+    state_conditioned_response_gap_share = _state_conditioned_response_gap_share(
+        ordered,
+        volume_imbalances=volume_imbalances,
+    )
+    responsive_simulation_gap_score = min(
+        1.0, event_mix_gap_score * 0.55 + state_conditioned_response_gap_share * 0.45
+    )
     latency_values: list[float] = []
     for row in ordered:
         value = _latency_ms(row)
@@ -308,6 +358,7 @@ def extract_lob_reality_gap_stress(
         + min(1.0, power_law_signed_flow_impact_bps / 25.0) * 0.18
         + impact_reversion_failure_share * 0.10
         + odd_lot_vanish_share * 0.12
+        + responsive_simulation_gap_score * 0.12
         + off_exchange_cancellation_share * 0.08,
     )
     replay_rank_penalty_bps = (
@@ -319,6 +370,7 @@ def extract_lob_reality_gap_stress(
         + impact_reversion_failure_share * 6.0
         + odd_lot_vanish_share * 5.0
         + off_exchange_cancellation_share * 3.0
+        + responsive_simulation_gap_score * 4.0
     )
     warnings: list[str] = []
     if not spreads:
@@ -331,6 +383,8 @@ def extract_lob_reality_gap_stress(
         warnings.append("missing_signed_flow_inputs")
     if not observed_odd_lots:
         warnings.append("missing_odd_lot_liquidity_inputs")
+    if not responsive_event_categories:
+        warnings.append("missing_responsive_event_type_inputs")
 
     return LobRealityGapStressSummary(
         row_count=len(ordered),
@@ -339,10 +393,14 @@ def extract_lob_reality_gap_stress(
         observed_latency_count=len(latency_values),
         observed_signed_flow_count=len(observed_signed_flow),
         observed_odd_lot_count=len(observed_odd_lots),
+        observed_responsive_event_count=len(responsive_event_categories),
         off_exchange_event_count=off_exchange_count,
         median_spread_bps=median_spread_bps,
         median_abs_volume_imbalance=median_abs_imbalance,
         high_imbalance_share=high_imbalance_share,
+        responsive_event_concentration_share=responsive_event_concentration_share,
+        state_conditioned_response_gap_share=state_conditioned_response_gap_share,
+        responsive_simulation_gap_score=responsive_simulation_gap_score,
         latency_mode_ms=latency_mode_ms,
         latency_mode_share=latency_mode_share,
         power_law_signed_flow_impact_bps=power_law_signed_flow_impact_bps,
@@ -538,6 +596,59 @@ def _event_type_contains(row: SignalEnvelope, needles: Sequence[str]) -> bool:
         str(payload.get(field) or "").strip().lower() for field in _EVENT_TYPE_FIELDS
     )
     return any(needle in token for token in tokens for needle in needles)
+
+
+def _event_category(row: SignalEnvelope) -> str | None:
+    payload = _payload(row)
+    tokens = tuple(
+        str(payload.get(field) or "").strip().lower()
+        for field in _EVENT_TYPE_FIELDS
+        if str(payload.get(field) or "").strip()
+    )
+    for token in tokens:
+        if any(item in token for item in _CANCEL_EVENT_TOKENS):
+            return "cancel"
+        if any(item in token for item in _LIMIT_EVENT_TOKENS):
+            return "limit"
+        if any(item in token for item in _MARKET_EVENT_TOKENS):
+            return "market"
+    return None
+
+
+def _event_category_concentration(categories: Sequence[str]) -> float:
+    if not categories:
+        return 0.0
+    counts: dict[str, int] = {}
+    for category in categories:
+        counts[category] = counts.get(category, 0) + 1
+    return max(counts.values()) / max(1, len(categories))
+
+
+def _state_conditioned_response_gap_share(
+    rows: Sequence[SignalEnvelope],
+    *,
+    volume_imbalances: Sequence[float | None],
+) -> float:
+    gaps = 0
+    observations = 0
+    for index in range(1, min(len(rows), len(volume_imbalances))):
+        previous_imbalance = volume_imbalances[index - 1]
+        current_imbalance = volume_imbalances[index]
+        if previous_imbalance is None or current_imbalance is None:
+            continue
+        if abs(previous_imbalance) < _HIGH_IMBALANCE_FLOOR:
+            continue
+        previous_category = _event_category(rows[index - 1])
+        current_category = _event_category(rows[index])
+        if previous_category is None or current_category is None:
+            continue
+        observations += 1
+        if (
+            previous_category == current_category
+            and abs(current_imbalance) >= abs(previous_imbalance) * 0.90
+        ):
+            gaps += 1
+    return gaps / max(1, observations)
 
 
 def _truthy(value: Any) -> bool:

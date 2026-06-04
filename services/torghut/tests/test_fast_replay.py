@@ -405,6 +405,18 @@ class TestFastReplayPreview(TestCase):
                 for source in row_payload["lob_reality_gap_stress"]["source_papers"]
             },
         )
+        self.assertIn(
+            "arxiv-2502.07071",
+            {
+                source["source_id"]
+                for source in row_payload["lob_reality_gap_stress"]["source_papers"]
+            },
+        )
+        self.assertTrue(
+            row_payload["lob_reality_gap_stress"][
+                "responsive_exchange_simulation_preview"
+            ]
+        )
         self.assertIn("alpha_decay_predictability_stress", row_payload)
         self.assertFalse(
             row_payload["alpha_decay_predictability_stress"]["proof_authority"]
