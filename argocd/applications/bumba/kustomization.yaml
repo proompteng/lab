@@ -4,7 +4,6 @@ namespace: jangar
 resources:
   - pvc-rwo.yaml
   - deployment.yaml
-  - atlas-chunk-embedding-backfill-job.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/bumba
     newTag: sha-84300ae
