@@ -51,6 +51,8 @@ def _payload(
     args: argparse.Namespace,
     started_at: datetime,
     batches: list[dict[str, int]],
+    execution_event_backfill_enabled: bool,
+    execution_event_backfill_skip_reason: str | None,
 ) -> dict[str, Any]:
     totals = {
         "selected": sum(batch["selected"] for batch in batches),
@@ -134,6 +136,8 @@ def _payload(
         "account_label": args.account_label,
         "canonical_account_label": args.canonical_account_label,
         "backfill_execution_events": bool(args.backfill_execution_events),
+        "execution_event_backfill_enabled": execution_event_backfill_enabled,
+        "execution_event_backfill_skip_reason": execution_event_backfill_skip_reason,
         "batch_size": max(1, min(int(args.batch_size), 5000)),
         "max_batches": max(1, int(args.max_batches)),
         "started_at": started_at.isoformat(),
@@ -160,6 +164,36 @@ def _reset_session_identity_map(session: Any) -> None:
         expunge_all()
 
 
+def _empty_execution_event_backfill_batch() -> dict[str, int]:
+    return {
+        "selected": 0,
+        "events_created": 0,
+        "source_windows_created": 0,
+        "skipped_existing_event": 0,
+        "skipped_missing_trade_decision": 0,
+        "skipped_missing_order_identity": 0,
+        "skipped_source_offset_collision": 0,
+    }
+
+
+def _execution_event_backfill_config(
+    args: argparse.Namespace,
+) -> tuple[bool, str | None]:
+    if not bool(args.backfill_execution_events):
+        return False, None
+
+    account_label = str(args.account_label or "").strip()
+    canonical_account_label = str(args.canonical_account_label or "").strip()
+    if (
+        account_label
+        and canonical_account_label
+        and account_label != canonical_account_label
+    ):
+        return False, "account_alias_repair"
+
+    return True, None
+
+
 def main() -> int:
     args = _parse_args()
     dsn = os.environ.get(str(args.dsn_env).strip())
@@ -177,6 +211,10 @@ def main() -> int:
         expire_on_commit=False,
         future=True,
     )
+    (
+        execution_event_backfill_enabled,
+        execution_event_backfill_skip_reason,
+    ) = _execution_event_backfill_config(args)
     batches: list[dict[str, int]] = []
     with session_factory() as session:
         for _ in range(max_batches):
@@ -197,16 +235,8 @@ def main() -> int:
                     account_label=args.account_label,
                     limit=batch_size,
                 )
-                if args.backfill_execution_events
-                else {
-                    "selected": 0,
-                    "events_created": 0,
-                    "source_windows_created": 0,
-                    "skipped_existing_event": 0,
-                    "skipped_missing_trade_decision": 0,
-                    "skipped_missing_order_identity": 0,
-                    "skipped_source_offset_collision": 0,
-                }
+                if execution_event_backfill_enabled
+                else _empty_execution_event_backfill_batch()
             )
             fill_delta_batch = repair_order_feed_fill_deltas(
                 session,
@@ -285,7 +315,13 @@ def main() -> int:
             ):
                 break
 
-    payload = _payload(args=args, started_at=started_at, batches=batches)
+    payload = _payload(
+        args=args,
+        started_at=started_at,
+        batches=batches,
+        execution_event_backfill_enabled=execution_event_backfill_enabled,
+        execution_event_backfill_skip_reason=execution_event_backfill_skip_reason,
+    )
     print(
         json.dumps(payload, separators=(",", ":"))
         if args.json

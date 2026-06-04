@@ -1842,8 +1842,9 @@ def link_order_events_to_execution(
             ),
         )
         .order_by(
-            ExecutionOrderEvent.event_ts.asc().nullsfirst(),
             ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
+            ExecutionOrderEvent.source_offset.asc().nullsfirst(),
+            ExecutionOrderEvent.event_ts.asc().nullsfirst(),
             ExecutionOrderEvent.created_at.asc(),
         )
     )

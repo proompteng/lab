@@ -48,8 +48,7 @@ spec:
                     --account-label PA3SX7FYNUTF \
                     --canonical-account-label TORGHUT_SIM \
                     --batch-size 1000 \
-                    --max-batches 5 \
-                    --backfill-execution-events \
+                    --max-batches 1 \
                     --apply \
                     --json
                   /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \

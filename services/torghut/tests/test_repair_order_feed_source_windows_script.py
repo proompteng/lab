@@ -111,6 +111,8 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["apply"], False)
         self.assertEqual(payload["backfill_execution_events"], False)
+        self.assertEqual(payload["execution_event_backfill_enabled"], False)
+        self.assertIsNone(payload["execution_event_backfill_skip_reason"])
         self.assertEqual(payload["dsn_env"], "TEST_DSN")
         self.assertEqual(payload["batch_size"], 5000)
         self.assertEqual(payload["max_batches"], 3)
@@ -261,6 +263,8 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["apply"], True)
         self.assertEqual(payload["account_label"], "TORGHUT_SIM")
         self.assertEqual(payload["backfill_execution_events"], False)
+        self.assertEqual(payload["execution_event_backfill_enabled"], False)
+        self.assertIsNone(payload["execution_event_backfill_skip_reason"])
         self.assertEqual(payload["selected"], 3)
         self.assertEqual(payload["source_windows_created"], 2)
         self.assertEqual(payload["source_windows_reused"], 1)
@@ -373,6 +377,8 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["apply"], True)
         self.assertEqual(payload["backfill_execution_events"], True)
+        self.assertEqual(payload["execution_event_backfill_enabled"], True)
+        self.assertIsNone(payload["execution_event_backfill_skip_reason"])
         self.assertEqual(payload["account_label"], "PA3SX7FYNUTF")
         self.assertEqual(payload["execution_event_backfill_candidates"], 7)
         self.assertEqual(payload["execution_event_backfill_events_created"], 6)
@@ -391,6 +397,95 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             account_label="PA3SX7FYNUTF",
             limit=100,
         )
+
+    def test_main_skips_execution_event_backfill_for_account_alias_repair(self) -> None:
+        fake_session = _FakeSession()
+        stdout = io.StringIO()
+
+        with (
+            patch.dict(os.environ, {"LIVE_DSN": "postgresql://example/live"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "repair_order_feed_source_windows.py",
+                    "--dsn-env",
+                    "LIVE_DSN",
+                    "--account-label",
+                    "PA3SX7FYNUTF",
+                    "--canonical-account-label",
+                    "TORGHUT_SIM",
+                    "--batch-size",
+                    "100",
+                    "--max-batches",
+                    "1",
+                    "--backfill-execution-events",
+                    "--apply",
+                    "--json",
+                ],
+            ),
+            patch.object(script, "create_engine", return_value=object()),
+            patch.object(
+                script,
+                "sessionmaker",
+                return_value=_FakeSessionFactory(fake_session),
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_source_windows",
+                return_value={
+                    "selected": 0,
+                    "source_windows_created": 0,
+                    "source_windows_reused": 0,
+                    "events_linked": 0,
+                },
+            ),
+            patch.object(
+                script,
+                "repair_order_feed_execution_links",
+                return_value={
+                    "selected": 1,
+                    "executions_matched": 1,
+                    "executions_linked": 1,
+                    "decisions_matched": 1,
+                    "events_linked": 1,
+                    "decision_events_linked": 0,
+                    "events_without_execution": 0,
+                    "events_without_decision": 0,
+                    "account_alias_events_linked": 1,
+                },
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_events_from_executions",
+            ) as backfill_execution_events,
+            patch.object(
+                script,
+                "repair_order_feed_fill_deltas",
+                return_value={
+                    "selected": 0,
+                    "delta_events_repaired": 0,
+                    "non_increasing_events_marked": 0,
+                    "missing_identity_events_marked": 0,
+                },
+            ),
+            patch("sys.stdout", stdout),
+        ):
+            exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["apply"], True)
+        self.assertEqual(payload["backfill_execution_events"], True)
+        self.assertEqual(payload["execution_event_backfill_enabled"], False)
+        self.assertEqual(
+            payload["execution_event_backfill_skip_reason"],
+            "account_alias_repair",
+        )
+        self.assertEqual(payload["execution_event_backfill_candidates"], 0)
+        self.assertEqual(payload["execution_event_backfill_events_created"], 0)
+        self.assertEqual(payload["execution_link_account_alias_events_linked"], 1)
+        backfill_execution_events.assert_not_called()
 
     def test_main_requires_configured_dsn_env(self) -> None:
         with (
