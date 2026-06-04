@@ -59,6 +59,15 @@ from .session_context import is_regular_equities_session_date
 logger = logging.getLogger(__name__)
 
 
+def _paper_route_evidence_query_timeout_ms() -> int:
+    raw_value = os.getenv("TORGHUT_PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS", "1500")
+    try:
+        value = int(raw_value.strip())
+    except ValueError:
+        return 1500
+    return max(250, min(value, 5000))
+
+
 PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.paper-route-evidence.v1"
 PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION = "torghut.paper-route-target-plan.v1"
 NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION = (
@@ -92,7 +101,7 @@ PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT = 100
 PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT = 25
 MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 168
 MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
-PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS = 5000
+PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS = _paper_route_evidence_query_timeout_ms()
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
@@ -578,6 +587,34 @@ def _unique_text_items(value: object) -> list[str]:
         item = str(raw_item).strip()
         if item and item not in items:
             items.append(item)
+    return items
+
+
+def _unique_source_offset_items(value: object) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw_item in _as_sequence(value):
+        item = _as_mapping(raw_item)
+        topic = _safe_text(item.get("topic")) or _safe_text(item.get("source_topic"))
+        partition = _safe_text(item.get("partition")) or _safe_text(
+            item.get("source_partition")
+        )
+        offset = _safe_text(item.get("offset")) or _safe_text(item.get("source_offset"))
+        if topic is None or partition is None or offset is None:
+            continue
+        key = (topic, partition, offset)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "topic": topic,
+                "partition": int(partition)
+                if partition.lstrip("-").isdigit()
+                else partition,
+                "offset": int(offset) if offset.lstrip("-").isdigit() else offset,
+            }
+        )
     return items
 
 
@@ -9193,6 +9230,60 @@ def _sanitized_runtime_ledger_source_collection_target(
     sanitized.update(_runtime_window_import_target_metadata(target))
     if runtime_ledger_bucket_ref := _safe_text(target.get("runtime_ledger_bucket_ref")):
         sanitized["runtime_ledger_bucket_ref"] = runtime_ledger_bucket_ref
+    for source_key, sanitized_key in (
+        ("source_window_ids", "source_window_ids"),
+        ("runtime_ledger_source_window_ids", "runtime_ledger_source_window_ids"),
+        ("execution_order_event_ids", "execution_order_event_ids"),
+        (
+            "runtime_ledger_execution_order_event_ids",
+            "runtime_ledger_execution_order_event_ids",
+        ),
+        ("execution_ids", "execution_ids"),
+        ("runtime_ledger_execution_ids", "runtime_ledger_execution_ids"),
+        ("execution_tca_metric_ids", "execution_tca_metric_ids"),
+        (
+            "runtime_ledger_execution_tca_metric_ids",
+            "runtime_ledger_execution_tca_metric_ids",
+        ),
+        ("trade_decision_ids", "trade_decision_ids"),
+        (
+            "runtime_ledger_trade_decision_ids",
+            "runtime_ledger_trade_decision_ids",
+        ),
+        ("source_materializations", "source_materializations"),
+        ("authority_classes", "authority_classes"),
+        ("authority_reasons", "authority_reasons"),
+    ):
+        if values := _unique_text_items(target.get(source_key)):
+            sanitized[sanitized_key] = values
+    if source_refs := [
+        ref
+        for ref in _unique_text_items(target.get("source_refs"))
+        if "strategy_runtime_ledger_buckets" not in ref
+    ]:
+        sanitized["source_refs"] = source_refs
+    if source_offsets := _unique_source_offset_items(target.get("source_offsets")):
+        sanitized["source_offsets"] = source_offsets
+    if source_row_counts := _as_mapping(target.get("source_row_counts")):
+        sanitized["source_row_counts"] = {
+            key: count
+            for key, raw_count in source_row_counts.items()
+            if (count := _safe_int(raw_count)) > 0
+        }
+    for source_key, sanitized_key in (
+        ("source_materialization", "source_materialization"),
+        ("authority_class", "authority_class"),
+        ("authority_reason", "authority_reason"),
+    ):
+        if value := _safe_text(target.get(source_key)):
+            sanitized[sanitized_key] = value
+            plural_key = (
+                "authority_classes"
+                if sanitized_key == "authority_class"
+                else f"{sanitized_key}s"
+            )
+            if plural_key not in sanitized:
+                sanitized[plural_key] = [value]
     observed_from_contaminated_target = _as_mapping(
         target.get("observed_from_contaminated_target")
     )

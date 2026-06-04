@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -69,6 +70,26 @@ class TestPaperRouteEvidenceAudit(TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(self.engine)
+
+    def test_paper_route_evidence_query_timeout_is_bounded(self) -> None:
+        with patch.dict(
+            os.environ, {"TORGHUT_PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS": "10000"}
+        ):
+            self.assertEqual(
+                paper_route_evidence._paper_route_evidence_query_timeout_ms(), 5000
+            )
+        with patch.dict(
+            os.environ, {"TORGHUT_PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS": "50"}
+        ):
+            self.assertEqual(
+                paper_route_evidence._paper_route_evidence_query_timeout_ms(), 250
+            )
+        with patch.dict(
+            os.environ, {"TORGHUT_PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS": "bad"}
+        ):
+            self.assertEqual(
+                paper_route_evidence._paper_route_evidence_query_timeout_ms(), 1500
+            )
 
     def test_order_event_source_offset_refs_skip_deduplicate_and_limit(self) -> None:
         rows = [
@@ -5531,16 +5552,34 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         "target_dsn_env": "SIM_DB_DSN",
                         "source_row_counts": {"execution_order_events": 2},
                         "source_window_ids": ["window-1"],
+                        "runtime_ledger_source_window_ids": ["runtime-window-1"],
                         "execution_order_event_ids": ["event-1", "event-2"],
+                        "runtime_ledger_execution_order_event_ids": ["runtime-event-1"],
                         "execution_ids": ["execution-1"],
+                        "runtime_ledger_execution_ids": ["runtime-execution-1"],
+                        "execution_tca_metric_ids": ["tca-1"],
+                        "runtime_ledger_execution_tca_metric_ids": ["runtime-tca-1"],
                         "trade_decision_ids": ["decision-1"],
+                        "runtime_ledger_trade_decision_ids": ["runtime-decision-1"],
                         "source_offsets": [
                             {
                                 "topic": "trade_updates",
                                 "partition": 0,
                                 "offset": 101,
-                            }
+                            },
+                            {
+                                "source_topic": "trade_updates",
+                                "source_partition": "0",
+                                "source_offset": "101",
+                            },
                         ],
+                        "source_refs": [
+                            ("strategy_runtime_ledger_buckets:run-1:start:end"),
+                            "postgres:execution_order_events:event-1",
+                        ],
+                        "source_materialization": "execution_order_events",
+                        "authority_class": "runtime_order_feed_execution_source",
+                        "authority_reason": "source_offsets_and_order_events_present",
                         "live_paper_evidence_requirements": [
                             "runtime_ledger_source_materialization",
                             "runtime_ledger_execution_refs",
@@ -5581,6 +5620,55 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             target["runtime_ledger_bucket_ref"],
             "strategy_runtime_ledger_buckets:run-1:start:end",
+        )
+        self.assertEqual(target["source_window_ids"], ["window-1"])
+        self.assertEqual(
+            target["runtime_ledger_source_window_ids"],
+            ["runtime-window-1"],
+        )
+        self.assertEqual(target["execution_order_event_ids"], ["event-1", "event-2"])
+        self.assertEqual(
+            target["runtime_ledger_execution_order_event_ids"],
+            ["runtime-event-1"],
+        )
+        self.assertEqual(target["execution_ids"], ["execution-1"])
+        self.assertEqual(
+            target["runtime_ledger_execution_ids"], ["runtime-execution-1"]
+        )
+        self.assertEqual(target["execution_tca_metric_ids"], ["tca-1"])
+        self.assertEqual(
+            target["runtime_ledger_execution_tca_metric_ids"],
+            ["runtime-tca-1"],
+        )
+        self.assertEqual(target["trade_decision_ids"], ["decision-1"])
+        self.assertEqual(
+            target["runtime_ledger_trade_decision_ids"],
+            ["runtime-decision-1"],
+        )
+        self.assertEqual(
+            target["source_offsets"],
+            [{"topic": "trade_updates", "partition": 0, "offset": 101}],
+        )
+        self.assertEqual(
+            target["source_refs"], ["postgres:execution_order_events:event-1"]
+        )
+        self.assertEqual(target["source_row_counts"], {"execution_order_events": 2})
+        self.assertEqual(target["source_materialization"], "execution_order_events")
+        self.assertEqual(target["source_materializations"], ["execution_order_events"])
+        self.assertEqual(
+            target["authority_class"], "runtime_order_feed_execution_source"
+        )
+        self.assertEqual(
+            target["authority_classes"],
+            ["runtime_order_feed_execution_source"],
+        )
+        self.assertEqual(
+            target["authority_reason"],
+            "source_offsets_and_order_events_present",
+        )
+        self.assertEqual(
+            target["authority_reasons"],
+            ["source_offsets_and_order_events_present"],
         )
         self.assertEqual(target["artifact_refs"], ["runtime-ledger/proof.json"])
         self.assertEqual(
