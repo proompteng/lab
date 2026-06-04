@@ -10132,6 +10132,24 @@ class TestTradingApi(TestCase):
                 require_bounded_sim_targets=True,
             )
         )
+        self.assertFalse(
+            main_module._paper_route_source_collection_target_cache_safe(
+                {
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                    "window_start": "2026-05-13T17:00:00+00:00",
+                }
+            )
+        )
+        self.assertTrue(
+            main_module._paper_route_source_collection_target_cache_safe(
+                {
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                    "window_start": "2026-05-13T17:00:00+00:00",
+                    "window_end": "2026-05-13T17:30:00+00:00",
+                    "source_window_ids": ["runtime-ledger-window-20260513T1700Z"],
+                }
+            )
+        )
         unsafe_source_collection_gate = {
             "runtime_ledger_paper_probation_import_plan": {
                 "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
