@@ -8810,6 +8810,61 @@ def _target_is_runtime_ledger_source_collection(
     )
 
 
+def _positive_mapping_count(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    typed_value = cast(Mapping[str, object], value)
+    for raw_count in typed_value.values():
+        if _safe_int(raw_count) > 0:
+            return True
+    return False
+
+
+def _source_collection_target_has_materializable_lineage(
+    target: Mapping[str, Any],
+) -> bool:
+    for key in (
+        "source_window_ids",
+        "runtime_ledger_source_window_ids",
+        "execution_order_event_ids",
+        "runtime_ledger_execution_order_event_ids",
+        "execution_ids",
+        "trade_decision_ids",
+        "source_offsets",
+    ):
+        if _unique_text_items(target.get(key)):
+            return True
+    if _safe_text(target.get("source_materialization")) is not None:
+        return True
+    if _safe_text(target.get("authority_class")) is not None:
+        return True
+    if _positive_mapping_count(target.get("source_row_counts")):
+        return True
+    source_refs = [
+        ref
+        for ref in _unique_text_items(target.get("source_refs"))
+        if "strategy_runtime_ledger_buckets" not in ref
+    ]
+    return bool(source_refs)
+
+
+def _source_collection_import_target_allowed(target: Mapping[str, Any]) -> bool:
+    """Reject legacy replay buckets that cannot be materialized into source proof."""
+
+    account_label = _safe_text(target.get("account_label"))
+    source_account_label = (
+        _safe_text(target.get("source_account_label")) or account_label
+    )
+    if (
+        account_label == "TORGHUT_REPLAY"
+        and source_account_label == "TORGHUT_REPLAY"
+        and _safe_text(target.get("source_dsn_env")) == "DB_DSN"
+        and not _source_collection_target_has_materializable_lineage(target)
+    ):
+        return False
+    return True
+
+
 def _runtime_window_import_target_metadata(
     target: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -8995,6 +9050,8 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
         if len(source_targets) >= limit:
             return
         if not _target_is_runtime_ledger_source_collection(target):
+            return
+        if not _source_collection_import_target_allowed(target):
             return
         sanitized = _sanitized_runtime_ledger_source_collection_target(target)
         key = (

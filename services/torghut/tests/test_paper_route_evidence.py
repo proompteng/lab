@@ -5158,6 +5158,18 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         "source_account_label": "TORGHUT_REPLAY",
                         "source_dsn_env": "DB_DSN",
                         "target_dsn_env": "SIM_DB_DSN",
+                        "source_row_counts": {"execution_order_events": 2},
+                        "source_window_ids": ["window-1"],
+                        "execution_order_event_ids": ["event-1", "event-2"],
+                        "execution_ids": ["execution-1"],
+                        "trade_decision_ids": ["decision-1"],
+                        "source_offsets": [
+                            {
+                                "topic": "trade_updates",
+                                "partition": 0,
+                                "offset": 101,
+                            }
+                        ],
                         "runtime_ledger_bucket_ref": (
                             "strategy_runtime_ledger_buckets:run-1:start:end"
                         ),
@@ -5228,6 +5240,102 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target_limit=10,
         )
         self.assertEqual(empty_plan, {})
+
+    def test_source_collection_import_plan_skips_aggregate_replay_bucket_without_lineage(
+        self,
+    ) -> None:
+        live_gate = {
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+        }
+
+        plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan={
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "aggregate-replay",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_REPLAY",
+                        "source_account_label": "TORGHUT_REPLAY",
+                        "source_dsn_env": "DB_DSN",
+                        "target_dsn_env": "SIM_DB_DSN",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_collection_authorized": True,
+                        "source_collection_priority": (
+                            "profit_target_source_materialization"
+                        ),
+                        "source_collection_profit_target_candidate": True,
+                        "source_collection_reason_codes": [
+                            "runtime_ledger_source_window_missing",
+                            "runtime_ledger_source_refs_missing",
+                            "runtime_ledger_execution_order_event_refs_missing",
+                            "runtime_ledger_source_offsets_missing",
+                            "runtime_ledger_source_materialization_missing",
+                            "runtime_ledger_authority_class_missing",
+                        ],
+                        "filled_notional": "127090.02495200",
+                        "fill_count": 2,
+                        "submitted_order_count": 2,
+                        "runtime_ledger_bucket_ref": (
+                            "strategy_runtime_ledger_buckets:"
+                            "rt-ledger-vwap-cap-safe-20260512-20260521-c88421d6:"
+                            "2026-05-13T17:00:00+00:00:"
+                            "2026-05-13T17:30:00+00:00"
+                        ),
+                    }
+                ],
+            },
+            live_submission_gate=live_gate,
+            target_limit=5,
+        )
+
+        self.assertEqual(plan, {})
+
+    def test_source_collection_import_allows_aggregate_replay_with_materializable_lineage(
+        self,
+    ) -> None:
+        base_target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "source-backed-replay",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_REPLAY",
+            "source_account_label": "TORGHUT_REPLAY",
+            "source_dsn_env": "DB_DSN",
+            "source_kind": "runtime_ledger_source_collection_candidate",
+            "source_collection_authorized": True,
+        }
+
+        self.assertFalse(
+            paper_route_evidence._positive_mapping_count(
+                {"execution_order_events": "not-an-int", "trade_decisions": 0}
+            )
+        )
+        self.assertTrue(
+            paper_route_evidence._positive_mapping_count(
+                {"execution_order_events": "2"}
+            )
+        )
+
+        for lineage in (
+            {"source_window_ids": ["window-1"]},
+            {"source_materialization": "execution_order_events"},
+            {"authority_class": "event_sourced_runtime_ledger_profit_proof"},
+            {"source_row_counts": {"execution_order_events": 2}},
+            {"source_refs": ["postgres:execution_order_events:event-1"]},
+        ):
+            target = {**base_target, **lineage}
+
+            self.assertTrue(
+                paper_route_evidence._source_collection_target_has_materializable_lineage(
+                    target
+                )
+            )
+            self.assertTrue(
+                paper_route_evidence._source_collection_import_target_allowed(target)
+            )
 
     def test_source_collection_import_plan_uses_direct_gate_candidates(
         self,
