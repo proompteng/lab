@@ -1128,6 +1128,114 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             plan["targets"][0]["window_start"], "2026-05-26T13:30:00+00:00"
         )
 
+    def test_runtime_window_target_plan_payload_prefers_selected_runtime_import_plan(
+        self,
+    ) -> None:
+        plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                    "source": "paper_route_observed_strategy_source_collection",
+                    "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-selected-source",
+                            "hypothesis_id": "H-TSMOM-LIQ-01",
+                            "strategy_family": "intraday_tsmom",
+                            "strategy_name": "intraday-tsmom-v2",
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_SIM",
+                            "source_kind": "runtime_ledger_source_collection_candidate",
+                            "window_start": "2026-06-04T13:30:00+00:00",
+                            "window_end": "2026-06-04T20:00:00+00:00",
+                            "candidate_blockers": [
+                                "runtime_ledger_source_collection_only"
+                            ],
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-contaminated-next",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "window_start": "2026-06-04T13:30:00+00:00",
+                            "window_end": "2026-06-04T20:00:00+00:00",
+                            "candidate_blockers": [
+                                "paper_route_account_contamination_detected",
+                                "foreign_order_events_present",
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(
+            plan["source"], "paper_route_observed_strategy_source_collection"
+        )
+        self.assertEqual(plan["targets"][0]["candidate_id"], "cand-selected-source")
+        self.assertNotIn(
+            "paper_route_account_contamination_detected",
+            plan["targets"][0]["candidate_blockers"],
+        )
+
+    def test_runtime_window_target_plan_payload_prefers_clean_after_discard(
+        self,
+    ) -> None:
+        plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "next_clean_paper_route_runtime_window_targets_after_discard": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "purpose": "next_clean_session_paper_route_runtime_window_collection_after_discard",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-clean-followup",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "window_start": "2026-06-05T13:30:00+00:00",
+                            "window_end": "2026-06-05T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-contaminated-next",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "window_start": "2026-06-04T13:30:00+00:00",
+                            "window_end": "2026-06-04T20:00:00+00:00",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(
+            plan["purpose"],
+            "next_clean_session_paper_route_runtime_window_collection_after_discard",
+        )
+        self.assertEqual(plan["targets"][0]["candidate_id"], "cand-clean-followup")
+
     def test_runtime_window_target_plan_payload_accepts_paper_route_evidence_plan(
         self,
     ) -> None:

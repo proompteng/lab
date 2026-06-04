@@ -926,8 +926,29 @@ def _runtime_window_target_plan_from_payload(
         str(payload.get("schema_version") or "").strip()
         == "torghut.paper-route-evidence.v1"
     )
-    if paper_route_evidence_payload and paper_route_plan:
-        plan = paper_route_plan
+    direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
+    if paper_route_evidence_payload:
+        plan = next(
+            (
+                candidate_plan
+                for candidate_plan in (
+                    direct_plan,
+                    _as_dict(
+                        payload.get(
+                            "next_clean_paper_route_runtime_window_targets_after_discard"
+                        )
+                    ),
+                    _as_dict(
+                        payload.get(
+                            "observed_strategy_source_runtime_window_import_plan"
+                        )
+                    ),
+                    paper_route_plan,
+                )
+                if _runtime_window_plan_target_items(candidate_plan)
+            ),
+            {},
+        )
     else:
         plan = {}
     source_runtime_window_plan = _as_dict(
@@ -936,7 +957,6 @@ def _runtime_window_target_plan_from_payload(
     if not plan and _runtime_window_plan_target_items(source_runtime_window_plan):
         plan = source_runtime_window_plan
     if not plan:
-        direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
         if direct_plan:
             plan = direct_plan
         else:
