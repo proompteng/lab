@@ -798,6 +798,10 @@ class TestFastReplayPreview(TestCase):
                 ]
             },
         )
+        self.assertIn(
+            "state_dependent_hawkes_arxiv_2604_23961_2026",
+            row_payload["hawkes_transient_impact_stress"]["source_markers"],
+        )
         self.assertFalse(
             row_payload["hawkes_transient_impact_stress"]["proof_authority"]
         )
