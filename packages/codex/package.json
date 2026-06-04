@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "node node_modules/typescript/bin/tsc -p tsconfig.json",
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
     "example": "bun run examples/run-example.ts",
     "test": "vitest run",
     "generate:app-server-types": "codex app-server generate-ts --experimental --out src/app-server",
