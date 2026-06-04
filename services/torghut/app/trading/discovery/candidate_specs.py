@@ -3920,6 +3920,142 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "liquidity uncertainty",
+            "liquidity_uncertainty",
+            "stochastic liquidity",
+            "stochastic_liquidity",
+            "stochastic market depth",
+            "stochastic_market_depth",
+            "market depth and resilience",
+            "market-depth resilience",
+            "limit-order book shape",
+            "limit order book shape",
+            "lob shape",
+            "regime-switching liquidity",
+            "regime switching liquidity",
+            "liquidity regime switching",
+            "liquidity resilience",
+            "stochastic volume effect",
+            "volume effect governing recovery",
+        )
+    ):
+        overlay_ids.append("stochastic_liquidity_resilience_execution_grid")
+        overlay_contracts.append(
+            {
+                "overlay_id": "stochastic_liquidity_resilience_execution_grid",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2506.11813",
+                        "url": "https://arxiv.org/abs/2506.11813",
+                        "title": "Optimal Execution under Liquidity Uncertainty",
+                        "mechanism": "regime_switching_liquidity_resilience_and_lob_shape_execution_boundaries",
+                    },
+                    {
+                        "source_id": "ssrn-3798235",
+                        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3798235",
+                        "title": "Constrained Optimal Execution Problem in Limit Order Book Market with Stochastic Market Depth",
+                        "mechanism": "markov_chain_stochastic_market_depth_shape_constrained_execution",
+                    },
+                ],
+                "required_evidence": [
+                    "liquidity_regime_transition_trace",
+                    "stochastic_market_depth_state",
+                    "lob_shape_parameter_history",
+                    "resilience_decay_half_life",
+                    "depth_recovery_after_child_order",
+                    "execution_shortfall_by_liquidity_regime",
+                    "route_tca",
+                    "runtime_ledger",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_liquidity_regime_resilience_shortfall_stress"
+                ),
+                "evidence_policy": (
+                    "stochastic_liquidity_resilience_grid_is_candidate_input_only_"
+                    "and_requires_real_depth_recovery_route_tca_runtime_ledger_proof"
+                ),
+            }
+        )
+        parameter_space["stochastic_liquidity_resilience_execution_grid"] = {
+            "schema_version": (
+                "torghut.stochastic-liquidity-resilience-execution-grid.v1"
+            ),
+            "source_ids": ["arxiv-2506.11813", "ssrn-3798235"],
+            "candidate_search_inputs": {
+                "liquidity_regime_count_grid": ["2", "3", "4"],
+                "regime_transition_probability_grid": ["0.02", "0.05", "0.10"],
+                "lob_shape_family_grid": [
+                    "block",
+                    "linear",
+                    "power_law",
+                    "empirical_piecewise",
+                ],
+                "resilience_half_life_seconds_grid": ["5", "30", "120", "600"],
+                "stochastic_volume_effect_scale_grid": ["0.25", "0.50", "1.00"],
+                "max_child_participation_rate_grid": ["0.01", "0.03", "0.05"],
+                "execution_boundary_buffer_bps_grid": ["2", "5", "10"],
+            },
+            "stress_inputs_required": [
+                "bid_depth",
+                "ask_depth",
+                "depth_recovery_after_trade",
+                "spread_bps",
+                "child_order_participation_rate",
+                "execution_shortfall_bps",
+                "route_tca_bps",
+            ],
+            "diagnostics_required": [
+                "liquidity_regime_transition_count",
+                "depth_shape_fit_error",
+                "resilience_half_life_estimate_seconds",
+                "impact_recovery_residual_bps",
+                "shortfall_by_liquidity_regime",
+            ],
+            "proof_neutrality": {
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "requires_exact_replay": True,
+                "requires_real_lob_depth_history": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_modeled_resilience_as_realized_pnl_authority": True,
+                "rejects_synthetic_depth_recovery_as_fill_authority": True,
+            },
+        }
+        hard_vetoes.update(
+            {
+                "required_stochastic_liquidity_resilience_execution_grid": True,
+                "required_liquidity_regime_transition_trace": True,
+                "required_stochastic_market_depth_state": True,
+                "required_lob_shape_parameter_history": True,
+                "required_resilience_decay_half_life": True,
+                "required_depth_recovery_after_child_order": True,
+                "required_execution_shortfall_by_liquidity_regime": True,
+                "required_max_liquidity_regime_shortfall_bps": "10",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_stochastic_liquidity_resilience_execution_grid": True,
+                "requires_liquidity_regime_transition_trace": True,
+                "requires_stochastic_market_depth_state": True,
+                "requires_lob_shape_parameter_history": True,
+                "requires_depth_recovery_after_child_order": True,
+                "requires_execution_shortfall_by_liquidity_regime": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_modeled_liquidity_resilience_as_profit_proof": True,
+                "rejects_synthetic_depth_recovery_as_fill_authority": True,
+                "execution_liquidity_policy": (
+                    "stochastic_liquidity_resilience_validation_only"
+                ),
+            }
+        )
+
+    if has_any(
+        (
             "alpha decay",
             "alpha_decay",
             "predictability decay",
