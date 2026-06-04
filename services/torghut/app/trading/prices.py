@@ -33,6 +33,7 @@ class MarketSnapshot:
     ask: Optional[Decimal] = None
     quote_as_of: Optional[datetime] = None
     quote_source: Optional[str] = None
+    quote_lookup_diagnostics: Optional[dict[str, object]] = None
 
 
 class PriceFetcher:
@@ -259,9 +260,42 @@ class ClickHousePriceFetcher(PriceFetcher):
             else None
         )
         quote_source = "ta_signals_quote"
+        quote_lookup_diagnostics: dict[str, object] | None = None
+        if self.url:
+            if quote_row is not None:
+                quote_lookup_diagnostics = self._quote_lookup_diagnostics(
+                    symbol=symbol,
+                    target_ts=target_ts,
+                    source=quote_source,
+                    row=quote_row,
+                    accepted=True,
+                )
+            else:
+                quote_lookup_diagnostics = self._quote_lookup_diagnostics(
+                    symbol=symbol,
+                    target_ts=target_ts,
+                    source=quote_source,
+                    row=self._fetch_latest_quote_diagnostic_row(
+                        symbol=symbol,
+                        target_ts=target_ts,
+                    ),
+                    accepted=False,
+                )
         if quote_row is None:
             quote_row = self._fetch_alpaca_latest_quote_row(symbol=symbol)
             quote_source = "alpaca_latest_quote"
+            if quote_row is not None:
+                quote_lookup_diagnostics = self._quote_lookup_diagnostics(
+                    symbol=symbol,
+                    target_ts=target_ts,
+                    source=quote_source,
+                    row=quote_row,
+                    accepted=True,
+                )
+            elif quote_lookup_diagnostics is not None:
+                quote_lookup_diagnostics["alpaca_quote_fallback_attempted"] = (
+                    self.alpaca_quote_fallback_enabled
+                )
         as_of = _snapshot_as_of(row, signal.event_ts)
         price = _select_price(row)
         spread = _optional_decimal(row.get("spread"))
@@ -292,6 +326,7 @@ class ClickHousePriceFetcher(PriceFetcher):
             ask=ask,
             quote_as_of=quote_as_of,
             quote_source=resolved_quote_source,
+            quote_lookup_diagnostics=quote_lookup_diagnostics,
         )
 
     def _fetch_recent_executable_quote_row(
@@ -344,7 +379,95 @@ class ClickHousePriceFetcher(PriceFetcher):
             return None
         if not rows:
             return None
+        for row in rows:
+            if _quote_row_reject_reason(row) is None:
+                return row
+        return None
+
+    def _fetch_latest_quote_diagnostic_row(
+        self,
+        *,
+        symbol: str,
+        target_ts: datetime,
+    ) -> dict[str, Any] | None:
+        lookback = target_ts - timedelta(seconds=self.quote_lookback_seconds)
+        quote_window_end = target_ts
+        if self.quote_forward_seconds > 0:
+            forward_end = target_ts + timedelta(seconds=self.quote_forward_seconds)
+            now = datetime.now(timezone.utc)
+            if target_ts.tzinfo is None:
+                now = now.replace(tzinfo=None)
+            quote_window_end = min(forward_end, now)
+        query = " ".join(
+            [
+                "SELECT event_ts, imbalance_bid_px, imbalance_ask_px, imbalance_spread",
+                "FROM",
+                self.quote_table,
+                "WHERE",
+                f"symbol = {_quote_literal(symbol)}",
+                "AND",
+                f"event_ts >= {to_datetime64(lookback)}",
+                "AND",
+                f"event_ts <= {to_datetime64(quote_window_end)}",
+                "ORDER BY",
+                "event_ts DESC",
+                "LIMIT 1",
+                "FORMAT JSONEachRow",
+            ]
+        )
+        try:
+            rows = self._query_clickhouse(query)
+        except Exception as exc:
+            logger.warning("Failed to fetch recent quote diagnostics: %s", exc)
+            return None
+        if not rows:
+            return None
         return rows[0]
+
+    def _quote_lookup_diagnostics(
+        self,
+        *,
+        symbol: str,
+        target_ts: datetime,
+        source: str,
+        row: Mapping[str, Any] | None,
+        accepted: bool,
+    ) -> dict[str, object]:
+        rejected_reason = None if accepted else "no_recent_quote"
+        bid: Decimal | None = None
+        ask: Decimal | None = None
+        spread: Decimal | None = None
+        spread_bps: Decimal | None = None
+        quote_as_of: datetime | None = None
+        if row is not None:
+            rejected_reason = None if accepted else _quote_row_reject_reason(row)
+            bid = _optional_decimal(row.get("imbalance_bid_px"))
+            ask = _optional_decimal(row.get("imbalance_ask_px"))
+            spread = _select_quote_spread(row, bid=bid, ask=ask)
+            if bid is not None and ask is not None:
+                spread_bps = _quote_spread_bps(bid=bid, ask=ask)
+            quote_as_of = _snapshot_as_of(row, target_ts)
+        return {
+            "schema_version": "torghut.quote-lookup-diagnostics.v1",
+            "symbol": symbol,
+            "target_ts": target_ts.isoformat(),
+            "source": source,
+            "latest_quote_present": row is not None,
+            "latest_quote_accepted": accepted,
+            "latest_quote_rejected_reason": rejected_reason,
+            "latest_quote_as_of": quote_as_of.isoformat()
+            if quote_as_of is not None
+            else None,
+            "latest_quote_bid": str(bid) if bid is not None else None,
+            "latest_quote_ask": str(ask) if ask is not None else None,
+            "latest_quote_spread": str(spread) if spread is not None else None,
+            "latest_quote_spread_bps": str(spread_bps)
+            if spread_bps is not None
+            else None,
+            "max_spread_bps": str(settings.trading_signal_max_executable_spread_bps),
+            "lookback_seconds": self.quote_lookback_seconds,
+            "forward_seconds": self.quote_forward_seconds,
+        }
 
     def _fetch_alpaca_latest_quote_row(self, *, symbol: str) -> dict[str, Any] | None:
         if not self.alpaca_quote_fallback_enabled:
@@ -675,6 +798,29 @@ def _select_quote_spread(
     if bid is None or ask is None:
         return None
     return ask - bid
+
+
+def _quote_row_reject_reason(row: Mapping[str, Any]) -> str | None:
+    bid = _optional_decimal(row.get("imbalance_bid_px"))
+    ask = _optional_decimal(row.get("imbalance_ask_px"))
+    if bid is None and ask is None:
+        return "missing_executable_quote"
+    if bid is None:
+        return "missing_bid"
+    if ask is None:
+        return "missing_ask"
+    if bid <= 0:
+        return "non_positive_bid"
+    if ask <= 0:
+        return "non_positive_ask"
+    if ask < bid:
+        return "crossed_quote"
+    spread_bps = _quote_spread_bps(bid=bid, ask=ask)
+    if spread_bps is None:
+        return "invalid_spread"
+    if spread_bps > settings.trading_signal_max_executable_spread_bps:
+        return "spread_bps_exceeded"
+    return None
 
 
 def _midpoint(*, bid: Decimal | None, ask: Decimal | None) -> Optional[Decimal]:

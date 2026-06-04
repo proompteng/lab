@@ -41,6 +41,7 @@ from ..prices import MarketSnapshot
 from ..quote_quality import (
     QuoteQualityPolicy,
     QuoteQualityStatus,
+    _status,
     assess_signal_quote_quality,
 )
 from ..proof_floor import build_profitability_proof_floor_receipt
@@ -3761,6 +3762,13 @@ class SimpleTradingPipeline(TradingPipeline):
                 max_executable_quote_age_seconds=settings.trading_executable_quote_lookback_seconds,
             ),
         )
+        quote_lookup_diagnostics = (
+            snapshot.quote_lookup_diagnostics if snapshot is not None else None
+        )
+        status = self._apply_quote_lookup_diagnostic_reason(
+            status,
+            quote_lookup_diagnostics=quote_lookup_diagnostics,
+        )
         target_mismatch = self._paper_route_target_plan_source_mismatch(decision)
         if target_mismatch is not None:
             status = QuoteQualityStatus(
@@ -3786,9 +3794,45 @@ class SimpleTradingPipeline(TradingPipeline):
             status=status,
             source=source,
             quote_as_of=quote_as_of,
+            quote_lookup_diagnostics=quote_lookup_diagnostics,
             target_mismatch=target_mismatch,
         )
         return status, routeability
+
+    @staticmethod
+    def _apply_quote_lookup_diagnostic_reason(
+        status: QuoteQualityStatus,
+        *,
+        quote_lookup_diagnostics: Mapping[str, object] | None,
+    ) -> QuoteQualityStatus:
+        if status.valid or status.reason != "missing_executable_quote":
+            return status
+        if not isinstance(quote_lookup_diagnostics, Mapping):
+            return status
+        diagnostic_reason = _safe_text(
+            quote_lookup_diagnostics.get("latest_quote_rejected_reason")
+        )
+        if diagnostic_reason not in {
+            "crossed_quote",
+            "non_positive_bid",
+            "non_positive_ask",
+            "spread_bps_exceeded",
+        }:
+            return status
+        return _status(
+            valid=False,
+            reason=diagnostic_reason,
+            spread_bps=_optional_decimal(
+                quote_lookup_diagnostics.get("latest_quote_spread_bps")
+            )
+            or status.spread_bps,
+            jump_bps=status.jump_bps,
+            quote_age_seconds=status.quote_age_seconds,
+            source=status.source,
+            price=status.price,
+            bid=status.bid,
+            ask=status.ask,
+        )
 
     @staticmethod
     def _paper_route_target_plan_source_mismatch(
@@ -3879,6 +3923,7 @@ class SimpleTradingPipeline(TradingPipeline):
         status: QuoteQualityStatus,
         source: str | None,
         quote_as_of: datetime | None,
+        quote_lookup_diagnostics: Mapping[str, object] | None = None,
         target_mismatch: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         blockers = [] if status.valid else [status.reason or "missing_executable_quote"]
@@ -3925,6 +3970,9 @@ class SimpleTradingPipeline(TradingPipeline):
             },
             "target_plan_source_mismatch": dict(target_mismatch)
             if target_mismatch is not None
+            else None,
+            "quote_lookup_diagnostics": dict(quote_lookup_diagnostics)
+            if isinstance(quote_lookup_diagnostics, Mapping)
             else None,
         }
 

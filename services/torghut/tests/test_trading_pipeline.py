@@ -61,6 +61,7 @@ from app.trading.paper_route_target_plan import (
     materialize_bounded_paper_route_target_plan,
     paper_route_target_plan_from_payload,
 )
+from app.trading.quote_quality import QuoteQualityStatus
 from app.trading.reconcile import Reconciler
 from app.trading.runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -761,11 +762,13 @@ class FakePriceFetcher(PriceFetcher):
         spread: Decimal | None = None,
         bid: Decimal | None = None,
         ask: Decimal | None = None,
+        quote_lookup_diagnostics: dict[str, object] | None = None,
     ) -> None:
         self.price = price
         self.spread = spread
         self.bid = bid
         self.ask = ask
+        self.quote_lookup_diagnostics = quote_lookup_diagnostics
         self.snapshot_requests = 0
 
     def fetch_price(self, signal: SignalEnvelope) -> Decimal:
@@ -781,6 +784,7 @@ class FakePriceFetcher(PriceFetcher):
             source="price_fetcher",
             bid=self.bid,
             ask=self.ask,
+            quote_lookup_diagnostics=self.quote_lookup_diagnostics,
         )
 
 
@@ -3610,6 +3614,122 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(
             row_json.get("reject_reason_atomic"), ["missing_executable_quote"]
         )
+
+    def test_paper_route_target_quote_diagnostics_surface_wide_latest_quote(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="paper-route-target-source",
+            params={
+                "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
+                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            },
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("190.12"),
+                quote_lookup_diagnostics={
+                    "schema_version": "torghut.quote-lookup-diagnostics.v1",
+                    "source": "ta_signals_quote",
+                    "latest_quote_present": True,
+                    "latest_quote_accepted": False,
+                    "latest_quote_rejected_reason": "spread_bps_exceeded",
+                    "latest_quote_spread_bps": "105.2631578947368421052631579",
+                },
+            ),
+        )
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            row = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "TORGHUT_SIM",
+            )
+
+            prepared = pipeline._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=row,
+                strategy=strategy,
+                account={
+                    "equity": "100000",
+                    "cash": "100000",
+                    "buying_power": "100000",
+                },
+                positions=[],
+            )
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], row_json.get("params"))
+            routeability = cast(dict[str, Any], params.get("quote_routeability"))
+
+        self.assertIsNone(prepared)
+        self.assertEqual(row.status, "rejected")
+        self.assertEqual(routeability.get("status"), "blocked")
+        self.assertEqual(routeability.get("reason"), "spread_bps_exceeded")
+        self.assertEqual(
+            row_json.get("reject_reason_atomic"), ["spread_bps_exceeded"]
+        )
+        diagnostics = cast(dict[str, Any], routeability.get("quote_lookup_diagnostics"))
+        self.assertEqual(
+            diagnostics.get("latest_quote_rejected_reason"),
+            "spread_bps_exceeded",
+        )
+
+    def test_paper_route_quote_lookup_diagnostics_keep_unknown_reason_blocked(
+        self,
+    ) -> None:
+        status = QuoteQualityStatus(
+            valid=False,
+            reason="missing_executable_quote",
+        )
+
+        rewritten = SimpleTradingPipeline._apply_quote_lookup_diagnostic_reason(
+            status,
+            quote_lookup_diagnostics={
+                "latest_quote_rejected_reason": "missing_bid",
+                "latest_quote_spread_bps": "42",
+            },
+        )
+
+        self.assertIs(rewritten, status)
+        self.assertEqual(rewritten.reason, "missing_executable_quote")
 
     def test_paper_route_target_quote_routeability_blocks_stale_and_wide_quotes(
         self,
