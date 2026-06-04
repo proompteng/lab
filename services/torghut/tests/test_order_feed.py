@@ -1654,6 +1654,61 @@ class TestOrderFeed(TestCase):
         self.assertEqual(event.execution_id, execution_id)
         self.assertEqual(event.trade_decision_id, decision_id)
 
+    def test_linking_events_applies_latest_stream_sequence_not_event_timestamp(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            execution_id = execution.id
+            partial_event = ExecutionOrderEvent(
+                event_fingerprint="legacy-partial-fill-later-event-ts",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=66072,
+                feed_seq=183689,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, 0, 360000, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="partial_fill",
+                status="partially_filled",
+                filled_qty=Decimal("0.1614"),
+                avg_fill_price=Decimal("311.01"),
+                raw_event={"event": "partial_fill"},
+            )
+            fill_event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-earlier-event-ts-higher-feed-seq",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=66073,
+                feed_seq=183690,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, 0, 358000, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("311.01"),
+                raw_event={"event": "fill"},
+            )
+            session.add_all([partial_event, fill_event])
+            session.commit()
+
+            linked = link_order_events_to_execution(session, execution)
+            session.commit()
+            session.refresh(execution)
+            session.refresh(partial_event)
+            session.refresh(fill_event)
+
+        self.assertEqual(linked, 2)
+        self.assertEqual(partial_event.execution_id, execution_id)
+        self.assertEqual(fill_event.execution_id, execution_id)
+        self.assertEqual(execution.status, "filled")
+        self.assertEqual(execution.filled_qty, Decimal("1.00000000"))
+
     def test_repair_order_feed_execution_links_links_matching_lifecycle_rows(
         self,
     ) -> None:
