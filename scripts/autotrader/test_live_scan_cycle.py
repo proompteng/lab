@@ -858,7 +858,7 @@ class LiveScanCycleTest(unittest.TestCase):
             },
         )
         self.assertEqual(summary["bestCandidate"]["ticketId"], "ticket-amd")
-        self.assertEqual(summary["candidateSymbols"], ["AMD"])
+        self.assertEqual(summary["candidateSymbols"], ["AMD", "AVGO"])
 
     def test_decision_summary_quality_adjusts_scorecard_edge_by_loss_rate(self) -> None:
         summary = live_scan_cycle.decision_summary_for_scan(
@@ -1045,7 +1045,7 @@ class LiveScanCycleTest(unittest.TestCase):
             },
         )
 
-    def test_decision_summary_blocks_unproven_raw_edge_without_positive_scorecard(self) -> None:
+    def test_decision_summary_allows_bounded_exploratory_starter_without_scorecard(self) -> None:
         result = {
             "symbol": "AVGO",
             "setup_type": "vwap_reclaim",
@@ -1055,11 +1055,19 @@ class LiveScanCycleTest(unittest.TestCase):
             "support": "278.00",
             "resistance": "290.00",
         }
+        account = {
+            "account": {
+                "equity": "30000.00",
+                "buying_power": "120000.00",
+                "daytrading_buying_power": "120000.00",
+            }
+        }
         payload = live_scan_cycle.ticket_payload_for_scan_result(
             session_id="session-1",
             cycle=10,
             index=1,
             result=result,
+            account=account,
         )
         summary = live_scan_cycle.decision_summary_for_scan(
             cycle=10,
@@ -1070,16 +1078,22 @@ class LiveScanCycleTest(unittest.TestCase):
                     "ticketId": "ticket-avgo",
                 }
             ],
+            account=account,
         )
 
         assert payload is not None
-        self.assertEqual(payload["status"], "blocked")
-        self.assertEqual(payload["noTradeReason"], "positive_scorecard_edge_required")
-        self.assertEqual(summary["action"], "no_actionable_candidate")
-        self.assertEqual(summary["actionableCandidateCount"], 0)
-        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertEqual(payload["status"], "candidate")
+        self.assertIsNone(payload["noTradeReason"])
+        self.assertEqual(payload["riskDollars"], "30.00")
+        self.assertEqual(payload["plannedQuantity"], "15")
+        self.assertEqual(payload["brokerOrderPlan"]["riskDirective"]["source"], "exploratory_starter")
+        self.assertEqual(payload["brokerOrderPlan"]["riskDirective"]["mode"], "starter_probe_without_scorecard_edge")
+        self.assertEqual(payload["brokerOrderPlan"]["riskDirective"]["positionSizeReason"], "account_risk_budget_stop_distance")
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["actionableCandidateCount"], 1)
+        self.assertEqual(summary["blockedResultCount"], 0)
         self.assertEqual(summary["noTradeResultCount"], 0)
-        self.assertIsNone(summary["bestCandidate"])
+        self.assertEqual(summary["candidateSymbols"], ["AVGO"])
 
     def test_decision_summary_blocks_one_sample_positive_scorecard_edge(self) -> None:
         result = {
@@ -1321,12 +1335,65 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["action"], "no_actionable_candidate")
         self.assertEqual(summary["blockedResultCount"], 1)
 
-    def test_decision_summary_blocks_sub_two_r_candidates(self) -> None:
+    def test_decision_summary_allows_sub_two_r_exploratory_starter_with_synthetic_bracket(self) -> None:
         result = {
             "symbol": "GOOGL",
             "setup_type": "vwap_reclaim",
             "setup_grade": "B",
             "expected_r": "1.786",
+            "last": "364.10",
+        }
+        account = {
+            "account": {
+                "equity": "30000.00",
+                "buying_power": "120000.00",
+                "daytrading_buying_power": "120000.00",
+            }
+        }
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=7,
+            index=1,
+            result=result,
+            account=account,
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=7,
+            scan={"results": [result]},
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-7-1-GOOGL-vwap_reclaim-B",
+                    "ticketId": "ticket-googl",
+                }
+            ],
+            account=account,
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["status"], "candidate")
+        self.assertIsNone(payload["noTradeReason"])
+        self.assertEqual(payload["stopPrice"], "363.01")
+        self.assertEqual(payload["targetPrice"], "366.39")
+        actual_bracket_r = live_scan_cycle.decimal_value(payload["actualBracketR"])
+        self.assertIsNotNone(actual_bracket_r)
+        assert actual_bracket_r is not None
+        self.assertGreaterEqual(actual_bracket_r, live_scan_cycle.MIN_ACTIONABLE_BRACKET_R)
+        self.assertEqual(payload["riskDollars"], "30.00")
+        self.assertEqual(payload["plannedQuantity"], "27")
+        self.assertEqual(payload["brokerOrderPlan"]["executableBracket"]["stopSource"], "exploratory_synthetic_pct_stop")
+        self.assertEqual(payload["brokerOrderPlan"]["executableBracket"]["targetSource"], "exploratory_synthetic_r_target")
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["actionableCandidateCount"], 1)
+        self.assertEqual(summary["blockedResultCount"], 0)
+        self.assertEqual(summary["noTradeResultCount"], 0)
+        self.assertEqual(summary["candidateSymbols"], ["GOOGL"])
+
+    def test_decision_summary_blocks_below_exploratory_expected_r_candidates(self) -> None:
+        result = {
+            "symbol": "GOOGL",
+            "setup_type": "vwap_reclaim",
+            "setup_grade": "B",
+            "expected_r": "0.786",
             "last": "364.10",
         }
         payload = live_scan_cycle.ticket_payload_for_scan_result(
