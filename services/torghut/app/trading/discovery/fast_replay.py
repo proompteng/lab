@@ -618,7 +618,7 @@ class FastReplayPreviewResult:
                 "hpairs_clusterlob_ofi_prefilter": "deterministic bounded H-PAIRS candidate prefilter metadata only; never promotion authority",
                 "clusterlob_order_flow_feature_lane": "offline replay-tape/fixture ClusterLOB and horizon OFI features for preview ranking only",
                 "hawkes_event_time_excitation_replay_stress": "deterministic Hawkes-style event-time burst/self-excitation proxy from arXiv:2510.08085 and arXiv:2604.23961; preview ranking only",
-                "mpc_market_limit_execution_schedule_stress": "deterministic MPC-style schedule deviation/opportunity-cost/market-limit-mix stress from arXiv:2603.28898 and arXiv:2507.06345; preview ranking only",
+                "mpc_market_limit_execution_schedule_stress": "deterministic MPC-style schedule deviation/opportunity-cost/market-limit-mix and submission-latency fill-probability stress from arXiv:2603.28898, arXiv:2507.06345, and arXiv:2504.00846; preview ranking only",
                 "order_book_observability_feedback_stress": "deterministic order-book feedback/censored-trade and state-dependent spread-cost stress from arXiv:2605.19584 and arXiv:2507.09196; preview ranking only",
                 "markov_order_transition_latent_regime_stress": "deterministic Markov transition entropy/inertia plus latent rising-edge stress from arXiv:2502.07625 and arXiv:2604.20949; preview ranking only",
                 "order_flow_entropy_hmm_regime_stress": "deterministic OFI Markov entropy, asymmetric HMM-regime, and multi-scale volatility/intensity stress from SSRN:5315733, arXiv:2512.15720, and arXiv:2603.20456; entropy is not directional alpha proof; preview ranking only",
