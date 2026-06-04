@@ -12348,8 +12348,18 @@ class TestTradingPipeline(TestCase):
         )
         setattr(
             pipeline,
+            "_process_paper_route_materialized_decisions",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
             "_process_paper_route_target_source_decisions",
             lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_probe_retry_decisions",
+            Mock(side_effect=AssertionError("generic retry path should be skipped")),
         )
         setattr(
             pipeline,
@@ -12364,6 +12374,176 @@ class TestTradingPipeline(TestCase):
 
         pipeline.run_once()
 
+        self.assertEqual(ingestor.committed_batches, 1)
+
+    def test_run_once_skips_generic_retries_on_empty_batch_when_target_reserves_account(
+        self,
+    ) -> None:
+        ingestor = FakeIngestor([])
+        pipeline = object.__new__(SimpleTradingPipeline)
+        setattr(pipeline, "account_label", "TORGHUT_SIM")
+        setattr(pipeline, "session_factory", self.session_local)
+        setattr(pipeline, "state", TradingState())
+        setattr(pipeline, "ingestor", ingestor)
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        target_source = Mock()
+        retry = Mock(side_effect=AssertionError("generic retry path should be skipped"))
+        setattr(pipeline, "_label_mature_rejected_signal_outcome_events", lambda: None)
+        setattr(pipeline, "_prepare_run_once", lambda _session: [strategy])
+        setattr(
+            pipeline,
+            "_capture_runtime_window_account_snapshot_if_due",
+            lambda _session: None,
+        )
+        setattr(
+            pipeline,
+            "_warm_session_context_from_open",
+            lambda _session, *, strategies: None,
+        )
+        setattr(
+            pipeline,
+            "_bounded_paper_route_signal_scope",
+            lambda *_args, **_kwargs: None,
+        )
+        setattr(pipeline, "_record_ingest_window", lambda _batch: None)
+        setattr(pipeline, "_signal_ingest_unavailable", lambda _batch: False)
+        setattr(
+            pipeline,
+            "_prepare_batch_for_decisions",
+            lambda *_args, **_kwargs: True,
+        )
+        setattr(
+            pipeline,
+            "_build_run_context",
+            lambda _session: ({}, {}, [], {"AAPL", "AMZN"}),
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_probe_exit_decisions",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_materialized_decisions",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_target_source_decisions",
+            target_source,
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_probe_retry_decisions",
+            retry,
+        )
+        setattr(
+            pipeline,
+            "_paper_route_target_plan_reserves_account",
+            lambda *, allowed_symbols: True,
+        )
+
+        pipeline.run_once()
+
+        target_source.assert_called_once()
+        retry.assert_not_called()
+
+    def test_run_once_processes_generic_retries_after_regular_batch_when_unreserved(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={"price": Decimal("100")},
+            timeframe="1Min",
+        )
+        ingestor = FakeIngestor([signal])
+        pipeline = object.__new__(SimpleTradingPipeline)
+        setattr(pipeline, "account_label", "TORGHUT_SIM")
+        setattr(pipeline, "session_factory", self.session_local)
+        setattr(pipeline, "state", TradingState())
+        setattr(pipeline, "ingestor", ingestor)
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        retry = Mock()
+        setattr(pipeline, "_label_mature_rejected_signal_outcome_events", lambda: None)
+        setattr(pipeline, "_prepare_run_once", lambda _session: [strategy])
+        setattr(
+            pipeline,
+            "_capture_runtime_window_account_snapshot_if_due",
+            lambda _session: None,
+        )
+        setattr(
+            pipeline,
+            "_warm_session_context_from_open",
+            lambda _session, *, strategies: None,
+        )
+        setattr(
+            pipeline,
+            "_bounded_paper_route_signal_scope",
+            lambda *_args, **_kwargs: None,
+        )
+        setattr(pipeline, "_record_ingest_window", lambda _batch: None)
+        setattr(
+            pipeline,
+            "_build_run_context",
+            lambda _session: ({}, {}, [], {"NVDA"}),
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_probe_exit_decisions",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_materialized_decisions",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_target_source_decisions",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_paper_route_target_plan_reserves_account",
+            lambda *, allowed_symbols: False,
+        )
+        setattr(
+            pipeline,
+            "_quality_gate_signals",
+            lambda *, signals, strategies, allowed_symbols: list(signals),
+        )
+        setattr(
+            pipeline,
+            "_prepare_batch_for_decisions",
+            lambda *_args, **_kwargs: True,
+        )
+        setattr(
+            pipeline,
+            "_process_batch_signals",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_probe_retry_decisions",
+            retry,
+        )
+
+        pipeline.run_once()
+
+        retry.assert_called_once()
         self.assertEqual(ingestor.committed_batches, 1)
 
     def test_run_once_blocks_bounded_target_decisions_when_signal_ingest_times_out(
@@ -12454,6 +12634,11 @@ class TestTradingPipeline(TestCase):
                 SimpleTradingPipeline,
                 "_external_paper_route_target_probe_symbols_cached",
                 return_value=({"AAPL", "AMZN"}, None, [target]),
+            ),
+            patch.object(
+                pipeline,
+                "_process_paper_route_probe_retry_decisions",
+                side_effect=AssertionError("generic retry path should be skipped"),
             ),
             patch(
                 "app.trading.scheduler.simple_pipeline.trading_now", return_value=now
