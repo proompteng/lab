@@ -132,6 +132,165 @@ def test_promotion_ready_bundle_blocks_missing_market_impact_stress() -> None:
     assert "market_impact_liquidity_evidence_missing" in blockers
 
 
+def test_promotion_ready_bundle_blocks_missing_order_type_tca_evidence() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-order-type-gap",
+        candidate_id="candidate-order-type-gap",
+        candidate_spec_id="spec-order-type-gap",
+        dataset_snapshot_id="snapshot-order-type-gap",
+        feature_spec_hash="feature-order-type-gap",
+        code_commit="commit-order-type-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_market_limit_order_type_validation": True,
+            "market_limit_order_mix_evidence_present": True,
+            "market_limit_order_mix_sample_count": 12,
+            "market_limit_order_mix_passed": False,
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "market_limit_order_mix_missing_or_failed" in blockers
+    assert "route_tca_evidence_missing" in blockers
+    assert "order_type_ablation_artifact_missing" in blockers
+    assert "order_type_ablation_sample_count_zero" in blockers
+    assert "order_type_ablation_missing_or_failed" in blockers
+    assert "limit_fill_probability_evidence_missing" in blockers
+    assert "limit_fill_probability_sample_count_zero" in blockers
+    assert "price_improvement_evidence_missing" in blockers
+    assert "execution_shortfall_evidence_missing" in blockers
+    assert "opportunity_cost_evidence_missing" in blockers
+
+
+def test_promotion_ready_bundle_infers_order_type_validation_from_mix_sample() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-order-type-sample-gap",
+        candidate_id="candidate-order-type-sample-gap",
+        candidate_spec_id="spec-order-type-sample-gap",
+        dataset_snapshot_id="snapshot-order-type-sample-gap",
+        feature_spec_hash="feature-order-type-sample-gap",
+        code_commit="commit-order-type-sample-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "market_limit_order_mix_sample_count": 7,
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "market_limit_order_mix_evidence_missing" in blockers
+    assert "market_limit_order_mix_sample_count_zero" not in blockers
+    assert "route_tca_evidence_missing" in blockers
+
+
+def test_promotion_ready_bundle_infers_order_type_validation_from_ablation_ref() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-order-type-ablation-ref-gap",
+        candidate_id="candidate-order-type-ablation-ref-gap",
+        candidate_spec_id="spec-order-type-ablation-ref-gap",
+        dataset_snapshot_id="snapshot-order-type-ablation-ref-gap",
+        feature_spec_hash="feature-order-type-ablation-ref-gap",
+        code_commit="commit-order-type-ablation-ref-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "order_type_ablation_artifact_ref": "artifact://order-type-ablation",
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "market_limit_order_mix_evidence_missing" in blockers
+    assert "market_limit_order_mix_sample_count_zero" in blockers
+    assert "order_type_ablation_artifact_missing" not in blockers
+
+
+def test_promotion_ready_bundle_accepts_materialized_order_type_tca_evidence() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-order-type-ok",
+        candidate_id="candidate-order-type-ok",
+        candidate_spec_id="spec-order-type-ok",
+        dataset_snapshot_id="snapshot-order-type-ok",
+        feature_spec_hash="feature-order-type-ok",
+        code_commit="commit-order-type-ok",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_market_limit_order_type_validation": True,
+            "market_limit_order_mix_evidence_present": True,
+            "market_limit_order_mix_sample_count": 24,
+            "market_limit_order_mix_passed": True,
+            "route_tca_artifact_ref": "artifact://route-tca",
+            "order_type_ablation_artifact_ref": "artifact://order-type-ablation",
+            "order_type_ablation_sample_count": 24,
+            "order_type_ablation_passed": True,
+            "limit_fill_probability_evidence_present": True,
+            "limit_fill_probability_sample_count": 12,
+            "price_improvement_evidence_present": True,
+            "execution_shortfall_evidence_present": True,
+            "opportunity_cost_evidence_present": True,
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "market_limit_order_mix_missing_or_failed" not in blockers
+    assert "route_tca_evidence_missing" not in blockers
+    assert "order_type_ablation_artifact_missing" not in blockers
+    assert "order_type_ablation_sample_count_zero" not in blockers
+    assert "order_type_ablation_missing_or_failed" not in blockers
+    assert "limit_fill_probability_evidence_missing" not in blockers
+    assert "limit_fill_probability_sample_count_zero" not in blockers
+    assert "price_improvement_evidence_missing" not in blockers
+    assert "execution_shortfall_evidence_missing" not in blockers
+    assert "opportunity_cost_evidence_missing" not in blockers
+
+
 def test_promotion_ready_bundle_blocks_missing_implementation_risk_parity() -> None:
     bundle = CandidateEvidenceBundle(
         schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
@@ -260,6 +419,52 @@ def test_promotion_ready_bundle_blocks_required_uncertainty_and_tail_risk_gaps()
     assert "conformal_tail_risk_failed" in blockers
     assert "conformal_tail_risk_sample_count_zero" in blockers
     assert "conformal_tail_risk_adjusted_net_pnl_non_positive" in blockers
+
+
+def test_frontier_candidate_preserves_order_type_tca_fields() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-order-type-preserved",
+        candidate={
+            "candidate_id": "candidate-order-type-preserved",
+            "objective_scorecard": _promotion_quality_scorecard(),
+            "requires_market_limit_order_type_validation": True,
+            "market_limit_order_mix_sample_count": 24,
+            "market_limit_order_mix_evidence_present": True,
+            "market_limit_order_mix_passed": True,
+            "route_tca_artifact_ref": "artifact://route-tca",
+            "order_type_ablation_artifact_ref": "artifact://order-type-ablation",
+            "order_type_ablation_sample_count": 24,
+            "order_type_ablation_passed": True,
+            "limit_fill_probability_sample_count": 12,
+            "limit_fill_probability_evidence_present": True,
+            "price_improvement_evidence_present": True,
+            "execution_shortfall_evidence_present": True,
+            "opportunity_cost_evidence_present": True,
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-order-type-preserved",
+        result_path="artifact://replay",
+        code_commit="commit-order-type-preserved",
+    )
+
+    assert (
+        bundle.objective_scorecard["requires_market_limit_order_type_validation"]
+        is True
+    )
+    assert bundle.objective_scorecard["order_type_ablation_sample_count"] == 24
+    assert bundle.objective_scorecard["order_type_ablation_passed"] is True
+    assert (
+        bundle.objective_scorecard["route_tca_artifact_ref"] == "artifact://route-tca"
+    )
+    blockers = evidence_bundle_blockers(bundle)
+    assert "order_type_ablation_artifact_missing" not in blockers
+    assert "price_improvement_evidence_missing" not in blockers
+    assert "execution_shortfall_evidence_missing" not in blockers
 
 
 def test_frontier_candidate_preserves_implementation_risk_parity_fields() -> None:

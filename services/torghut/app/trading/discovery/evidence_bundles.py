@@ -39,6 +39,16 @@ REPLAY_ACTIVITY_SCORECARD_KEYS = (
     "market_limit_order_mix_passed",
     "limit_fill_probability_sample_count",
     "limit_fill_probability_evidence_present",
+    "requires_market_limit_order_type_validation",
+    "market_limit_order_type_validation_required",
+    "order_type_ablation_required",
+    "order_type_ablation_sample_count",
+    "order_type_ablation_passed",
+    "market_limit_execution_policy_passed",
+    "order_type_ablation_selected_order_type",
+    "order_type_opportunity_cost_bps",
+    "order_type_opportunity_cost_evidence_present",
+    "order_type_execution_source_markers",
     "route_tca_artifact_ref",
     "route_tca_artifact_refs",
     "route_tca_evidence_present",
@@ -1390,6 +1400,87 @@ def _has_artifact_ref(scorecard: Mapping[str, Any], *keys: str) -> bool:
     return False
 
 
+def _order_type_execution_validation_required(scorecard: Mapping[str, Any]) -> bool:
+    if any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_market_limit_order_type_validation",
+            "market_limit_order_type_validation_required",
+            "order_type_ablation_required",
+        )
+    ):
+        return True
+    if _int(scorecard.get("market_limit_order_mix_sample_count")) > 0:
+        return True
+    if _has_artifact_ref(
+        scorecard,
+        "order_type_ablation_artifact_ref",
+        "order_type_ablation_artifact_refs",
+        "market_limit_order_mix_artifact_ref",
+        "market_limit_order_mix_artifact_refs",
+    ):
+        return True
+    source_markers = {
+        marker.lower()
+        for marker in _string_list(scorecard.get("order_type_execution_source_markers"))
+    }
+    return bool(
+        source_markers
+        & {
+            "retail_limit_orders_rof_rfaf049_2025",
+            "retail_order_flow_segmentation_ssrn_6414558_2026",
+            "payment_for_order_flow_ssrn_6704839_2026",
+            "mpc_execution_schedule_arxiv_2603_28898_2026",
+        }
+    )
+
+
+def _order_type_execution_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    if not _order_type_execution_validation_required(scorecard):
+        return []
+
+    blockers: list[str] = []
+    if not _bool(scorecard.get("market_limit_order_mix_evidence_present")):
+        blockers.append("market_limit_order_mix_evidence_missing")
+    if _int(scorecard.get("market_limit_order_mix_sample_count")) <= 0:
+        blockers.append("market_limit_order_mix_sample_count_zero")
+    if not (
+        _bool(scorecard.get("market_limit_order_mix_passed"))
+        or _bool(scorecard.get("market_limit_execution_policy_passed"))
+    ):
+        blockers.append("market_limit_order_mix_missing_or_failed")
+    if not _has_artifact_ref(
+        scorecard,
+        "route_tca_artifact_ref",
+        "route_tca_artifact_refs",
+    ) and not _bool(scorecard.get("route_tca_evidence_present")):
+        blockers.append("route_tca_evidence_missing")
+    if not _has_artifact_ref(
+        scorecard,
+        "order_type_ablation_artifact_ref",
+        "order_type_ablation_artifact_refs",
+    ):
+        blockers.append("order_type_ablation_artifact_missing")
+    if _int(scorecard.get("order_type_ablation_sample_count")) <= 0:
+        blockers.append("order_type_ablation_sample_count_zero")
+    if not _bool(scorecard.get("order_type_ablation_passed")):
+        blockers.append("order_type_ablation_missing_or_failed")
+    if not _bool(scorecard.get("limit_fill_probability_evidence_present")):
+        blockers.append("limit_fill_probability_evidence_missing")
+    if _int(scorecard.get("limit_fill_probability_sample_count")) <= 0:
+        blockers.append("limit_fill_probability_sample_count_zero")
+    if not _bool(scorecard.get("price_improvement_evidence_present")):
+        blockers.append("price_improvement_evidence_missing")
+    if not _bool(scorecard.get("execution_shortfall_evidence_present")):
+        blockers.append("execution_shortfall_evidence_missing")
+    if not (
+        _bool(scorecard.get("opportunity_cost_evidence_present"))
+        or _bool(scorecard.get("order_type_opportunity_cost_evidence_present"))
+    ):
+        blockers.append("opportunity_cost_evidence_missing")
+    return blockers
+
+
 def _market_impact_stress_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
     market_impact_passed = _bool(
@@ -1585,6 +1676,7 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
             )
         )
         blockers.extend(_market_impact_stress_blockers(scorecard))
+        blockers.extend(_order_type_execution_blockers(scorecard))
         blockers.extend(_implementation_uncertainty_blockers(scorecard))
         blockers.extend(_implementation_risk_backtest_stability_blockers(scorecard))
         blockers.extend(_conformal_tail_risk_blockers(scorecard))
