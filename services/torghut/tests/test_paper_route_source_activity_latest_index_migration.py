@@ -48,11 +48,13 @@ class TestPaperRouteSourceActivityLatestIndexMigration(TestCase):
 
         with (
             patch.object(module.op, "get_bind", return_value=object()),
+            patch.object(module.op, "get_context") as get_context,
             patch.object(module, "inspect", return_value=inspector),
             patch.object(module.op, "create_index") as create_index,
         ):
             module.upgrade()
 
+        get_context.return_value.autocommit_block.assert_called_once_with()
         create_index.assert_called_once_with(
             "ix_trade_decisions_account_strategy_symbol_created",
             "trade_decisions",
@@ -62,6 +64,7 @@ class TestPaperRouteSourceActivityLatestIndexMigration(TestCase):
                 "symbol",
                 "created_at",
             ],
+            postgresql_concurrently=True,
         )
 
     def test_downgrade_drops_latest_source_activity_index(self) -> None:
@@ -72,12 +75,15 @@ class TestPaperRouteSourceActivityLatestIndexMigration(TestCase):
 
         with (
             patch.object(module.op, "get_bind", return_value=object()),
+            patch.object(module.op, "get_context") as get_context,
             patch.object(module, "inspect", return_value=inspector),
             patch.object(module.op, "drop_index") as drop_index,
         ):
             module.downgrade()
 
+        get_context.return_value.autocommit_block.assert_called_once_with()
         drop_index.assert_called_once_with(
             "ix_trade_decisions_account_strategy_symbol_created",
             table_name="trade_decisions",
+            postgresql_concurrently=True,
         )
