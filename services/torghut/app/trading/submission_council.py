@@ -59,6 +59,7 @@ from .runtime_ledger_source_authority import (
     RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
     RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
     runtime_ledger_promotion_source_authority_blockers,
+    runtime_ledger_promotion_source_authority_present,
 )
 from .runtime_strategy_resolution import (
     derived_strategy_name_from_strategy_id,
@@ -1579,7 +1580,7 @@ def _runtime_ledger_repair_reason_codes(
 
 def _runtime_ledger_repair_score(
     candidate: Mapping[str, object],
-) -> tuple[int, int, int, int, int, Decimal, Decimal, Decimal, float]:
+) -> tuple[int, int, int, int, int, int, int, Decimal, Decimal, Decimal, float]:
     reason_codes = set(
         str(reason).strip()
         for reason in cast(Sequence[object], candidate.get("reason_codes") or [])
@@ -1594,8 +1595,25 @@ def _runtime_ledger_repair_score(
     ) or Decimal("0")
     ended_at = _coerce_aware_datetime(candidate.get("bucket_ended_at"))
     observed_stage = _safe_text(candidate.get("observed_stage"))
+    payload: dict[str, object] = {}
+    raw_bucket = candidate.get("runtime_ledger_bucket")
+    if isinstance(raw_bucket, Mapping):
+        payload.update(cast(Mapping[str, object], raw_bucket))
+    payload.update(
+        {
+            str(key): value
+            for key, value in candidate.items()
+            if key != "runtime_ledger_bucket"
+        }
+    )
+    source_authority_present = int(
+        runtime_ledger_promotion_source_authority_present(payload)
+    )
+    clear_live_candidate = observed_stage == "live" and not reason_codes
     return (
         (
+            2 if clear_live_candidate else source_authority_present,
+            source_authority_present,
             int(filled_notional > 0),
             int(_safe_int(candidate.get("fill_count")) > 0),
             int(_safe_int(candidate.get("closed_trade_count")) > 0),
@@ -1606,8 +1624,10 @@ def _runtime_ledger_repair_score(
             filled_notional,
             ended_at.timestamp() if ended_at is not None else 0.0,
         )
-        if observed_stage != "live" or reason_codes
+        if not clear_live_candidate
         else (
+            2,
+            source_authority_present,
             2,
             2,
             2,
