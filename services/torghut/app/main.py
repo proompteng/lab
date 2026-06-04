@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, Response
 import inngest
 from inngest.fast_api import serve as inngest_fastapi_serve
 from sqlalchemy import bindparam, func, select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from urllib.parse import urlencode, urlsplit
 
@@ -228,6 +228,23 @@ _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = ThreadPoolExecutor(
     thread_name_prefix="torghut-health-surface",
 )
 _TRADING_HEALTH_SURFACE_EVALUATION_LOCK = Lock()
+_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = 3
+_RETRYABLE_TCA_RECOMPUTE_SQLSTATES = frozenset({"40P01", "40001"})
+
+
+def _retryable_tca_recompute_error(exc: BaseException) -> bool:
+    if not isinstance(exc, OperationalError):
+        return False
+    original = getattr(exc, "orig", None)
+    sqlstate = str(getattr(original, "sqlstate", "") or "") or str(
+        getattr(original, "pgcode", "") or ""
+    )
+    if sqlstate in _RETRYABLE_TCA_RECOMPUTE_SQLSTATES:
+        return True
+    message = str(exc).lower()
+    return "deadlock detected" in message or "serialization failure" in message
+
+
 _TRADING_HEALTH_SURFACE_EVALUATIONS: dict[
     str,
     Future[tuple[dict[str, object], int]],
@@ -3119,28 +3136,82 @@ def trading_profit_freshness_zero_notional_repair(
     )
 
     def run_tca_recompute(_repair: Mapping[str, Any]) -> Mapping[str, object]:
-        try:
-            with SessionLocal() as session:
-                result = refresh_execution_tca_metrics(
-                    session,
-                    account_label=settings.trading_account_label,
-                    limit=tca_limit,
-                    dry_run=False,
-                )
-                session.commit()
-        except Exception as exc:  # pragma: no cover - fail-closed receipt path
-            logger.exception("Zero-notional route/TCA repair failed")
+        retry_reasons: list[str] = []
+        result: Mapping[str, object] = {}
+        for attempt in range(1, _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS + 1):
+            try:
+                with SessionLocal() as session:
+                    result = refresh_execution_tca_metrics(
+                        session,
+                        account_label=settings.trading_account_label,
+                        limit=tca_limit,
+                        dry_run=False,
+                    )
+                    session.commit()
+            except OperationalError as exc:
+                if (
+                    attempt < _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
+                    and _retryable_tca_recompute_error(exc)
+                ):
+                    retry_reason = f"route_tca_recompute_retryable:{type(exc).__name__}"
+                    retry_reasons.append(retry_reason)
+                    logger.warning(
+                        "Zero-notional route/TCA repair retrying after retryable database error attempt=%s max_attempts=%s",
+                        attempt,
+                        _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
+                        exc_info=True,
+                        extra={
+                            "zero_notional_tca_recompute_attempt": attempt,
+                            "zero_notional_tca_recompute_max_attempts": (
+                                _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
+                            ),
+                            "zero_notional_tca_recompute_retry_reason": retry_reason,
+                        },
+                    )
+                    time.sleep(min(0.25 * attempt, 1.0))
+                    continue
+                logger.exception("Zero-notional route/TCA repair failed")
+                return {
+                    "execution_state": "runner_failed",
+                    "command_exit_code": 1,
+                    "blocked_reasons": [
+                        f"route_tca_recompute_failed:{type(exc).__name__}",
+                        *retry_reasons,
+                    ],
+                    "after_refs": [],
+                    "retry_attempts": len(retry_reasons),
+                }
+            except Exception as exc:  # pragma: no cover - fail-closed receipt path
+                logger.exception("Zero-notional route/TCA repair failed")
+                return {
+                    "execution_state": "runner_failed",
+                    "command_exit_code": 1,
+                    "blocked_reasons": [
+                        f"route_tca_recompute_failed:{type(exc).__name__}",
+                        *retry_reasons,
+                    ],
+                    "after_refs": [],
+                    "retry_attempts": len(retry_reasons),
+                }
+            break
+        else:  # pragma: no cover - defensive; loop always returns or breaks.
             return {
                 "execution_state": "runner_failed",
                 "command_exit_code": 1,
-                "blocked_reasons": [f"route_tca_recompute_failed:{type(exc).__name__}"],
+                "blocked_reasons": [
+                    "route_tca_recompute_failed:retry_attempts_exhausted",
+                    *retry_reasons,
+                ],
                 "after_refs": [],
+                "retry_attempts": len(retry_reasons),
             }
         return {
             "execution_state": "executed",
             "command_exit_code": 0,
             "after_refs": ["execution_tca_metrics"],
             "result": result,
+            "retry_attempts": len(retry_reasons),
+            "retry_reasons": retry_reasons,
         }
 
     def run_drift_check_replay(repair: Mapping[str, Any]) -> Mapping[str, object]:

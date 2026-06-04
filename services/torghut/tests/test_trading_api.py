@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -7277,6 +7277,76 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["freshness_citation_state"], "cited")
         self.assertEqual(payload["freshness_dimension_id"], "tca")
         self.assertFalse(payload["order_submission_enabled"])
+
+    def test_zero_notional_repair_endpoint_retries_route_tca_deadlock(self) -> None:
+        class _Deadlock:
+            sqlstate = "40P01"
+
+            def __str__(self) -> str:
+                return "deadlock detected"
+
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "freshness_carry_ledger": _freshness_carry_ledger_for_test("tca"),
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:tca",
+                        "candidate_id": "candidate-b",
+                        "hypothesis_id": "H-AMZN",
+                        "blocked_dimension": "tca_fill_quality",
+                        "zero_notional_action": "recompute_route_tca_and_fill_quality",
+                        "before_refs": ["execution_tca:AMZN"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+
+        with (
+            patch("app.main.trading_status", return_value=status_payload),
+            patch("app.main.time.sleep") as sleep,
+            patch(
+                "app.main.refresh_execution_tca_metrics",
+                side_effect=[
+                    OperationalError("UPDATE execution_tca_metrics", {}, _Deadlock()),
+                    {
+                        "selected": 1,
+                        "refreshed": 1,
+                        "dry_run": False,
+                        "limit": 250,
+                        "account_label": "paper",
+                    },
+                ],
+            ) as refresh,
+        ):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair"
+                "?action=recompute_route_tca_and_fill_quality&execute=true"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "executed")
+        self.assertEqual(payload["command_exit_code"], 0)
+        self.assertEqual(payload["after_refs"], ["execution_tca_metrics"])
+        self.assertEqual(payload["runner_result"]["retry_attempts"], 1)
+        self.assertEqual(
+            payload["runner_result"]["retry_reasons"],
+            ["route_tca_recompute_retryable:OperationalError"],
+        )
+        self.assertFalse(payload["order_submission_enabled"])
+        self.assertEqual(refresh.call_count, 2)
+        sleep.assert_called_once()
 
     def test_zero_notional_repair_endpoint_executes_drift_replay(self) -> None:
         status_payload = {
