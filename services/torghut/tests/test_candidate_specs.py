@@ -1861,6 +1861,115 @@ class TestCandidateSpecs(TestCase):
             "double_selection_factor_screen_is_prefilter_not_promotion_proof",
         )
 
+    def test_attention_factor_stat_arb_claim_adds_pairs_grid(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-attention-factor-stat-arb-pairs",
+            claims=[
+                {
+                    "claim_id": "attention-factor-stat-arb-pair-selection",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Attention Factors for statistical arbitrage jointly identify "
+                        "similar assets, residual portfolios, weak factors, and "
+                        "mispricing signals. Hierarchical pair trading separates pair "
+                        "selection from low-level execution with trajectory-level and "
+                        "episode-level feedback."
+                    ),
+                    "data_requirements": [
+                        "point_in_time_factor_embeddings",
+                        "attention_factor_residual_portfolios",
+                        "similar_asset_pair_selection_trace",
+                        "mispricing_signal_trace",
+                        "pair_selection_execution_ablation",
+                        "trajectory_episode_feedback_log",
+                        "transaction_cost_stress",
+                        "route_tca",
+                    ],
+                    "confidence": "0.79",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        first = specs[0]
+        self.assertEqual(first.family_template_id, "microbar_cross_sectional_pairs_v1")
+        self.assertIn(
+            "attention_factor_stat_arb_pairs",
+            first.feature_contract["family_selection"]["reasons"],
+        )
+        self.assertIn(
+            "attention_factor_stat_arb_pairs_grid",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        grid = first.parameter_space["attention_factor_stat_arb_pairs_grid"]
+        self.assertEqual(
+            grid["schema_version"],
+            "torghut.attention-factor-stat-arb-pairs-grid.v1",
+        )
+        self.assertEqual(
+            grid["source_ids"],
+            ["arxiv-2510.11616", "arxiv-2605.01954"],
+        )
+        self.assertIn(
+            "weak_factor_retention_quantile_grid",
+            grid["candidate_search_inputs"],
+        )
+        self.assertIn(
+            "hierarchical_feedback_ranker",
+            grid["candidate_search_inputs"]["pair_selector_policy_grid"],
+        )
+        self.assertIn("mispricing_zscore", grid["stress_inputs_required"])
+        self.assertIn(
+            "pair_selector_execution_ablation_delta_bps",
+            grid["diagnostics_required"],
+        )
+        self.assertFalse(grid["proof_neutrality"]["promotion_authority"])
+        self.assertTrue(
+            grid["proof_neutrality"][
+                "rejects_llm_pair_selection_as_promotion_authority"
+            ]
+        )
+        self.assertTrue(
+            first.hard_vetoes["required_attention_factor_stat_arb_pairs_grid"]
+        )
+        self.assertTrue(first.hard_vetoes["required_point_in_time_factor_embeddings"])
+        self.assertEqual(
+            first.hard_vetoes["required_max_best_pair_contribution_share"], "0.35"
+        )
+        self.assertTrue(
+            first.promotion_contract["requires_attention_factor_stat_arb_pairs_grid"]
+        )
+        self.assertTrue(
+            first.promotion_contract[
+                "rejects_attention_factor_backtest_as_profit_proof"
+            ]
+        )
+        self.assertEqual(
+            first.strategy_overrides["params"]["stat_arb_factor_profile"],
+            "attention_factor_residual",
+        )
+        self.assertEqual(
+            first.strategy_overrides["params"]["llm_pair_selection_authority"],
+            "disabled_candidate_only",
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        contract = next(
+            item
+            for item in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if item["overlay_id"] == "attention_factor_stat_arb_pairs_grid"
+        )
+        self.assertEqual(contract["source_papers"][0]["source_id"], "arxiv-2510.11616")
+        self.assertEqual(
+            contract["rank_metric"],
+            "post_cost_net_pnl_after_attention_factor_pair_ablation_stress",
+        )
+        self.assertIn("runtime_ledger", contract["required_evidence"])
+
     def test_validation_only_lob_stress_does_not_portfolio_fanout(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-tlob-validation-only",

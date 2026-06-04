@@ -4642,6 +4642,174 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "attention factors",
+            "attention factor",
+            "attention_factor",
+            "conditional latent factor",
+            "conditional latent factors",
+            "weak factors",
+            "residual portfolio",
+            "residual portfolios",
+            "statistical arbitrage",
+            "stat arb",
+            "stat-arb",
+            "mispricing",
+            "similar assets",
+            "jointly identify similar assets",
+            "hierarchical pair trading",
+            "hierarchical pairs trading",
+            "pair selector",
+            "pair selection",
+            "language-driven hierarchical reinforcement learning",
+            "trajectory-level feedback",
+            "episode-level feedback",
+            "prompt updates",
+            "delayed feedback",
+        )
+    ):
+        overlay_ids.append("attention_factor_stat_arb_pairs_grid")
+        overlay_contracts.append(
+            {
+                "overlay_id": "attention_factor_stat_arb_pairs_grid",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2510.11616",
+                        "url": "https://arxiv.org/abs/2510.11616",
+                        "title": "Attention Factors for Statistical Arbitrage",
+                        "mechanism": (
+                            "joint_factor_similarity_mispricing_and_after_cost_"
+                            "stat_arb_policy_search"
+                        ),
+                    },
+                    {
+                        "source_id": "arxiv-2605.01954",
+                        "url": "https://arxiv.org/abs/2605.01954",
+                        "title": (
+                            "Moira: Language-driven Hierarchical Reinforcement "
+                            "Learning for Pair Trading"
+                        ),
+                        "mechanism": (
+                            "separate_pair_selection_abstraction_from_low_level_"
+                            "execution_with_episode_feedback_audits"
+                        ),
+                    },
+                ],
+                "required_evidence": [
+                    "point_in_time_factor_embeddings",
+                    "attention_factor_residual_portfolios",
+                    "similar_asset_pair_selection_trace",
+                    "mispricing_signal_trace",
+                    "pair_selection_execution_ablation",
+                    "trajectory_episode_feedback_log",
+                    "transaction_cost_stress",
+                    "walk_forward_replay",
+                    "post_cost_net_pnl",
+                    "route_tca",
+                    "runtime_ledger",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_attention_factor_pair_ablation_stress"
+                ),
+                "evidence_policy": (
+                    "attention_factor_pairs_grid_is_candidate_input_only_and_"
+                    "requires_point_in_time_replay_route_tca_runtime_ledger_proof"
+                ),
+            }
+        )
+        parameter_space["attention_factor_stat_arb_pairs_grid"] = {
+            "schema_version": "torghut.attention-factor-stat-arb-pairs-grid.v1",
+            "source_ids": ["arxiv-2510.11616", "arxiv-2605.01954"],
+            "candidate_search_inputs": {
+                "factor_embedding_family_grid": [
+                    "sector_industry_one_hot",
+                    "fundamental_characteristic_embedding",
+                    "price_volume_microstructure_embedding",
+                ],
+                "attention_factor_count_grid": ["4", "8", "16", "32"],
+                "weak_factor_retention_quantile_grid": ["0.50", "0.70", "0.90"],
+                "residual_signal_model_grid": [
+                    "zscore_reversion",
+                    "temporal_cnn",
+                    "sequence_transformer",
+                ],
+                "pair_selector_policy_grid": [
+                    "nearest_residual_factor",
+                    "attention_similarity_topk",
+                    "hierarchical_feedback_ranker",
+                ],
+                "pair_top_k_grid": ["2", "4", "8"],
+                "entry_mispricing_zscore_grid": ["1.5", "2.0", "2.5"],
+                "exit_mispricing_zscore_grid": ["0.0", "0.5", "1.0"],
+                "pair_leg_hold_seconds_grid": ["900", "1800", "3600", "7200"],
+                "transaction_cost_buffer_bps_grid": ["2", "4", "8"],
+            },
+            "stress_inputs_required": [
+                "point_in_time_factor_features",
+                "factor_embedding_snapshot_id",
+                "residual_portfolio_returns",
+                "pair_similarity_score",
+                "mispricing_zscore",
+                "pair_leg_order_flow",
+                "execution_shortfall_bps",
+                "route_tca_bps",
+                "runtime_ledger_post_cost_pnl",
+            ],
+            "diagnostics_required": [
+                "pair_selection_turnover",
+                "factor_residual_leakage_check",
+                "weak_factor_ablation_delta_bps",
+                "pair_selector_execution_ablation_delta_bps",
+                "train_holdout_pair_overlap_ratio",
+                "best_pair_contribution_share",
+                "episode_feedback_replay_trace_coverage",
+            ],
+            "proof_neutrality": {
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "requires_point_in_time_features": True,
+                "requires_walk_forward_replay": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_llm_pair_selection_as_promotion_authority": True,
+                "rejects_attention_factor_backtest_as_profit_proof": True,
+                "rejects_textual_feedback_as_runtime_ledger_authority": True,
+            },
+        }
+        hard_vetoes.update(
+            {
+                "required_attention_factor_stat_arb_pairs_grid": True,
+                "required_point_in_time_factor_embeddings": True,
+                "required_attention_factor_residual_portfolios": True,
+                "required_similar_asset_pair_selection_trace": True,
+                "required_mispricing_signal_trace": True,
+                "required_pair_selection_execution_ablation": True,
+                "required_transaction_cost_stress": True,
+                "required_walk_forward_replay": True,
+                "required_max_best_pair_contribution_share": "0.35",
+                "required_max_train_holdout_pair_overlap_ratio": "0.50",
+                "required_min_episode_feedback_trace_coverage": "0.90",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_attention_factor_stat_arb_pairs_grid": True,
+                "requires_point_in_time_factor_embeddings": True,
+                "requires_attention_factor_residual_portfolios": True,
+                "requires_pair_selection_execution_ablation": True,
+                "requires_transaction_cost_stress": True,
+                "requires_walk_forward_replay": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_llm_pair_selection_as_promotion_authority": True,
+                "rejects_attention_factor_backtest_as_profit_proof": True,
+                "pairs_policy": "attention_factor_stat_arb_validation_only",
+            }
+        )
+
+    if has_any(
+        (
             "non-parametric bootstrap",
             "nonparametric bootstrap",
             "bootstrap robust optimization",
@@ -5780,6 +5948,7 @@ def _apply_mechanism_overlay_strategy_params(
             "crumbling_quote_liquidity_erosion",
             "friction_aware_regime_conditioned_policy",
             "multi_asset_cross_impact_execution_grid",
+            "attention_factor_stat_arb_pairs_grid",
         }
         & overlay_ids
     ):
@@ -5804,6 +5973,10 @@ def _apply_mechanism_overlay_strategy_params(
         )
         params.setdefault("cross_impact_search_scope", "pair_leg_execution_cost")
         params.setdefault("cross_hedge_live_authority", "disabled_candidate_only")
+    if "attention_factor_stat_arb_pairs_grid" in overlay_ids:
+        params.setdefault("stat_arb_factor_profile", "attention_factor_residual")
+        params.setdefault("pair_selection_scope", "candidate_replay_only")
+        params.setdefault("llm_pair_selection_authority", "disabled_candidate_only")
     next_overrides["params"] = params
     return next_overrides
 
@@ -6189,6 +6362,37 @@ def _family_scores_for_hypothesis(
             "constrained_factor_search",
         )
         bump("intraday_tsmom_v2", 3, "constrained_factor_search")
+    if has_any(
+        (
+            "attention factors",
+            "attention factor",
+            "conditional latent factor",
+            "conditional latent factors",
+            "weak factors",
+            "residual portfolio",
+            "residual portfolios",
+            "statistical arbitrage",
+            "stat arb",
+            "stat-arb",
+            "mispricing",
+            "similar assets",
+            "hierarchical pair trading",
+            "hierarchical pairs trading",
+            "pair selector",
+            "pair selection",
+        )
+    ):
+        bump(
+            "microbar_cross_sectional_pairs_v1",
+            9,
+            "attention_factor_stat_arb_pairs",
+        )
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            4,
+            "attention_factor_stat_arb_pairs",
+        )
+        bump("intraday_tsmom_v2", 2, "attention_factor_stat_arb_pairs")
     if has_any(("momentum", "trend", "pullback", "trend persistence")):
         bump("momentum_pullback_v1", 5, "momentum_or_pullback")
         bump("intraday_tsmom_v2", 4, "momentum_or_pullback")
