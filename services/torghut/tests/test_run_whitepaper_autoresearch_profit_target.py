@@ -6792,7 +6792,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "net_pnl_per_day": "999",
                         "post_impact_net_pnl_per_day": "610",
                         "source_markers": [
-                            "realistic_market_impact_arxiv_2603_29086_2026"
+                            "double_square_root_impact_arxiv_2502_16246_2025",
+                            "realistic_market_impact_arxiv_2603_29086_2026",
                         ],
                     }
                 )
@@ -6969,7 +6970,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             updated.objective_scorecard["market_impact_stress_source_markers"],
-            ["realistic_market_impact_arxiv_2603_29086_2026"],
+            [
+                "double_square_root_impact_arxiv_2502_16246_2025",
+                "realistic_market_impact_arxiv_2603_29086_2026",
+            ],
+        )
+        self.assertIn(
+            "double_square_root_impact_arxiv_2502_16246_2025",
+            updated.objective_scorecard["market_impact_stress_components"][
+                "source_markers"
+            ],
         )
         self.assertEqual(
             updated.objective_scorecard["delay_adjusted_depth_stress_checks_total"],
@@ -7048,6 +7058,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             updated.objective_scorecard["runtime_closure_source_markers"],
             [
                 "double_oos_walkforward_arxiv_2602_10785_2026",
+                "double_square_root_impact_arxiv_2502_16246_2025",
                 "lob_simulation_reality_gap_arxiv_2603_24137_2026",
                 "realistic_market_impact_arxiv_2603_29086_2026",
             ],
@@ -7143,6 +7154,76 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             program,
         )
 
+    def test_runtime_closure_market_impact_source_marker_fallbacks(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            default_marker_path = tmp_path / "impact-default-marker.json"
+            default_marker_path.write_text(
+                json.dumps(
+                    {
+                        "objective_met": True,
+                        "model": "square_root",
+                        "impact_cost_bps": "7",
+                        "post_impact_net_pnl_per_day": "512",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            default_marker_update = runner._runtime_closure_market_impact_stress_update(
+                {"market_impact_stress_report_path": str(default_marker_path)}
+            )
+            self.assertEqual(
+                default_marker_update["market_impact_stress_source_markers"],
+                [
+                    "double_square_root_impact_arxiv_2502_16246_2025",
+                    "realistic_market_impact_arxiv_2603_29086_2026",
+                ],
+            )
+            self.assertEqual(
+                default_marker_update["market_impact_stress_components"][
+                    "source_markers"
+                ],
+                [
+                    "double_square_root_impact_arxiv_2502_16246_2025",
+                    "realistic_market_impact_arxiv_2603_29086_2026",
+                ],
+            )
+
+            component_marker_path = tmp_path / "impact-component-marker.json"
+            component_marker_path.write_text(
+                json.dumps(
+                    {
+                        "objective_met": True,
+                        "model": "square_root",
+                        "impact_cost_bps": "8",
+                        "post_impact_net_pnl_per_day": "513",
+                        "source_markers": [
+                            "double_square_root_impact_arxiv_2502_16246_2025",
+                            "realistic_market_impact_arxiv_2603_29086_2026",
+                        ],
+                        "market_impact_stress_components": {
+                            "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                            "selected_model": "square_root",
+                            "selected_cost_bps": "8",
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            component_marker_update = (
+                runner._runtime_closure_market_impact_stress_update(
+                    {"market_impact_stress_report_path": str(component_marker_path)}
+                )
+            )
+            self.assertIn(
+                "double_square_root_impact_arxiv_2502_16246_2025",
+                component_marker_update["market_impact_stress_components"][
+                    "source_markers"
+                ],
+            )
+
     def test_candidate_board_helpers_keep_blockers_explicit(self) -> None:
         spec = replace(
             self._candidate_spec("spec-regime-diagnostics"),
@@ -7187,6 +7268,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "market_impact_stress_artifact_ref": "/tmp/impact.json",
                     "market_impact_stress_components": {
                         "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                        "source_markers": [
+                            "double_square_root_impact_arxiv_2502_16246_2025",
+                            "realistic_market_impact_arxiv_2603_29086_2026",
+                        ],
                         "selected_model": "almgren_chriss_proxy",
                         "selected_cost_bps": "150",
                     },
@@ -7194,6 +7279,27 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 }
             )["state"],
             "passed",
+        )
+        self.assertIn(
+            "double_square_root_impact_arxiv_2502_16246_2025",
+            runner._candidate_board_market_impact_proof_summary(
+                {
+                    "market_impact_stress_model": "almgren_chriss_proxy",
+                    "market_impact_stress_cost_bps": "150",
+                    "market_impact_stress_net_pnl_per_day": "510",
+                    "market_impact_stress_artifact_ref": "/tmp/impact.json",
+                    "market_impact_stress_components": {
+                        "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+                        "source_markers": [
+                            "double_square_root_impact_arxiv_2502_16246_2025",
+                            "realistic_market_impact_arxiv_2603_29086_2026",
+                        ],
+                        "selected_model": "almgren_chriss_proxy",
+                        "selected_cost_bps": "150",
+                    },
+                    "nonlinear_market_impact_stress_passed": True,
+                }
+            )["source_markers"],
         )
         missing_impact = runner._candidate_board_market_impact_proof_summary(
             {"target_met": True}

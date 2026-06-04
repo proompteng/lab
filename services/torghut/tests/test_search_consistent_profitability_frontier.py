@@ -4215,6 +4215,14 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             summary["market_impact_stress_components"]["source_marker"],
             "realistic_market_impact_arxiv_2603_29086_2026",
         )
+        self.assertIn(
+            "double_square_root_impact_arxiv_2502_16246_2025",
+            summary["market_impact_stress_source_markers"],
+        )
+        self.assertIn(
+            "double_square_root_impact_arxiv_2502_16246_2025",
+            summary["market_impact_stress_components"]["source_markers"],
+        )
         self.assertEqual(
             summary["market_impact_stress_components"]["almgren_chriss_cost_bps"],
             "10.00",
@@ -5081,6 +5089,12 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "market_impact_stress_components"
                 ]["source_marker"],
                 "realistic_market_impact_arxiv_2603_29086_2026",
+            )
+            self.assertIn(
+                "double_square_root_impact_arxiv_2502_16246_2025",
+                top_by_stop["18"]["objective_scorecard"][
+                    "market_impact_stress_components"
+                ]["source_markers"],
             )
             self.assertTrue(
                 top_by_stop["18"]["objective_scorecard"][

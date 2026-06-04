@@ -123,6 +123,10 @@ class TestNonlinearImpactExecutionStress(TestCase):
         self.assertTrue(payload["square_root_market_impact_preview"])
         self.assertTrue(payload["permanent_impact_decay_preview"])
         self.assertTrue(payload["trade_level_logging_required_downstream"])
+        self.assertIn(
+            "double_square_root_impact_arxiv_2502_16246_2025",
+            payload["source_markers"],
+        )
         self.assertFalse(payload["proof_authority"])
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["final_authority_ok"])
@@ -140,6 +144,10 @@ class TestNonlinearImpactExecutionStress(TestCase):
         source_ids = {source["source_id"] for source in contract["source_papers"]}
         self.assertIn("arxiv-2603.29086", source_ids)
         self.assertIn("arxiv-2502.16246", source_ids)
+        self.assertIn(
+            "double_square_root_impact_arxiv_2502_16246_2025",
+            contract["source_markers"],
+        )
         proof_neutrality = contract["proof_neutrality"]
         self.assertTrue(proof_neutrality["requires_exact_replay"])
         self.assertTrue(proof_neutrality["requires_route_tca"])

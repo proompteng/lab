@@ -2497,6 +2497,10 @@ DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS = (
     Decimal("250"),
 )
 CONFORMAL_TAIL_RISK_ALPHA = Decimal("0.20")
+MARKET_IMPACT_STRESS_SOURCE_MARKERS = (
+    "realistic_market_impact_arxiv_2603_29086_2026",
+    "double_square_root_impact_arxiv_2502_16246_2025",
+)
 
 
 def _p10(values: Sequence[Decimal]) -> Decimal:
@@ -2635,6 +2639,7 @@ def _implementation_uncertainty_metrics(
         "implementation_uncertainty_source_markers": [
             "lob_simulation_reality_gap_arxiv_2603_24137_2026",
             "order_flow_market_impact_volatility_arxiv_2601_23172_2026",
+            "double_square_root_impact_arxiv_2502_16246_2025",
             "implementation_risk_backtesting_arxiv_2603_20319_2026",
         ],
     }
@@ -2765,6 +2770,9 @@ def _replay_stress_metrics(
         "market_impact_stress_model": market_impact_model,
         "market_impact_stress_cost_bps": str(nonlinear_impact_cost_bps),
         "market_impact_stress_net_pnl_per_day": str(market_impact_net_per_day),
+        "market_impact_stress_source_markers": list(
+            MARKET_IMPACT_STRESS_SOURCE_MARKERS
+        ),
         "market_impact_stress_components": {
             "square_root_cost_bps": str(square_root_impact_cost_bps),
             "almgren_chriss_temporary_impact_bps": str(
@@ -2777,6 +2785,7 @@ def _replay_stress_metrics(
             "selected_cost_bps": str(nonlinear_impact_cost_bps),
             "selected_model": market_impact_model,
             "source_marker": "realistic_market_impact_arxiv_2603_29086_2026",
+            "source_markers": list(MARKET_IMPACT_STRESS_SOURCE_MARKERS),
         },
         "nonlinear_market_impact_stress_passed": bool(
             total_liquidity_notional > 0
