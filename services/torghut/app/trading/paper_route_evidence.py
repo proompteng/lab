@@ -11,7 +11,7 @@ import os
 from contextlib import contextmanager
 import logging
 from collections import Counter
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
@@ -172,6 +172,11 @@ HPAIRS_CURRENT_COLLECTION_PREREQUISITE_BLOCKERS = frozenset(
     {
         "drift_checks_missing",
         "signal_lag_exceeded",
+    }
+)
+_HPAIRS_EXPECTED_MARKET_CLOSED_DRIFT_CHECK_BYPASS_REASONS = frozenset(
+    {
+        "expected_market_closed_staleness",
     }
 )
 PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS = frozenset(
@@ -1858,6 +1863,10 @@ def _hpairs_current_collection_prerequisite_blockers(
     current_blockers: set[str] = set()
     continuity_reason = _safe_text(health_gate.get("continuity_reason"))
     drift_reason = _safe_text(health_gate.get("drift_reason"))
+    bypass_drift_checks_for_closed_market = (
+        continuity_reason in _HPAIRS_EXPECTED_MARKET_CLOSED_DRIFT_CHECK_BYPASS_REASONS
+        and _safe_text(health_gate.get("continuity_ok")) == "true"
+    )
 
     signal_currently_stale = not _health_gate_ready_bool(
         health_gate,
@@ -1876,9 +1885,13 @@ def _hpairs_current_collection_prerequisite_blockers(
         source_key="drift_source",
     )
     if (
-        "drift_checks_missing" in raw_blockers
-        or (drift_reason is not None and "missing" in drift_reason)
-    ) and drift_currently_missing:
+        not bypass_drift_checks_for_closed_market
+        and (
+            "drift_checks_missing" in raw_blockers
+            or (drift_reason is not None and "missing" in drift_reason)
+        )
+        and drift_currently_missing
+    ):
         current_blockers.add("drift_checks_missing")
 
     return sorted(current_blockers)
@@ -1905,11 +1918,20 @@ def _hpairs_stale_collection_blockers_cleared_by_current_inputs(
         )
         & HPAIRS_CURRENT_COLLECTION_PREREQUISITE_BLOCKERS
     )
+    continuity_reason = _safe_text(health_gate.get("continuity_reason"))
+    bypass_drift_checks_for_closed_market = (
+        continuity_reason in _HPAIRS_EXPECTED_MARKET_CLOSED_DRIFT_CHECK_BYPASS_REASONS
+        and _safe_text(health_gate.get("continuity_ok")) == "true"
+    )
     cleared: list[str] = []
     if "drift_checks_missing" in raw_blockers and _health_gate_ready_bool(
         health_gate,
         ok_key="drift_ok",
         source_key="drift_source",
+    ):
+        cleared.append("drift_checks_missing")
+    elif (
+        bypass_drift_checks_for_closed_market and "drift_checks_missing" in raw_blockers
     ):
         cleared.append("drift_checks_missing")
     if "signal_lag_exceeded" in raw_blockers and _health_gate_ready_bool(
@@ -3233,8 +3255,7 @@ def _source_reject_blockers_are_quote_quality_only(
         if reason and str(item).strip().lower().startswith("source_reject_"):
             reason_blockers.append(reason)
     return bool(reason_blockers) and all(
-        _is_quote_quality_source_reject_reason(reason)
-        for reason in reason_blockers
+        _is_quote_quality_source_reject_reason(reason) for reason in reason_blockers
     )
 
 
@@ -3249,9 +3270,7 @@ def _source_activity_missing_reasons_are_quote_quality_only(
     if not reasons:
         return False
     non_source_reject_blockers = [
-        reason
-        for reason in reasons
-        if not reason.startswith("source_reject_")
+        reason for reason in reasons if not reason.startswith("source_reject_")
     ]
     if non_source_reject_blockers:
         return False
@@ -4583,11 +4602,13 @@ def _strategy_source_activity(
         complete_fill_order_event_count=complete_fill_order_event_count,
         tca_sample_count=tca_sample_count,
     )
-    is_effectively_present_for_runtime_window = _source_activity_effectively_present_for_runtime_window(
-        {
-            "missing": bool(missing_reasons),
-            "missing_reasons": missing_reasons,
-        },
+    is_effectively_present_for_runtime_window = (
+        _source_activity_effectively_present_for_runtime_window(
+            {
+                "missing": bool(missing_reasons),
+                "missing_reasons": missing_reasons,
+            },
+        )
     )
     missing = not is_effectively_present_for_runtime_window
     return {
@@ -6955,7 +6976,7 @@ def _target_source_audit_session(
     session: Session,
     *,
     target: Mapping[str, object],
-) -> Iterator[tuple[Session, dict[str, object]]]:
+) -> Generator[tuple[Session, dict[str, object]], None, None]:
     source_dsn_env = _safe_text(target.get("source_dsn_env"))
     target_dsn_env = _safe_text(target.get("target_dsn_env"))
     target_account_label = _safe_text(target.get("account_label"))
