@@ -254,6 +254,10 @@ class TestFastReplayPreview(TestCase):
             payload["implemented_mechanisms"],
         )
         self.assertIn(
+            "intraday_price_path_asymmetry_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
             "rough_flow_volatility_impact_stress",
             payload["implemented_mechanisms"],
         )
@@ -581,6 +585,36 @@ class TestFastReplayPreview(TestCase):
         self.assertIn(
             "intraday_jump_burst_stress_downranks_only",
             stress_payload["ranking_only_reasons"],
+        )
+        self.assertIn("intraday_price_path_asymmetry_stress", row_payload)
+        self.assertEqual(
+            row_payload["intraday_price_path_asymmetry_stress"]["status"],
+            "preview_only_intraday_price_path_asymmetry_stress_ranking",
+        )
+        self.assertIn(
+            "ssrn-6074846",
+            {
+                source["source_id"]
+                for source in row_payload["intraday_price_path_asymmetry_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["intraday_price_path_asymmetry_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["intraday_price_path_asymmetry_stress"][
+                "promotion_authority"
+            ]
+        )
+        self.assertIn(
+            "intraday_price_path_asymmetry_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "intraday_price_path_asymmetry_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
         )
         self.assertIn("cost_impact_lineage", row_payload)
         self.assertIn("impact_capacity_lineage", row_payload)
