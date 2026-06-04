@@ -1014,6 +1014,186 @@ def test_frontier_candidate_preserves_alpha_decay_predictability_fields() -> Non
     assert "predictability_decay_route_tca_evidence_missing" not in blockers
 
 
+def test_promotion_ready_bundle_blocks_required_stochastic_liquidity_resilience_gaps() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-liquidity-resilience-gap",
+        candidate_id="candidate-liquidity-resilience-gap",
+        candidate_spec_id="spec-liquidity-resilience-gap",
+        dataset_snapshot_id="snapshot-liquidity-resilience-gap",
+        feature_spec_hash="feature-liquidity-resilience-gap",
+        code_commit="commit-liquidity-resilience-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_stochastic_liquidity_resilience_execution_grid": True,
+            "required_max_liquidity_regime_shortfall_bps": "10",
+            "stochastic_liquidity_resilience_source_markers": [
+                "optimal_execution_liquidity_uncertainty_arxiv_2506_11813_2025",
+                "stochastic_market_depth_ssrn_3798235_2025",
+            ],
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "stochastic_liquidity_resilience_missing_or_failed" in blockers
+    assert "stochastic_liquidity_resilience_artifact_missing" in blockers
+    assert "liquidity_regime_transition_trace_missing" in blockers
+    assert "stochastic_market_depth_state_missing" in blockers
+    assert "lob_shape_parameter_history_missing" in blockers
+    assert "resilience_decay_half_life_missing" in blockers
+    assert "depth_recovery_after_child_order_missing" in blockers
+    assert "execution_shortfall_by_liquidity_regime_missing" in blockers
+    assert "liquidity_resilience_route_tca_evidence_missing" in blockers
+    assert "liquidity_resilience_net_pnl_non_positive" in blockers
+
+
+def test_promotion_ready_bundle_accepts_materialized_stochastic_liquidity_resilience_evidence() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-liquidity-resilience-ready",
+        candidate_id="candidate-liquidity-resilience-ready",
+        candidate_spec_id="spec-liquidity-resilience-ready",
+        dataset_snapshot_id="snapshot-liquidity-resilience-ready",
+        feature_spec_hash="feature-liquidity-resilience-ready",
+        code_commit="commit-liquidity-resilience-ready",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_stochastic_liquidity_resilience_execution_grid": True,
+            "required_max_liquidity_regime_shortfall_bps": "10",
+            "stochastic_liquidity_resilience_stress_passed": True,
+            "stochastic_liquidity_resilience_stress_artifact_ref": (
+                "artifact://liquidity-resilience"
+            ),
+            "liquidity_regime_transition_trace_present": True,
+            "liquidity_regime_transition_count": 4,
+            "stochastic_market_depth_state_present": True,
+            "stochastic_market_depth_state_count": 48,
+            "lob_shape_parameter_history_present": True,
+            "lob_shape_parameter_sample_count": 48,
+            "resilience_decay_half_life_present": True,
+            "median_resilience_half_life_seconds": "120",
+            "depth_recovery_after_child_order_present": True,
+            "depth_recovery_sample_count": 24,
+            "execution_shortfall_by_liquidity_regime_present": True,
+            "execution_shortfall_by_liquidity_regime_sample_count": 24,
+            "shortfall_by_liquidity_regime_bps": "6.5",
+            "route_tca_artifact_ref": "artifact://route-tca",
+            "post_cost_net_pnl_after_liquidity_regime_resilience_shortfall_stress": (
+                "530"
+            ),
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "stochastic_liquidity_resilience_missing_or_failed" not in blockers
+    assert "stochastic_liquidity_resilience_artifact_missing" not in blockers
+    assert "liquidity_regime_transition_trace_missing" not in blockers
+    assert "stochastic_market_depth_state_missing" not in blockers
+    assert "lob_shape_parameter_history_missing" not in blockers
+    assert "resilience_decay_half_life_missing" not in blockers
+    assert "depth_recovery_after_child_order_missing" not in blockers
+    assert "execution_shortfall_by_liquidity_regime_missing" not in blockers
+    assert "liquidity_regime_shortfall_above_max" not in blockers
+    assert "liquidity_resilience_route_tca_evidence_missing" not in blockers
+    assert "liquidity_resilience_net_pnl_non_positive" not in blockers
+
+
+def test_frontier_candidate_preserves_stochastic_liquidity_resilience_fields() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-liquidity-resilience-preserved",
+        candidate={
+            "candidate_id": "candidate-liquidity-resilience-preserved",
+            "objective_scorecard": _promotion_quality_scorecard(),
+            "hard_vetoes": {
+                "required_stochastic_liquidity_resilience_execution_grid": True,
+                "required_liquidity_regime_transition_trace": True,
+                "required_stochastic_market_depth_state": True,
+                "required_lob_shape_parameter_history": True,
+                "required_resilience_decay_half_life": True,
+                "required_depth_recovery_after_child_order": True,
+                "required_execution_shortfall_by_liquidity_regime": True,
+                "required_max_liquidity_regime_shortfall_bps": "10",
+            },
+            "promotion_contract": {
+                "requires_stochastic_liquidity_resilience_execution_grid": True,
+                "requires_route_tca": True,
+            },
+            "stochastic_liquidity_resilience_stress_passed": True,
+            "stochastic_liquidity_resilience_stress_artifact_ref": (
+                "artifact://liquidity-resilience"
+            ),
+            "liquidity_regime_transition_trace_present": True,
+            "liquidity_regime_transition_count": 4,
+            "stochastic_market_depth_state_present": True,
+            "stochastic_market_depth_state_count": 48,
+            "lob_shape_parameter_history_present": True,
+            "lob_shape_parameter_sample_count": 48,
+            "resilience_decay_half_life_present": True,
+            "median_resilience_half_life_seconds": "120",
+            "depth_recovery_after_child_order_present": True,
+            "depth_recovery_sample_count": 24,
+            "execution_shortfall_by_liquidity_regime_present": True,
+            "execution_shortfall_by_liquidity_regime_sample_count": 24,
+            "shortfall_by_liquidity_regime_bps": "6.5",
+            "route_tca_artifact_ref": "artifact://route-tca",
+            "post_cost_net_pnl_after_liquidity_regime_resilience_shortfall_stress": (
+                "530"
+            ),
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-liquidity-resilience-preserved",
+        result_path="artifact://replay",
+        code_commit="commit-liquidity-resilience-preserved",
+    )
+
+    assert (
+        bundle.objective_scorecard[
+            "requires_stochastic_liquidity_resilience_execution_grid"
+        ]
+        is True
+    )
+    assert (
+        bundle.objective_scorecard[
+            "stochastic_liquidity_resilience_stress_artifact_ref"
+        ]
+        == "artifact://liquidity-resilience"
+    )
+    blockers = evidence_bundle_blockers(bundle)
+    assert "stochastic_liquidity_resilience_artifact_missing" not in blockers
+    assert "liquidity_resilience_route_tca_evidence_missing" not in blockers
+
+
 def test_frontier_candidate_preserves_implementation_risk_parity_fields() -> None:
     bundle = evidence_bundle_from_frontier_candidate(
         candidate_spec_id="spec-implementation-risk-preserved",

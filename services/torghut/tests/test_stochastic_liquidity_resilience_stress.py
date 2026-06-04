@@ -130,6 +130,14 @@ class TestStochasticLiquidityResilienceStress(TestCase):
         self.assertFalse(payload["proof_authority"])
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["final_authority_ok"])
+        self.assertIn(
+            "optimal_execution_liquidity_uncertainty_arxiv_2506_11813_2025",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "stochastic_market_depth_ssrn_3798235_2025",
+            payload["source_markers"],
+        )
 
     def test_missing_depth_fails_closed_with_source_gap_and_contract_sources(
         self,
@@ -151,6 +159,22 @@ class TestStochasticLiquidityResilienceStress(TestCase):
         )
         self.assertIn("arxiv-2506.11813", source_ids)
         self.assertIn("ssrn-3798235", source_ids)
+        self.assertIn(
+            "optimal_execution_liquidity_uncertainty_arxiv_2506_11813_2025",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "stochastic_market_depth_ssrn_3798235_2025",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "optimal_execution_liquidity_uncertainty_arxiv_2506_11813_2025",
+            contract["source_markers"],
+        )
+        self.assertIn(
+            "stochastic_market_depth_ssrn_3798235_2025",
+            contract["source_markers"],
+        )
         self.assertIn(
             "missing_lob_depth_for_stochastic_liquidity_resilience",
             payload["warnings"],
