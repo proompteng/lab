@@ -1361,6 +1361,99 @@ def _delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     return blockers
 
 
+def _has_artifact_ref(scorecard: Mapping[str, Any], *keys: str) -> bool:
+    for key in keys:
+        raw_value = scorecard.get(key)
+        if isinstance(raw_value, Sequence) and not isinstance(
+            raw_value, (str, bytes, bytearray)
+        ):
+            if any(_string(item) for item in cast(Sequence[Any], raw_value)):
+                return True
+            continue
+        if _string(raw_value):
+            return True
+    return False
+
+
+def _market_impact_stress_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    market_impact_passed = _bool(
+        scorecard.get("nonlinear_market_impact_stress_passed")
+    ) or _bool(scorecard.get("market_impact_stress_passed"))
+    if not market_impact_passed:
+        blockers.append("market_impact_stress_failed")
+    if not _has_artifact_ref(
+        scorecard,
+        "market_impact_stress_artifact_ref",
+        "market_impact_stress_artifact_refs",
+        "nonlinear_market_impact_stress_artifact_ref",
+        "nonlinear_market_impact_stress_artifact_refs",
+    ):
+        blockers.append("market_impact_stress_artifact_missing")
+    if not _string(
+        scorecard.get("nonlinear_market_impact_stress_model")
+        or scorecard.get("market_impact_stress_model")
+        or scorecard.get("market_impact_cost_model")
+    ):
+        blockers.append("market_impact_stress_model_missing")
+    if (
+        _decimal(
+            scorecard.get("nonlinear_market_impact_stress_cost_bps")
+            or scorecard.get("market_impact_stress_cost_bps")
+            or scorecard.get("market_impact_cost_bps")
+        )
+        < MARKET_IMPACT_STRESS_COST_BPS
+    ):
+        blockers.append("market_impact_stress_cost_bps_below_min")
+    if (
+        _decimal(
+            scorecard.get("nonlinear_market_impact_stress_net_pnl_per_day")
+            or scorecard.get("market_impact_stress_net_pnl_per_day")
+        )
+        <= 0
+    ):
+        blockers.append("market_impact_stress_net_pnl_non_positive")
+    if not _bool(scorecard.get("market_impact_liquidity_evidence_present")):
+        blockers.append("market_impact_liquidity_evidence_missing")
+    return blockers
+
+
+def _implementation_uncertainty_blockers(
+    scorecard: Mapping[str, Any],
+) -> list[str]:
+    requires_implementation_uncertainty = _bool(
+        scorecard.get("implementation_uncertainty_required")
+    ) or _bool(scorecard.get("requires_implementation_uncertainty_stability"))
+    if not requires_implementation_uncertainty:
+        return []
+
+    blockers: list[str] = []
+    if not _bool(scorecard.get("implementation_uncertainty_stability_passed")):
+        blockers.append("implementation_uncertainty_stability_failed")
+    if _int(scorecard.get("implementation_uncertainty_model_count")) < 2:
+        blockers.append("implementation_uncertainty_model_count_below_min")
+    if _decimal(scorecard.get("implementation_uncertainty_lower_net_pnl_per_day")) <= 0:
+        blockers.append("implementation_uncertainty_lower_net_pnl_non_positive")
+    return blockers
+
+
+def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    requires_conformal_tail_risk = _bool(
+        scorecard.get("conformal_tail_risk_required")
+    ) or _bool(scorecard.get("requires_conformal_tail_risk"))
+    if not requires_conformal_tail_risk:
+        return []
+
+    blockers: list[str] = []
+    if not _bool(scorecard.get("conformal_tail_risk_passed")):
+        blockers.append("conformal_tail_risk_failed")
+    if _int(scorecard.get("conformal_tail_risk_sample_count")) <= 0:
+        blockers.append("conformal_tail_risk_sample_count_zero")
+    if _decimal(scorecard.get("conformal_tail_risk_adjusted_net_pnl_per_day")) <= 0:
+        blockers.append("conformal_tail_risk_adjusted_net_pnl_non_positive")
+    return blockers
+
+
 def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
     blockers: list[str] = []
     if not _string(bundle.dataset_snapshot_id):
@@ -1421,6 +1514,9 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
                 promotion_readiness=bundle.promotion_readiness,
             )
         )
+        blockers.extend(_market_impact_stress_blockers(scorecard))
+        blockers.extend(_implementation_uncertainty_blockers(scorecard))
+        blockers.extend(_conformal_tail_risk_blockers(scorecard))
         blockers.extend(_delay_depth_survival_blockers(scorecard))
     return tuple(dict.fromkeys(blockers))
 

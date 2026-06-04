@@ -10,6 +10,12 @@ from app.trading.discovery.evidence_bundles import (
 
 def _promotion_quality_scorecard() -> dict[str, object]:
     return {
+        "market_impact_stress_passed": True,
+        "market_impact_stress_artifact_ref": "artifact://market-impact",
+        "market_impact_stress_model": "nonlinear_square_root_impact",
+        "market_impact_stress_cost_bps": "1",
+        "market_impact_stress_net_pnl_per_day": "600",
+        "market_impact_liquidity_evidence_present": True,
         "delay_adjusted_depth_stress_passed": True,
         "delay_adjusted_depth_stress_model": "delay_adjusted_depth_fixture",
         "delay_adjusted_depth_stress_ms": "50",
@@ -81,6 +87,93 @@ def test_promotion_ready_bundle_blocks_unmaterialized_runtime_ledger_handoff() -
     assert "runtime_ledger_handoff_not_promotion_authority" in blockers
     assert "runtime_ledger_handoff_final_authority_blocked" in blockers
     assert "runtime_ledger_required_artifacts_unmaterialized" in blockers
+
+
+def test_promotion_ready_bundle_blocks_missing_market_impact_stress() -> None:
+    scorecard = _promotion_quality_scorecard()
+    for key in (
+        "market_impact_stress_passed",
+        "market_impact_stress_artifact_ref",
+        "market_impact_stress_model",
+        "market_impact_stress_cost_bps",
+        "market_impact_stress_net_pnl_per_day",
+        "market_impact_liquidity_evidence_present",
+    ):
+        scorecard.pop(key)
+
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-market-impact-gap",
+        candidate_id="candidate-market-impact-gap",
+        candidate_spec_id="spec-market-impact-gap",
+        dataset_snapshot_id="snapshot-market-impact-gap",
+        feature_spec_hash="feature-market-impact-gap",
+        code_commit="commit-market-impact-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard=scorecard,
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "market_impact_stress_failed" in blockers
+    assert "market_impact_stress_artifact_missing" in blockers
+    assert "market_impact_stress_model_missing" in blockers
+    assert "market_impact_stress_cost_bps_below_min" in blockers
+    assert "market_impact_stress_net_pnl_non_positive" in blockers
+    assert "market_impact_liquidity_evidence_missing" in blockers
+
+
+def test_promotion_ready_bundle_blocks_required_uncertainty_and_tail_risk_gaps() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-uncertainty-tail-gap",
+        candidate_id="candidate-uncertainty-tail-gap",
+        candidate_spec_id="spec-uncertainty-tail-gap",
+        dataset_snapshot_id="snapshot-uncertainty-tail-gap",
+        feature_spec_hash="feature-uncertainty-tail-gap",
+        code_commit="commit-uncertainty-tail-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "implementation_uncertainty_required": True,
+            "implementation_uncertainty_stability_passed": False,
+            "implementation_uncertainty_model_count": 1,
+            "implementation_uncertainty_lower_net_pnl_per_day": "0",
+            "conformal_tail_risk_required": True,
+            "conformal_tail_risk_passed": False,
+            "conformal_tail_risk_sample_count": 0,
+            "conformal_tail_risk_adjusted_net_pnl_per_day": "0",
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "implementation_uncertainty_stability_failed" in blockers
+    assert "implementation_uncertainty_model_count_below_min" in blockers
+    assert "implementation_uncertainty_lower_net_pnl_non_positive" in blockers
+    assert "conformal_tail_risk_failed" in blockers
+    assert "conformal_tail_risk_sample_count_zero" in blockers
+    assert "conformal_tail_risk_adjusted_net_pnl_non_positive" in blockers
 
 
 def test_frontier_candidate_preserves_runtime_handoff_as_promotion_blocker() -> None:
