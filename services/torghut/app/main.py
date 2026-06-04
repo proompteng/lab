@@ -6340,6 +6340,39 @@ def _paper_route_target_plan_truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _paper_route_source_collection_target_cache_safe(
+    target: Mapping[str, Any],
+) -> bool:
+    source_kind = str(target.get("source_kind") or "").strip()
+    handoff = str(target.get("handoff") or "").strip()
+    selected_by = str(target.get("selected_by") or "").strip()
+    if (
+        source_kind != "runtime_ledger_source_collection_candidate"
+        and handoff != "runtime_ledger_source_collection_import"
+        and selected_by != "runtime_ledger_source_collection"
+    ):
+        return True
+
+    if not str(target.get("window_start") or "").strip():
+        return False
+    if not str(target.get("window_end") or "").strip():
+        return False
+    if str(target.get("runtime_ledger_bucket_ref") or "").strip():
+        return True
+    return any(
+        target.get(key)
+        for key in (
+            "source_window_ids",
+            "runtime_ledger_source_window_ids",
+            "trade_decision_ids",
+            "execution_ids",
+            "execution_order_event_ids",
+            "source_offsets",
+            "source_refs",
+        )
+    )
+
+
 def _paper_route_target_plan_cache_safe_for_live(
     plan: Mapping[str, Any],
 ) -> bool:
@@ -6358,6 +6391,8 @@ def _paper_route_target_plan_cache_safe_for_live(
             target.get("account_label") or target.get("source_account_label") or ""
         ).strip()
         if target_account != _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL:
+            return False
+        if not _paper_route_source_collection_target_cache_safe(target):
             return False
         for key in (
             "promotion_allowed",

@@ -10132,6 +10132,66 @@ class TestTradingApi(TestCase):
                 require_bounded_sim_targets=True,
             )
         )
+        unsafe_source_collection_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "account_label": "TORGHUT_SIM",
+                        "source_account_label": "TORGHUT_SIM",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_collection_authorized": True,
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            }
+        }
+        self.assertIsNone(
+            main_module._paper_route_cached_live_submission_gate(
+                SimpleNamespace(
+                    _last_live_submission_gate=unsafe_source_collection_gate
+                ),
+                require_bounded_sim_targets=True,
+            )
+        )
+        source_collection_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "account_label": "TORGHUT_SIM",
+                        "source_account_label": "TORGHUT_SIM",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_collection_authorized": True,
+                        "window_start": "2026-05-13T17:00:00+00:00",
+                        "window_end": "2026-05-13T17:30:00+00:00",
+                        "runtime_ledger_bucket_ref": (
+                            "strategy_runtime_ledger_buckets:run:2026-05-13T17:00:00+00:00:"
+                            "2026-05-13T17:30:00+00:00"
+                        ),
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            }
+        }
+        self.assertIsNotNone(
+            main_module._paper_route_cached_live_submission_gate(
+                SimpleNamespace(_last_live_submission_gate=source_collection_gate),
+                require_bounded_sim_targets=True,
+            )
+        )
 
     def test_paper_route_target_strategy_lookup_names_skip_missing_values(
         self,
