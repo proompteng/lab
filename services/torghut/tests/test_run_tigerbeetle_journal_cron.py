@@ -121,6 +121,13 @@ class RunTigerBeetleJournalCronTest(TestCase):
             args.supervise_timeout_seconds,
             runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
         )
+        self.assertEqual(
+            command.supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=runner.LIVE_EXECUTION_BATCH_SIZE,
+                journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        )
 
     def test_live_preset_can_tune_source_batch_sizes_independently(self) -> None:
         commands = runner._live_commands(
@@ -148,6 +155,13 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertTrue(commands[1].skip_reconcile)
         self.assertTrue(commands[1].commit_each_row)
         self.assertEqual(commands[1].journal_batch_chunk_size, 6)
+        self.assertEqual(
+            commands[1].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=20,
+                journal_batch_chunk_size=6,
+            ),
+        )
         self.assertEqual(commands[2].source, SOURCE_TYPE_EXECUTION_ORDER_EVENT)
         self.assertEqual(commands[2].batch_size, 30)
         self.assertEqual(commands[2].max_batches, runner.LIVE_ORDER_EVENT_MAX_BATCHES)
@@ -156,6 +170,14 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(
             commands[2].event_scan_limit,
             runner.LIVE_ORDER_EVENT_SCAN_LIMIT,
+        )
+        self.assertTrue(commands[2].commit_each_row)
+        self.assertEqual(
+            commands[2].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=30,
+                journal_batch_chunk_size=6,
+            ),
         )
         self.assertEqual(commands[3].source, SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
         self.assertEqual(commands[3].batch_size, 40)
@@ -178,7 +200,15 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertNotIn("--skip-reconcile", argv)
         self.assertEqual(
             argv[argv.index("--supervise-timeout-seconds") + 1],
-            str(runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS),
+            str(
+                max(
+                    runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                    runner._journal_source_timeout_seconds(
+                        batch_size=command.batch_size,
+                        journal_batch_chunk_size=command.journal_batch_chunk_size,
+                    ),
+                )
+            ),
         )
         self.assertEqual(
             argv[argv.index("--reconcile-limit") + 1],
@@ -200,20 +230,52 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertNotIn("--skip-reconcile", argv)
         self.assertEqual(
             argv[argv.index("--supervise-timeout-seconds") + 1],
-            str(runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS),
+            str(
+                max(
+                    runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                    runner._journal_source_timeout_seconds(
+                        batch_size=command.batch_size,
+                        journal_batch_chunk_size=command.journal_batch_chunk_size,
+                    ),
+                )
+            ),
         )
 
-    def test_runtime_ledger_reconcile_timeout_does_not_leak_to_other_slices(
+    def test_live_source_timeouts_are_scaled_by_chunk_count(
         self,
     ) -> None:
         commands = runner._live_commands(execution_batch_size=5)
 
-        self.assertIsNone(commands[0].supervise_timeout_seconds)
-        self.assertIsNone(commands[1].supervise_timeout_seconds)
-        self.assertIsNone(commands[2].supervise_timeout_seconds)
+        self.assertEqual(
+            commands[0].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=5,
+                journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        )
+        self.assertEqual(
+            commands[1].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=runner.LIVE_TCA_METRIC_BATCH_SIZE,
+                journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        )
+        self.assertEqual(
+            commands[2].supervise_timeout_seconds,
+            runner._journal_source_timeout_seconds(
+                batch_size=runner.LIVE_ORDER_EVENT_BATCH_SIZE,
+                journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        )
         self.assertEqual(
             commands[3].supervise_timeout_seconds,
-            runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+            max(
+                runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                runner._journal_source_timeout_seconds(
+                    batch_size=runner.LIVE_RUNTIME_LEDGER_BATCH_SIZE,
+                    journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+                ),
+            ),
         )
 
     def test_live_order_event_argv_keeps_slice_bounded_under_watchdog(self) -> None:
@@ -250,8 +312,9 @@ class RunTigerBeetleJournalCronTest(TestCase):
         )
         self.assertEqual(
             argv[argv.index("--supervise-timeout-seconds") + 1],
-            str(runner.LIVE_SUPERVISE_TIMEOUT_SECONDS),
+            str(command.supervise_timeout_seconds),
         )
+        self.assertIn("--commit-each-row", argv)
         self.assertGreaterEqual(
             runner.LIVE_SUPERVISE_TIMEOUT_SECONDS,
             2 * 45.0,
@@ -285,7 +348,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(int(argv[argv.index("--max-batches") + 1]), 1)
         self.assertEqual(
             argv[argv.index("--supervise-timeout-seconds") + 1],
-            str(runner.LIVE_SUPERVISE_TIMEOUT_SECONDS),
+            str(command.supervise_timeout_seconds),
         )
         self.assertEqual(
             argv[argv.index("--journal-batch-chunk-size") + 1],
@@ -479,7 +542,12 @@ class RunTigerBeetleJournalCronTest(TestCase):
         )
         self.assertEqual(
             first_argv[first_argv.index("--supervise-timeout-seconds") + 1],
-            "0.001",
+            str(
+                runner._journal_source_timeout_seconds(
+                    batch_size=runner.MAX_TIGERBEETLE_BATCH_SIZE,
+                    journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+                )
+            ),
         )
         self.assertEqual(
             [source for _, source, _ in observed[: runner.LIVE_EXECUTION_SLICE_COUNT]],
@@ -488,7 +556,15 @@ class RunTigerBeetleJournalCronTest(TestCase):
         runtime_argv = observed[-1][0]
         self.assertEqual(
             runtime_argv[runtime_argv.index("--supervise-timeout-seconds") + 1],
-            str(runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS),
+            str(
+                max(
+                    runner.RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
+                    runner._journal_source_timeout_seconds(
+                        batch_size=runner.LIVE_RUNTIME_LEDGER_BATCH_SIZE,
+                        journal_batch_chunk_size=runner.LIVE_JOURNAL_BATCH_CHUNK_SIZE,
+                    ),
+                )
+            ),
         )
         self.assertTrue(all(json_output for _, _, json_output in observed))
 

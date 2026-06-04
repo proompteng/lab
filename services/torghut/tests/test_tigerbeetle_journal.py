@@ -107,6 +107,26 @@ class BatchCountingFakeTigerBeetleClient(FakeTigerBeetleClient):
         return super().create_transfers(transfers)
 
 
+class ExistingTransferLookupCountingFakeTigerBeetleClient(FakeTigerBeetleClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.lookup_call_sizes: list[int] = []
+
+    def create_transfers(self, transfers: Sequence[object]) -> Sequence[object]:
+        results: list[dict[str, object]] = []
+        for index, transfer in enumerate(transfers):
+            transfer_id = int(
+                getattr(transfer, "id", getattr(transfer, "transfer_id", 0))
+            )
+            self.transfers[transfer_id] = transfer
+            results.append({"index": index, "status": "exists"})
+        return results
+
+    def lookup_transfers(self, ids: Sequence[int]) -> Sequence[object]:
+        self.lookup_call_sizes.append(len(ids))
+        return super().lookup_transfers(ids)
+
+
 class _ScalarResult:
     def __init__(self, value: object | None) -> None:
         self._value = value
@@ -666,6 +686,49 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(len(client.account_call_sizes), 1)
             self.assertGreater(client.account_call_sizes[0], 0)
             self.assertEqual(len(client.transfers), 3)
+            persisted = session.execute(select(TigerBeetleTransferRef)).scalars().all()
+            self.assertEqual(len(persisted), 3)
+
+    def test_existing_transfer_batch_uses_single_lookup_request(self) -> None:
+        with Session(self.engine) as session:
+            metrics: list[ExecutionTCAMetric] = []
+            for index in range(3):
+                event = _create_fill_event(
+                    session,
+                    fingerprint=f"fingerprint-existing-cost-batch-{index}",
+                )
+                metric = ExecutionTCAMetric(
+                    execution_id=event.execution_id,
+                    trade_decision_id=event.trade_decision_id,
+                    strategy_id=event.trade_decision.strategy_id
+                    if event.trade_decision
+                    else None,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    side="buy",
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("1"),
+                    shortfall_notional=Decimal("0.25"),
+                    realized_shortfall_bps=Decimal("1.3"),
+                    computed_at=datetime.now(timezone.utc),
+                )
+                session.add(metric)
+                session.flush()
+                metrics.append(metric)
+            client = ExistingTransferLookupCountingFakeTigerBeetleClient()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            refs = journal.journal_execution_tca_metrics(session, metrics)
+
+            self.assertEqual(len([ref for ref in refs if ref is not None]), 3)
+            self.assertEqual(client.lookup_call_sizes, [3])
+            self.assertEqual(
+                {ref.status for ref in refs if ref is not None},
+                {"exists"},
+            )
             persisted = session.execute(select(TigerBeetleTransferRef)).scalars().all()
             self.assertEqual(len(persisted), 3)
 

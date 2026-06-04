@@ -1638,6 +1638,18 @@ class TigerBeetleLedgerJournal:
             default_status="created",
             status_type_names=("CreateTransferStatus",),
         )
+        existing_transfer_ids = list(
+            dict.fromkeys(
+                transfer_specs[index].transfer_id
+                for index, status in transfer_statuses.items()
+                if status == "exists"
+            )
+        )
+        existing_transfers_by_id: dict[int, object] = {}
+        if existing_transfer_ids:
+            for transfer in client.lookup_transfers(existing_transfer_ids):
+                existing_transfers_by_id[int(_transfer_attr(transfer, "id"))] = transfer
+
         for batch_index, (original_index, prepared, payload_json) in enumerate(
             new_writes
         ):
@@ -1646,12 +1658,13 @@ class TigerBeetleLedgerJournal:
             if status not in {"created", "exists"}:
                 raise RuntimeError(f"tigerbeetle_create_transfer_failed:{status}")
             if status == "exists":
-                matches = [
-                    item
-                    for item in client.lookup_transfers([transfer_spec.transfer_id])
-                    if _transfer_matches(item, transfer_spec)
-                ]
-                if not matches:
+                existing_transfer = existing_transfers_by_id.get(
+                    transfer_spec.transfer_id
+                )
+                if existing_transfer is None or not _transfer_matches(
+                    existing_transfer,
+                    transfer_spec,
+                ):
                     raise RuntimeError("tigerbeetle_duplicate_transfer_conflict")
             refs[original_index] = self._persist_written_transfer_ref(
                 session,
