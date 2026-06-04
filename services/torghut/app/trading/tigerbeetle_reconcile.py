@@ -10,6 +10,7 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import Settings, settings
 from app.models import (
@@ -588,6 +589,7 @@ def _runtime_ledger_ref_coverage(
     session: Session,
     *,
     cluster_id: int,
+    account_label: str | None = None,
     sample_limit: int = 50,
     full_ref_scan: bool = True,
 ) -> dict[str, object]:
@@ -602,11 +604,18 @@ def _runtime_ledger_ref_coverage(
         )
         or 0
     )
+    required_bucket_filters: list[ColumnElement[bool]] = [
+        (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
+        | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+    ]
+    if account_label:
+        required_bucket_filters.append(
+            StrategyRuntimeLedgerBucket.account_label == account_label
+        )
     required_runtime_bucket_count = int(
         session.scalar(
             select(func.count(StrategyRuntimeLedgerBucket.id)).where(
-                (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
-                | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+                *required_bucket_filters
             )
         )
         or 0
@@ -632,8 +641,7 @@ def _runtime_ledger_ref_coverage(
                 str(bucket_id)
                 for bucket_id in session.execute(
                     select(StrategyRuntimeLedgerBucket.id).where(
-                        (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
-                        | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+                        *required_bucket_filters
                     )
                 ).scalars()
             }
@@ -728,10 +736,7 @@ def _runtime_ledger_ref_coverage(
     current_bucket_ids = {
         str(bucket_id)
         for bucket_id in session.execute(
-            select(StrategyRuntimeLedgerBucket.id).where(
-                (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
-                | (StrategyRuntimeLedgerBucket.cost_amount != 0)
-            )
+            select(StrategyRuntimeLedgerBucket.id).where(*required_bucket_filters)
         ).scalars()
     }
     current_runtime_refs = [
@@ -881,6 +886,7 @@ def tigerbeetle_ref_counts(
     session: Session,
     *,
     cluster_id: int,
+    account_label: str | None = None,
     full_ref_scan: bool = True,
 ) -> dict[str, object]:
     account_total = session.scalar(
@@ -924,11 +930,13 @@ def tigerbeetle_ref_counts(
     runtime_coverage = _runtime_ledger_ref_coverage(
         session,
         cluster_id=cluster_id,
+        account_label=account_label,
         full_ref_scan=full_ref_scan,
     )
     return {
         "schema_version": "torghut.tigerbeetle-ref-counts.v1",
         "cluster_id": cluster_id,
+        "account_label": account_label,
         "account_ref_count": int(account_total or 0),
         "transfer_ref_count": int(total or 0),
         "by_source_type": by_source,
@@ -951,6 +959,7 @@ def tigerbeetle_ref_counts(
             "runtime_ledger_source_table": "strategy_runtime_ledger_buckets",
             "runtime_ledger_source_type": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             "runtime_ledger_transfer_kind": TRANSFER_KIND_RUNTIME_NET_PNL,
+            "runtime_ledger_account_label_scope": account_label,
         },
         **runtime_coverage,
     }
@@ -1318,6 +1327,7 @@ def reconcile_tigerbeetle_transfers(
     client: TigerBeetleClientProtocol | None = None,
     limit: int = 500,
     persist: bool = True,
+    account_label: str | None = None,
 ) -> dict[str, object]:
     started_at = datetime.now(timezone.utc)
     refs = _reconciliation_transfer_refs(
@@ -1684,13 +1694,18 @@ def reconcile_tigerbeetle_transfers(
     if unlinked_cost_count:
         blockers.append(BLOCKER_UNLINKED_COST)
 
+    runtime_bucket_filters: list[ColumnElement[bool]] = [
+        (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
+        | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+    ]
+    if account_label:
+        runtime_bucket_filters.append(
+            StrategyRuntimeLedgerBucket.account_label == account_label
+        )
     recent_runtime_buckets = (
         session.execute(
             select(StrategyRuntimeLedgerBucket)
-            .where(
-                (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
-                | (StrategyRuntimeLedgerBucket.cost_amount != 0)
-            )
+            .where(*runtime_bucket_filters)
             .order_by(StrategyRuntimeLedgerBucket.bucket_ended_at.desc())
             .limit(limit)
         )
@@ -1734,6 +1749,7 @@ def reconcile_tigerbeetle_transfers(
     ref_counts = tigerbeetle_ref_counts(
         session,
         cluster_id=settings_obj.tigerbeetle_cluster_id,
+        account_label=account_label,
     )
     compact_ref_counts = _compact_reconciliation_ref_counts(
         ref_counts,
@@ -1764,6 +1780,7 @@ def reconcile_tigerbeetle_transfers(
         "schema_version": SCHEMA_VERSION,
         "ok": ok,
         "cluster_id": settings_obj.tigerbeetle_cluster_id,
+        "account_label": account_label,
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
         "age_seconds": 0,

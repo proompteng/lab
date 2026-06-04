@@ -778,6 +778,7 @@ def _fresh_reconciliation_for_empty_selection(
     session: Any,
     *,
     settings_obj: Settings,
+    account_label: str | None,
 ) -> dict[str, object] | None:
     latest = latest_tigerbeetle_reconciliation_payload(
         session,
@@ -805,11 +806,15 @@ def _fresh_reconciliation_for_empty_selection(
         return None
     if not bool(latest.get("client_lookup_ok", True)):
         return None
+    latest_account_label = latest.get("account_label")
+    if account_label and latest_account_label != account_label:
+        return None
     return {
         "ok": True,
         "status": "skipped",
         "reason": "fresh_reconciliation_available",
         "fresh_reconciliation_available": True,
+        "account_label": latest_account_label,
         "latest_status": str(latest.get("status") or ""),
         "latest_started_at": latest.get("started_at"),
         "latest_finished_at": latest.get("finished_at"),
@@ -1555,6 +1560,7 @@ def main() -> int:
                 reconciliation = _fresh_reconciliation_for_empty_selection(
                     session,
                     settings_obj=settings_obj,
+                    account_label=args.account_label,
                 )
             if reconciliation is None:
                 reconciliation = reconcile_tigerbeetle_transfers(
@@ -1563,6 +1569,7 @@ def main() -> int:
                     client=journal.client_for_reconciliation(),
                     limit=max(1, int(args.reconcile_limit)),
                     persist=True,
+                    account_label=args.account_label,
                 )
             session.commit()
         elif not args.dry_run and not args.skip_reconcile and not stop_journaling:
