@@ -257,6 +257,10 @@ class TestFastReplayPreview(TestCase):
             "rough_flow_volatility_impact_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "institutional_mechanism_fidelity_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -503,6 +507,36 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(row_payload["rough_flow_volatility_stress"]["proof_authority"])
         self.assertFalse(
             row_payload["rough_flow_volatility_stress"]["promotion_authority"]
+        )
+        self.assertIn("institutional_mechanism_fidelity_stress", row_payload)
+        self.assertEqual(
+            row_payload["institutional_mechanism_fidelity_stress"]["status"],
+            "preview_only_institutional_mechanism_fidelity_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2604.18046",
+            {
+                source["source_id"]
+                for source in row_payload["institutional_mechanism_fidelity_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["institutional_mechanism_fidelity_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["institutional_mechanism_fidelity_stress"][
+                "promotion_authority"
+            ]
+        )
+        self.assertIn(
+            "institutional_mechanism_fidelity_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "institutional_mechanism_fidelity_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
         )
         self.assertIn(
             "intraday_jump_burst_stress_penalty_active",
