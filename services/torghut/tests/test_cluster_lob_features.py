@@ -139,6 +139,8 @@ class TestClusterLOBFeatures(TestCase):
         self.assertFalse(payload["final_promotion_allowed"])
         self.assertIn("hawkes_excitation", payload)
         self.assertIn("hawkes_excitation_stress_score", payload["ranking_features"])
+        self.assertIn("hawkes_time_rescaling_ks_proxy", payload["ranking_features"])
+        self.assertIn("event_taxonomy_coverage_ratio", payload["ranking_features"])
 
     def test_hawkes_excitation_summary_records_primary_sources_and_stress(self) -> None:
         clustered_rows = [
@@ -158,14 +160,56 @@ class TestClusterLOBFeatures(TestCase):
             float(sparse["replay_stress_score"]),
         )
         self.assertGreater(float(clustered["hawkes_branching_proxy"]), 0)
+        self.assertEqual(clustered["event_taxonomy_coverage_count"], 1)
+        self.assertGreaterEqual(float(clustered["time_rescaling_ks_proxy"]), 0)
         self.assertEqual(clustered["observed_event_time_count"], 6)
         self.assertTrue(
-            {"arxiv-2510.08085", "arxiv-2604.23961"}.issubset(
+            {"arxiv-2510.08085", "arxiv-2502.17417", "arxiv-2604.23961"}.issubset(
                 {item["source_id"] for item in clustered["source_papers"]}
             )
         )
         self.assertFalse(clustered["promotion_authority"])
         self.assertFalse(clustered["proof_authority"])
+
+    def test_lob_event_taxonomy_and_time_rescaling_are_rank_inputs(self) -> None:
+        sparse_taxonomy_rows = [
+            self._row(offset=offset, event_type="trade", side="buy", ofi="0.4")
+            for offset in (1, 2, 3, 20, 21, 300)
+        ]
+        richer_taxonomy_rows = [
+            self._row(offset=1, event_type="add", side="buy", ofi="0.1"),
+            self._row(offset=2, event_type="add", side="sell", ofi="-0.1"),
+            self._row(offset=4, event_type="trade", side="buy", ofi="0.4"),
+            self._row(offset=8, event_type="trade", side="sell", ofi="-0.3"),
+            self._row(offset=16, event_type="cancel", side="buy", ofi="-0.2"),
+            self._row(offset=32, event_type="cancel", side="sell", ofi="0.2"),
+        ]
+
+        sparse_payload = extract_cluster_lob_features(sparse_taxonomy_rows).to_payload()
+        richer_payload = extract_cluster_lob_features(richer_taxonomy_rows).to_payload()
+        sparse_hawkes = sparse_payload["hawkes_excitation"]
+        richer_hawkes = richer_payload["hawkes_excitation"]
+
+        self.assertIn("lob_event_taxonomy_coverage_gap", sparse_payload["warnings"])
+        self.assertEqual(sparse_hawkes["event_taxonomy_coverage_count"], 1)
+        self.assertGreater(
+            float(richer_hawkes["event_taxonomy_coverage_ratio"]),
+            float(sparse_hawkes["event_taxonomy_coverage_ratio"]),
+        )
+        self.assertGreater(
+            float(richer_hawkes["event_mix_entropy"]),
+            float(sparse_hawkes["event_mix_entropy"]),
+        )
+        self.assertIn(
+            "hawkes_time_rescaling_ks_proxy",
+            richer_payload["ranking_features"],
+        )
+        self.assertIn(
+            "hawkes_nearly_unstable_branching_pressure",
+            richer_payload["ranking_features"],
+        )
+        self.assertFalse(richer_hawkes["promotion_authority"])
+        self.assertFalse(richer_payload["promotion_authority"])
 
     def test_cluster_contract_exposes_hawkes_sources_without_promotion_authority(
         self,
@@ -178,8 +222,20 @@ class TestClusterLOBFeatures(TestCase):
             [item["source_id"] for item in HPAIRS_CLUSTER_LOB_PRIMARY_SOURCES],
         )
         self.assertEqual(policy["output_scope"], "preview_replay_stress_ranking_only")
+        self.assertEqual(policy["event_taxonomy_size"], 12)
+        self.assertIn("time_rescaling", policy["time_rescaling_gof_diagnostic"])
         self.assertTrue(contract["proof_neutrality"]["requires_exact_replay"])
         self.assertTrue(contract["proof_neutrality"]["requires_runtime_ledger"])
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_time_rescaling_gof_as_promotion_authority"
+            ]
+        )
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_event_taxonomy_coverage_as_fill_authority"
+            ]
+        )
         self.assertFalse(contract["proof_neutrality"]["promotion_proof"])
 
     def test_missing_partial_data_is_marked_without_authority(self) -> None:
