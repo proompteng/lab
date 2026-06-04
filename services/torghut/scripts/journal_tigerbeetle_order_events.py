@@ -1092,6 +1092,128 @@ def _last_journal_payload(text: str) -> dict[str, Any] | None:
     return payload
 
 
+def _journal_progress_events(text: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        clean_line = line.strip()
+        if not clean_line.startswith("{"):
+            continue
+        try:
+            candidate = json.loads(clean_line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("schema_version")
+            == "torghut.tigerbeetle-journal-progress.v1"
+        ):
+            events.append(candidate)
+    return events
+
+
+def _progress_int(value: object) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, ArithmeticError):
+        return 0
+
+
+def _completed_progress_batch_from_timeout(
+    text: str,
+    *,
+    worker_args: argparse.Namespace,
+) -> dict[str, Any] | None:
+    if not bool(getattr(worker_args, "skip_reconcile", False)):
+        return None
+    sources = _parse_sources(getattr(worker_args, "sources", "all"))
+    if len(sources) != 1:
+        return None
+    source = sources[0]
+    events = _journal_progress_events(text)
+    complete_events = [
+        event
+        for event in events
+        if event.get("event") == "source_batch_complete"
+        and str(event.get("source") or "").strip() == source
+    ]
+    if not complete_events:
+        return None
+    complete = complete_events[-1]
+    selected = _progress_int(complete.get("selected"))
+    journaled = _progress_int(complete.get("journaled"))
+    skipped = _progress_int(complete.get("skipped"))
+    failed = _progress_int(complete.get("failed"))
+    if failed != 0:
+        return None
+    if (
+        bool(complete.get("stopped_early"))
+        or str(complete.get("stop_reason") or "").strip()
+    ):
+        return None
+    if journaled + skipped + failed != selected:
+        return None
+    chunk_events = [
+        event
+        for event in events
+        if event.get("event") == "source_batch_chunk_complete"
+        and str(event.get("source") or "").strip() == source
+    ]
+    return {
+        "source": source,
+        "selected": selected,
+        "journaled": journaled,
+        "skipped": skipped,
+        "failed": failed,
+        "error_counts": {},
+        "sample_errors": [],
+        "stopped_early": False,
+        "stop_reason": None,
+        "journal_batch_chunk_size": max(
+            1,
+            min(
+                int(
+                    getattr(
+                        worker_args,
+                        "journal_batch_chunk_size",
+                        DEFAULT_JOURNAL_BATCH_CHUNK_SIZE,
+                    )
+                    or DEFAULT_JOURNAL_BATCH_CHUNK_SIZE
+                ),
+                MAX_JOURNAL_BATCH_CHUNK_SIZE,
+            ),
+        ),
+        "journal_batch_chunks": len(chunk_events),
+        "supervised_worker_timeout_normalized": True,
+    }
+
+
+def _payload_from_completed_timeout_progress(
+    text: str,
+    *,
+    worker_args: argparse.Namespace,
+    started_at: datetime,
+    timeout_seconds: float,
+) -> dict[str, Any] | None:
+    batch = _completed_progress_batch_from_timeout(text, worker_args=worker_args)
+    if batch is None:
+        return None
+    payload = _payload(
+        args=worker_args,
+        started_at=started_at,
+        batches=[batch],
+        reconciliation=None,
+    )
+    payload.update(
+        {
+            "supervised_worker": False,
+            "supervise_timeout_seconds": timeout_seconds,
+            "supervised_worker_timeout_normalized": True,
+            "supervised_worker_timeout_reason": "worker_completed_batch_before_process_exit_timeout",
+        }
+    )
+    return payload
+
+
 def _safe_payload_allows_success(payload: Mapping[str, Any] | None) -> bool:
     if not payload:
         return False
@@ -1165,6 +1287,24 @@ def _run_supervised_worker_once(
     except subprocess.TimeoutExpired as exc:
         stdout_text += _write_supervised_output(exc.stdout, stream=sys.stdout)
         stderr_text += _write_supervised_output(exc.stderr, stream=sys.stderr)
+        completed_payload = _payload_from_completed_timeout_progress(
+            stdout_text + "\n" + stderr_text,
+            worker_args=worker_args,
+            started_at=started_at,
+            timeout_seconds=timeout_seconds,
+        )
+        if completed_payload is not None:
+            _emit_progress(
+                "supervised_worker_timeout_after_complete_normalized",
+                timeout_seconds=timeout_seconds,
+                sources=list(_parse_sources(getattr(worker_args, "sources", "all"))),
+            )
+            print(
+                json.dumps(completed_payload, separators=(",", ":"))
+                if worker_args.json
+                else json.dumps(completed_payload, indent=2)
+            )
+            return 0
         _emit_progress(
             "supervised_worker_timeout",
             timeout_seconds=timeout_seconds,
