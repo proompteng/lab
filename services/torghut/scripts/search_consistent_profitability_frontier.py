@@ -189,6 +189,23 @@ _PAPER_PROBATION_QUEUE_SURVIVAL_REASONS = frozenset(
     }
 )
 _PAPER_PROBATION_TARGET_SCALE_QUANTUM = Decimal("0.000001")
+_PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS = (
+    "real_runtime_trade_decisions",
+    "broker_order_submissions_and_status_events",
+    "broker_fill_events",
+    "post_cost_costs_tca_and_execution_shortfall",
+    "source_backed_runtime_ledger_lineage",
+    "closed_flat_position_proof",
+    "broker_runtime_ledger_reconciliation",
+)
+_PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH = (
+    "preserve_final_promotion_gates_fail_closed",
+    "import_exact_replay_runtime_window_metadata_without_live_submit",
+    "run_bounded_live_paper_probe_with_configured_paper_account_only",
+    "materialize_source_backed_runtime_ledger_lineage_for_decisions_orders_fills_costs",
+    "verify_closed_flat_positions_and_broker_runtime_ledger_reconciliation",
+    "reevaluate_post_cost_runtime_profitability_before_any_final_promotion",
+)
 _CONSISTENCY_REPAIR_ENTRY_KEYS = (
     "max_entries_per_session",
     "max_entries_per_day",
@@ -5155,6 +5172,12 @@ def _paper_probation_repair_plan(
         ),
         "target_scale_required": target_scale_required,
         "target_scale_authority": "planning_only_requires_bounded_paper_validation",
+        "live_paper_evidence_requirements": list(
+            _PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+        ),
+        "safe_evidence_collection_path": list(
+            _PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH
+        ),
         "target_progress_ratio": _decimal_payload(
             _paper_probation_target_progress(
                 net_pnl_per_day=net_pnl_per_day,
@@ -5166,6 +5189,7 @@ def _paper_probation_repair_plan(
         "repair_actions": repair_actions,
         "repair_blockers": list(dict.fromkeys(str(blocker) for blocker in blockers)),
         "diagnostics": [dict(diagnostic) for diagnostic in handoff_diagnostics],
+        "live_capital_authorized": False,
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
@@ -5332,6 +5356,13 @@ def _build_paper_probation_shortlist(
             "required_actions_before_or_during_probation": list(
                 dict.fromkeys(required_actions)
             ),
+            "live_paper_evidence_requirements": repair_plan[
+                "live_paper_evidence_requirements"
+            ],
+            "safe_evidence_collection_path": repair_plan[
+                "safe_evidence_collection_path"
+            ],
+            "live_capital_authorized": False,
             "recommended_notional_scale": _decimal_payload(
                 capital_repair_notional_scale
             ),
