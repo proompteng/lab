@@ -107,6 +107,17 @@ class TestNonlinearImpactExecutionStress(TestCase):
             crowded.square_root_impact_cost_bps, liquid.square_root_impact_cost_bps
         )
         self.assertGreater(
+            crowded.directional_impact_uncertainty_score,
+            liquid.directional_impact_uncertainty_score,
+        )
+        self.assertGreater(
+            crowded.elliptic_uncertainty_worst_case_cost_bps,
+            liquid.elliptic_uncertainty_worst_case_cost_bps,
+        )
+        self.assertGreater(
+            crowded.robust_impact_cost_bps, liquid.robust_impact_cost_bps
+        )
+        self.assertGreater(
             crowded.permanent_impact_residual_bps, liquid.permanent_impact_residual_bps
         )
         self.assertGreater(
@@ -122,9 +133,21 @@ class TestNonlinearImpactExecutionStress(TestCase):
         )
         self.assertTrue(payload["square_root_market_impact_preview"])
         self.assertTrue(payload["permanent_impact_decay_preview"])
+        self.assertTrue(payload["directional_elliptic_uncertainty_preview"])
         self.assertTrue(payload["trade_level_logging_required_downstream"])
         self.assertIn(
+            "elliptic_uncertainty_worst_case_cost_bps",
+            payload["ranking_features"],
+        )
+        self.assertGreater(
+            payload["robust_impact_cost_bps"], payload["square_root_impact_cost_bps"]
+        )
+        self.assertIn(
             "double_square_root_impact_arxiv_2502_16246_2025",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "elliptic_market_impact_uncertainty_arxiv_2510_19950_2026",
             payload["source_markers"],
         )
         self.assertFalse(payload["proof_authority"])
@@ -144,6 +167,7 @@ class TestNonlinearImpactExecutionStress(TestCase):
         source_ids = {source["source_id"] for source in contract["source_papers"]}
         self.assertIn("arxiv-2603.29086", source_ids)
         self.assertIn("arxiv-2502.16246", source_ids)
+        self.assertIn("arxiv-2510.19950", source_ids)
         self.assertIn(
             "double_square_root_impact_arxiv_2502_16246_2025",
             contract["source_markers"],
@@ -155,7 +179,13 @@ class TestNonlinearImpactExecutionStress(TestCase):
         self.assertTrue(proof_neutrality["requires_runtime_ledger"])
         self.assertTrue(proof_neutrality["requires_trade_level_logging"])
         self.assertTrue(
+            proof_neutrality["requires_directional_impact_uncertainty_audit"]
+        )
+        self.assertTrue(
             proof_neutrality["rejects_model_cost_as_realized_pnl_authority"]
+        )
+        self.assertTrue(
+            proof_neutrality["rejects_robust_impact_model_as_realized_pnl_authority"]
         )
         self.assertTrue(proof_neutrality["rejects_synthetic_fill_authority"])
         self.assertFalse(payload["promotion_proof"])

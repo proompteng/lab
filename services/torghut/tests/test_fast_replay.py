@@ -538,14 +538,22 @@ class TestFastReplayPreview(TestCase):
             row_payload["nonlinear_impact_execution_stress"]["status"],
             "preview_only_nonlinear_impact_execution_stress_ranking",
         )
+        nonlinear_impact_source_ids = {
+            source["source_id"]
+            for source in row_payload["nonlinear_impact_execution_stress"][
+                "source_papers"
+            ]
+        }
+        self.assertIn("arxiv-2603.29086", nonlinear_impact_source_ids)
+        self.assertIn("arxiv-2510.19950", nonlinear_impact_source_ids)
         self.assertIn(
-            "arxiv-2603.29086",
-            {
-                source["source_id"]
-                for source in row_payload["nonlinear_impact_execution_stress"][
-                    "source_papers"
-                ]
-            },
+            "elliptic_uncertainty_worst_case_cost_bps",
+            row_payload["nonlinear_impact_execution_stress"]["ranking_features"],
+        )
+        self.assertTrue(
+            row_payload["nonlinear_impact_execution_stress"][
+                "directional_elliptic_uncertainty_preview"
+            ]
         )
         self.assertIn("option_gamma_flow_stress", row_payload)
         self.assertFalse(row_payload["option_gamma_flow_stress"]["proof_authority"])

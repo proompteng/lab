@@ -102,8 +102,8 @@ from app.trading.discovery.stochastic_liquidity_resilience_stress import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v16"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v17"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v17"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v18"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -664,7 +664,7 @@ class FastReplayPreviewResult:
                 "lob_simulation_reality_gap_execution_stress": "deterministic spread-volume imbalance, latency-race mode, power-law signed-flow impact, odd-lot liquidity reliability, and responsive exchange event-mix stress from arXiv:2603.24137, OFR WP 25-01, arXiv:2507.06345, and arXiv:2502.07071; preview ranking only",
                 "alpha_decay_predictability_stress": "deterministic multi-horizon spread-adjusted alpha decay, cost-crossover, latency-horizon mismatch, and efficiency-regime compression stress from arXiv:2601.02310 and SSRN:6608199; preview ranking only",
                 "counterfactual_regime_replay_stress": "deterministic real-tape regime support, edge concentration, and temporal Wasserstein shift stress from arXiv:2602.03776 and SSRN:6232459; no synthetic PnL; preview ranking only",
-                "nonlinear_impact_execution_stress": "deterministic real-tape participation-rate, square-root impact, and permanent-impact decay stress from arXiv:2603.29086 and arXiv:2502.16246; model costs are not PnL authority; preview ranking only",
+                "nonlinear_impact_execution_stress": "deterministic real-tape participation-rate, square-root impact, directional elliptic uncertainty, and permanent-impact decay stress from arXiv:2603.29086, arXiv:2510.19950, and arXiv:2502.16246; model costs are not PnL authority; preview ranking only",
                 "option_gamma_flow_stress": "deterministic replay-row option gamma, short-horizon option availability, and dealer-hedging feedback stress from SSRN:4692190 and SSRN:6703098; gamma proxies are not PnL authority; preview ranking only",
                 "intraday_jump_burst_stress": "deterministic replay-row intraday jump, volatility burst, and spurious-jump source-gap stress from SSRN:5223127, SSRN:5199540, and arXiv:2602.10925; jump proxies are not PnL authority; preview ranking only",
                 "intraday_price_path_asymmetry_stress": "deterministic range-based open-high-low intraday path asymmetry and late-session pressure stress from SSRN:6074846 and SSRN:5039009; next-session reversal proxies are not PnL authority; preview ranking only",
