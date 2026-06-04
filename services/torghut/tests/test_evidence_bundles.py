@@ -514,6 +514,102 @@ def test_promotion_ready_bundle_blocks_required_uncertainty_and_tail_risk_gaps()
     assert "conformal_tail_risk_adjusted_net_pnl_non_positive" in blockers
 
 
+def test_promotion_ready_bundle_blocks_required_bootstrap_robust_gaps() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-bootstrap-gap",
+        candidate_id="candidate-bootstrap-gap",
+        candidate_spec_id="spec-bootstrap-gap",
+        dataset_snapshot_id="snapshot-bootstrap-gap",
+        feature_spec_hash="feature-bootstrap-gap",
+        code_commit="commit-bootstrap-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_bootstrap_robust_optimization": True,
+            "required_min_bootstrap_replicates": "500",
+            "bootstrap_robust_optimization_source_markers": [
+                "bootstrap_robust_optimization_arxiv_2510_12725_2025",
+                "spurious_predictability_arxiv_2604_15531_2026",
+            ],
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "bootstrap_robust_optimization_missing_or_failed" in blockers
+    assert "bootstrap_robust_optimization_artifact_missing" in blockers
+    assert "bootstrap_replicate_count_below_min" in blockers
+    assert "bootstrap_confidence_interval_missing_or_failed" in blockers
+    assert "utility_percentile_optimization_missing_or_failed" in blockers
+    assert "bootstrap_percentile_robust_net_pnl_non_positive" in blockers
+    assert "selection_bias_stress_missing_or_failed" in blockers
+    assert "parameter_instability_stress_missing_or_failed" in blockers
+    assert "model_misspecification_stress_missing_or_failed" in blockers
+    assert "out_of_sample_generalization_missing_or_failed" in blockers
+
+
+def test_promotion_ready_bundle_accepts_materialized_bootstrap_robust_evidence() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-bootstrap-ready",
+        candidate_id="candidate-bootstrap-ready",
+        candidate_spec_id="spec-bootstrap-ready",
+        dataset_snapshot_id="snapshot-bootstrap-ready",
+        feature_spec_hash="feature-bootstrap-ready",
+        code_commit="commit-bootstrap-ready",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_bootstrap_robust_optimization": True,
+            "required_min_bootstrap_replicates": "500",
+            "bootstrap_robust_optimization_passed": True,
+            "bootstrap_robust_optimization_artifact_ref": "artifact://bootstrap",
+            "bootstrap_replicate_count": 500,
+            "bootstrap_confidence_interval_passed": True,
+            "utility_percentile_optimization_passed": True,
+            "bootstrap_percentile_robust_net_pnl_per_day": "550",
+            "selection_bias_stress_passed": True,
+            "parameter_instability_stress_passed": True,
+            "model_misspecification_stress_passed": True,
+            "out_of_sample_generalization_passed": True,
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "bootstrap_robust_optimization_missing_or_failed" not in blockers
+    assert "bootstrap_robust_optimization_artifact_missing" not in blockers
+    assert "bootstrap_replicate_count_below_min" not in blockers
+    assert "bootstrap_confidence_interval_missing_or_failed" not in blockers
+    assert "utility_percentile_optimization_missing_or_failed" not in blockers
+    assert "bootstrap_percentile_robust_net_pnl_non_positive" not in blockers
+    assert "selection_bias_stress_missing_or_failed" not in blockers
+    assert "parameter_instability_stress_missing_or_failed" not in blockers
+    assert "model_misspecification_stress_missing_or_failed" not in blockers
+    assert "out_of_sample_generalization_missing_or_failed" not in blockers
+
+
 def test_frontier_candidate_preserves_order_type_tca_fields() -> None:
     bundle = evidence_bundle_from_frontier_candidate(
         candidate_spec_id="spec-order-type-preserved",
@@ -558,6 +654,54 @@ def test_frontier_candidate_preserves_order_type_tca_fields() -> None:
     assert "order_type_ablation_artifact_missing" not in blockers
     assert "price_improvement_evidence_missing" not in blockers
     assert "execution_shortfall_evidence_missing" not in blockers
+
+
+def test_frontier_candidate_preserves_bootstrap_robust_fields() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-bootstrap-preserved",
+        candidate={
+            "candidate_id": "candidate-bootstrap-preserved",
+            "objective_scorecard": _promotion_quality_scorecard(),
+            "hard_vetoes": {
+                "required_bootstrap_robust_optimization": True,
+                "required_min_bootstrap_replicates": "500",
+            },
+            "promotion_contract": {
+                "requires_utility_percentile_optimization": True,
+            },
+            "bootstrap_robust_optimization_passed": True,
+            "bootstrap_robust_optimization_artifact_ref": "artifact://bootstrap",
+            "bootstrap_replicate_count": 500,
+            "bootstrap_confidence_interval_passed": True,
+            "utility_percentile_optimization_passed": True,
+            "bootstrap_percentile_robust_net_pnl_per_day": "550",
+            "selection_bias_stress_passed": True,
+            "parameter_instability_stress_passed": True,
+            "model_misspecification_stress_passed": True,
+            "out_of_sample_generalization_passed": True,
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-bootstrap-preserved",
+        result_path="artifact://replay",
+        code_commit="commit-bootstrap-preserved",
+    )
+
+    assert bundle.objective_scorecard["required_bootstrap_robust_optimization"] is True
+    assert bundle.objective_scorecard["required_min_bootstrap_replicates"] == "500"
+    assert (
+        bundle.objective_scorecard["requires_utility_percentile_optimization"] is True
+    )
+    assert (
+        bundle.objective_scorecard["bootstrap_robust_optimization_artifact_ref"]
+        == "artifact://bootstrap"
+    )
+    blockers = evidence_bundle_blockers(bundle)
+    assert "bootstrap_robust_optimization_artifact_missing" not in blockers
 
 
 def test_frontier_candidate_preserves_implementation_risk_parity_fields() -> None:

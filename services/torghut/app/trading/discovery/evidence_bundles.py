@@ -177,6 +177,34 @@ FILL_SURVIVAL_SCORECARD_KEYS = (
 RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS = (
     "runtime_ledger_lineage_materialization_handoff",
 )
+BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS = (
+    "requires_bootstrap_robust_optimization",
+    "required_bootstrap_robust_optimization",
+    "requires_bootstrap_confidence_intervals",
+    "required_bootstrap_confidence_interval",
+    "requires_utility_percentile_optimization",
+    "required_utility_percentile_optimization",
+    "requires_selection_bias_stress",
+    "required_selection_bias_stress",
+    "requires_parameter_instability_stress",
+    "required_parameter_instability_stress",
+    "requires_model_misspecification_stress",
+    "required_model_misspecification_stress",
+    "required_min_bootstrap_replicates",
+    "bootstrap_robust_optimization_passed",
+    "bootstrap_robust_optimization_artifact_ref",
+    "bootstrap_robust_optimization_artifact_refs",
+    "bootstrap_confidence_interval_passed",
+    "bootstrap_replicate_count",
+    "bootstrap_robust_optimization_replicate_count",
+    "utility_percentile_optimization_passed",
+    "bootstrap_percentile_robust_net_pnl_per_day",
+    "selection_bias_stress_passed",
+    "parameter_instability_stress_passed",
+    "model_misspecification_stress_passed",
+    "out_of_sample_generalization_passed",
+    "bootstrap_robust_optimization_source_markers",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -1013,6 +1041,13 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for key in BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
     for source in (candidate, summary, full_window):
         for key, value in _order_type_execution_metrics(source).items():
             if key not in scorecard:
@@ -1066,6 +1101,13 @@ def evidence_bundle_from_frontier_candidate(
     )
     if hard_vetoes and "hard_vetoes" not in scorecard:
         scorecard = {**scorecard, "hard_vetoes": list(hard_vetoes)}
+    for nested_contract in (
+        _mapping(candidate.get("hard_vetoes")),
+        _mapping(candidate.get("promotion_contract")),
+    ):
+        for key in BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS:
+            if key in nested_contract and key not in scorecard:
+                scorecard = {**scorecard, key: nested_contract[key]}
     replay_params = _frontier_replay_params(candidate)
     if replay_params and "runtime_params" not in scorecard:
         scorecard = {**scorecard, "runtime_params": replay_params}
@@ -1634,6 +1676,95 @@ def _implementation_risk_backtest_stability_blockers(
     return blockers
 
 
+def _bootstrap_robust_optimization_required(scorecard: Mapping[str, Any]) -> bool:
+    if any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_bootstrap_robust_optimization",
+            "required_bootstrap_robust_optimization",
+            "requires_bootstrap_confidence_intervals",
+            "required_bootstrap_confidence_interval",
+            "requires_utility_percentile_optimization",
+            "required_utility_percentile_optimization",
+            "requires_selection_bias_stress",
+            "required_selection_bias_stress",
+            "requires_parameter_instability_stress",
+            "required_parameter_instability_stress",
+            "requires_model_misspecification_stress",
+            "required_model_misspecification_stress",
+        )
+    ):
+        return True
+    hard_vetoes = {veto.lower() for veto in _string_list(scorecard.get("hard_vetoes"))}
+    if hard_vetoes.intersection(
+        {
+            "required_bootstrap_robust_optimization",
+            "required_bootstrap_confidence_interval",
+            "required_utility_percentile_optimization",
+            "required_selection_bias_stress",
+            "required_parameter_instability_stress",
+            "required_model_misspecification_stress",
+            "required_distribution_free_confidence_intervals",
+        }
+    ):
+        return True
+    return bool(
+        {
+            marker.lower()
+            for marker in _string_list(
+                scorecard.get("bootstrap_robust_optimization_source_markers")
+            )
+        }.intersection(
+            {
+                "bootstrap_robust_optimization_arxiv_2510_12725_2025",
+                "spurious_predictability_arxiv_2604_15531_2026",
+            }
+        )
+    )
+
+
+def _bootstrap_robust_optimization_blockers(
+    scorecard: Mapping[str, Any],
+) -> list[str]:
+    if not _bootstrap_robust_optimization_required(scorecard):
+        return []
+
+    blockers: list[str] = []
+    if not _bool(scorecard.get("bootstrap_robust_optimization_passed")):
+        blockers.append("bootstrap_robust_optimization_missing_or_failed")
+    if not _has_artifact_ref(
+        scorecard,
+        "bootstrap_robust_optimization_artifact_ref",
+        "bootstrap_robust_optimization_artifact_refs",
+    ):
+        blockers.append("bootstrap_robust_optimization_artifact_missing")
+    required_replicates = max(
+        1,
+        _int(scorecard.get("required_min_bootstrap_replicates") or 500),
+    )
+    observed_replicates = max(
+        _int(scorecard.get("bootstrap_replicate_count")),
+        _int(scorecard.get("bootstrap_robust_optimization_replicate_count")),
+    )
+    if observed_replicates < required_replicates:
+        blockers.append("bootstrap_replicate_count_below_min")
+    if not _bool(scorecard.get("bootstrap_confidence_interval_passed")):
+        blockers.append("bootstrap_confidence_interval_missing_or_failed")
+    if not _bool(scorecard.get("utility_percentile_optimization_passed")):
+        blockers.append("utility_percentile_optimization_missing_or_failed")
+    if _decimal(scorecard.get("bootstrap_percentile_robust_net_pnl_per_day")) <= 0:
+        blockers.append("bootstrap_percentile_robust_net_pnl_non_positive")
+    if not _bool(scorecard.get("selection_bias_stress_passed")):
+        blockers.append("selection_bias_stress_missing_or_failed")
+    if not _bool(scorecard.get("parameter_instability_stress_passed")):
+        blockers.append("parameter_instability_stress_missing_or_failed")
+    if not _bool(scorecard.get("model_misspecification_stress_passed")):
+        blockers.append("model_misspecification_stress_missing_or_failed")
+    if not _bool(scorecard.get("out_of_sample_generalization_passed")):
+        blockers.append("out_of_sample_generalization_missing_or_failed")
+    return blockers
+
+
 def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     requires_conformal_tail_risk = _bool(
         scorecard.get("conformal_tail_risk_required")
@@ -1715,6 +1846,7 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         blockers.extend(_order_type_execution_blockers(scorecard))
         blockers.extend(_implementation_uncertainty_blockers(scorecard))
         blockers.extend(_implementation_risk_backtest_stability_blockers(scorecard))
+        blockers.extend(_bootstrap_robust_optimization_blockers(scorecard))
         blockers.extend(_conformal_tail_risk_blockers(scorecard))
         blockers.extend(_delay_depth_survival_blockers(scorecard))
     return tuple(dict.fromkeys(blockers))
