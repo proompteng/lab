@@ -96,11 +96,14 @@ from app.trading.discovery.rough_flow_volatility_stress import (
 from app.trading.discovery.signal_adaptive_execution_resilience_stress import (
     extract_signal_adaptive_execution_resilience_stress,
 )
+from app.trading.discovery.stochastic_liquidity_resilience_stress import (
+    extract_stochastic_liquidity_resilience_stress,
+)
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v14"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v15"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v15"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v16"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -130,6 +133,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "rough_flow_volatility_impact_stress",
     "institutional_mechanism_fidelity_stress",
     "signal_adaptive_execution_resilience_stress",
+    "stochastic_liquidity_resilience_execution_stress",
     "microstructure_regime_tokenization_stress",
     "cost_aware_forecast_filter_stress",
     "adaptive_market_limit_allocation_stress",
@@ -297,6 +301,9 @@ class FastReplayPreviewRow:
     signal_adaptive_execution_resilience_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
+    stochastic_liquidity_resilience_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
     microstructure_regime_tokenization_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
@@ -441,6 +448,9 @@ class FastReplayPreviewRow:
             ),
             "signal_adaptive_execution_resilience_stress": dict(
                 self.signal_adaptive_execution_resilience_stress
+            ),
+            "stochastic_liquidity_resilience_stress": dict(
+                self.stochastic_liquidity_resilience_stress
             ),
             "microstructure_regime_tokenization_stress": dict(
                 self.microstructure_regime_tokenization_stress
@@ -661,6 +671,7 @@ class FastReplayPreviewResult:
                 "rough_flow_volatility_impact_stress": "deterministic persistent signed-flow, rough traded-volume/volatility, Poisson-arrival, and power-law impact consistency stress from arXiv:2601.23172 and arXiv:2603.13170; roughness proxies are not PnL authority; preview ranking only",
                 "institutional_mechanism_fidelity_stress": "deterministic market-calendar, auction/session-boundary, price-limit, tick-size, latency, and asynchronous cross-asset mechanism-fidelity stress from arXiv:2604.18046 and arXiv:2511.02016; simulator realism proxies are not PnL authority; preview ranking only",
                 "signal_adaptive_execution_resilience_stress": "deterministic signal-adaptive quote, fill-intensity, inventory-risk, stochastic liquidity-resilience, and regime-switch stress from arXiv:2605.24242 and arXiv:2506.11813; signal drift and modeled fill intensity are not PnL authority; preview ranking only",
+                "stochastic_liquidity_resilience_execution_stress": "deterministic stochastic market-depth regime switching, LOB shape imbalance, depth-recovery resilience, execution-boundary pressure, and shortfall-by-liquidity-regime stress from arXiv:2506.11813 and SSRN:3798235; modeled resilience is not fill, PnL, or promotion authority; preview ranking only",
                 "microstructure_regime_tokenization_stress": "deterministic latent-regime early-warning, scale-invariant trade-flow token coverage, raw event precision, and stylized-fact replay stress from arXiv:2604.20949, arXiv:2602.23784, and arXiv:2508.02247; latent triggers and tokenized trade-flow are not PnL authority; preview ranking only",
                 "cost_aware_forecast_filter_stress": "deterministic walk-forward forecast-magnitude, transaction-cost threshold, turnover churn, multi-scale trend coverage, and dynamic-variable-selection stress from arXiv:2606.00060 and arXiv:2512.12727; cost-filtered forecasts are not PnL authority; preview ranking only",
                 "adaptive_market_limit_allocation_stress": "deterministic observed market/limit allocation, fill-uncertainty, tactical-imbalance, and trade-level cost logging stress from arXiv:2507.06345 and arXiv:2603.29086; allocation models are not fill or PnL authority; preview ranking only",
@@ -1340,6 +1351,7 @@ def _score_candidate_spec(
             rough_flow_volatility_stress={},
             institutional_mechanism_fidelity_stress={},
             signal_adaptive_execution_resilience_stress={},
+            stochastic_liquidity_resilience_stress={},
             microstructure_regime_tokenization_stress={},
             cost_aware_forecast_filter_stress={},
             adaptive_market_limit_allocation_stress={},
@@ -1600,6 +1612,20 @@ def _score_candidate_spec(
         )
         or 0.0
     )
+    stochastic_liquidity_resilience_stress = (
+        extract_stochastic_liquidity_resilience_stress(
+            matched_source_rows,
+            max_notional=_candidate_notional(spec),
+        ).to_payload()
+    )
+    stochastic_liquidity_resilience_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(
+                stochastic_liquidity_resilience_stress.get("ranking_features")
+            ).get("replay_rank_penalty_bps")
+        )
+        or 0.0
+    )
     microstructure_regime_tokenization_stress = (
         extract_microstructure_regime_tokenization_stress(
             matched_source_rows,
@@ -1760,6 +1786,7 @@ def _score_candidate_spec(
         - rough_flow_volatility_rank_penalty_bps * 0.06
         - institutional_mechanism_fidelity_rank_penalty_bps * 0.05
         - signal_adaptive_execution_resilience_rank_penalty_bps * 0.05
+        - stochastic_liquidity_resilience_rank_penalty_bps * 0.05
         - microstructure_regime_tokenization_rank_penalty_bps * 0.05
         - cost_aware_forecast_filter_rank_penalty_bps * 0.05
         - adaptive_market_limit_allocation_rank_penalty_bps * 0.05
@@ -1813,6 +1840,7 @@ def _score_candidate_spec(
         - rough_flow_volatility_rank_penalty_bps * 0.03
         - institutional_mechanism_fidelity_rank_penalty_bps * 0.03
         - signal_adaptive_execution_resilience_rank_penalty_bps * 0.03
+        - stochastic_liquidity_resilience_rank_penalty_bps * 0.03
         - microstructure_regime_tokenization_rank_penalty_bps * 0.03
         - cost_aware_forecast_filter_rank_penalty_bps * 0.03
         - adaptive_market_limit_allocation_rank_penalty_bps * 0.03
@@ -1876,6 +1904,9 @@ def _score_candidate_spec(
         signal_adaptive_execution_resilience_stress=dict(
             signal_adaptive_execution_resilience_stress
         ),
+        stochastic_liquidity_resilience_stress=dict(
+            stochastic_liquidity_resilience_stress
+        ),
         microstructure_regime_tokenization_stress=dict(
             microstructure_regime_tokenization_stress
         ),
@@ -1938,6 +1969,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _rough_flow_volatility_rank_penalty_bps(row) * 0.04
         - _institutional_mechanism_fidelity_rank_penalty_bps(row) * 0.04
         - _signal_adaptive_execution_resilience_rank_penalty_bps(row) * 0.04
+        - _stochastic_liquidity_resilience_rank_penalty_bps(row) * 0.04
         - _microstructure_regime_tokenization_rank_penalty_bps(row) * 0.04
         - _cost_aware_forecast_filter_rank_penalty_bps(row) * 0.04
         - _adaptive_market_limit_allocation_rank_penalty_bps(row) * 0.04
@@ -2058,6 +2090,15 @@ def _signal_adaptive_execution_resilience_rank_penalty_bps(
 ) -> float:
     ranking_features = _mapping(
         row.signal_adaptive_execution_resilience_stress.get("ranking_features")
+    )
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _stochastic_liquidity_resilience_rank_penalty_bps(
+    row: FastReplayPreviewRow,
+) -> float:
+    ranking_features = _mapping(
+        row.stochastic_liquidity_resilience_stress.get("ranking_features")
     )
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
@@ -2334,6 +2375,9 @@ def _row_with_rank_and_selection(
         signal_adaptive_execution_resilience_stress=dict(
             row.signal_adaptive_execution_resilience_stress
         ),
+        stochastic_liquidity_resilience_stress=dict(
+            row.stochastic_liquidity_resilience_stress
+        ),
         microstructure_regime_tokenization_stress=dict(
             row.microstructure_regime_tokenization_stress
         ),
@@ -2428,6 +2472,9 @@ def _row_with_frontier_dedupe(
         ),
         signal_adaptive_execution_resilience_stress=dict(
             row.signal_adaptive_execution_resilience_stress
+        ),
+        stochastic_liquidity_resilience_stress=dict(
+            row.stochastic_liquidity_resilience_stress
         ),
         microstructure_regime_tokenization_stress=dict(
             row.microstructure_regime_tokenization_stress
@@ -3370,6 +3417,8 @@ def _risk_flags_for_row(
         flags.add("institutional_mechanism_fidelity_stress_penalty_active")
     if _signal_adaptive_execution_resilience_rank_penalty_bps(row) > 0:
         flags.add("signal_adaptive_execution_resilience_stress_penalty_active")
+    if _stochastic_liquidity_resilience_rank_penalty_bps(row) > 0:
+        flags.add("stochastic_liquidity_resilience_stress_penalty_active")
     if _microstructure_regime_tokenization_rank_penalty_bps(row) > 0:
         flags.add("microstructure_regime_tokenization_stress_penalty_active")
     if _cost_aware_forecast_filter_rank_penalty_bps(row) > 0:
@@ -3444,6 +3493,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("institutional_mechanism_fidelity_stress_downranks_only")
     if _signal_adaptive_execution_resilience_rank_penalty_bps(row) > 0:
         reasons.add("signal_adaptive_execution_resilience_stress_downranks_only")
+    if _stochastic_liquidity_resilience_rank_penalty_bps(row) > 0:
+        reasons.add("stochastic_liquidity_resilience_stress_downranks_only")
     if _microstructure_regime_tokenization_rank_penalty_bps(row) > 0:
         reasons.add("microstructure_regime_tokenization_stress_downranks_only")
     if _cost_aware_forecast_filter_rank_penalty_bps(row) > 0:
@@ -3511,6 +3562,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("institutional_mechanism_fidelity_stress_penalty")
     if _signal_adaptive_execution_resilience_rank_penalty_bps(row) > 0:
         vetoes.add("signal_adaptive_execution_resilience_stress_penalty")
+    if _stochastic_liquidity_resilience_rank_penalty_bps(row) > 0:
+        vetoes.add("stochastic_liquidity_resilience_stress_penalty")
     if _microstructure_regime_tokenization_rank_penalty_bps(row) > 0:
         vetoes.add("microstructure_regime_tokenization_stress_penalty")
     if _cost_aware_forecast_filter_rank_penalty_bps(row) > 0:
