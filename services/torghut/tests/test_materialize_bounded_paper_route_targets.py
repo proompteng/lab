@@ -605,6 +605,9 @@ def test_paper_route_target_plan_target_summary_accepts_explicit_quantity_and_sy
             "bounded_collection_stage": "paper",
             "target_notional": "20",
             "target_quantity": "3",
+            "bounded_evidence_collection_authorized": True,
+            "bounded_materialization_authorized": True,
+            "evidence_collection_ok": True,
             "symbols": ["AAPL", "AMZN"],
             "symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
             "symbol_quantities": {"AAPL": "3", "AMZN": "3"},
@@ -721,6 +724,109 @@ def test_url_payload_prefers_nested_hpairs_materialization_plan(
     assert report["materialized_decision_count"] == 2
     assert report["route_submission_count"] == 2
     assert report["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_url_payload_prefers_bounded_plan_over_larger_source_collection_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_collection_hpairs = _hpairs_target(
+        candidate_id="source-collection-hpairs",
+        bounded_evidence_collection_authorized=False,
+        evidence_collection_ok=True,
+    )
+    source_collection_tsmom = _tsmom_target(
+        bounded_evidence_collection_authorized=False,
+        evidence_collection_ok=True,
+    )
+    payload = {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "next_paper_route_runtime_window_targets": _plan(
+            source_collection_hpairs,
+            source_collection_tsmom,
+        ),
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
+        },
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--max-notional",
+            "25",
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["plan_source"]["selected_plan"] == (
+        "live_submission_gate.runtime_ledger_paper_probation_import_plan"
+    )
+    assert report["candidate_ids"] == ["c88421d619759b2cfaa6f4d0"]
+    assert report["hypothesis_ids"] == ["H-PAIRS-01"]
+    assert report["materialized_decision_count"] == 2
+    assert report["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_source_collection_only_plan_blocks_materialization_before_db_write(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "next_paper_route_runtime_window_targets": _plan(
+            _hpairs_target(
+                bounded_evidence_collection_authorized=False,
+                evidence_collection_ok=True,
+            ),
+        ),
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "25",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            "next_paper_route_runtime_window_targets",
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "25",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 2
+    assert report["materialized"] is False
+    assert report["blocked"] is True
+    assert (
+        "paper_route_materialization_target_0_bounded_evidence_collection_authorized_required"
+        in report["blockers"]
+    )
     assert _count_decisions(sqlite_dsn) == 0
 
 
