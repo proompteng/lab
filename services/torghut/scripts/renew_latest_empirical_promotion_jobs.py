@@ -775,6 +775,30 @@ def _runtime_window_target_plan_source_collection_targets(
     return targets
 
 
+def _runtime_window_gate_allows_source_collection_merge(
+    *,
+    gate: Mapping[str, Any],
+    gate_plan: Mapping[str, Any],
+) -> bool:
+    blocked_reasons = {
+        str(reason or "").strip()
+        for reason in _as_sequence(gate.get("blocked_reasons"))
+        if str(reason or "").strip()
+    }
+    if "runtime_ledger_source_collection_pending" in blocked_reasons:
+        return True
+    try:
+        source_collection_target_count = int(
+            gate_plan.get("source_collection_target_count") or 0
+        )
+    except (TypeError, ValueError):
+        source_collection_target_count = 0
+    if source_collection_target_count <= 0:
+        return False
+    reason = str(gate.get("reason") or "").strip()
+    return reason == "non_live_mode"
+
+
 def _runtime_window_target_plan_with_live_gate_source_collection(
     *,
     payload: Mapping[str, Any],
@@ -789,12 +813,10 @@ def _runtime_window_target_plan_with_live_gate_source_collection(
     if not source_collection_targets:
         return merged_plan
 
-    blocked_reasons = {
-        str(reason or "").strip()
-        for reason in _as_sequence(gate.get("blocked_reasons"))
-        if str(reason or "").strip()
-    }
-    if "runtime_ledger_source_collection_pending" not in blocked_reasons:
+    if not _runtime_window_gate_allows_source_collection_merge(
+        gate=gate,
+        gate_plan=gate_plan,
+    ):
         return merged_plan
 
     existing_targets = _runtime_window_plan_target_items(merged_plan)
