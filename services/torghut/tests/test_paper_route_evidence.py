@@ -5442,6 +5442,89 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
         self.assertEqual(plan, {})
 
+    def test_source_collection_import_keeps_bounded_bucket_seed_without_authority(
+        self,
+    ) -> None:
+        live_gate = {
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+        }
+
+        plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan={
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "bounded-replay-seed",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_REPLAY",
+                        "source_account_label": "TORGHUT_REPLAY",
+                        "source_dsn_env": "DB_DSN",
+                        "target_dsn_env": "SIM_DB_DSN",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_collection_authorized": True,
+                        "source_collection_priority": (
+                            "profit_target_source_materialization"
+                        ),
+                        "source_collection_profit_target_candidate": True,
+                        "source_collection_reason_codes": [
+                            "runtime_ledger_source_window_missing",
+                            "runtime_ledger_source_refs_missing",
+                            "runtime_ledger_execution_order_event_refs_missing",
+                            "runtime_ledger_source_offsets_missing",
+                            "runtime_ledger_source_materialization_missing",
+                            "runtime_ledger_authority_class_missing",
+                        ],
+                        "window_start": "2026-05-13T17:00:00+00:00",
+                        "window_end": "2026-05-13T17:30:00+00:00",
+                        "runtime_ledger_bucket_ref": (
+                            "strategy_runtime_ledger_buckets:"
+                            "rt-ledger-vwap-cap-safe-20260512-20260521-c88421d6:"
+                            "2026-05-13T17:00:00+00:00:"
+                            "2026-05-13T17:30:00+00:00"
+                        ),
+                    }
+                ],
+            },
+            live_submission_gate=live_gate,
+            target_limit=5,
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "bounded-replay-seed")
+        self.assertEqual(target["account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(target["source_dsn_env"], "DB_DSN")
+        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["window_start"], "2026-05-13T17:00:00+00:00")
+        self.assertEqual(target["window_end"], "2026-05-13T17:30:00+00:00")
+        self.assertEqual(
+            target["runtime_ledger_bucket_ref"],
+            (
+                "strategy_runtime_ledger_buckets:"
+                "rt-ledger-vwap-cap-safe-20260512-20260521-c88421d6:"
+                "2026-05-13T17:00:00+00:00:"
+                "2026-05-13T17:30:00+00:00"
+            ),
+        )
+        self.assertEqual(target["max_notional"], "0")
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertFalse(target["live_capital_authorized"])
+        self.assertFalse(
+            paper_route_evidence._source_collection_target_has_materializable_lineage(
+                target
+            )
+        )
+        self.assertTrue(
+            paper_route_evidence._source_collection_target_has_bounded_bucket_materialization_seed(
+                target
+            )
+        )
+
     def test_source_collection_import_allows_aggregate_replay_with_materializable_lineage(
         self,
     ) -> None:
