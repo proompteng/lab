@@ -49,6 +49,9 @@ from app.trading.discovery.institutional_mechanism_fidelity_stress import (
 from app.trading.discovery.lead_lag_cross_asset_stress import (
     extract_lead_lag_cross_asset_stress,
 )
+from app.trading.discovery.metaorder_adverse_selection_stress import (
+    extract_metaorder_adverse_selection_stress,
+)
 from app.trading.discovery.lob_reality_gap_stress import (
     extract_lob_reality_gap_stress,
 )
@@ -87,8 +90,8 @@ from app.trading.discovery.signal_adaptive_execution_resilience_stress import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v10"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v11"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v11"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v12"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -121,6 +124,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "microstructure_regime_tokenization_stress",
     "cost_aware_forecast_filter_stress",
     "adaptive_market_limit_allocation_stress",
+    "metaorder_adverse_selection_stress",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -244,6 +248,9 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     adaptive_market_limit_allocation_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    metaorder_adverse_selection_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
@@ -374,6 +381,9 @@ class FastReplayPreviewRow:
             ),
             "adaptive_market_limit_allocation_stress": dict(
                 self.adaptive_market_limit_allocation_stress
+            ),
+            "metaorder_adverse_selection_stress": dict(
+                self.metaorder_adverse_selection_stress
             ),
             "ranking_only_reasons": list(ranking_only_reasons),
             "risk_veto_reasons": list(risk_veto_reasons),
@@ -575,6 +585,7 @@ class FastReplayPreviewResult:
                 "microstructure_regime_tokenization_stress": "deterministic latent-regime early-warning, scale-invariant trade-flow token coverage, raw event precision, and stylized-fact replay stress from arXiv:2604.20949, arXiv:2602.23784, and arXiv:2508.02247; latent triggers and tokenized trade-flow are not PnL authority; preview ranking only",
                 "cost_aware_forecast_filter_stress": "deterministic walk-forward forecast-magnitude, transaction-cost threshold, turnover churn, multi-scale trend coverage, and dynamic-variable-selection stress from arXiv:2606.00060 and arXiv:2512.12727; cost-filtered forecasts are not PnL authority; preview ranking only",
                 "adaptive_market_limit_allocation_stress": "deterministic observed market/limit allocation, fill-uncertainty, tactical-imbalance, and trade-level cost logging stress from arXiv:2507.06345 and arXiv:2603.29086; allocation models are not fill or PnL authority; preview ranking only",
+                "metaorder_adverse_selection_stress": "deterministic Hawkes-style event clustering, same-direction metaorder footprint, adverse-selection drift, and liquidity-replenishment gap stress from arXiv:2510.27334 and DOI:10.1007/s10203-026-00570-z; metaorder footprints and Hawkes intensity are not fill or PnL authority; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -1244,6 +1255,7 @@ def _score_candidate_spec(
             microstructure_regime_tokenization_stress={},
             cost_aware_forecast_filter_stress={},
             adaptive_market_limit_allocation_stress={},
+            metaorder_adverse_selection_stress={},
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
             candidate_lineage=_candidate_lineage(spec),
@@ -1538,6 +1550,18 @@ def _score_candidate_spec(
         )
         or 0.0
     )
+    metaorder_adverse_selection_stress = extract_metaorder_adverse_selection_stress(
+        matched_source_rows,
+        direction=direction,
+    ).to_payload()
+    metaorder_adverse_selection_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(metaorder_adverse_selection_stress.get("ranking_features")).get(
+                "replay_rank_penalty_bps"
+            )
+        )
+        or 0.0
+    )
     impact_liquidity_penalty_bps = _impact_liquidity_penalty_bps(
         median_spread_bps=median_spread_bps,
         spread_tail_bps=spread_tail_bps,
@@ -1602,6 +1626,7 @@ def _score_candidate_spec(
         - microstructure_regime_tokenization_rank_penalty_bps * 0.05
         - cost_aware_forecast_filter_rank_penalty_bps * 0.05
         - adaptive_market_limit_allocation_rank_penalty_bps * 0.05
+        - metaorder_adverse_selection_rank_penalty_bps * 0.05
         - conformal_tail_risk_penalty_bps * 0.12
         - macro_stress_veto_score * 18.0
     )
@@ -1651,6 +1676,7 @@ def _score_candidate_spec(
         - microstructure_regime_tokenization_rank_penalty_bps * 0.03
         - cost_aware_forecast_filter_rank_penalty_bps * 0.03
         - adaptive_market_limit_allocation_rank_penalty_bps * 0.03
+        - metaorder_adverse_selection_rank_penalty_bps * 0.03
     )
     return FastReplayPreviewRow(
         candidate_spec_id=spec.candidate_spec_id,
@@ -1714,6 +1740,7 @@ def _score_candidate_spec(
         adaptive_market_limit_allocation_stress=dict(
             adaptive_market_limit_allocation_stress
         ),
+        metaorder_adverse_selection_stress=dict(metaorder_adverse_selection_stress),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
@@ -1768,6 +1795,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _microstructure_regime_tokenization_rank_penalty_bps(row) * 0.04
         - _cost_aware_forecast_filter_rank_penalty_bps(row) * 0.04
         - _adaptive_market_limit_allocation_rank_penalty_bps(row) * 0.04
+        - _metaorder_adverse_selection_rank_penalty_bps(row) * 0.04
         - float(row.conformal_tail_risk_penalty_bps) * 0.10
     )
 
@@ -1908,6 +1936,15 @@ def _adaptive_market_limit_allocation_rank_penalty_bps(
 ) -> float:
     ranking_features = _mapping(
         row.adaptive_market_limit_allocation_stress.get("ranking_features")
+    )
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _metaorder_adverse_selection_rank_penalty_bps(
+    row: FastReplayPreviewRow,
+) -> float:
+    ranking_features = _mapping(
+        row.metaorder_adverse_selection_stress.get("ranking_features")
     )
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
@@ -2130,6 +2167,7 @@ def _row_with_rank_and_selection(
         adaptive_market_limit_allocation_stress=dict(
             row.adaptive_market_limit_allocation_stress
         ),
+        metaorder_adverse_selection_stress=dict(row.metaorder_adverse_selection_stress),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -2219,6 +2257,7 @@ def _row_with_frontier_dedupe(
         adaptive_market_limit_allocation_stress=dict(
             row.adaptive_market_limit_allocation_stress
         ),
+        metaorder_adverse_selection_stress=dict(row.metaorder_adverse_selection_stress),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -3052,6 +3091,8 @@ def _risk_flags_for_row(
         flags.add("cost_aware_forecast_filter_stress_penalty_active")
     if _adaptive_market_limit_allocation_rank_penalty_bps(row) > 0:
         flags.add("adaptive_market_limit_allocation_stress_penalty_active")
+    if _metaorder_adverse_selection_rank_penalty_bps(row) > 0:
+        flags.add("metaorder_adverse_selection_stress_penalty_active")
     if row.matched_symbol_count < row.requested_symbol_count:
         flags.add("partial_symbol_coverage")
     if row.trading_day_count <= 0:
@@ -3118,6 +3159,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("cost_aware_forecast_filter_stress_downranks_only")
     if _adaptive_market_limit_allocation_rank_penalty_bps(row) > 0:
         reasons.add("adaptive_market_limit_allocation_stress_downranks_only")
+    if _metaorder_adverse_selection_rank_penalty_bps(row) > 0:
+        reasons.add("metaorder_adverse_selection_stress_downranks_only")
     if row.selection_reason == "insufficient_replay_tape_rows":
         reasons.add("missing_replay_tape_source_data_explicit_blocker")
     if lineage_blockers:
@@ -3177,6 +3220,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("cost_aware_forecast_filter_stress_penalty")
     if _adaptive_market_limit_allocation_rank_penalty_bps(row) > 0:
         vetoes.add("adaptive_market_limit_allocation_stress_penalty")
+    if _metaorder_adverse_selection_rank_penalty_bps(row) > 0:
+        vetoes.add("metaorder_adverse_selection_stress_penalty")
     if row.robust_lower_percentile_post_cost_utility_bps <= 0:
         vetoes.add("robust_lower_percentile_post_cost_utility_not_positive")
     return tuple(sorted(vetoes))
