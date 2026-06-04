@@ -4,6 +4,10 @@
   "lane_id": "intraday-tsmom-liquid-open",
   "strategy_family": "intraday_tsmom_consistent",
   "candidate_id": "H-TSMOM-LIQ-01",
+  "paper_probation_candidate_ids": [
+    "H-TSMOM-LIQ-01",
+    "ca4e6e3c7d639e3363dc5860"
+  ],
   "strategy_id": "intraday_tsmom_v2@research",
   "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
   "initial_state": "blocked",

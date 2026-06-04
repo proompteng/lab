@@ -595,6 +595,10 @@ class TestHypothesisReadiness(TestCase):
             item for item in registry.items if item.hypothesis_id == "H-TSMOM-LIQ-01"
         )
         self.assertEqual(liq_manifest.candidate_id, "H-TSMOM-LIQ-01")
+        self.assertIn(
+            "ca4e6e3c7d639e3363dc5860",
+            liq_manifest.paper_probation_candidate_ids,
+        )
         self.assertEqual(liq_manifest.strategy_family, "intraday_tsmom_consistent")
 
         statuses = compile_hypothesis_runtime_statuses(
