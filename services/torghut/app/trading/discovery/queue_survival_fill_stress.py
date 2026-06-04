@@ -16,9 +16,9 @@ from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v4"
+QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v5"
 QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION = (
-    "torghut.queue-survival-fill-stress-contract.v4"
+    "torghut.queue-survival-fill-stress-contract.v5"
 )
 QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL = "queue_survival_fill_stress_preview_only_exact_replay_route_tca_order_lifecycle_runtime_ledger_required"
 QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
@@ -28,6 +28,20 @@ QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
         "title": "KANFormer for Predicting Fill Probabilities via Survival Analysis in Limit Order Books",
         "date": "2025-12-05",
         "mechanism": "queue_position_survival_time_to_fill_probability_features",
+    },
+    {
+        "source_id": "arxiv-2403.02572v2",
+        "url": "https://arxiv.org/abs/2403.02572",
+        "title": "Fill Probabilities in a Limit Order Book with State-Dependent Stochastic Order Flows",
+        "date": "2026-02-06",
+        "mechanism": "state_dependent_fill_probability_before_opposite_quote_or_midprice_move",
+    },
+    {
+        "source_id": "arxiv-2507.06345v2",
+        "url": "https://arxiv.org/abs/2507.06345",
+        "title": "Reinforcement Learning for Trade Execution with Market and Limit Orders",
+        "date": "2026-01-26",
+        "mechanism": "market_limit_allocation_under_order_book_imbalance_tactical_response",
     },
     {
         "source_id": "ssrn-6440898",
@@ -149,6 +163,12 @@ class QueueSurvivalFillStressSummary:
     time_priority_edge_concentration_score: float
     randomized_priority_fill_gap_proxy_bps: float
     queue_allocation_rule_sensitivity_penalty_bps: float
+    fill_before_move_trial_count: int
+    observed_opportunity_midprice_move_count: int
+    opportunity_midprice_move_before_fill_share: float
+    state_dependent_fill_before_move_probability: float
+    state_dependent_order_flow_gap_score: float
+    state_dependent_fill_risk_penalty_bps: float
     observed_order_book_imbalance_count: int
     median_directional_order_book_imbalance: float
     contrarian_reversal_support_score: float
@@ -203,6 +223,22 @@ class QueueSurvivalFillStressSummary:
             ),
             "queue_allocation_rule_sensitivity_penalty_bps": _stable_float(
                 self.queue_allocation_rule_sensitivity_penalty_bps
+            ),
+            "fill_before_move_trial_count": self.fill_before_move_trial_count,
+            "observed_opportunity_midprice_move_count": (
+                self.observed_opportunity_midprice_move_count
+            ),
+            "opportunity_midprice_move_before_fill_share": _stable_float(
+                self.opportunity_midprice_move_before_fill_share
+            ),
+            "state_dependent_fill_before_move_probability": _stable_float(
+                self.state_dependent_fill_before_move_probability
+            ),
+            "state_dependent_order_flow_gap_score": _stable_float(
+                self.state_dependent_order_flow_gap_score
+            ),
+            "state_dependent_fill_risk_penalty_bps": _stable_float(
+                self.state_dependent_fill_risk_penalty_bps
             ),
             "observed_order_book_imbalance_count": (
                 self.observed_order_book_imbalance_count
@@ -262,6 +298,18 @@ class QueueSurvivalFillStressSummary:
                 "queue_allocation_rule_sensitivity_penalty_bps": _stable_float(
                     self.queue_allocation_rule_sensitivity_penalty_bps
                 ),
+                "opportunity_midprice_move_before_fill_share": _stable_float(
+                    self.opportunity_midprice_move_before_fill_share
+                ),
+                "state_dependent_fill_before_move_probability": _stable_float(
+                    self.state_dependent_fill_before_move_probability
+                ),
+                "state_dependent_order_flow_gap_score": _stable_float(
+                    self.state_dependent_order_flow_gap_score
+                ),
+                "state_dependent_fill_risk_penalty_bps": _stable_float(
+                    self.state_dependent_fill_risk_penalty_bps
+                ),
                 "median_directional_order_book_imbalance": _stable_float(
                     self.median_directional_order_book_imbalance
                 ),
@@ -290,6 +338,7 @@ class QueueSurvivalFillStressSummary:
             "queue_reactive_replay_parity_preview": True,
             "order_size_distribution_preview": True,
             "queue_allocation_rule_sensitivity_preview": True,
+            "state_dependent_fill_before_move_preview": True,
             "maker_fill_return_tradeoff_preview": True,
             "group_normalized_downside_reward_preview": True,
             "research_ranking_only": True,
@@ -302,6 +351,14 @@ class QueueSurvivalFillStressSummary:
             "final_authority_ok": False,
             "proof_semantics_label": QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL,
         }
+
+
+@dataclass(frozen=True)
+class _FillBeforeMoveStats:
+    trial_count: int
+    observed_move_count: int
+    fill_before_move_share: float
+    opportunity_move_before_fill_share: float
 
 
 def queue_survival_fill_stress_contract() -> dict[str, Any]:
@@ -325,6 +382,10 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "time_priority_edge_concentration_score",
             "randomized_priority_fill_gap_proxy_bps",
             "queue_allocation_rule_sensitivity_penalty_bps",
+            "opportunity_midprice_move_before_fill_share",
+            "state_dependent_fill_before_move_probability",
+            "state_dependent_order_flow_gap_score",
+            "state_dependent_fill_risk_penalty_bps",
             "median_directional_order_book_imbalance",
             "contrarian_reversal_support_score",
             "maker_fill_return_tradeoff_penalty_bps",
@@ -346,6 +407,7 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "requires_order_lifecycle_fill_evidence": True,
             "requires_queue_reactive_replay_parity": True,
             "requires_queue_allocation_rule_audit": True,
+            "requires_state_dependent_fill_before_move_audit": True,
             "requires_maker_fill_return_tradeoff_audit": True,
             "requires_group_downside_reward_out_of_sample_audit": True,
             "requires_runtime_ledger": True,
@@ -353,6 +415,8 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "rejects_queue_reactive_replay_parity_as_pnl_proof": True,
             "rejects_order_size_distribution_proxy_as_fill_authority": True,
             "rejects_time_priority_edge_as_mechanism_neutral_pnl_proof": True,
+            "rejects_state_dependent_fill_probability_as_fill_authority": True,
+            "rejects_opportunity_move_proxy_as_pnl_or_promotion_authority": True,
             "rejects_contrarian_reversal_proxy_as_promotion_authority": True,
             "rejects_order_flow_policy_reward_as_pnl_proof": True,
         },
@@ -523,6 +587,47 @@ def extract_queue_survival_fill_stress(
         fill_probability=estimated_limit_fill_probability,
     )
     median_spread_bps = _median(tuple(spread for spread in spreads if spread > 0.0))
+    fill_before_move_stats = _fill_before_opportunity_move_stats(
+        rows=ordered,
+        prices=prices,
+        event_labels=event_labels,
+        direction=signed_direction,
+        median_spread_bps=median_spread_bps,
+    )
+    if fill_before_move_stats.trial_count <= 0:
+        warnings.append("missing_state_dependent_fill_before_move_trials")
+    if fill_before_move_stats.observed_move_count <= 0 and len(valid_prices) >= 2:
+        warnings.append("missing_opportunity_midprice_move_before_fill_observations")
+    state_dependent_fill_before_move_probability = _state_dependent_fill_before_move_probability(
+        estimated_limit_fill_probability=estimated_limit_fill_probability,
+        fill_before_move_trial_count=fill_before_move_stats.trial_count,
+        fill_before_move_success_share=fill_before_move_stats.fill_before_move_share,
+        queue_reactive_event_mix_l1=queue_reactive_event_mix_l1,
+        observed_order_book_imbalance_count=observed_order_book_imbalance_count,
+    )
+    opportunity_midprice_move_before_fill_share = (
+        fill_before_move_stats.opportunity_move_before_fill_share
+    )
+    state_dependent_order_flow_gap_score = _state_dependent_order_flow_gap_score(
+        fill_before_move_trial_count=fill_before_move_stats.trial_count,
+        opportunity_midprice_move_before_fill_share=(
+            opportunity_midprice_move_before_fill_share
+        ),
+        queue_reactive_event_mix_l1=queue_reactive_event_mix_l1,
+        observed_order_book_imbalance_count=observed_order_book_imbalance_count,
+        cancellation_or_reject_share=cancellation_or_reject_share,
+    )
+    state_dependent_fill_risk_penalty_bps = _state_dependent_fill_risk_penalty_bps(
+        state_dependent_fill_before_move_probability=(
+            state_dependent_fill_before_move_probability
+        ),
+        opportunity_midprice_move_before_fill_share=(
+            opportunity_midprice_move_before_fill_share
+        ),
+        state_dependent_order_flow_gap_score=state_dependent_order_flow_gap_score,
+        nonfill_opportunity_cost_bps=nonfill_opportunity_cost_bps,
+        median_spread_bps=median_spread_bps,
+    )
     directional_imbalances = tuple(
         signed_direction * item for item in order_book_imbalances if item is not None
     )
@@ -564,6 +669,7 @@ def extract_queue_survival_fill_stress(
         + group_normalized_downside_reward_penalty_bps
         + nonfill_opportunity_cost_bps
         + adverse_selection_after_touch_bps
+        + state_dependent_fill_risk_penalty_bps
         + missing_penalty_bps
     )
     return QueueSurvivalFillStressSummary(
@@ -583,6 +689,12 @@ def extract_queue_survival_fill_stress(
         time_priority_edge_concentration_score=time_priority_edge_concentration_score,
         randomized_priority_fill_gap_proxy_bps=randomized_priority_fill_gap_proxy_bps,
         queue_allocation_rule_sensitivity_penalty_bps=queue_allocation_rule_sensitivity_penalty_bps,
+        fill_before_move_trial_count=fill_before_move_stats.trial_count,
+        observed_opportunity_midprice_move_count=fill_before_move_stats.observed_move_count,
+        opportunity_midprice_move_before_fill_share=opportunity_midprice_move_before_fill_share,
+        state_dependent_fill_before_move_probability=state_dependent_fill_before_move_probability,
+        state_dependent_order_flow_gap_score=state_dependent_order_flow_gap_score,
+        state_dependent_fill_risk_penalty_bps=state_dependent_fill_risk_penalty_bps,
         observed_order_book_imbalance_count=observed_order_book_imbalance_count,
         median_directional_order_book_imbalance=median_directional_order_book_imbalance,
         contrarian_reversal_support_score=contrarian_reversal_support_score,
@@ -690,6 +802,144 @@ def _randomized_priority_fill_gap_proxy_bps(
         25.0,
         fifo_edge_bps * clob_speed_gap_decline_fraction + depth_uncertainty_bps,
     )
+
+
+def _fill_before_opportunity_move_stats(
+    *,
+    rows: Sequence[SignalEnvelope],
+    prices: Sequence[float | None],
+    event_labels: Sequence[str],
+    direction: float,
+    median_spread_bps: float,
+) -> _FillBeforeMoveStats:
+    """Measure whether fills arrive before the intended-side mid-price move.
+
+    arXiv:2403.02572v2 models LOB fill probabilities jointly with the
+    probability that prices move first. Torghut keeps this as a deterministic
+    replay-ranking proxy: it does not infer actual fills without lifecycle/TCA
+    evidence and does not authorize capital.
+    """
+
+    if not rows or len(rows) != len(prices) or len(rows) != len(event_labels):
+        return _FillBeforeMoveStats(
+            trial_count=0,
+            observed_move_count=0,
+            fill_before_move_share=0.0,
+            opportunity_move_before_fill_share=0.0,
+        )
+    start_indexes = [
+        index
+        for index, label in enumerate(event_labels)
+        if _label_has_token(label, _ADD_TOKENS)
+        and not _label_has_token(label, _CANCEL_TOKENS | _REJECT_TOKENS)
+    ]
+    if not start_indexes and prices[0] is not None:
+        start_indexes = [0]
+    threshold_bps = max(0.5, median_spread_bps * 0.5)
+    trial_count = 0
+    fill_before_move_count = 0
+    opportunity_move_before_fill_count = 0
+    observed_move_count = 0
+    for start_index in start_indexes:
+        start_price = prices[start_index]
+        if start_price is None or start_price <= 0.0:
+            continue
+        horizon_end = min(len(rows), start_index + 7)
+        for index in range(start_index + 1, horizon_end):
+            price = prices[index]
+            if price is None or price <= 0.0:
+                continue
+            move_bps = direction * (price - start_price) / start_price * 10_000.0
+            label = event_labels[index]
+            if _label_has_token(label, _FILL_TOKENS):
+                trial_count += 1
+                fill_before_move_count += 1
+                break
+            if move_bps >= threshold_bps:
+                trial_count += 1
+                observed_move_count += 1
+                opportunity_move_before_fill_count += 1
+                break
+    if trial_count <= 0:
+        return _FillBeforeMoveStats(
+            trial_count=0,
+            observed_move_count=observed_move_count,
+            fill_before_move_share=0.0,
+            opportunity_move_before_fill_share=0.0,
+        )
+    return _FillBeforeMoveStats(
+        trial_count=trial_count,
+        observed_move_count=observed_move_count,
+        fill_before_move_share=fill_before_move_count / trial_count,
+        opportunity_move_before_fill_share=(
+            opportunity_move_before_fill_count / trial_count
+        ),
+    )
+
+
+def _state_dependent_fill_before_move_probability(
+    *,
+    estimated_limit_fill_probability: float,
+    fill_before_move_trial_count: int,
+    fill_before_move_success_share: float,
+    queue_reactive_event_mix_l1: float,
+    observed_order_book_imbalance_count: int,
+) -> float:
+    if fill_before_move_trial_count <= 0:
+        source_coverage_penalty = (
+            0.15 if observed_order_book_imbalance_count > 0 else 0.30
+        )
+        return max(0.0, estimated_limit_fill_probability - source_coverage_penalty)
+    parity_penalty = min(0.20, queue_reactive_event_mix_l1 * 0.08)
+    probability = (
+        estimated_limit_fill_probability * 0.45
+        + min(1.0, max(0.0, fill_before_move_success_share)) * 0.55
+        - parity_penalty
+    )
+    return min(0.99, max(0.0, probability))
+
+
+def _state_dependent_order_flow_gap_score(
+    *,
+    fill_before_move_trial_count: int,
+    opportunity_midprice_move_before_fill_share: float,
+    queue_reactive_event_mix_l1: float,
+    observed_order_book_imbalance_count: int,
+    cancellation_or_reject_share: float,
+) -> float:
+    missing_trial_penalty = 0.35 if fill_before_move_trial_count <= 0 else 0.0
+    missing_state_penalty = 0.20 if observed_order_book_imbalance_count <= 0 else 0.0
+    raw = (
+        missing_trial_penalty
+        + missing_state_penalty
+        + min(1.0, max(0.0, opportunity_midprice_move_before_fill_share)) * 0.45
+        + min(2.0, max(0.0, queue_reactive_event_mix_l1)) * 0.12
+        + min(1.0, max(0.0, cancellation_or_reject_share)) * 0.18
+    )
+    return min(1.0, raw)
+
+
+def _state_dependent_fill_risk_penalty_bps(
+    *,
+    state_dependent_fill_before_move_probability: float,
+    opportunity_midprice_move_before_fill_share: float,
+    state_dependent_order_flow_gap_score: float,
+    nonfill_opportunity_cost_bps: float,
+    median_spread_bps: float,
+) -> float:
+    spread_floor_bps = max(1.0, median_spread_bps)
+    raw = (
+        (1.0 - min(1.0, max(0.0, state_dependent_fill_before_move_probability)))
+        * spread_floor_bps
+        * 4.0
+        + min(1.0, max(0.0, opportunity_midprice_move_before_fill_share))
+        * max(spread_floor_bps, nonfill_opportunity_cost_bps)
+        * 0.55
+        + min(1.0, max(0.0, state_dependent_order_flow_gap_score))
+        * spread_floor_bps
+        * 2.5
+    )
+    return min(35.0, max(0.0, raw))
 
 
 def _queue_reactive_event_mix_l1(

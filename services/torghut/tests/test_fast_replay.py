@@ -438,6 +438,20 @@ class TestFastReplayPreview(TestCase):
             },
         )
         self.assertIn(
+            "arxiv-2403.02572v2",
+            {
+                source["source_id"]
+                for source in row_payload["queue_survival_fill_stress"]["source_papers"]
+            },
+        )
+        self.assertIn(
+            "arxiv-2507.06345v2",
+            {
+                source["source_id"]
+                for source in row_payload["queue_survival_fill_stress"]["source_papers"]
+            },
+        )
+        self.assertIn(
             "ssrn-6574208",
             {
                 source["source_id"]
@@ -470,9 +484,18 @@ class TestFastReplayPreview(TestCase):
             "group_normalized_downside_reward_penalty_bps",
             row_payload["queue_survival_fill_stress"]["ranking_features"],
         )
+        self.assertIn(
+            "state_dependent_fill_risk_penalty_bps",
+            row_payload["queue_survival_fill_stress"]["ranking_features"],
+        )
         self.assertTrue(
             row_payload["queue_survival_fill_stress"][
                 "queue_allocation_rule_sensitivity_preview"
+            ]
+        )
+        self.assertTrue(
+            row_payload["queue_survival_fill_stress"][
+                "state_dependent_fill_before_move_preview"
             ]
         )
         self.assertTrue(

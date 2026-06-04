@@ -105,8 +105,8 @@ from app.trading.discovery.stochastic_liquidity_resilience_stress import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v18"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v19"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v19"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v20"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -669,7 +669,7 @@ class FastReplayPreviewResult:
                 "markov_order_transition_latent_regime_stress": "deterministic Markov transition entropy/inertia plus latent rising-edge stress from arXiv:2502.07625 and arXiv:2604.20949; preview ranking only",
                 "order_flow_entropy_hmm_regime_stress": "deterministic OFI Markov entropy, asymmetric HMM-regime, and multi-scale volatility/intensity stress from SSRN:5315733, arXiv:2512.15720, and arXiv:2603.20456; entropy is not directional alpha proof; preview ranking only",
                 "dynamic_lead_lag_cross_asset_stress": "deterministic event-grid dynamic pair-specific lead-lag, cross-market LOB/order-flow predictability, and one-second OFI endogeneity stress from arXiv:2511.00390, SSRN:5523878, and arXiv:2508.06788; lead-lag is not alpha proof; preview ranking only",
-                "queue_position_survival_fill_stress": "deterministic queue-position survival fill probability, depth-delay, MDQR queue-reactive event-mix/order-size replay parity, queue-allocation-rule sensitivity, maker fill/return tradeoff, and group-normalized downside reward stress from arXiv:2512.05734, arXiv:2501.08822, arXiv:2511.15262, arXiv:2502.18625, arXiv:2605.25527, SSRN:6440898, SSRN:6730443, SSRN:6574208, and SSRN:6578978; preview ranking only",
+                "queue_position_survival_fill_stress": "deterministic queue-position survival fill probability, state-dependent fill-before-price-move, market/limit allocation, depth-delay, MDQR queue-reactive event-mix/order-size replay parity, queue-allocation-rule sensitivity, maker fill/return tradeoff, and group-normalized downside reward stress from arXiv:2512.05734, arXiv:2403.02572v2, arXiv:2507.06345v2, arXiv:2501.08822, arXiv:2511.15262, arXiv:2502.18625, arXiv:2605.25527, SSRN:6440898, SSRN:6730443, SSRN:6574208, and SSRN:6578978; preview ranking only",
                 "public_feed_lag_quoted_liquidity_stress": "deterministic public-feed delay, quoted-liquidity reliability, stale-quote, and authoritative trade-direction join stress from SSRN:6675338, arXiv:2604.24366, and arXiv:2511.20606; preview ranking only",
                 "lob_simulation_reality_gap_execution_stress": "deterministic spread-volume imbalance, latency-race mode, power-law signed-flow impact, odd-lot liquidity reliability, and responsive exchange event-mix stress from arXiv:2603.24137, OFR WP 25-01, arXiv:2507.06345, and arXiv:2502.07071; preview ranking only",
                 "alpha_decay_predictability_stress": "deterministic multi-horizon spread-adjusted alpha decay, cost-crossover, latency-horizon mismatch, and efficiency-regime compression stress from arXiv:2601.02310 and SSRN:6608199; preview ranking only",
