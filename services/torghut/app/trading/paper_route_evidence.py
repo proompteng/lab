@@ -1297,6 +1297,40 @@ def _balanced_pair_probe_symbol_actions(
     return actions
 
 
+def _paper_route_probe_default_action(target: Mapping[str, object]) -> str:
+    for key in (
+        "paper_route_probe_action",
+        "paper_route_probe_side",
+        "probe_action",
+        "probe_side",
+        "action",
+        "side",
+    ):
+        normalized = (_safe_text(target.get(key)) or "").lower()
+        if normalized in {"buy", "long"}:
+            return "buy"
+        if normalized in {"sell", "short"}:
+            return "sell"
+    return "buy"
+
+
+def _paper_route_probe_symbol_actions(
+    target: Mapping[str, object],
+    symbols: Sequence[str],
+) -> dict[str, str]:
+    normalized_symbols = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    actions = _balanced_pair_probe_symbol_actions(target, normalized_symbols)
+    if _target_requires_balanced_pair_probe(target):
+        return actions
+
+    default_action = _paper_route_probe_default_action(target)
+    for symbol in normalized_symbols:
+        actions.setdefault(symbol, default_action)
+    return actions
+
+
 def _paper_route_probe_symbol_quantities(
     target: Mapping[str, object],
     symbols: Sequence[str],
@@ -2156,7 +2190,7 @@ def _next_paper_route_runtime_window_targets(
         pair_balance_required = _target_requires_balanced_pair_probe(
             pair_balance_target
         )
-        pair_symbol_actions = _balanced_pair_probe_symbol_actions(
+        pair_symbol_actions = _paper_route_probe_symbol_actions(
             pair_balance_target,
             target_probe_symbols,
         )

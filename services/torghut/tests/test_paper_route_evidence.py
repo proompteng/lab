@@ -42,6 +42,7 @@ from app.trading.paper_route_evidence import (
     _normalized_open_positions,
     _order_event_source_offset_refs,
     _paper_route_probe_summary,
+    _paper_route_probe_symbol_actions,
     _paper_route_probe_symbol_quantities,
     _pair_probe_balance_state,
     _runtime_ledger_bucket_evidence_grade,
@@ -696,6 +697,27 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
 
         self.assertEqual(quantities, {"AAPL": "0.5", "AMZN": "0.7"})
+
+    def test_non_pair_probe_symbol_actions_default_to_buy(self) -> None:
+        actions = _paper_route_probe_symbol_actions(
+            {"strategy_family": "intraday_tsmom_consistent"},
+            ["NVDA", "AAPL"],
+        )
+
+        self.assertEqual(actions, {"NVDA": "buy", "AAPL": "buy"})
+        self.assertEqual(_pair_probe_balance_state(actions), "imbalanced")
+
+    def test_non_pair_probe_symbol_actions_preserve_explicit_sell_alias(self) -> None:
+        actions = _paper_route_probe_symbol_actions(
+            {
+                "strategy_family": "intraday_tsmom_consistent",
+                "paper_route_probe_action": "long",
+                "paper_route_probe_symbol_actions": {"NVDA": "short"},
+            },
+            ["NVDA", "AAPL"],
+        )
+
+        self.assertEqual(actions, {"NVDA": "sell", "AAPL": "buy"})
 
     def test_account_contamination_reason_reports_mixed_foreign_and_unlinked(
         self,
@@ -4829,6 +4851,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "intraday-tsmom-profit-v3",
         )
         self.assertEqual(readiness["scoped_probe_symbols"], ["NVDA", "AAPL"])
+        self.assertEqual(
+            target["paper_route_probe_symbol_actions"],
+            {"NVDA": "buy", "AAPL": "buy"},
+        )
+        self.assertFalse(target["paper_route_probe_pair_balance_required"])
+        self.assertEqual(target["paper_route_probe_pair_balance_state"], "not_required")
         self.assertEqual(
             target["paper_route_probe_out_of_strategy_scope_symbols"],
             ["MSFT"],
