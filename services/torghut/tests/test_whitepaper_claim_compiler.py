@@ -293,6 +293,10 @@ class TestWhitepaperClaimCompiler(TestCase):
             source_by_id["paper-arxiv-2507.06345"].title,
             "Reinforcement Learning for Trade Execution with Market and Limit Orders",
         )
+        self.assertEqual(
+            source_by_id["paper-arxiv-2502.16246"].title,
+            'The "double" square-root law: Evidence for the mechanical origin of market impact using Tokyo Stock Exchange data',
+        )
         self.assertTrue(
             any(
                 claim.get("claim_type") == "portfolio_construction"
@@ -309,6 +313,13 @@ class TestWhitepaperClaimCompiler(TestCase):
             any(
                 claim.get("claim_id") == "market-limit-allocation-proof-neutrality"
                 for claim in source_by_id["paper-arxiv-2507.06345"].claims
+            )
+        )
+        self.assertTrue(
+            any(
+                claim.get("claim_id") == "impact-decay-proof-neutrality"
+                and "runtime_ledger_profit_proof" in claim.get("data_requirements", ())
+                for claim in source_by_id["paper-arxiv-2502.16246"].claims
             )
         )
 
