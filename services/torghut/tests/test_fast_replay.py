@@ -73,6 +73,8 @@ class TestFastReplayPreview(TestCase):
     ) -> SignalEnvelope:
         mid = Decimal(price)
         fill_qty = Decimal("100") if event_type == "trade" else Decimal("0")
+        order_type = "market" if event_type == "trade" else "limit"
+        fill_status = "filled" if fill_qty > 0 else "unfilled"
         return SignalEnvelope(
             event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc)
             + timedelta(minutes=offset),
@@ -86,8 +88,12 @@ class TestFastReplayPreview(TestCase):
                 "ask": mid + Decimal("0.01"),
                 "spread_bps": Decimal("2"),
                 "ofi": Decimal(ofi),
+                "order_book_imbalance": Decimal(ofi),
                 "microbar_volume": Decimal(volume),
                 "event_type": event_type,
+                "order_type": order_type,
+                "fill_status": fill_status,
+                "order_qty": Decimal("100"),
                 "queue_ratio": Decimal(queue_ratio),
                 "fill_qty": fill_qty,
                 "feed_delay_ms": Decimal(feed_delay_ms),
@@ -287,6 +293,10 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "cost_aware_forecast_filter_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
+            "adaptive_market_limit_allocation_stress",
             payload["implemented_mechanisms"],
         )
         self.assertEqual(
@@ -684,6 +694,45 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "cost_aware_forecast_filter_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("adaptive_market_limit_allocation_stress", row_payload)
+        self.assertEqual(
+            row_payload["adaptive_market_limit_allocation_stress"]["status"],
+            "preview_only_adaptive_market_limit_allocation_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2507.06345",
+            {
+                source["source_id"]
+                for source in row_payload["adaptive_market_limit_allocation_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn(
+            "arxiv-2603.29086",
+            {
+                source["source_id"]
+                for source in row_payload["adaptive_market_limit_allocation_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["adaptive_market_limit_allocation_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["adaptive_market_limit_allocation_stress"][
+                "promotion_authority"
+            ]
+        )
+        self.assertIn(
+            "adaptive_market_limit_allocation_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "adaptive_market_limit_allocation_stress_downranks_only",
             row_payload["ranking_only_reasons"],
         )
         self.assertIn(
