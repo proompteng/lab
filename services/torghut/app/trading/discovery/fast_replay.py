@@ -105,8 +105,8 @@ from app.trading.discovery.stochastic_liquidity_resilience_stress import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v17"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v18"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v18"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v19"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -663,7 +663,7 @@ class FastReplayPreviewResult:
             "implemented_mechanisms": {
                 "hpairs_clusterlob_ofi_prefilter": "deterministic bounded H-PAIRS candidate prefilter metadata only; never promotion authority",
                 "clusterlob_order_flow_feature_lane": "offline replay-tape/fixture ClusterLOB and horizon OFI features for preview ranking only",
-                "hawkes_event_time_excitation_replay_stress": "deterministic Hawkes-style event-time burst/self-excitation proxy from arXiv:2510.08085 and arXiv:2604.23961; preview ranking only",
+                "hawkes_event_time_excitation_replay_stress": "deterministic Hawkes-style event-time burst/self-excitation, LOB event-taxonomy coverage, and time-rescaling GOF proxy from arXiv:2510.08085, arXiv:2502.17417, and arXiv:2604.23961; preview ranking only",
                 "mpc_market_limit_execution_schedule_stress": "deterministic MPC-style schedule deviation/opportunity-cost/market-limit-mix and submission-latency fill-probability stress from arXiv:2603.28898, arXiv:2507.06345, and arXiv:2504.00846; preview ranking only",
                 "order_book_observability_feedback_stress": "deterministic order-book feedback/censored-trade and state-dependent spread-cost stress from arXiv:2605.19584 and arXiv:2507.09196; preview ranking only",
                 "markov_order_transition_latent_regime_stress": "deterministic Markov transition entropy/inertia plus latent rising-edge stress from arXiv:2502.07625 and arXiv:2604.20949; preview ranking only",
@@ -1168,6 +1168,40 @@ def _candidate_clusterlob_feature_lane(
             for ranking, weight in zip(ranking_payloads, weights)
         ]
     )
+    event_taxonomy_coverage_ratio = _weighted_average(
+        [
+            (
+                _float_or_none(ranking.get("event_taxonomy_coverage_ratio")) or 0.0,
+                weight,
+            )
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
+    event_mix_entropy = _weighted_average(
+        [
+            (_float_or_none(ranking.get("event_mix_entropy")) or 0.0, weight)
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
+    hawkes_time_rescaling_ks_proxy = _weighted_average(
+        [
+            (
+                _float_or_none(ranking.get("hawkes_time_rescaling_ks_proxy")) or 0.0,
+                weight,
+            )
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
+    hawkes_nearly_unstable_branching_pressure = _weighted_average(
+        [
+            (
+                _float_or_none(ranking.get("hawkes_nearly_unstable_branching_pressure"))
+                or 0.0,
+                weight,
+            )
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
     missing_penalty = _weighted_average(
         [
             (_float_or_none(ranking.get("missing_data_penalty")) or 0.0, weight)
@@ -1179,6 +1213,10 @@ def _candidate_clusterlob_feature_lane(
         + imbalance_abs_mean * 10.0
         + cluster_entropy * 4.0
         + cluster_switch_rate * 2.0
+        + event_mix_entropy * 2.0
+        - (1.0 - event_taxonomy_coverage_ratio) * 3.0
+        - hawkes_time_rescaling_ks_proxy * 4.0
+        - hawkes_nearly_unstable_branching_pressure * 2.0
         - missing_penalty * 8.0
     )
     feature_schema_hashes = tuple(
@@ -1217,6 +1255,16 @@ def _candidate_clusterlob_feature_lane(
             "imbalance_abs_mean": _decimal_string_from_float(imbalance_abs_mean),
             "cluster_entropy": _decimal_string_from_float(cluster_entropy),
             "cluster_switch_rate": _decimal_string_from_float(cluster_switch_rate),
+            "event_taxonomy_coverage_ratio": _decimal_string_from_float(
+                event_taxonomy_coverage_ratio
+            ),
+            "event_mix_entropy": _decimal_string_from_float(event_mix_entropy),
+            "hawkes_time_rescaling_ks_proxy": _decimal_string_from_float(
+                hawkes_time_rescaling_ks_proxy
+            ),
+            "hawkes_nearly_unstable_branching_pressure": (
+                _decimal_string_from_float(hawkes_nearly_unstable_branching_pressure)
+            ),
             "missing_data_penalty": _decimal_string_from_float(missing_penalty),
             "preview_rank_feature_score": _decimal_string_from_float(
                 preview_rank_feature_score
@@ -1279,6 +1327,19 @@ def _clusterlob_feature_lane_score(
     cluster_switch_rate = (
         _float_or_none(ranking_features.get("cluster_switch_rate")) or 0.0
     )
+    event_taxonomy_coverage_ratio = (
+        _float_or_none(ranking_features.get("event_taxonomy_coverage_ratio")) or 0.0
+    )
+    event_mix_entropy = _float_or_none(ranking_features.get("event_mix_entropy")) or 0.0
+    hawkes_time_rescaling_ks_proxy = (
+        _float_or_none(ranking_features.get("hawkes_time_rescaling_ks_proxy")) or 0.0
+    )
+    hawkes_nearly_unstable_branching_pressure = (
+        _float_or_none(
+            ranking_features.get("hawkes_nearly_unstable_branching_pressure")
+        )
+        or 0.0
+    )
     missing_penalty = (
         _float_or_none(ranking_features.get("missing_data_penalty")) or 0.0
     )
@@ -1287,6 +1348,10 @@ def _clusterlob_feature_lane_score(
         + imbalance_abs_mean * 8.0
         + cluster_entropy * 3.0
         + cluster_switch_rate * 2.0
+        + event_mix_entropy * 1.5
+        - (1.0 - event_taxonomy_coverage_ratio) * 2.0
+        - hawkes_time_rescaling_ks_proxy * 3.0
+        - hawkes_nearly_unstable_branching_pressure * 2.0
         - missing_penalty * 12.0
     )
 

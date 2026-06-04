@@ -26,9 +26,9 @@ from app.trading.discovery.order_flow_features import (
 )
 from app.trading.models import SignalEnvelope
 
-HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION = "torghut.hpairs-clusterlob-features.v2"
+HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION = "torghut.hpairs-clusterlob-features.v3"
 HPAIRS_CLUSTER_LOB_FEATURE_CONTRACT_SCHEMA_VERSION = (
-    "torghut.hpairs-clusterlob-feature-contract.v2"
+    "torghut.hpairs-clusterlob-feature-contract.v3"
 )
 HPAIRS_CLUSTER_LOB_PROOF_SEMANTICS_LABEL = "hpairs_clusterlob_order_flow_features_preview_only_exact_replay_and_runtime_ledger_required"
 HAWKES_EXCITATION_KERNEL_SECONDS = 5.0
@@ -37,19 +37,27 @@ HPAIRS_CLUSTER_LOB_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
     {
         "source_id": "arxiv-2510.08085",
         "url": "https://arxiv.org/abs/2510.08085",
-        "mechanism": "deterministic_lob_hawkes_order_flow_clustering",
+        "title": "A Deterministic Limit Order Book Simulator with Hawkes-Driven Order Flow",
+        "date": "2025-10-09",
+        "mechanism": "deterministic_lob_hawkes_order_flow_clustering_and_time_rescaling_gof",
     },
     {
         "source_id": "arxiv-2604.23961",
         "url": "https://arxiv.org/abs/2604.23961",
+        "title": "Extended State-dependent Hawkes Process for Limit Order Books",
+        "date": "2026-04-27",
         "mechanism": "state_dependent_hawkes_volatility_signature_stability",
     },
     {
         "source_id": "arxiv-2502.17417",
         "url": "https://arxiv.org/abs/2502.17417",
-        "mechanism": "neural_hawkes_lob_event_interaction_fill_stress",
+        "title": "Event-Based Limit Order Book Simulation under a Neural Hawkes Process",
+        "date": "2025-02-24",
+        "mechanism": "neural_hawkes_lob_event_interaction_event_taxonomy_fill_stress",
     },
 )
+
+_LOB_EVENT_TAXONOMY_SIZE = 12
 
 _EXPLICIT_CLUSTER_FIELDS: tuple[str, ...] = (
     "cluster_lob_bucket",
@@ -74,18 +82,23 @@ _EVENT_FIELDS: tuple[str, ...] = (
 @dataclass(frozen=True)
 class HawkesExcitationSummary:
     observed_event_time_count: int
+    event_taxonomy_coverage_count: int
+    event_taxonomy_coverage_ratio: float
+    event_mix_entropy: float
     mean_interarrival_seconds: float
     p10_interarrival_seconds: float
     burst_event_share: float
     same_cluster_max_run: int
     mean_self_excitation: float
     hawkes_branching_proxy: float
+    nearly_unstable_branching_pressure: float
+    time_rescaling_ks_proxy: float
     local_supercriticality_flag: bool
     replay_stress_score: float
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            "schema_version": "torghut.hpairs-hawkes-excitation-summary.v1",
+            "schema_version": "torghut.hpairs-hawkes-excitation-summary.v2",
             "source_papers": [
                 dict(item) for item in HPAIRS_CLUSTER_LOB_PRIMARY_SOURCES
             ],
@@ -93,15 +106,27 @@ class HawkesExcitationSummary:
                 "decay_kernel": "exp(-delta_seconds / 5)",
                 "lookback_seconds": _stable_float(HAWKES_EXCITATION_LOOKBACK_SECONDS),
                 "branching_proxy_cap": "1.5",
+                "near_unstable_pressure_floor": "0.8",
                 "local_supercriticality_threshold": "1.0",
+                "time_rescaling_diagnostic": "ks_proxy_against_exp1_residuals",
+                "lob_event_taxonomy_size": str(_LOB_EVENT_TAXONOMY_SIZE),
             },
             "observed_event_time_count": self.observed_event_time_count,
+            "event_taxonomy_coverage_count": self.event_taxonomy_coverage_count,
+            "event_taxonomy_coverage_ratio": _stable_float(
+                self.event_taxonomy_coverage_ratio
+            ),
+            "event_mix_entropy": _stable_float(self.event_mix_entropy),
             "mean_interarrival_seconds": _stable_float(self.mean_interarrival_seconds),
             "p10_interarrival_seconds": _stable_float(self.p10_interarrival_seconds),
             "burst_event_share": _stable_float(self.burst_event_share),
             "same_cluster_max_run": self.same_cluster_max_run,
             "mean_self_excitation": _stable_float(self.mean_self_excitation),
             "hawkes_branching_proxy": _stable_float(self.hawkes_branching_proxy),
+            "nearly_unstable_branching_pressure": _stable_float(
+                self.nearly_unstable_branching_pressure
+            ),
+            "time_rescaling_ks_proxy": _stable_float(self.time_rescaling_ks_proxy),
             "local_supercriticality_flag": self.local_supercriticality_flag,
             "replay_stress_score": _stable_float(self.replay_stress_score),
             "prefilter_only": True,
@@ -164,12 +189,29 @@ class ClusterLOBFeatureSet:
         )
         missing_penalty = _float_or_zero(order_flow_ranking.get("missing_data_penalty"))
         hawkes_stress_score = self.hawkes_excitation_summary.replay_stress_score
+        event_taxonomy_gap = (
+            1.0 - self.hawkes_excitation_summary.event_taxonomy_coverage_ratio
+        )
+        time_rescaling_ks_proxy = self.hawkes_excitation_summary.time_rescaling_ks_proxy
+        nearly_unstable_branching_pressure = (
+            self.hawkes_excitation_summary.nearly_unstable_branching_pressure
+        )
         return {
             "directional_alignment_score": _stable_float(directional_alignment),
             "imbalance_abs_mean": _stable_float(imbalance_abs_mean),
             "cluster_entropy": _stable_float(self.cluster_entropy),
             "cluster_switch_rate": _stable_float(self.cluster_switch_rate),
             "hawkes_excitation_stress_score": _stable_float(hawkes_stress_score),
+            "event_taxonomy_coverage_ratio": _stable_float(
+                self.hawkes_excitation_summary.event_taxonomy_coverage_ratio
+            ),
+            "event_mix_entropy": _stable_float(
+                self.hawkes_excitation_summary.event_mix_entropy
+            ),
+            "hawkes_time_rescaling_ks_proxy": _stable_float(time_rescaling_ks_proxy),
+            "hawkes_nearly_unstable_branching_pressure": _stable_float(
+                nearly_unstable_branching_pressure
+            ),
             "missing_data_penalty": _stable_float(missing_penalty),
             "preview_rank_feature_score": _stable_float(
                 (abs(directional_alignment) * 18.0)
@@ -177,6 +219,10 @@ class ClusterLOBFeatureSet:
                 + (self.cluster_entropy * 4.0)
                 + (self.cluster_switch_rate * 2.0)
                 + (hawkes_stress_score * 3.0)
+                + (self.hawkes_excitation_summary.event_mix_entropy * 2.0)
+                - (event_taxonomy_gap * 3.0)
+                - (time_rescaling_ks_proxy * 4.0)
+                - (nearly_unstable_branching_pressure * 2.0)
                 - (missing_penalty * 8.0)
             ),
         }
@@ -203,6 +249,10 @@ def cluster_lob_feature_contract(
             "event_time_required_for_excitation": True,
             "decay_kernel": "exp(-delta_seconds / 5)",
             "lookback_seconds": _stable_float(HAWKES_EXCITATION_LOOKBACK_SECONDS),
+            "event_taxonomy_size": _LOB_EVENT_TAXONOMY_SIZE,
+            "time_rescaling_gof_diagnostic": (
+                "time_rescaling_deterministic_ks_proxy_against_exp1_transformed_interarrivals"
+            ),
             "output_scope": "preview_replay_stress_ranking_only",
         },
         "proof_neutrality": {
@@ -213,6 +263,8 @@ def cluster_lob_feature_contract(
             "promotion_authority": False,
             "requires_exact_replay": True,
             "requires_runtime_ledger": True,
+            "rejects_time_rescaling_gof_as_promotion_authority": True,
+            "rejects_event_taxonomy_coverage_as_fill_authority": True,
         },
     }
 
@@ -243,6 +295,12 @@ def extract_cluster_lob_features(
         warnings.append("missing_cluster_lob_inputs")
     if hawkes_summary.observed_event_time_count < 2:
         warnings.append("insufficient_hawkes_event_timestamps")
+    if ordered and hawkes_summary.event_taxonomy_coverage_ratio < 0.25:
+        warnings.append("lob_event_taxonomy_coverage_gap")
+    if hawkes_summary.time_rescaling_ks_proxy >= 0.35:
+        warnings.append("hawkes_time_rescaling_replay_gap")
+    if hawkes_summary.nearly_unstable_branching_pressure >= 0.50:
+        warnings.append("near_unstable_hawkes_branching_pressure")
     symbols = {
         symbol
         for record in ordered
@@ -311,29 +369,56 @@ def extract_hawkes_excitation_summary(
     same_cluster_max_run = _same_cluster_max_run(
         tuple(label for _, label in event_pairs)
     )
+    event_taxonomy_counts = Counter(
+        _event_taxonomy_bucket(label) for _, label in event_pairs
+    )
+    event_taxonomy_coverage_count = len(
+        tuple(label for label in event_taxonomy_counts if label != "unknown_event")
+    )
+    event_taxonomy_coverage_ratio = min(
+        1.0, event_taxonomy_coverage_count / float(_LOB_EVENT_TAXONOMY_SIZE)
+    )
+    event_mix_entropy = _normalized_entropy(event_taxonomy_counts)
     excitations = tuple(
         _hawkes_excitation_at(index, event_pairs) for index in range(len(event_pairs))
     )
     mean_self_excitation = _safe_mean(excitations)
     hawkes_branching_proxy = min(1.5, mean_self_excitation / 3.0)
+    nearly_unstable_branching_pressure = min(
+        1.0, max(0.0, (hawkes_branching_proxy - 0.80) / 0.70)
+    )
+    time_rescaling_ks_proxy = _time_rescaling_ks_proxy(
+        event_pairs=event_pairs,
+        interarrivals=interarrivals,
+        mean_interarrival=mean_interarrival,
+    )
     same_cluster_run_score = min(1.0, max(0, same_cluster_max_run - 1) / 5.0)
+    event_taxonomy_gap_score = 1.0 - event_taxonomy_coverage_ratio
     replay_stress_score = min(
         1.0,
         max(
             0.0,
-            (min(1.0, hawkes_branching_proxy) * 0.55)
-            + (burst_event_share * 0.30)
-            + (same_cluster_run_score * 0.15),
+            (min(1.0, hawkes_branching_proxy) * 0.35)
+            + (burst_event_share * 0.20)
+            + (same_cluster_run_score * 0.15)
+            + (nearly_unstable_branching_pressure * 0.10)
+            + (time_rescaling_ks_proxy * 0.12)
+            + (event_taxonomy_gap_score * 0.08),
         ),
     )
     return HawkesExcitationSummary(
         observed_event_time_count=len(event_pairs),
+        event_taxonomy_coverage_count=event_taxonomy_coverage_count,
+        event_taxonomy_coverage_ratio=event_taxonomy_coverage_ratio,
+        event_mix_entropy=event_mix_entropy,
         mean_interarrival_seconds=mean_interarrival,
         p10_interarrival_seconds=p10_interarrival,
         burst_event_share=burst_event_share,
         same_cluster_max_run=same_cluster_max_run,
         mean_self_excitation=mean_self_excitation,
         hawkes_branching_proxy=hawkes_branching_proxy,
+        nearly_unstable_branching_pressure=nearly_unstable_branching_pressure,
+        time_rescaling_ks_proxy=time_rescaling_ks_proxy,
         local_supercriticality_flag=hawkes_branching_proxy >= 1.0,
         replay_stress_score=replay_stress_score,
     )
@@ -355,6 +440,86 @@ def _hawkes_excitation_at(
             -delta_seconds / HAWKES_EXCITATION_KERNEL_SECONDS
         )
     return excitation
+
+
+def _time_rescaling_ks_proxy(
+    *,
+    event_pairs: Sequence[tuple[float, str]],
+    interarrivals: Sequence[float],
+    mean_interarrival: float,
+) -> float:
+    """Return a deterministic time-rescaling goodness-of-fit proxy.
+
+    The deterministic Hawkes simulator paper uses time-rescaling diagnostics to
+    check whether generated order flow has plausible event-time clustering. This
+    cheap replay proxy transforms interarrival times with a baseline-plus-local
+    excitation rate, then compares residuals to Exp(1) with a KS-style distance.
+    It is a ranking stress only; it is not a fitted Hawkes likelihood.
+    """
+
+    if len(event_pairs) < 3 or not interarrivals or mean_interarrival <= 0.0:
+        return 0.0
+    baseline_rate = 1.0 / max(0.001, mean_interarrival)
+    residuals: list[float] = []
+    for index, delta_seconds in enumerate(interarrivals, start=1):
+        excitation = min(3.0, _hawkes_excitation_at(index, event_pairs))
+        local_rate = baseline_rate * (1.0 + excitation)
+        residuals.append(max(0.000001, local_rate * max(0.001, delta_seconds)))
+    return _exp1_ks_proxy(residuals)
+
+
+def _exp1_ks_proxy(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(value for value in values if isfinite(value) and value >= 0.0)
+    if not ordered:
+        return 0.0
+    sample_count = len(ordered)
+    distances: list[float] = []
+    for index, value in enumerate(ordered, start=1):
+        empirical_cdf = index / sample_count
+        model_cdf = 1.0 - exp(-value)
+        distances.append(abs(empirical_cdf - model_cdf))
+    return min(1.0, max(distances, default=0.0))
+
+
+def _event_taxonomy_bucket(cluster_label: str) -> str:
+    label = _normalize_label(cluster_label)
+    if "unknown" in label:
+        return "unknown_event"
+    if "buy" in label and any(
+        token in label for token in ("trade", "fill", "execution")
+    ):
+        return "buy_trade"
+    if "sell" in label and any(
+        token in label for token in ("trade", "fill", "execution")
+    ):
+        return "sell_trade"
+    if "bid" in label and any(
+        token in label for token in ("add", "insert", "open", "quote")
+    ):
+        return "bid_add"
+    if "ask" in label and any(
+        token in label for token in ("add", "insert", "open", "quote")
+    ):
+        return "ask_add"
+    if "bid" in label and any(
+        token in label for token in ("cancel", "delete", "remove")
+    ):
+        return "bid_cancel"
+    if "ask" in label and any(
+        token in label for token in ("cancel", "delete", "remove")
+    ):
+        return "ask_cancel"
+    if "bid_depth" in label:
+        return "bid_depth_state"
+    if "ask_depth" in label:
+        return "ask_depth_state"
+    if "balanced_depth" in label:
+        return "balanced_depth_state"
+    if "event_" in label:
+        return label[:64]
+    return label[:64] or "unknown_event"
 
 
 def _same_cluster_max_run(labels: Sequence[str]) -> int:

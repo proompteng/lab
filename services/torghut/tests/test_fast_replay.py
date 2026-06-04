@@ -220,6 +220,18 @@ class TestFastReplayPreview(TestCase):
             payload["implemented_mechanisms"],
         )
         self.assertIn(
+            "time-rescaling GOF proxy",
+            payload["implemented_mechanisms"][
+                "hawkes_event_time_excitation_replay_stress"
+            ],
+        )
+        self.assertIn(
+            "arXiv:2502.17417",
+            payload["implemented_mechanisms"][
+                "hawkes_event_time_excitation_replay_stress"
+            ],
+        )
+        self.assertIn(
             "mpc_market_limit_execution_schedule_stress",
             payload["implemented_mechanisms"],
         )
@@ -1124,6 +1136,14 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(feature_lane["promotion_authority"])
         self.assertFalse(feature_lane["final_authority_ok"])
         self.assertIn("feature_schema_hashes", feature_lane)
+        self.assertIn(
+            "hawkes_time_rescaling_ks_proxy",
+            feature_lane["ranking_features"],
+        )
+        self.assertIn(
+            "event_taxonomy_coverage_ratio",
+            feature_lane["ranking_features"],
+        )
         self.assertIn(
             "hpairs_clusterlob_order_flow_feature_lane",
             payload,
