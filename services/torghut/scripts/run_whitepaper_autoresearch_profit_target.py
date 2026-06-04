@@ -11687,6 +11687,21 @@ def _candidate_board_payload(
                 "conformal_tail_risk_buffer_per_day": _candidate_board_decimal_field(
                     scorecard, "conformal_tail_risk_buffer_per_day"
                 ),
+                "breakeven_transaction_cost_buffer_passed": _boolish(
+                    scorecard.get("breakeven_transaction_cost_buffer_passed")
+                ),
+                "breakeven_transaction_cost_buffer_bps": _candidate_board_decimal_field(
+                    scorecard, "breakeven_transaction_cost_buffer_bps"
+                ),
+                "transaction_cost_buffer_bps": _candidate_board_decimal_field(
+                    scorecard, "transaction_cost_buffer_bps"
+                ),
+                "post_cost_net_pnl_after_breakeven_transaction_cost_buffer": (
+                    _candidate_board_decimal_field(
+                        scorecard,
+                        "post_cost_net_pnl_after_breakeven_transaction_cost_buffer",
+                    )
+                ),
                 "trading_day_count": _candidate_board_int_field(
                     scorecard, "trading_day_count"
                 ),
