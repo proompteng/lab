@@ -30,7 +30,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: journal-order-events-live
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:54b8a3f60fcf24af379541df12315ff7b36e5f80ff401cd54a770422687b1488
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:67e5d07505dd15a04b9817521a826445e371e59a5032954c937be55df415377b
               imagePullPolicy: IfNotPresent
               securityContext:
                 seccompProfile:
@@ -87,7 +87,7 @@ spec:
                 - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
                   value: "false"
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:54b8a3f60fcf24af379541df12315ff7b36e5f80ff401cd54a770422687b1488
+                  value: sha256:67e5d07505dd15a04b9817521a826445e371e59a5032954c937be55df415377b
                 - name: PYTHONUNBUFFERED
                   value: "1"
 ---
@@ -123,7 +123,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: journal-order-events-sim
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:54b8a3f60fcf24af379541df12315ff7b36e5f80ff401cd54a770422687b1488
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:67e5d07505dd15a04b9817521a826445e371e59a5032954c937be55df415377b
               imagePullPolicy: IfNotPresent
               securityContext:
                 seccompProfile:
@@ -195,6 +195,6 @@ spec:
                 - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
                   value: "false"
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:54b8a3f60fcf24af379541df12315ff7b36e5f80ff401cd54a770422687b1488
+                  value: sha256:67e5d07505dd15a04b9817521a826445e371e59a5032954c937be55df415377b
                 - name: PYTHONUNBUFFERED
                   value: "1"
