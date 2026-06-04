@@ -4894,15 +4894,52 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
             "liquidity_withdrawal",
             "transient mechanical liquidity",
             "transient liquidity erosion",
+            "latent microstructure",
+            "latent microstructure regime",
+            "microstructure regime",
+            "latent build-up",
+            "latent_build_up",
+            "stable latent stress",
+            "stable to latent",
+            "early-warning",
+            "early warning",
+            "rising-edge",
+            "rising edge",
+            "adaptive threshold",
+            "max aggregation",
         )
     ):
         overlay_ids.append("crumbling_quote_liquidity_erosion")
+        overlay_ids.append("latent_crumbling_quote_regime_grid")
         overlay_contracts.append(
             {
                 "overlay_id": "crumbling_quote_liquidity_erosion",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2604.21993",
+                        "url": "https://arxiv.org/abs/2604.21993",
+                        "title": "When Quotes Crumble: Detecting Transient Mechanical Liquidity Erosion in Limit Order Books",
+                        "mechanism": (
+                            "calibrated_crumbling_quote_probability_from_lob_features_"
+                            "distinguishes_mechanical_liquidity_withdrawal_from_repricing"
+                        ),
+                    },
+                    {
+                        "source_id": "arxiv-2604.20949",
+                        "url": "https://arxiv.org/abs/2604.20949",
+                        "title": "Early Detection of Latent Microstructure Regimes in Limit Order Books",
+                        "mechanism": (
+                            "stable_latent_build_up_stress_detector_with_positive_"
+                            "lead_time_before_reactive_ofi_volatility_baselines"
+                        ),
+                    },
+                ],
                 "required_evidence": [
                     "crumbling_quote_probability",
                     "mechanical_liquidity_erosion",
+                    "latent_build_up_regime_trace",
+                    "early_warning_lead_time",
+                    "rising_edge_trigger_trace",
                     "lob_event_stream",
                     "executable_quote",
                     "route_tca",
@@ -4915,13 +4952,126 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
                 ),
             }
         )
+        overlay_contracts.append(
+            {
+                "overlay_id": "latent_crumbling_quote_regime_grid",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2604.20949",
+                        "url": "https://arxiv.org/abs/2604.20949",
+                        "title": "Early Detection of Latent Microstructure Regimes in Limit Order Books",
+                        "mechanism": (
+                            "max_aggregated_complementary_signal_channels_with_"
+                            "rising_edge_adaptive_thresholds_for_positive_lead_time"
+                        ),
+                    },
+                    {
+                        "source_id": "arxiv-2604.21993",
+                        "url": "https://arxiv.org/abs/2604.21993",
+                        "title": "When Quotes Crumble: Detecting Transient Mechanical Liquidity Erosion in Limit Order Books",
+                        "mechanism": (
+                            "calibrated_quote_erosion_probability_and_temporal_feature_"
+                            "ablation_for_mechanical_liquidity_withdrawal_detection"
+                        ),
+                    },
+                ],
+                "required_evidence": [
+                    "point_in_time_lob_feature_panel",
+                    "latent_build_up_regime_trace",
+                    "crumbling_quote_probability",
+                    "mechanical_liquidity_erosion_probability",
+                    "max_channel_aggregation_trace",
+                    "rising_edge_trigger_trace",
+                    "adaptive_threshold_trace",
+                    "early_warning_lead_time",
+                    "reactive_baseline_comparison",
+                    "execution_veto_ablation",
+                    "route_tca",
+                    "runtime_ledger",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_latent_crumbling_quote_veto_stress"
+                ),
+                "evidence_policy": (
+                    "latent_crumbling_quote_grid_is_candidate_veto_search_input_"
+                    "only_and_requires_live_paper_route_tca_runtime_ledger_authority"
+                ),
+            }
+        )
+        parameter_space["latent_crumbling_quote_regime_grid"] = {
+            "schema_version": "torghut.latent-crumbling-quote-regime-grid.v1",
+            "source_ids": ["arxiv-2604.20949", "arxiv-2604.21993"],
+            "candidate_search_inputs": {
+                "early_warning_horizon_seconds_grid": ["1", "5", "15", "30", "60"],
+                "channel_aggregation_grid": [
+                    "max_complementary_channels",
+                    "weighted_max_order_flow_quote_depth",
+                    "calibrated_neural_crumbling_probability",
+                ],
+                "rising_edge_slope_window_seconds_grid": ["1", "5", "15"],
+                "adaptive_threshold_quantile_grid": ["0.90", "0.95", "0.98"],
+                "crumbling_probability_veto_grid": ["0.35", "0.50", "0.65"],
+                "latent_build_up_persistence_ticks_grid": ["2", "5", "10"],
+                "quote_depth_erosion_bps_grid": ["5", "10", "20"],
+                "execution_response_grid": [
+                    "veto_entry",
+                    "prefer_passive_limit",
+                    "cancel_replace_delay",
+                    "size_halve",
+                ],
+            },
+            "stress_inputs_required": [
+                "point_in_time_lob_features",
+                "quote_depth_erosion",
+                "mechanical_liquidity_withdrawal_label_or_proxy",
+                "latent_build_up_regime_proxy",
+                "order_flow_imbalance",
+                "short_horizon_volatility",
+                "executable_quote_snapshot",
+                "route_tca_bps",
+                "runtime_ledger_post_cost_pnl",
+            ],
+            "diagnostics_required": [
+                "early_warning_mean_lead_time_ticks",
+                "early_warning_precision",
+                "early_warning_coverage",
+                "crumbling_probability_calibration_error",
+                "reactive_baseline_lead_time_delta",
+                "temporal_feature_ablation_delta_auc",
+                "execution_veto_false_positive_rate",
+                "missed_stress_entry_rate",
+            ],
+            "proof_neutrality": {
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "requires_exact_replay": True,
+                "requires_point_in_time_lob_features": True,
+                "requires_executable_quote_evidence": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_agent_based_crumbling_labels_as_live_authority": True,
+                "rejects_early_warning_score_as_profit_proof": True,
+                "rejects_veto_backtest_as_runtime_ledger_authority": True,
+            },
+        }
         hard_vetoes.update(
             {
                 "required_crumbling_quote_liquidity_erosion": True,
+                "required_latent_crumbling_quote_regime_grid": True,
                 "required_crumbling_quote_probability": True,
                 "required_mechanical_liquidity_erosion_probability": True,
+                "required_latent_build_up_regime_trace": True,
+                "required_early_warning_lead_time": True,
+                "required_rising_edge_trigger_trace": True,
+                "required_adaptive_threshold_trace": True,
                 "required_min_crumbling_quote_sample_count": "60",
+                "required_min_latent_regime_sample_count": "60",
                 "required_max_crumbling_quote_probability": "0.90",
+                "required_min_early_warning_precision": "0.80",
+                "required_min_early_warning_mean_lead_time_ticks": "1",
+                "required_max_execution_veto_false_positive_rate": "0.25",
                 "required_route_tca": True,
                 "required_live_paper_parity": True,
             }
@@ -4929,14 +5079,22 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
         promotion_contract.update(
             {
                 "requires_crumbling_quote_liquidity_erosion": True,
+                "requires_latent_crumbling_quote_regime_grid": True,
                 "requires_crumbling_quote_probability": True,
                 "requires_mechanical_liquidity_erosion_probability": True,
+                "requires_latent_build_up_regime_trace": True,
+                "requires_early_warning_lead_time": True,
+                "requires_reactive_baseline_comparison": True,
+                "requires_execution_veto_ablation": True,
                 "requires_lob_event_stream": True,
                 "requires_executable_quote_evidence": True,
                 "requires_route_tca": True,
+                "requires_runtime_ledger": True,
                 "requires_live_paper_parity": True,
                 "requires_adverse_selection_stress": True,
                 "rejects_crumbling_quote_simulation_as_promotion_proof": True,
+                "rejects_early_warning_score_as_profit_proof": True,
+                "rejects_agent_based_crumbling_labels_as_live_authority": True,
                 "risk_policy": "crumbling_quote_liquidity_erosion_validation_only",
             }
         )
@@ -5946,6 +6104,7 @@ def _apply_mechanism_overlay_strategy_params(
         {
             "mixed_market_limit_execution_policy",
             "crumbling_quote_liquidity_erosion",
+            "latent_crumbling_quote_regime_grid",
             "friction_aware_regime_conditioned_policy",
             "multi_asset_cross_impact_execution_grid",
             "attention_factor_stat_arb_pairs_grid",
@@ -5963,6 +6122,11 @@ def _apply_mechanism_overlay_strategy_params(
         params.setdefault("market_order_spread_bps_max", "6")
         params.setdefault("max_recent_quote_invalid_ratio", "0.12")
         params.setdefault("max_recent_quote_jump_bps", "40")
+    if "latent_crumbling_quote_regime_grid" in overlay_ids:
+        params.setdefault(
+            "microstructure_stress_veto_profile", "latent_crumbling_quote"
+        )
+        params.setdefault("crumbling_quote_live_authority", "disabled_candidate_only")
     if "friction_aware_regime_conditioned_policy" in overlay_ids:
         params.setdefault("cost_model_profile", "proportional_plus_impact")
         params.setdefault("turnover_budget_profile", "trade_space_trust_region")
@@ -6080,6 +6244,33 @@ def _family_scores_for_hypothesis(
             3,
             "alpha_decay_predictability_stress",
         )
+
+    if has_any(
+        (
+            "crumbling quote",
+            "crumbling quotes",
+            "quote crumble",
+            "quote erosion",
+            "mechanical liquidity erosion",
+            "mechanical liquidity withdrawal",
+            "latent microstructure",
+            "latent microstructure regime",
+            "latent build-up",
+            "latent_build_up",
+            "early-warning",
+            "early warning",
+            "rising-edge",
+            "rising edge",
+            "adaptive threshold",
+        )
+    ):
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            7,
+            "latent_crumbling_quote_regime",
+        )
+        bump("intraday_tsmom_v2", 3, "latent_crumbling_quote_regime")
+        bump("microbar_cross_sectional_pairs_v1", 3, "latent_crumbling_quote_regime")
 
     if has_any(
         (
