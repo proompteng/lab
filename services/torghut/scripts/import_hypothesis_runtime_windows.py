@@ -5340,6 +5340,18 @@ def _runtime_ledger_bucket_metadata(
             for blocker in _runtime_ledger_bucket_profit_proof_blockers(payload)
         )
     )
+    source_bucket_ids = sorted(
+        {
+            bucket_id
+            for payload in payloads
+            if (
+                bucket_id := _text_or_none(
+                    payload.get("source_runtime_ledger_bucket_id") or payload.get("id")
+                )
+            )
+            is not None
+        }
+    )
     metadata: dict[str, Any] = {
         f"runtime_ledger_{prefix}_bucket_count": len(payloads),
         f"runtime_ledger_{prefix}_bucket_run_ids": sorted(
@@ -5364,6 +5376,12 @@ def _runtime_ledger_bucket_metadata(
         metadata[f"runtime_ledger_{prefix}_bucket_candidate_ids"] = candidate_ids
     if len(candidate_ids) == 1:
         metadata[f"runtime_ledger_{prefix}_bucket_candidate_id"] = candidate_ids[0]
+    if source_bucket_ids:
+        metadata[f"runtime_ledger_{prefix}_bucket_ids"] = source_bucket_ids
+        metadata[f"runtime_ledger_{prefix}_bucket_refs"] = [
+            f"postgres:strategy_runtime_ledger_buckets:{bucket_id}"
+            for bucket_id in source_bucket_ids
+        ]
     return metadata
 
 
@@ -5415,6 +5433,7 @@ def _runtime_ledger_tca_rows_from_durable_buckets(
 
 
 _SOURCE_RUNTIME_LEDGER_COLUMNS = (
+    "id",
     "run_id",
     "candidate_id",
     "hypothesis_id",
@@ -5456,6 +5475,25 @@ def _source_runtime_ledger_payload_from_row(
         for key, value in _as_mapping(payload.get("payload_json")).items()
         if key != "payload_json"
     }
+    if source_bucket_id := _text_or_none(payload.get("id")):
+        source_bucket_ref = (
+            f"postgres:strategy_runtime_ledger_buckets:{source_bucket_id}"
+        )
+        source_refs = _metadata_text_list(payload_json.get("source_refs"))
+        if source_bucket_ref not in source_refs:
+            source_refs.append(source_bucket_ref)
+        source_row_counts = {
+            str(key): _nonnegative_int(value)
+            for key, value in _as_mapping(payload_json.get("source_row_counts")).items()
+        }
+        source_row_counts["strategy_runtime_ledger_buckets"] = max(
+            1,
+            source_row_counts.get("strategy_runtime_ledger_buckets", 0),
+        )
+        payload_json["source_refs"] = source_refs
+        payload_json["source_row_counts"] = source_row_counts
+        payload_json["source_runtime_ledger_bucket_id"] = source_bucket_id
+        payload_json["source_runtime_ledger_bucket_ref"] = source_bucket_ref
     row_payload = {
         key: value for key, value in payload.items() if key != "payload_json"
     }

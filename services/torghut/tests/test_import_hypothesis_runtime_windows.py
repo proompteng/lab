@@ -193,6 +193,7 @@ class _SourceLedgerCursor:
         self._results = [
             [
                 (
+                    "source-runtime-ledger-bucket-1",
                     "runtime-proof-source",
                     "H-TSMOM-LIQ-01",
                     "H-TSMOM-LIQ-01",
@@ -2595,6 +2596,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(metadata["runtime_ledger_source_bucket_count"], 1)
         self.assertEqual(
+            metadata["runtime_ledger_source_bucket_ids"],
+            ["source-runtime-ledger-bucket-1"],
+        )
+        self.assertEqual(
+            metadata["runtime_ledger_source_bucket_refs"],
+            ["postgres:strategy_runtime_ledger_buckets:source-runtime-ledger-bucket-1"],
+        )
+        self.assertEqual(
             metadata["runtime_ledger_source_bucket_run_ids"],
             ["runtime-proof-source"],
         )
@@ -2617,6 +2626,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["run_id"], "runtime-proof-source")
+        self.assertEqual(
+            bucket["source_runtime_ledger_bucket_id"],
+            "source-runtime-ledger-bucket-1",
+        )
+        self.assertIn(
+            "postgres:strategy_runtime_ledger_buckets:source-runtime-ledger-bucket-1",
+            bucket["source_refs"],
+        )
+        self.assertEqual(
+            bucket["source_row_counts"]["strategy_runtime_ledger_buckets"],
+            1,
+        )
         self.assertEqual(
             bucket["cost_basis_counts"], {"broker_reported_commission_and_fees": 2}
         )
@@ -2652,6 +2673,24 @@ class TestImportHypothesisRuntimeWindows(TestCase):
 
         self.assertNotIn("payload_json", payload)
         self.assertEqual(payload["run_id"], "runtime-proof-source")
+        self.assertEqual(
+            payload["source_runtime_ledger_bucket_id"],
+            "source-runtime-ledger-bucket-1",
+        )
+        self.assertEqual(
+            payload["source_runtime_ledger_bucket_ref"],
+            "postgres:strategy_runtime_ledger_buckets:source-runtime-ledger-bucket-1",
+        )
+        self.assertIn(
+            "postgres:strategy_runtime_ledger_buckets:source-runtime-ledger-bucket-1",
+            payload["source_refs"],
+        )
+        self.assertEqual(
+            cast(Mapping[str, object], payload["source_row_counts"])[
+                "strategy_runtime_ledger_buckets"
+            ],
+            1,
+        )
         self.assertEqual(
             payload["source_decision_mode_counts"],
             {"strategy_signal_paper": 2},
@@ -2743,6 +2782,17 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             metadata["runtime_ledger_source_bucket_profit_proof_blockers"],
         )
         self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertIn(
+            "postgres:strategy_runtime_ledger_buckets:source-runtime-ledger-bucket-1",
+            bucket["source_refs"],
+        )
+        self.assertEqual(
+            bucket["source_row_counts"],
+            {"strategy_runtime_ledger_buckets": 1},
+        )
         self.assertIn(
             "runtime_ledger_source_refs_missing",
             rows[0]["runtime_ledger_blockers"],
