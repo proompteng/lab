@@ -23,7 +23,8 @@ workflow submissions in `torghut` do not rely on manual secret copies from `argo
 
 The `torghut-empirical-promotion-renewal` CronJob is also the scheduled runtime-ledger proof packet conductor for the
 paper-route proof lane. It first runs `renew_latest_empirical_promotion_jobs.py` with the sim
-`/trading/paper-route-target-plan` target plan, then runs `assemble_runtime_ledger_proof_packet.py` in explicit
+`/trading/paper-route-evidence?target_limit=5` target plan/evidence payload, then runs
+`assemble_runtime_ledger_proof_packet.py` in explicit
 `authority` mode and uploads the packet under `runtime-ledger-proof-packets/{run_id}`. The scheduled packet uses the
 final authority thresholds: 20 runtime-ledger trading days, $10,000 total post-cost net PnL, $500/day post-cost net PnL,
 3% max drawdown/equity, 25% best-day share, and 35% symbol concentration. When the paper-route window is import-ready,

@@ -1858,12 +1858,12 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "
-            "'http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
+            "'http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
             args,
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "'http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
+            "'http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
             args,
         )
         self.assertNotIn(
@@ -1946,11 +1946,11 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn(
-            "--paper-route-service-base-url http://torghut.torghut.svc.cluster.local",
+            "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
             args,
         )
         self.assertNotIn(
-            "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
+            "--paper-route-service-base-url http://torghut.torghut.svc.cluster.local",
             args,
         )
         self.assertIn(
