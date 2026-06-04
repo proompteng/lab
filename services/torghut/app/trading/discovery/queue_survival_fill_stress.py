@@ -16,9 +16,9 @@ from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v3"
+QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v4"
 QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION = (
-    "torghut.queue-survival-fill-stress-contract.v3"
+    "torghut.queue-survival-fill-stress-contract.v4"
 )
 QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL = "queue_survival_fill_stress_preview_only_exact_replay_route_tca_order_lifecycle_runtime_ledger_required"
 QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
@@ -71,6 +71,20 @@ QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
         "date": "2026-04-15",
         "mechanism": "queue_allocation_mechanism_taxonomy_priority_rule_fragility",
     },
+    {
+        "source_id": "arxiv-2502.18625",
+        "url": "https://arxiv.org/abs/2502.18625",
+        "title": "The Market Maker's Dilemma: Navigating the Fill Probability vs. Post-Fill Returns Trade-Off",
+        "date": "2025-02-25",
+        "mechanism": "maker_fill_probability_post_fill_return_tradeoff_and_contrarian_imbalance_reversal",
+    },
+    {
+        "source_id": "arxiv-2605.25527",
+        "url": "https://arxiv.org/abs/2605.25527",
+        "title": "DeepSeekMath Meets Order Book: Group-Aware Policy Optimization for High-Frequency Directional Trading",
+        "date": "2026-05-25",
+        "mechanism": "order_flow_state_group_normalized_downside_aware_policy_reward_stress",
+    },
 )
 
 _PRICE_FIELDS = ("price", "mid_price", "mid", "mark", "last_price", "close")
@@ -99,6 +113,15 @@ _FILL_FIELDS = ("fill_qty", "filled_qty", "executed_qty", "filled_size", "fill_s
 _STATUS_FIELDS = ("order_status", "status", "execution_status")
 _EVENT_FIELDS = ("event_type", "order_event_type", "lob_event_type", "action", "type")
 _SIDE_FIELDS = ("side", "order_side", "trade_side", "aggressor_side")
+_ORDER_BOOK_IMBALANCE_FIELDS = (
+    "order_book_imbalance",
+    "book_imbalance",
+    "queue_imbalance",
+    "obi",
+    "microprice_imbalance",
+    "order_flow_imbalance",
+    "ofi",
+)
 _FILL_TOKENS = frozenset(("fill", "filled", "execution", "executed", "trade"))
 _CANCEL_TOKENS = frozenset(("cancel", "canceled", "cancelled", "delete", "remove"))
 _REJECT_TOKENS = frozenset(
@@ -126,6 +149,11 @@ class QueueSurvivalFillStressSummary:
     time_priority_edge_concentration_score: float
     randomized_priority_fill_gap_proxy_bps: float
     queue_allocation_rule_sensitivity_penalty_bps: float
+    observed_order_book_imbalance_count: int
+    median_directional_order_book_imbalance: float
+    contrarian_reversal_support_score: float
+    maker_fill_return_tradeoff_penalty_bps: float
+    group_normalized_downside_reward_penalty_bps: float
     estimated_limit_fill_probability: float
     nonfill_opportunity_cost_bps: float
     adverse_selection_after_touch_bps: float
@@ -176,6 +204,21 @@ class QueueSurvivalFillStressSummary:
             "queue_allocation_rule_sensitivity_penalty_bps": _stable_float(
                 self.queue_allocation_rule_sensitivity_penalty_bps
             ),
+            "observed_order_book_imbalance_count": (
+                self.observed_order_book_imbalance_count
+            ),
+            "median_directional_order_book_imbalance": _stable_float(
+                self.median_directional_order_book_imbalance
+            ),
+            "contrarian_reversal_support_score": _stable_float(
+                self.contrarian_reversal_support_score
+            ),
+            "maker_fill_return_tradeoff_penalty_bps": _stable_float(
+                self.maker_fill_return_tradeoff_penalty_bps
+            ),
+            "group_normalized_downside_reward_penalty_bps": _stable_float(
+                self.group_normalized_downside_reward_penalty_bps
+            ),
             "estimated_limit_fill_probability": _stable_float(
                 self.estimated_limit_fill_probability
             ),
@@ -219,6 +262,18 @@ class QueueSurvivalFillStressSummary:
                 "queue_allocation_rule_sensitivity_penalty_bps": _stable_float(
                     self.queue_allocation_rule_sensitivity_penalty_bps
                 ),
+                "median_directional_order_book_imbalance": _stable_float(
+                    self.median_directional_order_book_imbalance
+                ),
+                "contrarian_reversal_support_score": _stable_float(
+                    self.contrarian_reversal_support_score
+                ),
+                "maker_fill_return_tradeoff_penalty_bps": _stable_float(
+                    self.maker_fill_return_tradeoff_penalty_bps
+                ),
+                "group_normalized_downside_reward_penalty_bps": _stable_float(
+                    self.group_normalized_downside_reward_penalty_bps
+                ),
                 "nonfill_opportunity_cost_bps": _stable_float(
                     self.nonfill_opportunity_cost_bps
                 ),
@@ -235,6 +290,8 @@ class QueueSurvivalFillStressSummary:
             "queue_reactive_replay_parity_preview": True,
             "order_size_distribution_preview": True,
             "queue_allocation_rule_sensitivity_preview": True,
+            "maker_fill_return_tradeoff_preview": True,
+            "group_normalized_downside_reward_preview": True,
             "research_ranking_only": True,
             "prefilter_only": True,
             "promotion_proof": False,
@@ -268,6 +325,10 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "time_priority_edge_concentration_score",
             "randomized_priority_fill_gap_proxy_bps",
             "queue_allocation_rule_sensitivity_penalty_bps",
+            "median_directional_order_book_imbalance",
+            "contrarian_reversal_support_score",
+            "maker_fill_return_tradeoff_penalty_bps",
+            "group_normalized_downside_reward_penalty_bps",
             "nonfill_opportunity_cost_bps",
             "adverse_selection_after_touch_bps",
         ],
@@ -285,11 +346,15 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "requires_order_lifecycle_fill_evidence": True,
             "requires_queue_reactive_replay_parity": True,
             "requires_queue_allocation_rule_audit": True,
+            "requires_maker_fill_return_tradeoff_audit": True,
+            "requires_group_downside_reward_out_of_sample_audit": True,
             "requires_runtime_ledger": True,
             "rejects_queue_position_free_fill_assumptions": True,
             "rejects_queue_reactive_replay_parity_as_pnl_proof": True,
             "rejects_order_size_distribution_proxy_as_fill_authority": True,
             "rejects_time_priority_edge_as_mechanism_neutral_pnl_proof": True,
+            "rejects_contrarian_reversal_proxy_as_promotion_authority": True,
+            "rejects_order_flow_policy_reward_as_pnl_proof": True,
         },
     }
 
@@ -342,6 +407,7 @@ def extract_queue_survival_fill_stress(
         _nonnegative_float(_first_payload_value(row.payload, _FILL_FIELDS))
         for row in ordered
     )
+    order_book_imbalances = tuple(_order_book_imbalance(row.payload) for row in ordered)
 
     warnings: list[str] = []
     if len(ordered) < 3:
@@ -359,6 +425,11 @@ def extract_queue_survival_fill_stress(
         warnings.append("missing_candidate_notional_for_queue_stress")
     if not any(event_labels):
         warnings.append("missing_queue_reactive_event_labels")
+    observed_order_book_imbalance_count = sum(
+        item is not None for item in order_book_imbalances
+    )
+    if observed_order_book_imbalance_count == 0:
+        warnings.append("missing_order_book_imbalance_for_maker_dilemma")
 
     observed_fill_count = sum(
         1
@@ -452,6 +523,31 @@ def extract_queue_survival_fill_stress(
         fill_probability=estimated_limit_fill_probability,
     )
     median_spread_bps = _median(tuple(spread for spread in spreads if spread > 0.0))
+    directional_imbalances = tuple(
+        signed_direction * item for item in order_book_imbalances if item is not None
+    )
+    median_directional_order_book_imbalance = _median(directional_imbalances)
+    contrarian_reversal_support_score = _contrarian_reversal_support_score(
+        prices=valid_prices,
+        direction=signed_direction,
+        median_directional_order_book_imbalance=median_directional_order_book_imbalance,
+        median_spread_bps=median_spread_bps,
+    )
+    maker_fill_return_tradeoff_penalty_bps = _maker_fill_return_tradeoff_penalty_bps(
+        fill_probability=estimated_limit_fill_probability,
+        adverse_selection_after_touch_bps=adverse_selection_after_touch_bps,
+        median_directional_order_book_imbalance=median_directional_order_book_imbalance,
+        contrarian_reversal_support_score=contrarian_reversal_support_score,
+        median_spread_bps=median_spread_bps,
+        observed_order_book_imbalance_count=observed_order_book_imbalance_count,
+    )
+    group_normalized_downside_reward_penalty_bps = (
+        _group_normalized_downside_reward_penalty_bps(
+            rows=ordered,
+            direction=signed_direction,
+            fallback_spread_bps=median_spread_bps,
+        )
+    )
     queue_delay_penalty_bps = (
         median_queue_ahead_ratio * 10.0
         + visible_depth_notional_shortfall_share * 12.0
@@ -464,6 +560,8 @@ def extract_queue_survival_fill_stress(
         queue_delay_penalty_bps
         + queue_reactive_replay_parity_penalty_bps
         + queue_allocation_rule_sensitivity_penalty_bps
+        + maker_fill_return_tradeoff_penalty_bps
+        + group_normalized_downside_reward_penalty_bps
         + nonfill_opportunity_cost_bps
         + adverse_selection_after_touch_bps
         + missing_penalty_bps
@@ -485,6 +583,11 @@ def extract_queue_survival_fill_stress(
         time_priority_edge_concentration_score=time_priority_edge_concentration_score,
         randomized_priority_fill_gap_proxy_bps=randomized_priority_fill_gap_proxy_bps,
         queue_allocation_rule_sensitivity_penalty_bps=queue_allocation_rule_sensitivity_penalty_bps,
+        observed_order_book_imbalance_count=observed_order_book_imbalance_count,
+        median_directional_order_book_imbalance=median_directional_order_book_imbalance,
+        contrarian_reversal_support_score=contrarian_reversal_support_score,
+        maker_fill_return_tradeoff_penalty_bps=maker_fill_return_tradeoff_penalty_bps,
+        group_normalized_downside_reward_penalty_bps=group_normalized_downside_reward_penalty_bps,
         estimated_limit_fill_probability=estimated_limit_fill_probability,
         nonfill_opportunity_cost_bps=nonfill_opportunity_cost_bps,
         adverse_selection_after_touch_bps=adverse_selection_after_touch_bps,
@@ -679,6 +782,127 @@ def _adverse_selection_after_touch_bps(
         return 0.0
     adverse_move_bps = -direction * (terminal - touched) / touched * 10_000.0
     return max(0.0, adverse_move_bps) * max(0.0, fill_probability)
+
+
+def _order_book_imbalance(payload: Mapping[str, Any]) -> float | None:
+    explicit = _float_or_none(
+        _first_payload_value(payload, _ORDER_BOOK_IMBALANCE_FIELDS)
+    )
+    if explicit is not None:
+        return min(1.0, max(-1.0, explicit))
+    bid_size = _nonnegative_float(_first_payload_value(payload, _BID_SIZE_FIELDS))
+    ask_size = _nonnegative_float(_first_payload_value(payload, _ASK_SIZE_FIELDS))
+    total_depth = bid_size + ask_size
+    if total_depth <= 0.0:
+        return None
+    return min(1.0, max(-1.0, (bid_size - ask_size) / total_depth))
+
+
+def _contrarian_reversal_support_score(
+    *,
+    prices: Sequence[float],
+    direction: float,
+    median_directional_order_book_imbalance: float,
+    median_spread_bps: float,
+) -> float:
+    """Bounded support for maker quotes counter-trading a prevailing imbalance.
+
+    arXiv:2502.18625 documents that maker fill probability can be negatively
+    correlated with post-fill returns and that viable maker strategies may need
+    to counter-trade the prevailing book imbalance. This proxy is only a
+    replay-ranking feature: it cannot authorize fills, PnL, or promotion.
+    """
+
+    if len(prices) < 2 or prices[0] <= 0.0:
+        return 0.0
+    contrarian_pressure = max(0.0, -median_directional_order_book_imbalance)
+    terminal_move_bps = direction * (prices[-1] - prices[0]) / prices[0] * 10_000.0
+    spread_floor_bps = max(1.0, median_spread_bps)
+    reversal_strength = max(0.0, terminal_move_bps) / max(4.0, spread_floor_bps * 4.0)
+    return min(1.0, contrarian_pressure * min(1.0, reversal_strength))
+
+
+def _maker_fill_return_tradeoff_penalty_bps(
+    *,
+    fill_probability: float,
+    adverse_selection_after_touch_bps: float,
+    median_directional_order_book_imbalance: float,
+    contrarian_reversal_support_score: float,
+    median_spread_bps: float,
+    observed_order_book_imbalance_count: int,
+) -> float:
+    if observed_order_book_imbalance_count <= 0:
+        return 0.0
+    same_direction_pressure = max(0.0, median_directional_order_book_imbalance)
+    spread_floor_bps = max(1.0, median_spread_bps)
+    raw_penalty = fill_probability * (
+        same_direction_pressure * spread_floor_bps * 8.0
+        + adverse_selection_after_touch_bps * 0.45
+    )
+    contrarian_relief = 1.0 - min(0.35, contrarian_reversal_support_score * 0.35)
+    return min(40.0, max(0.0, raw_penalty * contrarian_relief))
+
+
+def _group_normalized_downside_reward_penalty_bps(
+    *,
+    rows: Sequence[SignalEnvelope],
+    direction: float,
+    fallback_spread_bps: float,
+) -> float:
+    """Downside-aware, group-normalized spread-scaled reward stress.
+
+    arXiv:2605.25527 motivates order-flow state policies with group-normalized
+    updates and downside-aware shaping. Torghut keeps this deterministic and
+    proof-neutral by ranking replay rows with per-symbol post-cost downside
+    dispersion only; it is not model PnL or live-capital authority.
+    """
+
+    returns_by_symbol: dict[str, list[float]] = {}
+    rows_by_symbol: dict[str, list[SignalEnvelope]] = {}
+    for row in rows:
+        rows_by_symbol.setdefault(row.symbol, []).append(row)
+    for symbol, symbol_rows in rows_by_symbol.items():
+        ordered = sorted(symbol_rows, key=lambda item: (item.event_ts, item.seq))
+        for current, following in zip(ordered, ordered[1:]):
+            current_price = _positive_float(
+                _first_payload_value(current.payload, _PRICE_FIELDS)
+            )
+            next_price = _positive_float(
+                _first_payload_value(following.payload, _PRICE_FIELDS)
+            )
+            if current_price is None or next_price is None:
+                continue
+            spread_bps = _nonnegative_float(
+                _first_payload_value(current.payload, _SPREAD_FIELDS)
+            )
+            if spread_bps <= 0.0:
+                spread_bps = fallback_spread_bps
+            signed_post_cost_return_bps = direction * (
+                next_price - current_price
+            ) / current_price * 10_000.0 - max(0.0, spread_bps)
+            returns_by_symbol.setdefault(symbol, []).append(signed_post_cost_return_bps)
+    group_penalties: list[float] = []
+    for values in returns_by_symbol.values():
+        if not values:
+            continue
+        mean_value = sum(values) / len(values)
+        variance = sum((value - mean_value) ** 2 for value in values) / max(
+            1, len(values)
+        )
+        std_dev = variance**0.5
+        downside_bps = sum(max(0.0, -value) for value in values) / len(values)
+        downside_z = (
+            sum(max(0.0, (mean_value - value) / std_dev) for value in values)
+            / len(values)
+            if std_dev > 0.0
+            else 0.0
+        )
+        group_penalties.append(
+            downside_bps * 0.35 + downside_z * max(1.0, fallback_spread_bps) * 0.45
+        )
+    if not group_penalties:
+        return 0.0
+    return min(35.0, sum(group_penalties) / len(group_penalties))
 
 
 def _event_label(payload: Mapping[str, Any]) -> str:
