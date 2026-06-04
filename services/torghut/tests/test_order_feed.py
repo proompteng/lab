@@ -1951,6 +1951,84 @@ class TestOrderFeed(TestCase):
         self.assertTrue(source_window.payload_json["source_coverage_complete"])
         self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
 
+    def test_repair_order_feed_execution_links_prioritizes_recent_account_alias_event(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            old_unmatchable_event = ExecutionOrderEvent(
+                event_fingerprint="repair-old-broker-account-unmatchable-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=331,
+                alpaca_account_label="PA3SX7FYNUTF",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="old-broker-missing-order",
+                client_order_id="old-broker-missing-client",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+            )
+            execution = self._seed_execution(
+                session,
+                account_label="TORGHUT_SIM",
+                order_id="new-sim-alias-order",
+                client_order_id="new-sim-alias-client",
+            )
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            linkable_event = ExecutionOrderEvent(
+                event_fingerprint="repair-new-broker-account-linkable-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=332,
+                alpaca_account_label="PA3SX7FYNUTF",
+                event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="new-sim-alias-order",
+                client_order_id="new-sim-alias-client",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add_all([old_unmatchable_event, linkable_event])
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="PA3SX7FYNUTF",
+                canonical_account_label="TORGHUT_SIM",
+                limit=1,
+            )
+            session.commit()
+            session.refresh(old_unmatchable_event)
+            session.refresh(linkable_event)
+
+        self.assertEqual(result["selected"], 1)
+        self.assertEqual(result["events_linked"], 1)
+        self.assertEqual(result["account_alias_events_linked"], 1)
+        self.assertIsNone(old_unmatchable_event.execution_id)
+        self.assertIsNone(old_unmatchable_event.trade_decision_id)
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(old_unmatchable_event),
+            [],
+        )
+        self.assertEqual(linkable_event.alpaca_account_label, "PA3SX7FYNUTF")
+        self.assertEqual(linkable_event.execution_id, execution_id)
+        self.assertEqual(linkable_event.trade_decision_id, trade_decision_id)
+        self.assertEqual(
+            linkable_event.raw_event["_torghut_account_label_alias"],
+            {
+                "source_account_label": "PA3SX7FYNUTF",
+                "canonical_account_label": "TORGHUT_SIM",
+                "basis": "matched_order_identity",
+            },
+        )
+
     def test_linkage_helpers_preserve_actionable_blocker_classifications(
         self,
     ) -> None:

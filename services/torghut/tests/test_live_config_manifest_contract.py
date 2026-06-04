@@ -1360,6 +1360,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/repair_order_feed_source_windows.py", args)
         self.assertIn("--dsn-env DB_DSN", args)
         self.assertIn("--account-label PA3SX7FYNUTF", args)
+        self.assertIn("--canonical-account-label TORGHUT_SIM", args)
         self.assertIn("--batch-size 1000", args)
         self.assertIn("--max-batches 5", args)
         self.assertIn("--backfill-execution-events", args)

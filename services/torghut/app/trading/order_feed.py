@@ -1946,6 +1946,26 @@ def repair_order_feed_execution_links(
         if canonical_account_label is not None and canonical_account_label.strip()
         else None
     )
+    if canonical_label is not None:
+        event_ordering = (
+            ExecutionOrderEvent.raw_event["_torghut_linkage"]
+            .as_string()
+            .is_(None)
+            .desc(),
+            ExecutionOrderEvent.event_ts.desc().nullslast(),
+            ExecutionOrderEvent.feed_seq.desc().nullslast(),
+            ExecutionOrderEvent.created_at.desc(),
+        )
+    else:
+        event_ordering = (
+            ExecutionOrderEvent.raw_event["_torghut_linkage"]
+            .as_string()
+            .is_(None)
+            .desc(),
+            ExecutionOrderEvent.event_ts.asc().nullsfirst(),
+            ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
+            ExecutionOrderEvent.created_at.asc(),
+        )
     stmt = (
         select(ExecutionOrderEvent)
         .where(
@@ -1958,15 +1978,7 @@ def repair_order_feed_execution_links(
                 | (ExecutionOrderEvent.client_order_id.is_not(None))
             ),
         )
-        .order_by(
-            ExecutionOrderEvent.raw_event["_torghut_linkage"]
-            .as_string()
-            .is_(None)
-            .desc(),
-            ExecutionOrderEvent.event_ts.asc().nullsfirst(),
-            ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
-            ExecutionOrderEvent.created_at.asc(),
-        )
+        .order_by(*event_ordering)
         .limit(bounded_limit)
     )
     if account_label:
