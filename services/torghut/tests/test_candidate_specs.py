@@ -555,6 +555,113 @@ class TestCandidateSpecs(TestCase):
             "post_cost_net_pnl_after_transient_impact_hawkes_predator_stress",
         )
 
+    def test_cross_impact_claim_adds_multi_asset_execution_grid(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-multi-asset-cross-impact-execution",
+            claims=[
+                {
+                    "claim_id": "cross-impact-resilience-execution",
+                    "claim_type": "execution_assumption",
+                    "claim_text": (
+                        "Multi-asset optimal trade execution with stochastic "
+                        "cross-effects, matrix-valued price impact and resilience, "
+                        "cross-hedging, signed trade flow feedback, and spread and "
+                        "volume imbalance state projection should stress H-PAIRS leg "
+                        "scheduling before any promotion proof."
+                    ),
+                    "data_requirements": [
+                        "pair_leg_order_flow_covariance",
+                        "cross_impact_matrix_fit",
+                        "impact_resilience_matrix_fit",
+                        "cross_hedge_leg_ablation",
+                        "signed_trade_flow_decay_feedback",
+                        "spread_volume_imbalance_state_projection",
+                        "route_tca",
+                    ],
+                    "confidence": "0.78",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        first = specs[0]
+        self.assertEqual(first.family_template_id, "microbar_cross_sectional_pairs_v1")
+        self.assertIn(
+            "multi_asset_cross_impact_pairs_execution",
+            first.feature_contract["family_selection"]["reasons"],
+        )
+        self.assertIn(
+            "multi_asset_cross_impact_execution_grid",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        grid = first.parameter_space["multi_asset_cross_impact_execution_grid"]
+        self.assertEqual(
+            grid["schema_version"],
+            "torghut.multi-asset-cross-impact-execution-grid.v1",
+        )
+        self.assertEqual(
+            set(grid["source_ids"]),
+            {"arxiv-2503.05594", "arxiv-2603.24137", "arxiv-2506.05755"},
+        )
+        self.assertIn(
+            "factor_low_rank_psd",
+            grid["candidate_search_inputs"]["impact_matrix_structure_grid"],
+        )
+        self.assertIn(
+            "lead_lag_hedged",
+            grid["candidate_search_inputs"]["pair_leg_execution_mode_grid"],
+        )
+        self.assertIn(
+            "signed_trade_flow_decay_kernel",
+            grid["stress_inputs_required"],
+        )
+        self.assertIn(
+            "price_manipulation_screen_passed",
+            grid["diagnostics_required"],
+        )
+        self.assertFalse(grid["proof_neutrality"]["proof_authority"])
+        self.assertTrue(
+            grid["proof_neutrality"]["rejects_cross_impact_model_as_profit_proof"]
+        )
+        self.assertTrue(
+            first.hard_vetoes["required_multi_asset_cross_impact_execution_grid"]
+        )
+        self.assertTrue(first.hard_vetoes["required_cross_hedge_leg_ablation"])
+        self.assertEqual(
+            first.hard_vetoes["required_max_cross_impact_fit_error_bps"], "8"
+        )
+        self.assertTrue(
+            first.promotion_contract["requires_multi_asset_cross_impact_execution_grid"]
+        )
+        self.assertTrue(
+            first.promotion_contract["rejects_cross_hedge_ablation_as_fill_authority"]
+        )
+        self.assertEqual(
+            first.strategy_overrides["params"]["cross_impact_stress_profile"],
+            "multi_asset_matrix_resilience",
+        )
+        self.assertEqual(
+            first.strategy_overrides["params"]["cross_hedge_live_authority"],
+            "disabled_candidate_only",
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        contract = next(
+            item
+            for item in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if item["overlay_id"] == "multi_asset_cross_impact_execution_grid"
+        )
+        self.assertEqual(contract["source_papers"][0]["source_id"], "arxiv-2503.05594")
+        self.assertEqual(
+            contract["rank_metric"],
+            "post_cost_net_pnl_after_cross_impact_resilience_stress",
+        )
+        self.assertIn("runtime_ledger", contract["required_evidence"])
+
     def test_lob_simulation_reality_gap_claim_adds_implementation_risk_overlay(
         self,
     ) -> None:
