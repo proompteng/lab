@@ -1662,7 +1662,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("SIM_DB_DSN", live_env)
         live_args = "\n".join(str(item) for item in live_container.get("args", []))
         self.assertIn("--preset live", live_args)
-        self.assertIn("--execution-batch-size 5", live_args)
+        self.assertIn("--execution-batch-size 250", live_args)
+        self.assertIn("--tca-metric-batch-size 250", live_args)
+        self.assertIn("--order-event-batch-size 50", live_args)
+        self.assertIn("--runtime-ledger-batch-size 100", live_args)
         self.assertIn("--supervise-timeout-seconds 45", live_args)
         self.assertNotIn("--dsn-env DB_DSN", live_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
@@ -1684,7 +1687,10 @@ class TestLiveConfigManifestContract(TestCase):
             tigerbeetle_journal_runner.LIVE_EXECUTION_SLICE_COUNT,
         )
         self.assertTrue(live_execution_command.commit_each_row)
-        self.assertEqual(live_execution_command.progress_interval, 1)
+        self.assertEqual(
+            live_execution_command.progress_interval,
+            tigerbeetle_journal_runner.LIVE_EXECUTION_PROGRESS_INTERVAL,
+        )
         live_order_event_commands = [
             command
             for command in tigerbeetle_journal_runner._live_commands(
@@ -1698,7 +1704,7 @@ class TestLiveConfigManifestContract(TestCase):
             live_order_event_command.batch_size,
             tigerbeetle_journal_runner.LIVE_ORDER_EVENT_BATCH_SIZE,
         )
-        self.assertEqual(live_order_event_command.batch_size, 1)
+        self.assertEqual(live_order_event_command.batch_size, 50)
         self.assertEqual(
             live_order_event_command.event_scan_limit,
             tigerbeetle_journal_runner.LIVE_ORDER_EVENT_SCAN_LIMIT,
@@ -1715,8 +1721,8 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertLessEqual(
             live_order_event_command.batch_size * live_order_event_command.max_batches,
-            1,
-            "live order-event slices must stay to one selected row after the 2-batch image still timed out",
+            tigerbeetle_journal_runner.LIVE_ORDER_EVENT_BATCH_SIZE,
+            "live order-event slices must stay to one bounded batch under the 45s watchdog",
         )
         self.assertTrue(live_order_event_command.skip_reconcile)
         self.assertTrue(live_order_event_command.allow_data_quality_degraded)
@@ -1760,6 +1766,8 @@ class TestLiveConfigManifestContract(TestCase):
             )
         sim_args = "\n".join(str(item) for item in sim_container.get("args", []))
         self.assertIn("--preset sim", sim_args)
+        self.assertIn("--sim-batch-size 250", sim_args)
+        self.assertIn("--runtime-ledger-batch-size 100", sim_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", sim_args)
         self.assertNotIn("--account-label TORGHUT_SIM", sim_args)
         self.assertNotIn("--batch-size", sim_args)
@@ -1898,7 +1906,7 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertNotIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
-        self.assertNotIn("--runtime-window-target '{\"hypothesis_id\"", args)
+        self.assertNotIn('--runtime-window-target \'{"hypothesis_id"', args)
         self.assertNotIn("PA3SX7FYNUTF", args)
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
         self.assertIn("--runtime-window-observed-stage paper", args)

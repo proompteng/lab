@@ -24,14 +24,20 @@ from app.trading.tigerbeetle_journal import (  # noqa: E402
 )
 from scripts import journal_tigerbeetle_order_events as journal_script  # noqa: E402
 
-LIVE_ORDER_EVENT_BATCH_SIZE = 1
+MAX_TIGERBEETLE_BATCH_SIZE = 5000
+LIVE_ORDER_EVENT_BATCH_SIZE = 50
 LIVE_ORDER_EVENT_MAX_BATCHES = 1
-LIVE_ORDER_EVENT_SCAN_LIMIT = 250
-LIVE_EXECUTION_BATCH_SIZE = 5
-LIVE_EXECUTION_SLICE_COUNT = 5
-LIVE_TCA_METRIC_BATCH_SIZE = 5
+LIVE_ORDER_EVENT_SCAN_LIMIT = 5000
+LIVE_EXECUTION_BATCH_SIZE = 250
+LIVE_EXECUTION_SLICE_COUNT = 1
+LIVE_EXECUTION_PROGRESS_INTERVAL = 25
+LIVE_TCA_METRIC_BATCH_SIZE = 250
 LIVE_TCA_METRIC_MAX_BATCHES = 1
+LIVE_RUNTIME_LEDGER_BATCH_SIZE = 100
 LIVE_RECONCILE_LIMIT = 500
+SIM_SOURCE_BATCH_SIZE = 250
+SIM_RUNTIME_LEDGER_BATCH_SIZE = 100
+SIM_ORDER_EVENT_SCAN_LIMIT = 5000
 RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS = 120.0
 
 
@@ -64,12 +70,38 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--execution-batch-size", type=int, default=LIVE_EXECUTION_BATCH_SIZE
     )
+    parser.add_argument(
+        "--tca-metric-batch-size",
+        type=int,
+        default=LIVE_TCA_METRIC_BATCH_SIZE,
+    )
+    parser.add_argument(
+        "--order-event-batch-size",
+        type=int,
+        default=LIVE_ORDER_EVENT_BATCH_SIZE,
+    )
+    parser.add_argument(
+        "--runtime-ledger-batch-size",
+        type=int,
+        default=LIVE_RUNTIME_LEDGER_BATCH_SIZE,
+    )
+    parser.add_argument("--sim-batch-size", type=int, default=SIM_SOURCE_BATCH_SIZE)
     parser.add_argument("--supervise-timeout-seconds", type=float, default=45.0)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
 
-def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
+def _bounded_batch_size(value: object) -> int:
+    return max(1, min(int(value), MAX_TIGERBEETLE_BATCH_SIZE))
+
+
+def _live_commands(
+    *,
+    execution_batch_size: int,
+    tca_metric_batch_size: int = LIVE_TCA_METRIC_BATCH_SIZE,
+    order_event_batch_size: int = LIVE_ORDER_EVENT_BATCH_SIZE,
+    runtime_ledger_batch_size: int = LIVE_RUNTIME_LEDGER_BATCH_SIZE,
+) -> list[JournalCronCommand]:
     return [
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION,
@@ -80,13 +112,13 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             skip_reconcile=True,
             allow_data_quality_degraded=True,
             commit_each_row=True,
-            progress_interval=1,
+            progress_interval=LIVE_EXECUTION_PROGRESS_INTERVAL,
             repeat_count=LIVE_EXECUTION_SLICE_COUNT,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
             dsn_env="DB_DSN",
-            batch_size=LIVE_TCA_METRIC_BATCH_SIZE,
+            batch_size=tca_metric_batch_size,
             max_batches=LIVE_TCA_METRIC_MAX_BATCHES,
             reconcile_limit=1000,
             skip_reconcile=True,
@@ -94,7 +126,7 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
             dsn_env="DB_DSN",
-            batch_size=LIVE_ORDER_EVENT_BATCH_SIZE,
+            batch_size=order_event_batch_size,
             max_batches=LIVE_ORDER_EVENT_MAX_BATCHES,
             reconcile_limit=1000,
             event_scan_limit=LIVE_ORDER_EVENT_SCAN_LIMIT,
@@ -104,7 +136,7 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
         JournalCronCommand(
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             dsn_env="DB_DSN",
-            batch_size=5,
+            batch_size=runtime_ledger_batch_size,
             max_batches=1,
             reconcile_limit=LIVE_RECONCILE_LIMIT,
             reconcile_empty_selection=True,
@@ -114,39 +146,56 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
     ]
 
 
-def _sim_commands() -> list[JournalCronCommand]:
-    common = {
-        "dsn_env": "SIM_DB_DSN",
-        "batch_size": 5,
-        "max_batches": 1,
-        "reconcile_limit": 500,
-        "account_label": "TORGHUT_SIM",
-    }
+def _sim_commands(
+    *,
+    batch_size: int = SIM_SOURCE_BATCH_SIZE,
+    runtime_ledger_batch_size: int = SIM_RUNTIME_LEDGER_BATCH_SIZE,
+) -> list[JournalCronCommand]:
+    dsn_env = "SIM_DB_DSN"
+    max_batches = 1
+    reconcile_limit = 500
+    account_label = "TORGHUT_SIM"
     return [
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION,
+            dsn_env=dsn_env,
+            batch_size=batch_size,
+            max_batches=max_batches,
+            reconcile_limit=reconcile_limit,
+            account_label=account_label,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
-            **common,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
+            dsn_env=dsn_env,
+            batch_size=batch_size,
+            max_batches=max_batches,
+            reconcile_limit=reconcile_limit,
+            account_label=account_label,
             skip_reconcile=True,
-            **common,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-            event_scan_limit=300,
+            dsn_env=dsn_env,
+            batch_size=batch_size,
+            max_batches=max_batches,
+            reconcile_limit=reconcile_limit,
+            account_label=account_label,
+            event_scan_limit=SIM_ORDER_EVENT_SCAN_LIMIT,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
-            **common,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            dsn_env=dsn_env,
+            batch_size=runtime_ledger_batch_size,
+            max_batches=max_batches,
+            reconcile_limit=reconcile_limit,
+            account_label=account_label,
             reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
             supervise_timeout_seconds=RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS,
-            **common,
         ),
     ]
 
@@ -154,9 +203,31 @@ def _sim_commands() -> list[JournalCronCommand]:
 def _commands_for_preset(args: argparse.Namespace) -> list[JournalCronCommand]:
     if args.preset == "live":
         return _live_commands(
-            execution_batch_size=max(1, min(int(args.execution_batch_size), 5000))
+            execution_batch_size=_bounded_batch_size(
+                getattr(args, "execution_batch_size", LIVE_EXECUTION_BATCH_SIZE)
+            ),
+            tca_metric_batch_size=_bounded_batch_size(
+                getattr(args, "tca_metric_batch_size", LIVE_TCA_METRIC_BATCH_SIZE)
+            ),
+            order_event_batch_size=_bounded_batch_size(
+                getattr(args, "order_event_batch_size", LIVE_ORDER_EVENT_BATCH_SIZE)
+            ),
+            runtime_ledger_batch_size=_bounded_batch_size(
+                getattr(
+                    args,
+                    "runtime_ledger_batch_size",
+                    LIVE_RUNTIME_LEDGER_BATCH_SIZE,
+                )
+            ),
         )
-    return _sim_commands()
+    return _sim_commands(
+        batch_size=_bounded_batch_size(
+            getattr(args, "sim_batch_size", SIM_SOURCE_BATCH_SIZE)
+        ),
+        runtime_ledger_batch_size=_bounded_batch_size(
+            getattr(args, "runtime_ledger_batch_size", SIM_RUNTIME_LEDGER_BATCH_SIZE)
+        ),
+    )
 
 
 def _journal_script_path() -> str:
