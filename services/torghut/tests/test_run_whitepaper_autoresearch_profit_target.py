@@ -4670,6 +4670,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             "exact_replay_required", selection["replay_tape_preview"]["blockers"]
         )
+        self.assertIn(
+            "adaptive_signal_falsification_if_adaptive_factor_or_signal_source",
+            selection["replay_tape_preview"]["proof_semantics"][
+                "final_promotion_requires"
+            ],
+        )
         self.assertTrue(preview_scores_exists)
         nvda_row = next(
             row
@@ -4685,6 +4691,41 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("fast_replay_adv_capacity_context", nvda_row)
         self.assertIn("fast_replay_lineage_blockers", nvda_row)
         self.assertIn("fast_replay_risk_flags", nvda_row)
+        self.assertIn("fast_replay_adaptive_signal_falsification_stress", nvda_row)
+        adaptive_falsification_stress = nvda_row[
+            "fast_replay_adaptive_signal_falsification_stress"
+        ]
+        self.assertEqual(
+            adaptive_falsification_stress["status"],
+            "research_only_adaptive_signal_falsification_evidence_collection",
+        )
+        self.assertTrue(nvda_row["fast_replay_adaptive_signal_falsification_required"])
+        self.assertFalse(nvda_row["fast_replay_adaptive_signal_falsification_passed"])
+        self.assertIn(
+            "spurious_predictability_arxiv_2604_15531_2026",
+            nvda_row["fast_replay_adaptive_signal_falsification_source_markers"],
+        )
+        self.assertIn(
+            "null_model_sample_count_below_min",
+            nvda_row["fast_replay_adaptive_signal_falsification_warnings"],
+        )
+        self.assertIn(
+            "leakage_probe_missing_or_failed",
+            nvda_row["fast_replay_adaptive_signal_falsification_warnings"],
+        )
+        scorecard_patch = nvda_row[
+            "fast_replay_adaptive_signal_falsification_objective_scorecard_patch"
+        ]
+        self.assertTrue(scorecard_patch["required_adaptive_signal_falsification"])
+        self.assertFalse(scorecard_patch["adaptive_signal_falsification_passed"])
+        self.assertEqual(
+            scorecard_patch["adaptive_signal_falsification_artifact_ref"],
+            nvda_row["fast_replay_adaptive_signal_falsification_artifact_ref"],
+        )
+        self.assertFalse(adaptive_falsification_stress["proof_authority"])
+        self.assertFalse(adaptive_falsification_stress["promotion_authority"])
+        self.assertFalse(adaptive_falsification_stress["promotion_allowed"])
+        self.assertFalse(adaptive_falsification_stress["final_authority_ok"])
         self.assertTrue(nvda_row["fast_replay_prefilter_only"])
         self.assertFalse(nvda_row["fast_replay_proof_authority"])
         self.assertFalse(nvda_row["fast_replay_promotion_allowed"])

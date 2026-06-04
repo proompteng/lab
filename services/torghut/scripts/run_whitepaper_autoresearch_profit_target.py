@@ -6839,6 +6839,44 @@ def _apply_fast_replay_preview_narrowing(
             updated["fast_replay_frontier_dedupe_metadata"] = preview_row.get(
                 "frontier_dedupe_metadata"
             )
+            adaptive_signal_falsification_stress = _mapping(
+                preview_row.get("adaptive_signal_falsification_stress")
+            )
+            if adaptive_signal_falsification_stress:
+                updated["fast_replay_adaptive_signal_falsification_stress"] = (
+                    adaptive_signal_falsification_stress
+                )
+                updated[
+                    "fast_replay_adaptive_signal_falsification_objective_scorecard_patch"
+                ] = _mapping(
+                    adaptive_signal_falsification_stress.get(
+                        "objective_scorecard_patch"
+                    )
+                )
+                updated["fast_replay_adaptive_signal_falsification_required"] = True
+                updated["fast_replay_adaptive_signal_falsification_passed"] = bool(
+                    adaptive_signal_falsification_stress.get(
+                        "adaptive_signal_falsification_passed"
+                    )
+                )
+                updated["fast_replay_adaptive_signal_falsification_artifact_ref"] = (
+                    adaptive_signal_falsification_stress.get("artifact_ref")
+                )
+                updated["fast_replay_adaptive_signal_falsification_source_markers"] = (
+                    list(
+                        cast(
+                            Sequence[Any],
+                            adaptive_signal_falsification_stress.get("source_markers")
+                            or (),
+                        )
+                    )
+                )
+                updated["fast_replay_adaptive_signal_falsification_warnings"] = list(
+                    cast(
+                        Sequence[Any],
+                        adaptive_signal_falsification_stress.get("warnings") or (),
+                    )
+                )
             updated["fast_replay_proof_semantics_label"] = preview_row[
                 "proof_semantics_label"
             ]
@@ -6994,6 +7032,7 @@ def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
             "exact_replay_evidence",
             "source_backed_runtime_ledger",
             "live_paper_runtime_evidence",
+            "adaptive_signal_falsification_if_adaptive_factor_or_signal_source",
             "unchanged_promotion_gates",
         ],
         "whitepaper_gpu_fast_replay_policy": (
@@ -10555,11 +10594,9 @@ def _paper_probation_candidate_payload(
         lower_bound=lower_bound,
         target=target,
     )
-    required_notional_repair_scale = (
-        _candidate_board_required_notional_repair_scale(
-            lower_bound=lower_bound,
-            target=target,
-        )
+    required_notional_repair_scale = _candidate_board_required_notional_repair_scale(
+        lower_bound=lower_bound,
+        target=target,
     )
     deployable_missing_count = deployable_lower_bound_missing_count(payload)
     deployable_failed_gate_count = deployable_proof_failed_gate_count(payload)
