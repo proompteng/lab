@@ -132,6 +132,92 @@ def test_promotion_ready_bundle_blocks_missing_market_impact_stress() -> None:
     assert "market_impact_liquidity_evidence_missing" in blockers
 
 
+def test_promotion_ready_bundle_blocks_missing_implementation_risk_parity() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-implementation-risk-gap",
+        candidate_id="candidate-implementation-risk-gap",
+        candidate_spec_id="spec-implementation-risk-gap",
+        dataset_snapshot_id="snapshot-implementation-risk-gap",
+        feature_spec_hash="feature-implementation-risk-gap",
+        code_commit="commit-implementation-risk-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "implementation_uncertainty_required": True,
+            "implementation_uncertainty_stability_passed": True,
+            "implementation_uncertainty_model_count": 5,
+            "implementation_uncertainty_lower_net_pnl_per_day": "600",
+            "implementation_uncertainty_source_markers": [
+                "implementation_risk_backtesting_arxiv_2603_20319_2026"
+            ],
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "multi_engine_replay_missing_or_failed" in blockers
+    assert "multi_engine_replay_engine_count_below_min" in blockers
+    assert "engine_sensitivity_report_missing" in blockers
+    assert "conclusion_stability_missing_or_failed" in blockers
+    assert "conclusion_stability_index_below_min" in blockers
+
+
+def test_promotion_ready_bundle_accepts_materialized_implementation_risk_parity() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-implementation-risk-ok",
+        candidate_id="candidate-implementation-risk-ok",
+        candidate_spec_id="spec-implementation-risk-ok",
+        dataset_snapshot_id="snapshot-implementation-risk-ok",
+        feature_spec_hash="feature-implementation-risk-ok",
+        code_commit="commit-implementation-risk-ok",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "implementation_uncertainty_required": True,
+            "implementation_uncertainty_stability_passed": True,
+            "implementation_uncertainty_model_count": 5,
+            "implementation_uncertainty_lower_net_pnl_per_day": "600",
+            "requires_multi_engine_replay": True,
+            "multi_engine_replay_passed": True,
+            "multi_engine_replay_engine_count": 2,
+            "engine_sensitivity_report_ref": "artifact://engine-sensitivity",
+            "conclusion_stability_passed": True,
+            "conclusion_stability_index": "1.00",
+            "required_conclusion_stability_index": "1.00",
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "multi_engine_replay_missing_or_failed" not in blockers
+    assert "multi_engine_replay_engine_count_below_min" not in blockers
+    assert "engine_sensitivity_report_missing" not in blockers
+    assert "conclusion_stability_missing_or_failed" not in blockers
+    assert "conclusion_stability_index_below_min" not in blockers
+
+
 def test_promotion_ready_bundle_blocks_required_uncertainty_and_tail_risk_gaps() -> (
     None
 ):
@@ -174,6 +260,45 @@ def test_promotion_ready_bundle_blocks_required_uncertainty_and_tail_risk_gaps()
     assert "conformal_tail_risk_failed" in blockers
     assert "conformal_tail_risk_sample_count_zero" in blockers
     assert "conformal_tail_risk_adjusted_net_pnl_non_positive" in blockers
+
+
+def test_frontier_candidate_preserves_implementation_risk_parity_fields() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-implementation-risk-preserved",
+        candidate={
+            "candidate_id": "candidate-implementation-risk-preserved",
+            "objective_scorecard": _promotion_quality_scorecard(),
+            "requires_multi_engine_replay": True,
+            "multi_engine_replay_passed": True,
+            "multi_engine_replay_engine_count": 2,
+            "engine_sensitivity_report_ref": "artifact://engine-sensitivity",
+            "conclusion_stability_passed": True,
+            "conclusion_stability_index": "1.00",
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-implementation-risk-preserved",
+        result_path="artifact://replay",
+        code_commit="commit-implementation-risk-preserved",
+    )
+
+    assert bundle.objective_scorecard["requires_multi_engine_replay"] is True
+    assert bundle.objective_scorecard["multi_engine_replay_passed"] is True
+    assert bundle.objective_scorecard["multi_engine_replay_engine_count"] == 2
+    assert (
+        bundle.objective_scorecard["engine_sensitivity_report_ref"]
+        == "artifact://engine-sensitivity"
+    )
+    assert bundle.objective_scorecard["conclusion_stability_passed"] is True
+    assert bundle.objective_scorecard["conclusion_stability_index"] == "1.00"
+    blockers = evidence_bundle_blockers(bundle)
+    assert "multi_engine_replay_missing_or_failed" not in blockers
+    assert "engine_sensitivity_report_missing" not in blockers
+    assert "conclusion_stability_missing_or_failed" not in blockers
 
 
 def test_frontier_candidate_preserves_runtime_handoff_as_promotion_blocker() -> None:
