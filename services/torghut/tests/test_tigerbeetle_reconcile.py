@@ -139,7 +139,7 @@ def _transfer(
 
 
 def _runtime_bucket(
-    *, net_pnl: Decimal = Decimal("2.50")
+    *, net_pnl: Decimal = Decimal("2.50"), account_label: str = "paper"
 ) -> StrategyRuntimeLedgerBucket:
     observed_at = datetime.now(timezone.utc)
     return StrategyRuntimeLedgerBucket(
@@ -149,7 +149,7 @@ def _runtime_bucket(
         observed_stage="paper",
         bucket_started_at=observed_at,
         bucket_ended_at=observed_at,
-        account_label="paper",
+        account_label=account_label,
         runtime_strategy_name="demo",
         strategy_family="demo",
         fill_count=1,
@@ -718,6 +718,88 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertEqual(payload["runtime_ledger_checked_transfer_count"], 1)
             self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 1)
             self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 0)
+
+    def test_reconciliation_scopes_required_runtime_refs_by_account_label(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            sim_bucket = _runtime_bucket(
+                net_pnl=Decimal("2.50"),
+                account_label="TORGHUT_SIM",
+            )
+            replay_bucket = _runtime_bucket(
+                net_pnl=Decimal("7.50"),
+                account_label="TORGHUT_REPLAY",
+            )
+            session.add_all([sim_bucket, replay_bucket])
+            session.flush()
+            sim_plan = build_runtime_ledger_bucket_transfer_plan(sim_bucket)
+            self.assertIsNotNone(sim_plan)
+            assert sim_plan is not None
+            _add_account_refs_for_plan(session, sim_plan)
+            sim_transfer = sim_plan.transfer_spec
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(sim_transfer.transfer_id),
+                    transfer_kind=sim_transfer.transfer_kind,
+                    ledger=sim_transfer.ledger,
+                    code=sim_transfer.code,
+                    amount=Decimal(sim_transfer.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=sim_bucket.id,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(sim_bucket.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "run_id": sim_bucket.run_id,
+                        "candidate_id": sim_bucket.candidate_id,
+                        "hypothesis_id": sim_bucket.hypothesis_id,
+                        "observed_stage": sim_bucket.observed_stage,
+                        "pnl_basis": sim_bucket.pnl_basis,
+                        "ledger_schema_version": sim_bucket.ledger_schema_version,
+                        "amount_source": str(sim_plan.amount_source),
+                        "signed_amount_micros": sim_plan.signed_amount_micros,
+                        "pnl_direction": sim_plan.pnl_direction,
+                        "runtime_key": sim_plan.runtime_key,
+                        "debit_account_id": str(sim_transfer.debit_account_id),
+                        "credit_account_id": str(sim_transfer.credit_account_id),
+                    },
+                )
+            )
+            client = FakeTigerBeetleClient()
+            client.transfers[sim_transfer.transfer_id] = sim_transfer
+            session.flush()
+
+            unscoped = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+                account_label=None,
+            )
+            scoped = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+                account_label="TORGHUT_SIM",
+            )
+
+            self.assertFalse(unscoped["ok"], unscoped)
+            self.assertEqual(unscoped["runtime_ledger_missing_signed_ref_count"], 1)
+            self.assertEqual(scoped["account_label"], "TORGHUT_SIM")
+            self.assertTrue(scoped["ok"], scoped)
+            self.assertEqual(scoped["runtime_ledger_ref_count"], 1)
+            self.assertEqual(scoped["runtime_ledger_signed_ref_count"], 1)
+            self.assertEqual(scoped["runtime_ledger_missing_signed_ref_count"], 0)
+            ref_counts = scoped["ref_counts"]
+            assert isinstance(ref_counts, dict)
+            self.assertEqual(ref_counts["account_label"], "TORGHUT_SIM")
+            source_materialization = ref_counts["source_materialization"]
+            assert isinstance(source_materialization, dict)
+            self.assertEqual(
+                source_materialization["runtime_ledger_account_label_scope"],
+                "TORGHUT_SIM",
+            )
 
     def test_reconciliation_reports_archived_runtime_ref_without_blocking_current_ref(
         self,

@@ -2445,6 +2445,62 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             reconcile.call_args.kwargs["client"],
             FakeJournal.instances[0].reconciliation_client,
         )
+        self.assertIsNone(reconcile.call_args.kwargs["account_label"])
+
+    def test_main_passes_account_label_to_empty_selection_reconciliation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--sources",
+                        "strategy_runtime_ledger_bucket",
+                        "--account-label",
+                        "TORGHUT_SIM",
+                        "--batch-size",
+                        "5",
+                        "--reconcile-limit",
+                        "12",
+                        "--reconcile-empty-selection",
+                        "--fail-on-degraded",
+                        "--allow-data-quality-degraded",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(
+                    script,
+                    "reconcile_tigerbeetle_transfers",
+                    return_value={
+                        "ok": True,
+                        "status": "ok",
+                        "account_label": "TORGHUT_SIM",
+                    },
+                ) as reconcile,
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["selected"], 0)
+        self.assertEqual(payload["reconciliation"]["account_label"], "TORGHUT_SIM")
+        reconcile.assert_called_once()
+        self.assertEqual(reconcile.call_args.kwargs["account_label"], "TORGHUT_SIM")
 
     def test_main_reuses_fresh_reconciliation_when_empty_source_selects_no_rows(
         self,
@@ -2563,6 +2619,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                             Settings,
                             SimpleNamespace(tigerbeetle_cluster_id=2001),
                         ),
+                        account_label=None,
                     )
 
                 self.assertIsNone(result)
