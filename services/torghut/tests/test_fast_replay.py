@@ -261,6 +261,10 @@ class TestFastReplayPreview(TestCase):
             "institutional_mechanism_fidelity_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "signal_adaptive_execution_resilience_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -536,6 +540,38 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "institutional_mechanism_fidelity_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("signal_adaptive_execution_resilience_stress", row_payload)
+        self.assertEqual(
+            row_payload["signal_adaptive_execution_resilience_stress"]["status"],
+            "preview_only_signal_adaptive_execution_resilience_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2605.24242",
+            {
+                source["source_id"]
+                for source in row_payload[
+                    "signal_adaptive_execution_resilience_stress"
+                ]["source_papers"]
+            },
+        )
+        self.assertFalse(
+            row_payload["signal_adaptive_execution_resilience_stress"][
+                "proof_authority"
+            ]
+        )
+        self.assertFalse(
+            row_payload["signal_adaptive_execution_resilience_stress"][
+                "promotion_authority"
+            ]
+        )
+        self.assertIn(
+            "signal_adaptive_execution_resilience_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "signal_adaptive_execution_resilience_stress_downranks_only",
             row_payload["ranking_only_reasons"],
         )
         self.assertIn(
