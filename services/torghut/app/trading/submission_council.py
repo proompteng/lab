@@ -1690,6 +1690,24 @@ _RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS = (
     "runtime_ledger_source_window_evidence_pending",
     "live_runtime_ledger_required",
 )
+_RUNTIME_LEDGER_SOURCE_COLLECTION_LIVE_PAPER_EVIDENCE_REQUIREMENTS = (
+    "runtime_ledger_source_window_refs",
+    "runtime_ledger_source_window_ids",
+    "runtime_ledger_trade_decision_refs",
+    "runtime_ledger_execution_refs",
+    "runtime_ledger_execution_order_event_refs",
+    "runtime_ledger_source_offsets",
+    "runtime_ledger_source_materialization",
+    "post_cost_tca_cost_refs",
+    "closed_flat_reconciliation",
+)
+_RUNTIME_LEDGER_SOURCE_COLLECTION_SAFE_EVIDENCE_COLLECTION_PATH = (
+    "materialize_runtime_ledger_source_window_refs",
+    "attach_trade_decision_execution_and_order_event_refs",
+    "persist_runtime_ledger_source_offsets_and_materialization",
+    "reconcile_post_cost_tca_and_closed_flat_state",
+    "rerun_live_paper_runtime_ledger_proof_before_final_promotion",
+)
 _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_NET_PNL_AFTER_COSTS = Decimal("500")
 _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER = (
     "runtime_ledger_profit_target_source_collection_pending"
@@ -1879,6 +1897,32 @@ def _runtime_ledger_source_collection_profit_target_candidate(
     )
 
 
+def _runtime_ledger_source_collection_target_progress_payload(
+    *,
+    net_pnl_after_costs: Decimal,
+    filled_notional: Decimal,
+) -> dict[str, object]:
+    target = _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_NET_PNL_AFTER_COSTS
+    shortfall = max(target - net_pnl_after_costs, Decimal("0"))
+    progress_ratio = (
+        net_pnl_after_costs / target if target > 0 else Decimal("0")
+    )
+    if net_pnl_after_costs > 0:
+        required_notional_scale = max(target / net_pnl_after_costs, Decimal("1"))
+    else:
+        required_notional_scale = Decimal("0")
+    required_notional = filled_notional * required_notional_scale
+    return {
+        "probation_target_shortfall": str(shortfall),
+        "probation_target_progress_ratio": str(progress_ratio),
+        "required_notional_repair_scale_to_target": str(required_notional_scale),
+        "required_notional_to_reach_target": str(required_notional),
+        "required_notional_repair_scale_authority": (
+            "linear_notional_sizing_estimate_for_repair_only_not_capital_authority"
+        ),
+    }
+
+
 def _runtime_ledger_source_collection_profit_target_metadata(
     candidate: Mapping[str, object],
 ) -> dict[str, object]:
@@ -1894,23 +1938,34 @@ def _runtime_ledger_source_collection_profit_target_metadata(
         "source_collection_priority": "source_window_evidence_collection",
     }
     if profit_target_candidate:
+        net_pnl_after_costs = (
+            _safe_decimal(payload.get("net_strategy_pnl_after_costs")) or Decimal("0")
+        )
+        filled_notional = _safe_decimal(payload.get("filled_notional")) or Decimal("0")
         metadata.update(
             {
                 "source_collection_priority": "profit_target_source_materialization",
-                "source_collection_net_strategy_pnl_after_costs": str(
-                    _safe_decimal(payload.get("net_strategy_pnl_after_costs"))
-                    or Decimal("0")
-                ),
+                "source_collection_net_strategy_pnl_after_costs": str(net_pnl_after_costs),
                 "source_collection_post_cost_expectancy_bps": str(
                     _safe_decimal(payload.get("post_cost_expectancy_bps"))
                     or Decimal("0")
                 ),
-                "source_collection_filled_notional": str(
-                    _safe_decimal(payload.get("filled_notional")) or Decimal("0")
-                ),
+                "source_collection_filled_notional": str(filled_notional),
                 "source_collection_next_action": (
                     "materialize_runtime_ledger_source_window_refs"
                 ),
+                **_runtime_ledger_source_collection_target_progress_payload(
+                    net_pnl_after_costs=net_pnl_after_costs,
+                    filled_notional=filled_notional,
+                ),
+                "live_paper_evidence_requirements": list(
+                    _RUNTIME_LEDGER_SOURCE_COLLECTION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+                ),
+                "safe_evidence_collection_path": list(
+                    _RUNTIME_LEDGER_SOURCE_COLLECTION_SAFE_EVIDENCE_COLLECTION_PATH
+                ),
+                "live_capital_authorized": False,
+                "final_promotion_requires_live_paper_runtime_proof": True,
             }
         )
     return metadata
@@ -2280,6 +2335,37 @@ def _runtime_ledger_paper_probation_import_plan(
                         _safe_text(candidate.get("source_collection_next_action"))
                         or "materialize_runtime_ledger_source_window_refs"
                     ),
+                    "probation_target_shortfall": (
+                        _safe_text(candidate.get("probation_target_shortfall")) or ""
+                    ),
+                    "probation_target_progress_ratio": (
+                        _safe_text(candidate.get("probation_target_progress_ratio"))
+                        or ""
+                    ),
+                    "required_notional_repair_scale_to_target": (
+                        _safe_text(
+                            candidate.get("required_notional_repair_scale_to_target")
+                        )
+                        or ""
+                    ),
+                    "required_notional_to_reach_target": (
+                        _safe_text(candidate.get("required_notional_to_reach_target"))
+                        or ""
+                    ),
+                    "required_notional_repair_scale_authority": (
+                        _safe_text(
+                            candidate.get("required_notional_repair_scale_authority")
+                        )
+                        or "linear_notional_sizing_estimate_for_repair_only_not_capital_authority"
+                    ),
+                    "live_paper_evidence_requirements": list(
+                        _RUNTIME_LEDGER_SOURCE_COLLECTION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+                    ),
+                    "safe_evidence_collection_path": list(
+                        _RUNTIME_LEDGER_SOURCE_COLLECTION_SAFE_EVIDENCE_COLLECTION_PATH
+                    ),
+                    "live_capital_authorized": False,
+                    "final_promotion_requires_live_paper_runtime_proof": True,
                 }
             )
         if bucket_ref:
