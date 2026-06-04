@@ -36,7 +36,8 @@ LIVE_TCA_METRIC_MAX_BATCHES = 1
 LIVE_RUNTIME_LEDGER_BATCH_SIZE = 100
 LIVE_RECONCILE_LIMIT = 500
 LIVE_JOURNAL_BATCH_CHUNK_SIZE = 25
-SIM_SOURCE_BATCH_SIZE = 250
+LIVE_SUPERVISE_TIMEOUT_SECONDS = 120.0
+SIM_SOURCE_BATCH_SIZE = 100
 SIM_RUNTIME_LEDGER_BATCH_SIZE = 100
 SIM_ORDER_EVENT_SCAN_LIMIT = 5000
 RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS = 120.0
@@ -93,7 +94,11 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=LIVE_JOURNAL_BATCH_CHUNK_SIZE,
     )
-    parser.add_argument("--supervise-timeout-seconds", type=float, default=45.0)
+    parser.add_argument(
+        "--supervise-timeout-seconds",
+        type=float,
+        default=LIVE_SUPERVISE_TIMEOUT_SECONDS,
+    )
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 

@@ -862,7 +862,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 ],
             )
             self.assertNotIn("execution,execution_tca_metric", section)
-            self.assertEqual(section.count("--supervise-timeout-seconds 45"), 1)
+            self.assertEqual(section.count("--supervise-timeout-seconds 120"), 1)
             command_argvs = [
                 cron_runner._argv_for_command(
                     command,
