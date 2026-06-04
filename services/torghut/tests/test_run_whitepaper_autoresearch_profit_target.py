@@ -6156,8 +6156,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertNotIn("runtime_ledger_artifact_refs", direct_sleeve_row)
         self.assertNotIn("runtime_ledger_artifact_ref", direct_sleeve_row)
-        self.assertEqual(direct_sleeve_row["exact_replay_ledger_artifact_row_count"], 12)
-        self.assertEqual(direct_sleeve_row["exact_replay_ledger_artifact_fill_count"], 4)
+        self.assertEqual(
+            direct_sleeve_row["exact_replay_ledger_artifact_row_count"], 12
+        )
+        self.assertEqual(
+            direct_sleeve_row["exact_replay_ledger_artifact_fill_count"], 4
+        )
         source_compiler_mock.assert_not_called()
         candidate_compiler_mock.assert_not_called()
         selection_mock.assert_not_called()
@@ -8562,6 +8566,65 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "tkan_lob_alpha_decay_arxiv_2601_02310_2026",
         )
 
+    def test_candidate_sleeve_goal_proof_handoff_surfaces_runtime_ledger_materialization(
+        self,
+    ) -> None:
+        spec = self._candidate_spec("spec-sleeve-runtime-ledger-handoff")
+        runtime_ledger_handoff = {
+            "materialization_status": "lineage_unmaterialized",
+            "runtime_ledger_required": True,
+            "zero_authoritative_daily_pnl_until_materialized": True,
+            "required_artifacts": "runtime-ledger/daily-pnl.json",
+        }
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-sleeve-runtime-ledger-handoff",
+            candidate_id="cand-sleeve-runtime-ledger-handoff",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-sleeve-runtime-ledger-handoff",
+            feature_spec_hash="hash-sleeve-runtime-ledger-handoff",
+            code_commit="commit-test",
+            replay_artifact_refs=("sleeve-runtime-ledger-handoff.json",),
+            objective_scorecard={},
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={},
+            null_comparator={},
+            promotion_readiness={
+                "runtime_ledger_lineage_materialization_handoff": (
+                    runtime_ledger_handoff
+                )
+            },
+        )
+
+        proof_handoff = runner._candidate_sleeve_goal_proof_handoff_fields(
+            selection={"selected_for_replay": True},
+            spec=spec,
+            scorecard=evidence.objective_scorecard,
+            evidence=evidence,
+            selected_for_replay=True,
+        )
+
+        self.assertEqual(
+            proof_handoff["runtime_ledger_lineage_materialization_handoff"],
+            runtime_ledger_handoff,
+        )
+        self.assertEqual(
+            proof_handoff["runtime_ledger_required_materialized_artifacts"],
+            ["runtime-ledger/daily-pnl.json"],
+        )
+        self.assertEqual(
+            proof_handoff["runtime_ledger_materialization_status"],
+            "lineage_unmaterialized",
+        )
+        self.assertTrue(
+            proof_handoff["zero_authoritative_daily_pnl_until_materialized"]
+        )
+        self.assertEqual(
+            runner._candidate_board_runtime_ledger_required_materialized_artifacts({}),
+            [],
+        )
+
     def test_candidate_board_surfaces_paper_probation_without_promotion(
         self,
     ) -> None:
@@ -8622,6 +8685,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 },
                 "profit_target_oracle": {
                     "blockers": ["delay_adjusted_depth_tail_coverage_passed_failed"]
+                },
+                "runtime_ledger_lineage_materialization_handoff": {
+                    "status": "requires_runtime_ledger_materialization_before_authoritative_pnl",
+                    "runtime_ledger_required": True,
+                    "source_backed_runtime_ledger_required": True,
+                    "proof_authority": False,
+                    "promotion_allowed": False,
+                    "final_authority_ok": False,
+                    "zero_authoritative_daily_pnl_until_materialized": True,
+                    "required_materialized_artifacts": [
+                        {
+                            "artifact_ref": "paper-probation-exact-ledger.json",
+                            "kind": "exact_replay_ledger",
+                        },
+                        "runtime-ledger/daily-pnl.parquet",
+                    ],
                 },
             },
             fold_metrics=(),
@@ -8687,6 +8766,39 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ["live_paper_parity", "route_tca", "runtime_ledger"],
         )
         self.assertEqual(row["paper_required_evidence_count"], 3)
+        expected_runtime_ledger_handoff = {
+            "status": "requires_runtime_ledger_materialization_before_authoritative_pnl",
+            "runtime_ledger_required": True,
+            "source_backed_runtime_ledger_required": True,
+            "proof_authority": False,
+            "promotion_allowed": False,
+            "final_authority_ok": False,
+            "zero_authoritative_daily_pnl_until_materialized": True,
+            "required_materialized_artifacts": [
+                {
+                    "artifact_ref": "paper-probation-exact-ledger.json",
+                    "kind": "exact_replay_ledger",
+                },
+                "runtime-ledger/daily-pnl.parquet",
+            ],
+        }
+        expected_required_materialized_artifacts = [
+            "paper-probation-exact-ledger.json",
+            "runtime-ledger/daily-pnl.parquet",
+        ]
+        self.assertEqual(
+            row["runtime_ledger_lineage_materialization_handoff"],
+            expected_runtime_ledger_handoff,
+        )
+        self.assertEqual(
+            row["runtime_ledger_required_materialized_artifacts"],
+            expected_required_materialized_artifacts,
+        )
+        self.assertEqual(
+            row["runtime_ledger_materialization_status"],
+            "requires_runtime_ledger_materialization_before_authoritative_pnl",
+        )
+        self.assertTrue(row["zero_authoritative_daily_pnl_until_materialized"])
         self.assertEqual(
             board["paper_probation_candidate"]["candidate_id"], "cand-paper-probation"
         )
@@ -8704,6 +8816,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(probation_candidate["evidence_collection_stage"], "paper")
         self.assertEqual(
             probation_candidate["selection_reason"], "target_met_but_oracle_blocked"
+        )
+        self.assertEqual(
+            probation_candidate["runtime_ledger_lineage_materialization_handoff"],
+            expected_runtime_ledger_handoff,
+        )
+        self.assertEqual(
+            probation_candidate["runtime_ledger_required_materialized_artifacts"],
+            expected_required_materialized_artifacts,
+        )
+        self.assertTrue(
+            probation_candidate["zero_authoritative_daily_pnl_until_materialized"]
         )
         self.assertFalse(probation_candidate["promotion_allowed"])
         self.assertFalse(probation_candidate["final_promotion_authorized"])
@@ -8748,6 +8871,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(target["exact_replay_ledger_artifact_row_count"], 27)
         self.assertEqual(target["exact_replay_ledger_artifact_fill_count"], 9)
         self.assertEqual(
+            target["runtime_ledger_lineage_materialization_handoff"],
+            expected_runtime_ledger_handoff,
+        )
+        self.assertEqual(
+            target["runtime_ledger_required_materialized_artifacts"],
+            expected_required_materialized_artifacts,
+        )
+        self.assertEqual(
+            target["runtime_ledger_materialization_status"],
+            "requires_runtime_ledger_materialization_before_authoritative_pnl",
+        )
+        self.assertTrue(target["zero_authoritative_daily_pnl_until_materialized"])
+        self.assertEqual(
             target["replay_selection_reason"], "paper_contract_exploration"
         )
         self.assertTrue(target["paper_contract_candidate"])
@@ -8776,6 +8912,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             import_metadata["exact_replay_ledger_artifact_ref"],
             "paper-probation-exact-ledger.json",
+        )
+        self.assertEqual(
+            import_metadata["runtime_ledger_lineage_materialization_handoff"],
+            expected_runtime_ledger_handoff,
+        )
+        self.assertEqual(
+            import_metadata["runtime_ledger_required_materialized_artifacts"],
+            expected_required_materialized_artifacts,
+        )
+        self.assertEqual(
+            import_metadata["runtime_ledger_materialization_status"],
+            "requires_runtime_ledger_materialization_before_authoritative_pnl",
+        )
+        self.assertTrue(
+            import_metadata["zero_authoritative_daily_pnl_until_materialized"]
         )
         self.assertEqual(import_metadata["window_start"], target["window_start"])
         self.assertEqual(import_metadata["window_end"], target["window_end"])

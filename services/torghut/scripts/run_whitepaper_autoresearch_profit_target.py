@@ -3292,6 +3292,52 @@ def _candidate_family_goal_rows(
     return payload_rows
 
 
+def _candidate_board_runtime_ledger_lineage_handoff(
+    *,
+    scorecard: Mapping[str, Any],
+    evidence: CandidateEvidenceBundle | None,
+) -> dict[str, Any]:
+    scorecard_handoff = _mapping(
+        scorecard.get("runtime_ledger_lineage_materialization_handoff")
+    )
+    if scorecard_handoff:
+        return scorecard_handoff
+    if evidence is None:
+        return {}
+    promotion_readiness = _mapping(evidence.promotion_readiness)
+    return _mapping(
+        promotion_readiness.get("runtime_ledger_lineage_materialization_handoff")
+    )
+
+
+def _candidate_board_runtime_ledger_required_materialized_artifacts(
+    handoff: Mapping[str, Any],
+) -> list[str]:
+    raw_artifacts = handoff.get("required_materialized_artifacts") or handoff.get(
+        "required_artifacts"
+    )
+    if isinstance(raw_artifacts, str):
+        artifacts = [_string(raw_artifacts)]
+    elif isinstance(raw_artifacts, Sequence):
+        artifacts = []
+        for item in cast(Sequence[Any], raw_artifacts):
+            if isinstance(item, Mapping):
+                artifact = _string(
+                    item.get("artifact_ref")
+                    or item.get("ref")
+                    or item.get("path")
+                    or item.get("name")
+                    or item.get("artifact")
+                )
+            else:
+                artifact = _string(item)
+            if artifact:
+                artifacts.append(artifact)
+    else:
+        artifacts = []
+    return list(dict.fromkeys(artifacts))
+
+
 def _candidate_sleeve_goal_proof_handoff_fields(
     *,
     selection: Mapping[str, Any],
@@ -3340,7 +3386,16 @@ def _candidate_sleeve_goal_proof_handoff_fields(
         or paper_mechanism_overlay_ids
         or paper_required_evidence_tokens
     )
-    return {
+    runtime_ledger_lineage_handoff = _candidate_board_runtime_ledger_lineage_handoff(
+        scorecard=scorecard,
+        evidence=evidence,
+    )
+    runtime_ledger_required_materialized_artifacts = (
+        _candidate_board_runtime_ledger_required_materialized_artifacts(
+            runtime_ledger_lineage_handoff
+        )
+    )
+    proof_handoff: dict[str, Any] = {
         "replay_selection_reason": _string(selection.get("selection_reason"))
         or ("selected_for_replay" if selected_for_replay else "not_selected_budget"),
         "paper_contract_candidate": paper_contract_candidate,
@@ -3357,17 +3412,35 @@ def _candidate_sleeve_goal_proof_handoff_fields(
         "exact_replay_ledger_artifact_ref": exact_replay_ledger_artifact_ref,
         "exact_replay_ledger_artifact_row_count": _candidate_board_first_int_field(
             scorecard,
-            (
-                "exact_replay_ledger_artifact_row_count",
-            ),
+            ("exact_replay_ledger_artifact_row_count",),
         ),
         "exact_replay_ledger_artifact_fill_count": _candidate_board_first_int_field(
             scorecard,
-            (
-                "exact_replay_ledger_artifact_fill_count",
-            ),
+            ("exact_replay_ledger_artifact_fill_count",),
         ),
     }
+    if runtime_ledger_lineage_handoff:
+        proof_handoff["runtime_ledger_lineage_materialization_handoff"] = dict(
+            runtime_ledger_lineage_handoff
+        )
+        proof_handoff["runtime_ledger_required_materialized_artifacts"] = (
+            runtime_ledger_required_materialized_artifacts
+        )
+        materialization_status = _string(
+            runtime_ledger_lineage_handoff.get("materialization_status")
+            or runtime_ledger_lineage_handoff.get("status")
+        )
+        if materialization_status:
+            proof_handoff["runtime_ledger_materialization_status"] = (
+                materialization_status
+            )
+        if _boolish(
+            runtime_ledger_lineage_handoff.get(
+                "zero_authoritative_daily_pnl_until_materialized"
+            )
+        ):
+            proof_handoff["zero_authoritative_daily_pnl_until_materialized"] = True
+    return proof_handoff
 
 
 def _candidate_sleeve_goal_rows(
@@ -10742,7 +10815,9 @@ def _candidate_board_runtime_window_import_bounds(
     )
 
 
-def _candidate_board_exact_replay_ledger_refs(row: Mapping[str, Any]) -> tuple[str, ...]:
+def _candidate_board_exact_replay_ledger_refs(
+    row: Mapping[str, Any],
+) -> tuple[str, ...]:
     refs: list[str] = []
     for key in ("exact_replay_ledger_artifact_ref",):
         ref = _string(row.get(key))
@@ -10763,8 +10838,7 @@ def _candidate_board_exact_replay_ledger_refs(row: Mapping[str, Any]) -> tuple[s
         ref = _string(raw_ref)
         ref_lower = ref.lower()
         if ref and (
-            "exact-replay-ledger" in ref_lower
-            or "exact_replay_ledger" in ref_lower
+            "exact-replay-ledger" in ref_lower or "exact_replay_ledger" in ref_lower
         ):
             refs.append(ref)
     return tuple(dict.fromkeys(refs))
@@ -10908,6 +10982,14 @@ def _candidate_board_runtime_window_import_plan(
         if dedupe_key in seen_keys:
             continue
         seen_keys.add(dedupe_key)
+        runtime_ledger_lineage_handoff = _mapping(
+            row.get("runtime_ledger_lineage_materialization_handoff")
+        )
+        runtime_ledger_required_materialized_artifacts = (
+            _candidate_board_runtime_ledger_required_materialized_artifacts(
+                runtime_ledger_lineage_handoff
+            )
+        )
         target = {
             "run_id": _string(row.get("epoch_id"))
             or "candidate-board-runtime-window-import",
@@ -10950,6 +11032,27 @@ def _candidate_board_runtime_window_import_plan(
             "handoff": "runtime_window_import_only",
             "promotion_gate": "existing_runtime_governance_fail_closed",
         }
+        if runtime_ledger_lineage_handoff:
+            target["runtime_ledger_lineage_materialization_handoff"] = dict(
+                runtime_ledger_lineage_handoff
+            )
+            target["runtime_ledger_required_materialized_artifacts"] = (
+                runtime_ledger_required_materialized_artifacts
+            )
+            materialization_status = _string(
+                row.get("runtime_ledger_materialization_status")
+                or runtime_ledger_lineage_handoff.get("materialization_status")
+                or runtime_ledger_lineage_handoff.get("status")
+            )
+            if materialization_status:
+                target["runtime_ledger_materialization_status"] = materialization_status
+            if _boolish(
+                row.get("zero_authoritative_daily_pnl_until_materialized")
+                or runtime_ledger_lineage_handoff.get(
+                    "zero_authoritative_daily_pnl_until_materialized"
+                )
+            ):
+                target["zero_authoritative_daily_pnl_until_materialized"] = True
         if bool(row.get("paper_probation_authorized")):
             target.update(
                 {
@@ -11261,6 +11364,21 @@ def _candidate_board_payload(
         exact_replay_ledger_artifact_ref = _string(
             scorecard.get("exact_replay_ledger_artifact_ref")
         )
+        runtime_ledger_lineage_handoff = (
+            _candidate_board_runtime_ledger_lineage_handoff(
+                scorecard=scorecard,
+                evidence=evidence,
+            )
+        )
+        runtime_ledger_required_materialized_artifacts = (
+            _candidate_board_runtime_ledger_required_materialized_artifacts(
+                runtime_ledger_lineage_handoff
+            )
+        )
+        runtime_ledger_materialization_status = _string(
+            runtime_ledger_lineage_handoff.get("materialization_status")
+            or runtime_ledger_lineage_handoff.get("status")
+        )
         factor_acceptance_replay_metadata = (
             _candidate_factor_acceptance_replay_metadata(
                 spec=spec,
@@ -11534,6 +11652,20 @@ def _candidate_board_payload(
                     _candidate_board_first_int_field(
                         scorecard,
                         ("exact_replay_ledger_artifact_fill_count",),
+                    )
+                ),
+                "runtime_ledger_lineage_materialization_handoff": dict(
+                    runtime_ledger_lineage_handoff
+                ),
+                "runtime_ledger_required_materialized_artifacts": (
+                    runtime_ledger_required_materialized_artifacts
+                ),
+                "runtime_ledger_materialization_status": (
+                    runtime_ledger_materialization_status
+                ),
+                "zero_authoritative_daily_pnl_until_materialized": _boolish(
+                    runtime_ledger_lineage_handoff.get(
+                        "zero_authoritative_daily_pnl_until_materialized"
                     )
                 ),
                 "replay_artifact_refs": list(evidence.replay_artifact_refs)
