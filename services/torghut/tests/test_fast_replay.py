@@ -269,6 +269,10 @@ class TestFastReplayPreview(TestCase):
             "signal_adaptive_execution_resilience_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "microstructure_regime_tokenization_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -578,6 +582,45 @@ class TestFastReplayPreview(TestCase):
             "signal_adaptive_execution_resilience_stress_downranks_only",
             row_payload["ranking_only_reasons"],
         )
+        self.assertIn("microstructure_regime_tokenization_stress", row_payload)
+        self.assertEqual(
+            row_payload["microstructure_regime_tokenization_stress"]["status"],
+            "preview_only_microstructure_regime_tokenization_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2604.20949",
+            {
+                source["source_id"]
+                for source in row_payload["microstructure_regime_tokenization_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn(
+            "arxiv-2602.23784",
+            {
+                source["source_id"]
+                for source in row_payload["microstructure_regime_tokenization_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["microstructure_regime_tokenization_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["microstructure_regime_tokenization_stress"][
+                "promotion_authority"
+            ]
+        )
+        self.assertIn(
+            "microstructure_regime_tokenization_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "microstructure_regime_tokenization_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
+        )
         self.assertIn(
             "intraday_jump_burst_stress_penalty_active",
             stress_payload["risk_flags"],
@@ -604,9 +647,7 @@ class TestFastReplayPreview(TestCase):
             row_payload["intraday_price_path_asymmetry_stress"]["proof_authority"]
         )
         self.assertFalse(
-            row_payload["intraday_price_path_asymmetry_stress"][
-                "promotion_authority"
-            ]
+            row_payload["intraday_price_path_asymmetry_stress"]["promotion_authority"]
         )
         self.assertIn(
             "intraday_price_path_asymmetry_stress_penalty_active",
