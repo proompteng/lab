@@ -24,7 +24,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: repair-source-windows
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:5e5a45836b9b9d723811e30782a86e7e72b0642a276e2cd41072f1ddc8eae920
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:14e81784094bbf30db489022402f4cedba58edea1edd3e04163fb1333296e6fa
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
