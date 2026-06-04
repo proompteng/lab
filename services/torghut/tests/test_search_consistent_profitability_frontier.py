@@ -1328,6 +1328,15 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
 
         self.assertTrue(summary["breakeven_transaction_cost_buffer_passed"])
         self.assertTrue(summary["required_breakeven_transaction_cost_buffer"])
+        self.assertTrue(summary["required_seed_model_family_robustness"])
+        self.assertFalse(summary["seed_robustness_passed"])
+        self.assertEqual(summary["seed_robustness_sample_count"], 0)
+        self.assertFalse(summary["model_family_robustness_passed"])
+        self.assertEqual(summary["model_family_robustness_family_count"], 0)
+        self.assertEqual(
+            summary["seed_model_family_robustness_status"],
+            "required_not_materialized_by_single_frontier_replay",
+        )
         self.assertEqual(summary["transaction_cost_buffer_bps"], "1")
         self.assertEqual(
             Decimal(str(summary["breakeven_transaction_cost_buffer_bps"])),
@@ -1344,6 +1353,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertIn(
             "realistic_market_impact_arxiv_2603_29086_2026",
             summary["breakeven_transaction_cost_buffer_source_markers"],
+        )
+        self.assertIn(
+            "regime_weighted_conformal_var_arxiv_2602_03903_2026",
+            summary["seed_model_family_robustness_source_markers"],
         )
         self.assertEqual(penalties, Decimal("0"))
 

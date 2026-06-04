@@ -11702,6 +11702,24 @@ def _candidate_board_payload(
                         "post_cost_net_pnl_after_breakeven_transaction_cost_buffer",
                     )
                 ),
+                "required_seed_model_family_robustness": _boolish(
+                    scorecard.get("required_seed_model_family_robustness")
+                ),
+                "seed_model_family_robustness_status": str(
+                    scorecard.get("seed_model_family_robustness_status") or ""
+                ),
+                "seed_robustness_passed": _boolish(
+                    scorecard.get("seed_robustness_passed")
+                ),
+                "seed_robustness_sample_count": _candidate_board_int_field(
+                    scorecard, "seed_robustness_sample_count"
+                ),
+                "model_family_robustness_passed": _boolish(
+                    scorecard.get("model_family_robustness_passed")
+                ),
+                "model_family_robustness_family_count": _candidate_board_int_field(
+                    scorecard, "model_family_robustness_family_count"
+                ),
                 "trading_day_count": _candidate_board_int_field(
                     scorecard, "trading_day_count"
                 ),

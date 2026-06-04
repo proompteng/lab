@@ -2606,6 +2606,7 @@ def _breakeven_transaction_cost_buffer_metrics(
     )
     return {
         "required_breakeven_transaction_cost_buffer": True,
+        "required_seed_model_family_robustness": True,
         "breakeven_transaction_cost_buffer_passed": passed,
         "breakeven_transaction_cost_buffer_bps": str(breakeven_buffer_bps),
         "transaction_cost_buffer_bps": str(selected_cost_buffer_bps),
@@ -2616,9 +2617,19 @@ def _breakeven_transaction_cost_buffer_metrics(
         "breakeven_transaction_cost_buffer_target_net_pnl_per_day": str(
             target_net_per_day
         ),
+        "seed_model_family_robustness_status": (
+            "required_not_materialized_by_single_frontier_replay"
+        ),
+        "seed_robustness_passed": False,
+        "seed_robustness_sample_count": 0,
+        "model_family_robustness_passed": False,
+        "model_family_robustness_family_count": 0,
         "breakeven_transaction_cost_buffer_source_markers": [
             "regime_weighted_conformal_var_arxiv_2602_03903_2026",
             "realistic_market_impact_arxiv_2603_29086_2026",
+        ],
+        "seed_model_family_robustness_source_markers": [
+            "regime_weighted_conformal_var_arxiv_2602_03903_2026"
         ],
     }
 
@@ -7271,6 +7282,11 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 "required_breakeven_transaction_cost_buffer"
                             )
                         ),
+                        "required_seed_model_family_robustness": bool(
+                            full_window_summary.get(
+                                "required_seed_model_family_robustness"
+                            )
+                        ),
                         "breakeven_transaction_cost_buffer_passed": bool(
                             full_window_summary.get(
                                 "breakeven_transaction_cost_buffer_passed"
@@ -7309,6 +7325,36 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 Sequence[Any],
                                 full_window_summary.get(
                                     "breakeven_transaction_cost_buffer_source_markers"
+                                )
+                                or (),
+                            )
+                        ),
+                        "seed_model_family_robustness_status": str(
+                            full_window_summary.get(
+                                "seed_model_family_robustness_status"
+                            )
+                            or ""
+                        ),
+                        "seed_robustness_passed": bool(
+                            full_window_summary.get("seed_robustness_passed")
+                        ),
+                        "seed_robustness_sample_count": int(
+                            full_window_summary.get("seed_robustness_sample_count") or 0
+                        ),
+                        "model_family_robustness_passed": bool(
+                            full_window_summary.get("model_family_robustness_passed")
+                        ),
+                        "model_family_robustness_family_count": int(
+                            full_window_summary.get(
+                                "model_family_robustness_family_count"
+                            )
+                            or 0
+                        ),
+                        "seed_model_family_robustness_source_markers": list(
+                            cast(
+                                Sequence[Any],
+                                full_window_summary.get(
+                                    "seed_model_family_robustness_source_markers"
                                 )
                                 or (),
                             )
