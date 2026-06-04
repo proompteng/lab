@@ -1787,7 +1787,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertFalse(sim_runtime_command.skip_reconcile)
         self.assertTrue(sim_runtime_command.reconcile_empty_selection)
 
-    def test_empirical_promotion_renewal_imports_authoritative_sim_paper_plan_and_sim_db(
+    def test_empirical_promotion_renewal_imports_authoritative_live_paper_plan_and_sim_db(
         self,
     ) -> None:
         spec, container = _load_cronjob_container(
@@ -1857,6 +1857,11 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(args.count("--dsn-env SIM_DB_DSN"), 2)
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
+            "--runtime-window-target-plan-url "
+            "'http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
+            args,
+        )
+        self.assertNotIn(
             "--runtime-window-target-plan-url "
             "'http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
             args,
@@ -1941,11 +1946,11 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn(
-            "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
+            "--paper-route-service-base-url http://torghut.torghut.svc.cluster.local",
             args,
         )
         self.assertNotIn(
-            "--paper-route-service-base-url http://torghut.torghut.svc.cluster.local",
+            "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
             args,
         )
         self.assertIn(
