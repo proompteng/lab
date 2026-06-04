@@ -1072,6 +1072,20 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         plan = renewal._runtime_window_target_plan_from_payload(
             {
                 "schema_version": "torghut.paper-route-evidence.v1",
+                "source_runtime_window_import_plan": {
+                    "schema_version": (
+                        "torghut.source-runtime-window-import-plan.v1"
+                    ),
+                    "target_count": 5,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-source-superset",
+                            "hypothesis_id": "H-SOURCE-SUPERSET",
+                            "window_start": "2026-05-20T13:30:00+00:00",
+                            "window_end": "2026-05-20T20:00:00+00:00",
+                        }
+                    ],
+                },
                 "live_submission_gate": {
                     "runtime_ledger_paper_probation_import_plan": {
                         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",

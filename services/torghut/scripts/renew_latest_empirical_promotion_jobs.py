@@ -830,42 +830,41 @@ def _runtime_window_target_plan_with_live_gate_source_collection(
 def _runtime_window_target_plan_from_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
+    paper_route_plan = _as_dict(payload.get("next_paper_route_runtime_window_targets"))
+    paper_route_evidence_payload = (
+        str(payload.get("schema_version") or "").strip()
+        == "torghut.paper-route-evidence.v1"
+    )
+    if paper_route_evidence_payload and paper_route_plan:
+        plan = paper_route_plan
+    else:
+        plan = {}
     source_runtime_window_plan = _as_dict(
         payload.get("source_runtime_window_import_plan")
     )
-    if _runtime_window_plan_target_items(source_runtime_window_plan):
+    if not plan and _runtime_window_plan_target_items(source_runtime_window_plan):
         plan = source_runtime_window_plan
-    else:
+    if not plan:
         direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
         if direct_plan:
             plan = direct_plan
         else:
-            paper_route_plan = _as_dict(
-                payload.get("next_paper_route_runtime_window_targets")
+            gate = _as_dict(payload.get("live_submission_gate"))
+            gate_plan = _as_dict(
+                gate.get("runtime_ledger_paper_probation_import_plan")
             )
-            if (
-                str(payload.get("schema_version") or "").strip()
-                == "torghut.paper-route-evidence.v1"
-                and paper_route_plan
-            ):
-                plan = paper_route_plan
+            if gate_plan:
+                plan = gate_plan
             else:
-                gate = _as_dict(payload.get("live_submission_gate"))
-                gate_plan = _as_dict(
-                    gate.get("runtime_ledger_paper_probation_import_plan")
+                top_level_gate_plan = _as_dict(
+                    payload.get("runtime_ledger_paper_probation_import_plan")
                 )
-                if gate_plan:
-                    plan = gate_plan
+                if top_level_gate_plan:
+                    plan = top_level_gate_plan
+                elif paper_route_plan:
+                    plan = paper_route_plan
                 else:
-                    top_level_gate_plan = _as_dict(
-                        payload.get("runtime_ledger_paper_probation_import_plan")
-                    )
-                    if top_level_gate_plan:
-                        plan = top_level_gate_plan
-                    elif paper_route_plan:
-                        plan = paper_route_plan
-                    else:
-                        plan = _as_dict(payload)
+                    plan = _as_dict(payload)
     plan = _runtime_window_target_plan_with_live_gate_source_collection(
         payload=payload,
         plan=plan,
