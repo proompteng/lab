@@ -50,6 +50,10 @@ OFI_RESPONSE_HORIZON_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
         ),
     },
 )
+OFI_RESPONSE_HORIZON_STRESS_SOURCE_MARKERS: tuple[str, ...] = (
+    "ofi_response_horizon_arxiv_2505_17388_2025",
+    "intraday_ofi_macro_news_arxiv_2508_06788_2025",
+)
 
 _PRICE_FIELDS = ("price", "mid_price", "mid", "mark", "last_price", "close")
 _OFI_FIELDS = (
@@ -104,6 +108,7 @@ class OfiResponseHorizonStressSummary:
             "source_papers": [
                 dict(item) for item in OFI_RESPONSE_HORIZON_STRESS_PRIMARY_SOURCES
             ],
+            "source_markers": list(OFI_RESPONSE_HORIZON_STRESS_SOURCE_MARKERS),
             "row_count": self.row_count,
             "observed_ofi_count": self.observed_ofi_count,
             "observed_price_count": self.observed_price_count,
@@ -181,6 +186,7 @@ def ofi_response_horizon_stress_contract() -> dict[str, Any]:
         "source_papers": [
             dict(item) for item in OFI_RESPONSE_HORIZON_STRESS_PRIMARY_SOURCES
         ],
+        "source_markers": list(OFI_RESPONSE_HORIZON_STRESS_SOURCE_MARKERS),
         "stress_policy": (
             "ofi_response_ratio_memory_decay_and_macro_news_distortion_ranking"
         ),

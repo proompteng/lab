@@ -843,6 +843,14 @@ class TestFastReplayPreview(TestCase):
                 ]
             },
         )
+        self.assertIn(
+            "ofi_response_horizon_arxiv_2505_17388_2025",
+            row_payload["ofi_response_horizon_stress"]["source_markers"],
+        )
+        self.assertIn(
+            "intraday_ofi_macro_news_arxiv_2508_06788_2025",
+            row_payload["ofi_response_horizon_stress"]["source_markers"],
+        )
         self.assertFalse(row_payload["ofi_response_horizon_stress"]["proof_authority"])
         self.assertFalse(
             row_payload["ofi_response_horizon_stress"]["promotion_authority"]
