@@ -844,6 +844,176 @@ def test_frontier_candidate_preserves_ofi_response_fields() -> None:
     assert "ofi_route_tca_evidence_missing" not in blockers
 
 
+def test_promotion_ready_bundle_blocks_required_alpha_decay_predictability_gaps() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-alpha-decay-gap",
+        candidate_id="candidate-alpha-decay-gap",
+        candidate_spec_id="spec-alpha-decay-gap",
+        dataset_snapshot_id="snapshot-alpha-decay-gap",
+        feature_spec_hash="feature-alpha-decay-gap",
+        code_commit="commit-alpha-decay-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_predictability_decay_stress": True,
+            "required_min_decay_stress_horizon_count": "3",
+            "required_min_tight_spread_regime_count": "20",
+            "required_min_high_volume_regime_count": "20",
+            "required_min_decay_stress_split_pass_rate": "0.60",
+            "required_max_decay_stress_best_split_share": "0.35",
+            "required_max_model_inference_latency_ms": "200",
+            "alpha_decay_predictability_source_markers": [
+                "alpha_decay_predictability_arxiv_2601_02310_2026",
+                "short_run_market_efficiency_ssrn_6608199_2026",
+            ],
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "predictability_decay_stress_missing_or_failed" in blockers
+    assert "predictability_decay_stress_artifact_missing" in blockers
+    assert "horizon_decay_curve_missing" in blockers
+    assert "spread_adjusted_label_replay_missing_or_failed" in blockers
+    assert "predictability_decay_horizon_count_below_min" in blockers
+    assert "tight_spread_regime_count_below_min" in blockers
+    assert "high_volume_regime_count_below_min" in blockers
+    assert "predictability_decay_split_pass_rate_below_min" in blockers
+    assert "predictability_decay_best_split_share_missing" in blockers
+    assert "model_inference_latency_missing" in blockers
+    assert "predictability_decay_route_tca_evidence_missing" in blockers
+    assert "predictability_decay_net_pnl_non_positive" in blockers
+
+
+def test_promotion_ready_bundle_accepts_materialized_alpha_decay_predictability_evidence() -> (
+    None
+):
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-alpha-decay-ready",
+        candidate_id="candidate-alpha-decay-ready",
+        candidate_spec_id="spec-alpha-decay-ready",
+        dataset_snapshot_id="snapshot-alpha-decay-ready",
+        feature_spec_hash="feature-alpha-decay-ready",
+        code_commit="commit-alpha-decay-ready",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_predictability_decay_stress": True,
+            "required_min_decay_stress_horizon_count": "3",
+            "required_min_tight_spread_regime_count": "20",
+            "required_min_high_volume_regime_count": "20",
+            "required_min_decay_stress_split_pass_rate": "0.60",
+            "required_max_decay_stress_best_split_share": "0.35",
+            "required_max_model_inference_latency_ms": "200",
+            "predictability_decay_stress_passed": True,
+            "predictability_decay_stress_artifact_ref": "artifact://alpha-decay",
+            "horizon_decay_curve_present": True,
+            "spread_adjusted_label_replay_passed": True,
+            "predictability_decay_stress_horizon_count": 4,
+            "tight_spread_regime_count": 24,
+            "high_volume_regime_count": 25,
+            "predictability_decay_stress_split_pass_rate": "0.65",
+            "predictability_decay_stress_best_split_share": "0.30",
+            "model_inference_latency_ms": "80",
+            "route_tca_artifact_ref": "artifact://route-tca",
+            "post_cost_net_pnl_after_predictability_decay_stress": "535",
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "predictability_decay_stress_missing_or_failed" not in blockers
+    assert "predictability_decay_stress_artifact_missing" not in blockers
+    assert "horizon_decay_curve_missing" not in blockers
+    assert "spread_adjusted_label_replay_missing_or_failed" not in blockers
+    assert "predictability_decay_horizon_count_below_min" not in blockers
+    assert "tight_spread_regime_count_below_min" not in blockers
+    assert "high_volume_regime_count_below_min" not in blockers
+    assert "predictability_decay_split_pass_rate_below_min" not in blockers
+    assert "predictability_decay_best_split_share_missing" not in blockers
+    assert "model_inference_latency_missing" not in blockers
+    assert "predictability_decay_route_tca_evidence_missing" not in blockers
+    assert "predictability_decay_net_pnl_non_positive" not in blockers
+
+
+def test_frontier_candidate_preserves_alpha_decay_predictability_fields() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-alpha-decay-preserved",
+        candidate={
+            "candidate_id": "candidate-alpha-decay-preserved",
+            "objective_scorecard": _promotion_quality_scorecard(),
+            "hard_vetoes": {
+                "required_predictability_decay_stress": True,
+                "required_horizon_decay_curve": True,
+                "required_spread_adjusted_label_replay": True,
+                "required_min_decay_stress_horizon_count": "3",
+                "required_min_tight_spread_regime_count": "20",
+                "required_min_high_volume_regime_count": "20",
+                "required_min_decay_stress_split_pass_rate": "0.60",
+                "required_max_decay_stress_best_split_share": "0.35",
+                "required_max_model_inference_latency_ms": "200",
+            },
+            "promotion_contract": {
+                "requires_predictability_decay_stress": True,
+                "requires_route_tca": True,
+            },
+            "predictability_decay_stress_passed": True,
+            "predictability_decay_stress_artifact_ref": "artifact://alpha-decay",
+            "horizon_decay_curve_present": True,
+            "spread_adjusted_label_replay_passed": True,
+            "predictability_decay_stress_horizon_count": 4,
+            "tight_spread_regime_count": 24,
+            "high_volume_regime_count": 25,
+            "predictability_decay_stress_split_pass_rate": "0.65",
+            "predictability_decay_stress_best_split_share": "0.30",
+            "model_inference_latency_ms": "80",
+            "route_tca_artifact_ref": "artifact://route-tca",
+            "post_cost_net_pnl_after_predictability_decay_stress": "535",
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-alpha-decay-preserved",
+        result_path="artifact://replay",
+        code_commit="commit-alpha-decay-preserved",
+    )
+
+    assert bundle.objective_scorecard["requires_predictability_decay_stress"] is True
+    assert bundle.objective_scorecard["required_horizon_decay_curve"] is True
+    assert (
+        bundle.objective_scorecard["predictability_decay_stress_artifact_ref"]
+        == "artifact://alpha-decay"
+    )
+    blockers = evidence_bundle_blockers(bundle)
+    assert "predictability_decay_stress_artifact_missing" not in blockers
+    assert "predictability_decay_route_tca_evidence_missing" not in blockers
+
+
 def test_frontier_candidate_preserves_implementation_risk_parity_fields() -> None:
     bundle = evidence_bundle_from_frontier_candidate(
         candidate_spec_id="spec-implementation-risk-preserved",

@@ -43,6 +43,10 @@ ALPHA_DECAY_PREDICTABILITY_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...]
         "mechanism": "tight_spread_heavy_trading_algorithmic_activity_predictability_compression",
     },
 )
+ALPHA_DECAY_PREDICTABILITY_STRESS_SOURCE_MARKERS: tuple[str, ...] = (
+    "alpha_decay_predictability_arxiv_2601_02310_2026",
+    "short_run_market_efficiency_ssrn_6608199_2026",
+)
 
 _PRICE_FIELDS = ("price", "mid_price", "mid", "mark", "last_price", "close")
 _BID_FIELDS = ("bid", "best_bid", "bid_price", "best_bid_price")
@@ -107,6 +111,7 @@ class AlphaDecayPredictabilityStressSummary:
             "source_papers": [
                 dict(item) for item in ALPHA_DECAY_PREDICTABILITY_STRESS_PRIMARY_SOURCES
             ],
+            "source_markers": list(ALPHA_DECAY_PREDICTABILITY_STRESS_SOURCE_MARKERS),
             "row_count": self.row_count,
             "observed_price_count": self.observed_price_count,
             "observed_spread_count": self.observed_spread_count,
@@ -195,6 +200,7 @@ def alpha_decay_predictability_stress_contract() -> dict[str, Any]:
         "source_papers": [
             dict(item) for item in ALPHA_DECAY_PREDICTABILITY_STRESS_PRIMARY_SOURCES
         ],
+        "source_markers": list(ALPHA_DECAY_PREDICTABILITY_STRESS_SOURCE_MARKERS),
         "stress_policy": "multi_horizon_alpha_decay_spread_adjusted_efficiency_regime_stress",
         "stress_components": [
             "horizon_curve",

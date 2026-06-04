@@ -226,6 +226,40 @@ OFI_RESPONSE_HORIZON_SCORECARD_KEYS = (
     "post_cost_net_pnl_after_ofi_response_horizon",
     "ofi_response_horizon_source_markers",
 )
+ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS = (
+    "requires_predictability_decay_stress",
+    "required_predictability_decay_stress",
+    "requires_horizon_decay_curve",
+    "required_horizon_decay_curve",
+    "requires_spread_adjusted_label_replay",
+    "required_spread_adjusted_label_replay",
+    "requires_tight_spread_and_high_volume_slices",
+    "requires_model_latency_budget",
+    "rejects_single_horizon_lob_alpha_promotion",
+    "rejects_classification_accuracy_without_costs",
+    "required_min_decay_stress_horizon_count",
+    "required_min_tight_spread_regime_count",
+    "required_min_high_volume_regime_count",
+    "required_min_decay_stress_split_pass_rate",
+    "required_max_decay_stress_best_split_share",
+    "required_max_model_inference_latency_ms",
+    "predictability_decay_stress_passed",
+    "predictability_decay_stress_artifact_ref",
+    "predictability_decay_stress_artifact_refs",
+    "horizon_decay_curve_present",
+    "predictability_horizon_decay_curve_present",
+    "spread_adjusted_label_replay_passed",
+    "spread_adjusted_label_evidence_present",
+    "predictability_decay_stress_horizon_count",
+    "tight_spread_regime_count",
+    "high_volume_regime_count",
+    "predictability_decay_stress_split_pass_rate",
+    "predictability_decay_stress_best_split_share",
+    "model_inference_latency_ms",
+    "post_cost_net_pnl_after_predictability_decay_stress",
+    "predictability_decay_stress_net_pnl_per_day",
+    "alpha_decay_predictability_source_markers",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -1076,6 +1110,13 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for key in ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
     for source in (candidate, summary, full_window):
         for key, value in _order_type_execution_metrics(source).items():
             if key not in scorecard:
@@ -1136,6 +1177,7 @@ def evidence_bundle_from_frontier_candidate(
         for key in (
             *BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS,
             *OFI_RESPONSE_HORIZON_SCORECARD_KEYS,
+            *ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS,
         ):
             if key in nested_contract and key not in scorecard:
                 scorecard = {**scorecard, key: nested_contract[key]}
@@ -1890,6 +1932,134 @@ def _ofi_response_horizon_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     return blockers
 
 
+def _alpha_decay_predictability_required(scorecard: Mapping[str, Any]) -> bool:
+    if any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_predictability_decay_stress",
+            "required_predictability_decay_stress",
+            "requires_horizon_decay_curve",
+            "required_horizon_decay_curve",
+            "requires_spread_adjusted_label_replay",
+            "required_spread_adjusted_label_replay",
+            "requires_tight_spread_and_high_volume_slices",
+            "requires_model_latency_budget",
+            "rejects_single_horizon_lob_alpha_promotion",
+            "rejects_classification_accuracy_without_costs",
+        )
+    ):
+        return True
+    hard_vetoes = {veto.lower() for veto in _string_list(scorecard.get("hard_vetoes"))}
+    if hard_vetoes.intersection(
+        {
+            "required_predictability_decay_stress",
+            "required_horizon_decay_curve",
+            "required_spread_adjusted_label_replay",
+            "required_min_decay_stress_horizon_count",
+            "required_min_tight_spread_regime_count",
+            "required_min_high_volume_regime_count",
+            "required_min_decay_stress_split_pass_rate",
+            "required_max_decay_stress_best_split_share",
+            "required_max_model_inference_latency_ms",
+        }
+    ):
+        return True
+    return bool(
+        {
+            marker.lower()
+            for marker in _string_list(
+                scorecard.get("alpha_decay_predictability_source_markers")
+            )
+        }.intersection(
+            {
+                "alpha_decay_predictability_arxiv_2601_02310_2026",
+                "short_run_market_efficiency_ssrn_6608199_2026",
+            }
+        )
+    )
+
+
+def _alpha_decay_predictability_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    if not _alpha_decay_predictability_required(scorecard):
+        return []
+
+    blockers: list[str] = []
+    if not _bool(scorecard.get("predictability_decay_stress_passed")):
+        blockers.append("predictability_decay_stress_missing_or_failed")
+    if not _has_artifact_ref(
+        scorecard,
+        "predictability_decay_stress_artifact_ref",
+        "predictability_decay_stress_artifact_refs",
+    ):
+        blockers.append("predictability_decay_stress_artifact_missing")
+    if not (
+        _bool(scorecard.get("horizon_decay_curve_present"))
+        or _bool(scorecard.get("predictability_horizon_decay_curve_present"))
+    ):
+        blockers.append("horizon_decay_curve_missing")
+    if not (
+        _bool(scorecard.get("spread_adjusted_label_replay_passed"))
+        or _bool(scorecard.get("spread_adjusted_label_evidence_present"))
+    ):
+        blockers.append("spread_adjusted_label_replay_missing_or_failed")
+    required_horizon_count = max(
+        1,
+        _int(scorecard.get("required_min_decay_stress_horizon_count") or 3),
+    )
+    if (
+        _int(scorecard.get("predictability_decay_stress_horizon_count"))
+        < required_horizon_count
+    ):
+        blockers.append("predictability_decay_horizon_count_below_min")
+    required_tight_spread_count = max(
+        1,
+        _int(scorecard.get("required_min_tight_spread_regime_count") or 20),
+    )
+    if _int(scorecard.get("tight_spread_regime_count")) < required_tight_spread_count:
+        blockers.append("tight_spread_regime_count_below_min")
+    required_high_volume_count = max(
+        1,
+        _int(scorecard.get("required_min_high_volume_regime_count") or 20),
+    )
+    if _int(scorecard.get("high_volume_regime_count")) < required_high_volume_count:
+        blockers.append("high_volume_regime_count_below_min")
+    required_split_rate = _decimal(
+        scorecard.get("required_min_decay_stress_split_pass_rate") or "0.60"
+    )
+    if (
+        _decimal(scorecard.get("predictability_decay_stress_split_pass_rate"))
+        < required_split_rate
+    ):
+        blockers.append("predictability_decay_split_pass_rate_below_min")
+    max_best_split_share = _decimal(
+        scorecard.get("required_max_decay_stress_best_split_share") or "0.35"
+    )
+    raw_best_split_share = scorecard.get("predictability_decay_stress_best_split_share")
+    if raw_best_split_share is None:
+        blockers.append("predictability_decay_best_split_share_missing")
+    elif _decimal(raw_best_split_share) > max_best_split_share:
+        blockers.append("predictability_decay_best_split_share_above_max")
+    raw_latency_ms = scorecard.get("model_inference_latency_ms")
+    max_latency_ms = _decimal(
+        scorecard.get("required_max_model_inference_latency_ms") or "200"
+    )
+    if raw_latency_ms is None:
+        blockers.append("model_inference_latency_missing")
+    elif _decimal(raw_latency_ms) > max_latency_ms:
+        blockers.append("model_inference_latency_above_max")
+    if not _route_tca_present(scorecard):
+        blockers.append("predictability_decay_route_tca_evidence_missing")
+    if (
+        _decimal(
+            scorecard.get("post_cost_net_pnl_after_predictability_decay_stress")
+            or scorecard.get("predictability_decay_stress_net_pnl_per_day")
+        )
+        <= 0
+    ):
+        blockers.append("predictability_decay_net_pnl_non_positive")
+    return blockers
+
+
 def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     requires_conformal_tail_risk = _bool(
         scorecard.get("conformal_tail_risk_required")
@@ -1973,6 +2143,7 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         blockers.extend(_implementation_risk_backtest_stability_blockers(scorecard))
         blockers.extend(_bootstrap_robust_optimization_blockers(scorecard))
         blockers.extend(_ofi_response_horizon_blockers(scorecard))
+        blockers.extend(_alpha_decay_predictability_blockers(scorecard))
         blockers.extend(_conformal_tail_risk_blockers(scorecard))
         blockers.extend(_delay_depth_survival_blockers(scorecard))
     return tuple(dict.fromkeys(blockers))
