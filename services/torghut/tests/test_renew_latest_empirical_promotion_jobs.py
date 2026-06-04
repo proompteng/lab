@@ -302,6 +302,244 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
         self.assertTrue(target.target_metadata["source_collection_authorized"])
         self.assertNotIn("paper_route_probe_symbols", target.target_metadata)
 
+    def test_target_plan_payload_prefers_selected_latest_closed_import_plan(
+        self,
+    ) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": (
+                        "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                    ),
+                    "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-CURRENT",
+                            "candidate_id": "current-candidate",
+                            "strategy_name": "current-strategy",
+                            "runtime_strategy_name": "current-strategy",
+                            "account_label": "TORGHUT_SIM",
+                            "source_manifest_ref": "current.json",
+                            "window_start": "2026-06-04T13:30:00+00:00",
+                            "window_end": "2026-06-04T20:00:00+00:00",
+                            "paper_route_session_import_ready": False,
+                            "paper_route_session_import_blockers": [
+                                "paper_route_session_window_not_closed"
+                            ],
+                        }
+                    ],
+                },
+                "latest_closed_runtime_window_import_selection": {
+                    "schema_version": (
+                        "torghut.paper-route-runtime-window-import-selection.v1"
+                    ),
+                    "selected": True,
+                    "state": "selected",
+                    "reason": "latest_closed_window_source_backed_and_clean",
+                    "source_backed_evidence_present": True,
+                    "clean_window_importable": True,
+                },
+                "latest_closed_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "session_readiness": {"import_ready": True},
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "closed-candidate",
+                            "strategy_family": "microbar_cross_sectional_pairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "runtime_strategy_name": (
+                                "microbar-cross-sectional-pairs-v1"
+                            ),
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_SIM",
+                            "source_dsn_env": "SIM_DB_DSN",
+                            "target_dsn_env": "SIM_DB_DSN",
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-pairs-01.json"
+                            ),
+                            "window_start": "2026-06-03T13:30:00+00:00",
+                            "window_end": "2026-06-03T20:00:00+00:00",
+                            "source_collection_authorized": True,
+                            "source_collection_authorization_scope": (
+                                "source_window_evidence_collection_only"
+                            ),
+                        }
+                    ],
+                },
+                "live_submission_gate": {
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-CURRENT",
+                                "candidate_id": "current-candidate",
+                                "strategy_family": "intraday_tsmom_consistent",
+                                "strategy_name": "current-strategy",
+                                "runtime_strategy_name": "current-strategy",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                                "source_manifest_ref": "current.json",
+                                "source_collection_authorized": True,
+                                "window_start": "2026-06-04T13:30:00+00:00",
+                                "window_end": "2026-06-04T20:00:00+00:00",
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+
+        targets = renew._runtime_window_targets_from_plan(
+            plan=plan,
+            ref="target-plan-url-fixture",
+            args=argparse.Namespace(),
+        )
+
+        self.assertEqual(
+            plan["purpose"], "latest_closed_session_paper_route_runtime_window_import"
+        )
+        self.assertEqual(len(plan["targets"]), 1)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].candidate_id, "closed-candidate")
+        self.assertEqual(str(targets[0].window_start), "2026-06-03T13:30:00+00:00")
+
+    def test_target_plan_payload_ignores_unselected_latest_closed_plan(self) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": (
+                        "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                    ),
+                    "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-CURRENT",
+                            "candidate_id": "current-candidate",
+                            "strategy_name": "current-strategy",
+                            "runtime_strategy_name": "current-strategy",
+                            "account_label": "TORGHUT_SIM",
+                            "source_manifest_ref": "current.json",
+                            "window_start": "2026-06-04T13:30:00+00:00",
+                            "window_end": "2026-06-04T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "latest_closed_runtime_window_import_selection": {
+                    "selected": False,
+                    "state": "discarded",
+                    "source_backed_evidence_present": True,
+                    "clean_window_importable": True,
+                },
+                "latest_closed_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "session_readiness": {"import_ready": True},
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "closed-candidate",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-pairs-01.json"
+                            ),
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(
+            plan["purpose"], "observed_strategy_runtime_ledger_source_collection_import"
+        )
+        self.assertEqual(plan["targets"][0]["candidate_id"], "current-candidate")
+
+    def test_target_plan_payload_requires_clean_latest_closed_selection(
+        self,
+    ) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+                    "targets": [{"candidate_id": "current-candidate"}],
+                },
+                "latest_closed_runtime_window_import_selection": {
+                    "selected": True,
+                    "state": "selected",
+                    "source_backed_evidence_present": True,
+                    "clean_window_importable": False,
+                },
+                "latest_closed_paper_route_runtime_window_targets": {
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "session_readiness": {"import_ready": True},
+                    "targets": [{"candidate_id": "closed-candidate"}],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "current-candidate")
+
+    def test_target_plan_payload_requires_source_backed_latest_closed_selection(
+        self,
+    ) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+                    "targets": [{"candidate_id": "current-candidate"}],
+                },
+                "latest_closed_runtime_window_import_selection": {
+                    "selected": True,
+                    "state": "selected",
+                    "source_backed_evidence_present": False,
+                    "clean_window_importable": True,
+                },
+                "latest_closed_paper_route_runtime_window_targets": {
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "session_readiness": {"import_ready": True},
+                    "targets": [{"candidate_id": "closed-candidate"}],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "current-candidate")
+
+    def test_target_plan_payload_requires_import_ready_latest_closed_plan(
+        self,
+    ) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+                    "targets": [{"candidate_id": "current-candidate"}],
+                },
+                "latest_closed_runtime_window_import_selection": {
+                    "selected": True,
+                    "state": "selected",
+                    "source_backed_evidence_present": True,
+                    "clean_window_importable": True,
+                },
+                "latest_closed_paper_route_runtime_window_targets": {
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "session_readiness": {"import_ready": False},
+                    "runtime_window_import_handoff": {"import_ready": False},
+                    "targets": [{"candidate_id": "closed-candidate"}],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "current-candidate")
+
     def test_exact_replay_runtime_window_plan_preserves_exact_counts(
         self,
     ) -> None:

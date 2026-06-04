@@ -867,6 +867,11 @@ def _runtime_window_target_plan_with_live_gate_source_collection(
     plan: Mapping[str, Any],
 ) -> dict[str, Any]:
     merged_plan = dict(plan)
+    if (
+        str(merged_plan.get("purpose") or "").strip()
+        == "latest_closed_session_paper_route_runtime_window_import"
+    ):
+        return merged_plan
     gate = _as_dict(payload.get("live_submission_gate"))
     gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
     source_collection_targets = _runtime_window_target_plan_source_collection_targets(
@@ -918,10 +923,45 @@ def _runtime_window_target_plan_with_live_gate_source_collection(
     return merged_plan
 
 
+def _latest_closed_runtime_window_target_plan_from_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    plan = _as_dict(payload.get("latest_closed_paper_route_runtime_window_targets"))
+    if not _runtime_window_plan_target_items(plan):
+        return {}
+
+    selection = _as_dict(payload.get("latest_closed_runtime_window_import_selection"))
+    selection_state = str(selection.get("state") or "").strip()
+    selection_selected = (
+        _runtime_window_target_plan_target_truthy(selection.get("selected"))
+        or selection_state == "selected"
+    )
+    if not selection_selected:
+        return {}
+    if not _runtime_window_target_plan_target_truthy(
+        selection.get("clean_window_importable")
+    ):
+        return {}
+    if not _runtime_window_target_plan_target_truthy(
+        selection.get("source_backed_evidence_present")
+    ):
+        return {}
+
+    session_readiness = _as_dict(plan.get("session_readiness"))
+    runtime_handoff = _as_dict(plan.get("runtime_window_import_handoff"))
+    import_ready = _runtime_window_target_plan_target_truthy(
+        session_readiness.get("import_ready")
+    ) or _runtime_window_target_plan_target_truthy(runtime_handoff.get("import_ready"))
+    if not import_ready:
+        return {}
+    return plan
+
+
 def _runtime_window_target_plan_from_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     paper_route_plan = _as_dict(payload.get("next_paper_route_runtime_window_targets"))
+    latest_closed_plan = _latest_closed_runtime_window_target_plan_from_payload(payload)
     paper_route_evidence_payload = (
         str(payload.get("schema_version") or "").strip()
         == "torghut.paper-route-evidence.v1"
@@ -932,6 +972,7 @@ def _runtime_window_target_plan_from_payload(
             (
                 candidate_plan
                 for candidate_plan in (
+                    latest_closed_plan,
                     direct_plan,
                     _as_dict(
                         payload.get(
@@ -950,7 +991,7 @@ def _runtime_window_target_plan_from_payload(
             {},
         )
     else:
-        plan = {}
+        plan = latest_closed_plan
     source_runtime_window_plan = _as_dict(
         payload.get("source_runtime_window_import_plan")
     )
