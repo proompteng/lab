@@ -145,6 +145,42 @@ _EXECUTION_TCA_REF_KEYS = (
     "tca_id",
     "tca_ref",
 )
+_SOURCE_WINDOW_REF_KEYS = (
+    "source_window_ids",
+    "source_window_refs",
+    "source_window_id",
+    "source_window_ref",
+    "runtime_ledger_source_window_ids",
+    "runtime_ledger_source_window_refs",
+    "runtime_ledger_source_window_id",
+    "runtime_ledger_source_window_ref",
+)
+_EXECUTION_ORDER_EVENT_REF_KEYS = (
+    "execution_order_event_ids",
+    "execution_order_event_refs",
+    "execution_order_event_id",
+    "execution_order_event_ref",
+    "runtime_ledger_execution_order_event_ids",
+    "runtime_ledger_execution_order_event_refs",
+    "runtime_ledger_execution_order_event_id",
+    "runtime_ledger_execution_order_event_ref",
+)
+_RUNTIME_LEDGER_SOURCE_AUTHORITY_BLOCKERS = frozenset(
+    {
+        "runtime_ledger_source_window_missing",
+        "runtime_ledger_source_window_ids_missing",
+        "runtime_ledger_source_refs_missing",
+        "runtime_ledger_trade_decision_refs_missing",
+        "runtime_ledger_execution_refs_missing",
+        "runtime_ledger_execution_order_event_refs_missing",
+        "runtime_ledger_source_offsets_missing",
+        "runtime_ledger_source_materialization_missing",
+        "runtime_ledger_authority_class_missing",
+        "order_feed_source_window_gap",
+        "order_feed_lifecycle_missing",
+        "execution_economics_missing",
+    }
+)
 _RUNTIME_LIFECYCLE_IDENTIFIER_KEYS = (
     "execution_id",
     "trade_decision_id",
@@ -1508,11 +1544,11 @@ def _with_runtime_ledger_source_authority_context(
     if execution_tca_required is not None:
         payload["execution_tca_required"] = execution_tca_required
     if source_materialization:
-        payload.setdefault("source_materialization", source_materialization)
+        payload["source_materialization"] = source_materialization
     if authority_class:
-        payload.setdefault("authority_class", authority_class)
+        payload["authority_class"] = authority_class
     if authority_reason:
-        payload.setdefault("authority_reason", authority_reason)
+        payload["authority_reason"] = authority_reason
     existing_counts = _as_mapping(payload.get("source_row_counts"))
     merged_counts: dict[str, int] = {
         str(key): _nonnegative_int(value) for key, value in existing_counts.items()
@@ -1525,6 +1561,23 @@ def _with_runtime_ledger_source_authority_context(
         )
     if merged_counts:
         payload["source_row_counts"] = dict(sorted(merged_counts.items()))
+    existing_blockers = _metadata_text_list(payload.get("blockers"))
+    if existing_blockers:
+        refreshed_source_blockers = set(
+            runtime_ledger_promotion_source_authority_blockers(payload)
+        )
+        refreshed_blockers = [
+            blocker
+            for blocker in existing_blockers
+            if (
+                blocker not in _RUNTIME_LEDGER_SOURCE_AUTHORITY_BLOCKERS
+                or blocker in refreshed_source_blockers
+            )
+        ]
+        for blocker in refreshed_source_blockers:
+            if blocker not in refreshed_blockers:
+                refreshed_blockers.append(blocker)
+        payload["blockers"] = refreshed_blockers
     return payload
 
 
@@ -1545,9 +1598,21 @@ def _source_identifier_values(
     values: list[str] = []
     for row in rows or ():
         for key in keys:
-            value = _text_or_none(row.get(key))
-            if value is not None:
-                values.append(value)
+            raw_value = row.get(key)
+            row_values: list[str] = []
+            if isinstance(raw_value, Sequence) and not isinstance(
+                raw_value,
+                (str, bytes, bytearray),
+            ):
+                row_values = [
+                    value
+                    for item in raw_value
+                    if (value := _text_or_none(item)) is not None
+                ]
+            elif (value := _text_or_none(raw_value)) is not None:
+                row_values = [value]
+            if row_values:
+                values.extend(row_values)
                 break
     return list(dict.fromkeys(values))
 
@@ -1569,6 +1634,27 @@ def _source_offset_values(
         offsets.append({"topic": topic, "partition": partition, "offset": offset})
         seen.add(key)
     return offsets
+
+
+def _with_canonical_runtime_source_refs(
+    row: Mapping[str, object],
+) -> dict[str, object]:
+    normalized = {str(key): value for key, value in row.items()}
+    if normalized.get("execution_order_event_id") is None:
+        execution_order_event_ids = _source_identifier_values(
+            [normalized],
+            *_EXECUTION_ORDER_EVENT_REF_KEYS,
+        )
+        if execution_order_event_ids:
+            normalized["execution_order_event_id"] = execution_order_event_ids[0]
+    if normalized.get("source_window_id") is None:
+        source_window_ids = _source_identifier_values(
+            [normalized],
+            *_SOURCE_WINDOW_REF_KEYS,
+        )
+        if source_window_ids:
+            normalized["source_window_id"] = source_window_ids[0]
+    return normalized
 
 
 def _unique_source_window_rows(
@@ -3643,14 +3729,17 @@ def _source_backed_fill_lifecycle_rows(
 ) -> list[dict[str, object]]:
     source_backed_rows: list[dict[str, object]] = []
     for row in rows:
-        normalized = {str(key): value for key, value in row.items()}
+        normalized = _with_canonical_runtime_source_refs(row)
         if _runtime_ledger_event_type(normalized) not in _RUNTIME_LEDGER_FILL_EVENTS:
             continue
         if _runtime_order_id(normalized) is None:
             continue
-        if not _source_identifier_values([normalized], "execution_order_event_id"):
+        if not _source_identifier_values(
+            [normalized],
+            *_EXECUTION_ORDER_EVENT_REF_KEYS,
+        ):
             continue
-        if not _source_identifier_values([normalized], "source_window_id"):
+        if not _source_identifier_values([normalized], *_SOURCE_WINDOW_REF_KEYS):
             continue
         if not _source_offset_values([normalized]):
             continue
@@ -3663,7 +3752,7 @@ def _source_backed_order_lifecycle_rows(
 ) -> list[dict[str, object]]:
     source_backed_rows: list[dict[str, object]] = []
     for row in rows:
-        normalized = {str(key): value for key, value in row.items()}
+        normalized = _with_canonical_runtime_source_refs(row)
         if (
             _runtime_ledger_event_type(normalized)
             not in _RUNTIME_LEDGER_ORDER_LIFECYCLE_EVENTS
@@ -3671,9 +3760,12 @@ def _source_backed_order_lifecycle_rows(
             continue
         if _runtime_order_id(normalized) is None:
             continue
-        if not _source_identifier_values([normalized], "execution_order_event_id"):
+        if not _source_identifier_values(
+            [normalized],
+            *_EXECUTION_ORDER_EVENT_REF_KEYS,
+        ):
             continue
-        if not _source_identifier_values([normalized], "source_window_id"):
+        if not _source_identifier_values([normalized], *_SOURCE_WINDOW_REF_KEYS):
             continue
         if not _source_offset_values([normalized]):
             continue
@@ -3956,7 +4048,7 @@ def _runtime_source_context_for_bucket(
     ]
     source_window_ids = _source_identifier_values(
         source_authority_lifecycle_rows,
-        "source_window_id",
+        *_SOURCE_WINDOW_REF_KEYS,
     )
     required_order_lifecycle_source_row_count = (
         _required_order_lifecycle_source_row_count(
@@ -4010,7 +4102,7 @@ def _runtime_source_context_for_bucket(
     )
     execution_order_event_ids = _source_identifier_values(
         source_authority_lifecycle_rows,
-        "execution_order_event_id",
+        *_EXECUTION_ORDER_EVENT_REF_KEYS,
     )
     if source_offsets and execution_order_event_ids:
         if order_feed_fill_economics_complete and execution_tca_satisfied:
@@ -4435,18 +4527,22 @@ def _build_realized_strategy_pnl_rows(
         carry_in_execution_rows or []
     )
     order_lifecycle_rows = [
-        _with_linked_execution_id(
-            row,
-            execution_id_by_order_id=execution_id_by_order_id,
-            execution_side_by_order_id=execution_side_by_order_id,
+        _with_canonical_runtime_source_refs(
+            _with_linked_execution_id(
+                row,
+                execution_id_by_order_id=execution_id_by_order_id,
+                execution_side_by_order_id=execution_side_by_order_id,
+            )
         )
         for row in order_lifecycle_rows or []
     ]
     carry_in_order_lifecycle_rows = [
-        _with_linked_execution_id(
-            row,
-            execution_id_by_order_id=carry_in_execution_id_by_order_id,
-            execution_side_by_order_id=carry_in_execution_side_by_order_id,
+        _with_canonical_runtime_source_refs(
+            _with_linked_execution_id(
+                row,
+                execution_id_by_order_id=carry_in_execution_id_by_order_id,
+                execution_side_by_order_id=carry_in_execution_side_by_order_id,
+            )
         )
         for row in carry_in_order_lifecycle_rows or []
     ]
@@ -4807,6 +4903,9 @@ def _build_realized_strategy_pnl_rows(
                 authority_reason=authority_reason,
             )
             row["runtime_ledger_bucket"] = bucket_payload
+            row["runtime_ledger_blockers"] = _metadata_text_list(
+                bucket_payload.get("blockers")
+            )
         source_backed_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
             and fill_economics_complete
