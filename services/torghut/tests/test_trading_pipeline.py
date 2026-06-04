@@ -8406,6 +8406,127 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(decisions[0].action, "buy")
         self.assertEqual(blocked_by_exposure, [])
 
+    def test_materialized_target_plan_ignores_transient_batch_symbol_filter(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_allow_shorts = True
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="bounded H-PAIRS materialized target",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            target = {
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                "account_label": "TORGHUT_SIM",
+                "source_account_label": "TORGHUT_REPLAY",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "source_plan_ref": "config/trading/hypotheses/h-pairs-01.json",
+                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                "observed_stage": "paper",
+                "bounded_collection_stage": "bounded_paper_collection",
+                "target_notional": "200",
+                "target_quantity": "1",
+                "paper_route_probe_next_session_max_notional": "200",
+                "paper_route_probe_window_start": window_start.isoformat(),
+                "paper_route_probe_window_end": window_end.isoformat(),
+                "paper_route_probe_symbols": ["AAPL"],
+                "paper_route_probe_symbol_actions": {"AAPL": "buy"},
+                "paper_route_probe_symbol_quantities": {"AAPL": "1"},
+                "paper_route_probe_pair_balance_state": "not_required",
+                "source_decision_readiness": {"ready": True, "blockers": []},
+                "evidence_collection_ok": True,
+                "bounded_evidence_collection_authorized": True,
+                "bounded_live_paper_collection_authorized": True,
+                "canary_collection_authorized": True,
+                "promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "final_promotion_allowed": False,
+            }
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    decision_json={
+                        "submission_stage": "bounded_paper_route_materialized",
+                        "source": "paper_route_target_plan_materializer",
+                        "source_decision_mode": (
+                            BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                        ),
+                        "symbol": "AAPL",
+                        "action": "buy",
+                        "qty": "1",
+                        "params": {
+                            "paper_route_target_plan_materialized": True,
+                            "source": "paper_route_target_plan_materializer",
+                            "source_decision_mode": (
+                                BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                            ),
+                            "paper_route_target_plan_source_decision": target,
+                        },
+                    },
+                    decision_hash="materialized-batch-filter-aapl",
+                    status="planned",
+                    created_at=now,
+                )
+            )
+            session.commit()
+
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="TORGHUT_SIM",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=now,
+            ):
+                decisions = pipeline._paper_route_materialized_planned_decisions(
+                    session=session,
+                    strategies=[strategy],
+                    allowed_symbols={"NVDA"},
+                    positions=[],
+                )
+
+        self.assertEqual([decision.symbol for decision in decisions], ["AAPL"])
+        self.assertEqual(decisions[0].action, "buy")
+        self.assertEqual(
+            decisions[0].params["paper_route_target_plan"]["candidate_id"],
+            "c88421d619759b2cfaa6f4d0",
+        )
+
     def test_materialized_target_plan_process_records_handler_errors(
         self,
     ) -> None:
