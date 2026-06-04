@@ -72,6 +72,21 @@ MARKET_IMPACT_SCORECARD_KEYS = (
     "implementation_uncertainty_target_net_pnl_per_day",
     "implementation_uncertainty_scenarios",
     "implementation_uncertainty_source_markers",
+    "requires_implementation_risk_backtest_stability",
+    "implementation_risk_backtest_stability_required",
+    "requires_multi_engine_replay",
+    "required_multi_engine_replay",
+    "multi_engine_replay_passed",
+    "multi_engine_replay_engine_count",
+    "implementation_engine_count",
+    "requires_engine_sensitivity_report",
+    "engine_sensitivity_report_present",
+    "engine_sensitivity_report_ref",
+    "engine_sensitivity_artifact_ref",
+    "requires_conclusion_stability",
+    "conclusion_stability_passed",
+    "conclusion_stability_index",
+    "required_conclusion_stability_index",
     "conformal_tail_risk_required",
     "conformal_tail_risk_model",
     "conformal_tail_risk_alpha",
@@ -1437,6 +1452,61 @@ def _implementation_uncertainty_blockers(
     return blockers
 
 
+def _implementation_risk_backtest_stability_required(
+    scorecard: Mapping[str, Any],
+) -> bool:
+    if any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_implementation_risk_backtest_stability",
+            "implementation_risk_backtest_stability_required",
+            "requires_multi_engine_replay",
+            "required_multi_engine_replay",
+            "requires_engine_sensitivity_report",
+            "requires_conclusion_stability",
+        )
+    ):
+        return True
+    return "implementation_risk_backtesting_arxiv_2603_20319_2026" in {
+        marker.lower()
+        for marker in _string_list(
+            scorecard.get("implementation_uncertainty_source_markers")
+        )
+    }
+
+
+def _implementation_risk_backtest_stability_blockers(
+    scorecard: Mapping[str, Any],
+) -> list[str]:
+    if not _implementation_risk_backtest_stability_required(scorecard):
+        return []
+
+    blockers: list[str] = []
+    engine_count = max(
+        _int(scorecard.get("multi_engine_replay_engine_count")),
+        _int(scorecard.get("implementation_engine_count")),
+    )
+    if not _bool(scorecard.get("multi_engine_replay_passed")):
+        blockers.append("multi_engine_replay_missing_or_failed")
+    if engine_count < 2:
+        blockers.append("multi_engine_replay_engine_count_below_min")
+    if not (
+        _bool(scorecard.get("engine_sensitivity_report_present"))
+        or _string(scorecard.get("engine_sensitivity_report_ref"))
+        or _string(scorecard.get("engine_sensitivity_artifact_ref"))
+    ):
+        blockers.append("engine_sensitivity_report_missing")
+    required_index = _decimal(
+        scorecard.get("required_conclusion_stability_index") or "1"
+    )
+    observed_index = _decimal(scorecard.get("conclusion_stability_index"))
+    if not _bool(scorecard.get("conclusion_stability_passed")):
+        blockers.append("conclusion_stability_missing_or_failed")
+    if observed_index < required_index:
+        blockers.append("conclusion_stability_index_below_min")
+    return blockers
+
+
 def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     requires_conformal_tail_risk = _bool(
         scorecard.get("conformal_tail_risk_required")
@@ -1516,6 +1586,7 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         )
         blockers.extend(_market_impact_stress_blockers(scorecard))
         blockers.extend(_implementation_uncertainty_blockers(scorecard))
+        blockers.extend(_implementation_risk_backtest_stability_blockers(scorecard))
         blockers.extend(_conformal_tail_risk_blockers(scorecard))
         blockers.extend(_delay_depth_survival_blockers(scorecard))
     return tuple(dict.fromkeys(blockers))
