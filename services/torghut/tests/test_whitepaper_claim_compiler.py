@@ -297,6 +297,10 @@ class TestWhitepaperClaimCompiler(TestCase):
             source_by_id["paper-arxiv-2502.16246"].title,
             'The "double" square-root law: Evidence for the mechanical origin of market impact using Tokyo Stock Exchange data',
         )
+        self.assertEqual(
+            source_by_id["paper-arxiv-2604.15531"].title,
+            "Spurious Predictability in Financial Machine Learning",
+        )
         self.assertTrue(
             any(
                 claim.get("claim_type") == "portfolio_construction"
@@ -320,6 +324,13 @@ class TestWhitepaperClaimCompiler(TestCase):
                 claim.get("claim_id") == "impact-decay-proof-neutrality"
                 and "runtime_ledger_profit_proof" in claim.get("data_requirements", ())
                 for claim in source_by_id["paper-arxiv-2502.16246"].claims
+            )
+        )
+        self.assertTrue(
+            any(
+                claim.get("claim_id") == "adaptive-falsification-proof-neutrality"
+                and "runtime_ledger_profit_proof" in claim.get("data_requirements", ())
+                for claim in source_by_id["paper-arxiv-2604.15531"].claims
             )
         )
 
