@@ -199,6 +199,24 @@ RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS = (
     "runtime_ledger_source_collection_only",
     "live_runtime_ledger_required",
 )
+RUNTIME_LEDGER_SOURCE_COLLECTION_LIVE_PAPER_EVIDENCE_REQUIREMENTS = (
+    "runtime_ledger_source_window_refs",
+    "runtime_ledger_source_window_ids",
+    "runtime_ledger_trade_decision_refs",
+    "runtime_ledger_execution_refs",
+    "runtime_ledger_execution_order_event_refs",
+    "runtime_ledger_source_offsets",
+    "runtime_ledger_source_materialization",
+    "post_cost_tca_cost_refs",
+    "closed_flat_reconciliation",
+)
+RUNTIME_LEDGER_SOURCE_COLLECTION_SAFE_EVIDENCE_COLLECTION_PATH = (
+    "materialize_runtime_ledger_source_window_refs",
+    "attach_trade_decision_execution_and_order_event_refs",
+    "persist_runtime_ledger_source_offsets_and_materialization",
+    "reconcile_post_cost_tca_and_closed_flat_state",
+    "rerun_live_paper_runtime_ledger_proof_before_final_promotion",
+)
 
 
 def _maybe_set_paper_route_audit_statement_timeout(session: Session) -> None:
@@ -9015,7 +9033,15 @@ def _sanitized_runtime_ledger_source_collection_target(
         "bounded_live_paper_collection_authorized": False,
         "bounded_evidence_collection_authorized": False,
         "capital_promotion_allowed": False,
+        "live_capital_authorized": False,
         "final_authority_ok": False,
+        "final_promotion_requires_live_paper_runtime_proof": True,
+        "live_paper_evidence_requirements": list(
+            RUNTIME_LEDGER_SOURCE_COLLECTION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+        ),
+        "safe_evidence_collection_path": list(
+            RUNTIME_LEDGER_SOURCE_COLLECTION_SAFE_EVIDENCE_COLLECTION_PATH
+        ),
         "evidence_collection_stage": "paper",
         "probation_allowed": False,
         "probation_reason": "source_window_evidence_collection_pending",
@@ -9050,9 +9076,20 @@ def _sanitized_runtime_ledger_source_collection_target(
         "source_collection_net_strategy_pnl_after_costs",
         "source_collection_post_cost_expectancy_bps",
         "source_collection_next_action",
+        "probation_target_shortfall",
+        "probation_target_progress_ratio",
+        "required_notional_repair_scale_to_target",
+        "required_notional_to_reach_target",
+        "required_notional_repair_scale_authority",
     ):
         if value := _safe_text(target.get(key)):
             sanitized[key] = value
+    for key in (
+        "live_paper_evidence_requirements",
+        "safe_evidence_collection_path",
+    ):
+        if values := _unique_text_items(target.get(key)):
+            sanitized[key] = values
     sanitized.update(_runtime_window_import_target_metadata(target))
     if runtime_ledger_bucket_ref := _safe_text(target.get("runtime_ledger_bucket_ref")):
         sanitized["runtime_ledger_bucket_ref"] = runtime_ledger_bucket_ref

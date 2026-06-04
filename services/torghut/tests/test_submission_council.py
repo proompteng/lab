@@ -62,6 +62,7 @@ from app.trading.submission_council import (
     _runtime_ledger_paper_probation_blockers,
     _runtime_ledger_paper_probation_import_plan,
     _runtime_ledger_source_collection_candidates,
+    _runtime_ledger_source_collection_target_progress_payload,
     build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     load_quant_evidence_status,
@@ -2162,6 +2163,41 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             target["source_collection_next_action"],
             "materialize_runtime_ledger_source_window_refs",
+        )
+        self.assertEqual(target["probation_target_shortfall"], "0")
+        self.assertEqual(
+            target["probation_target_progress_ratio"],
+            "1.13489441156",
+        )
+        self.assertEqual(target["required_notional_repair_scale_to_target"], "1")
+        self.assertEqual(
+            target["required_notional_repair_scale_authority"],
+            "linear_notional_sizing_estimate_for_repair_only_not_capital_authority",
+        )
+        self.assertFalse(target["live_capital_authorized"])
+        self.assertTrue(target["final_promotion_requires_live_paper_runtime_proof"])
+        self.assertIn(
+            "runtime_ledger_execution_order_event_refs",
+            target["live_paper_evidence_requirements"],
+        )
+        self.assertEqual(
+            target["safe_evidence_collection_path"][0],
+            "materialize_runtime_ledger_source_window_refs",
+        )
+
+    def test_source_collection_target_progress_payload_handles_zero_pnl(self) -> None:
+        payload = _runtime_ledger_source_collection_target_progress_payload(
+            net_pnl_after_costs=Decimal("0"),
+            filled_notional=Decimal("125000"),
+        )
+
+        self.assertEqual(payload["probation_target_shortfall"], "500")
+        self.assertEqual(payload["probation_target_progress_ratio"], "0")
+        self.assertEqual(payload["required_notional_repair_scale_to_target"], "0")
+        self.assertEqual(payload["required_notional_to_reach_target"], "0")
+        self.assertEqual(
+            payload["required_notional_repair_scale_authority"],
+            "linear_notional_sizing_estimate_for_repair_only_not_capital_authority",
         )
 
     def test_runtime_ledger_repair_score_prefers_source_backed_positive_candidate(

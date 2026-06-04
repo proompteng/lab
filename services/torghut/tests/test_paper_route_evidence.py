@@ -5198,6 +5198,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "offset": 101,
                             }
                         ],
+                        "live_paper_evidence_requirements": [
+                            "runtime_ledger_source_materialization",
+                            "runtime_ledger_execution_refs",
+                            "runtime_ledger_source_materialization",
+                        ],
+                        "safe_evidence_collection_path": [
+                            "materialize_runtime_ledger_source_window_refs",
+                            "attach_trade_decision_execution_and_order_event_refs",
+                            "materialize_runtime_ledger_source_window_refs",
+                        ],
                         "runtime_ledger_bucket_ref": (
                             "strategy_runtime_ledger_buckets:run-1:start:end"
                         ),
@@ -5253,6 +5263,22 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(target["max_notional"], "0")
         self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["live_capital_authorized"])
+        self.assertTrue(target["final_promotion_requires_live_paper_runtime_proof"])
+        self.assertEqual(
+            target["live_paper_evidence_requirements"],
+            [
+                "runtime_ledger_source_materialization",
+                "runtime_ledger_execution_refs",
+            ],
+        )
+        self.assertEqual(
+            target["safe_evidence_collection_path"],
+            [
+                "materialize_runtime_ledger_source_window_refs",
+                "attach_trade_decision_execution_and_order_event_refs",
+            ],
+        )
 
         empty_plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
             plan={
