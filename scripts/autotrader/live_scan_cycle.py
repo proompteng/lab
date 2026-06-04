@@ -41,6 +41,10 @@ ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
 DEFAULT_SCORECARD_LIMIT = 100
 MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_ACTIONABLE_BRACKET_R = Decimal("2.0")
+MIN_EXPLORATORY_ACTIONABLE_EXPECTED_R = Decimal("1.0")
+EXPLORATORY_SYNTHETIC_BRACKET_R = Decimal("2.1")
+EXPLORATORY_STOP_DISTANCE_PCT = Decimal("0.003")
+EXPLORATORY_RISK_EQUITY_PCT = Decimal("0.001")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MIN_SCORECARD_ACTIONABLE_AVG_REALIZED_R = Decimal("0.5")
 LOSSY_SCORECARD_EDGE_DISCOUNT = Decimal("0.5")
@@ -58,6 +62,7 @@ ACCOUNT_RATIO_QUANT = Decimal("0.000001")
 R_MULTIPLE_QUANT = Decimal("0.000001")
 PROFIT_PROTECT_BREAKEVEN_TRIGGER_R = Decimal("0.5")
 PROFIT_PROTECT_LOCK_TRIGGER_R = Decimal("1.0")
+EXPLORATORY_BLOCKING_RISK_NOTES = {"wide_spread", "weak_liquidity_score"}
 PROFIT_LOCK_R = Decimal("0.25")
 
 
@@ -1562,6 +1567,49 @@ def first_decimal_value(result: dict[str, Any], *keys: str) -> Decimal | None:
     return None
 
 
+def result_risk_notes(result: dict[str, Any]) -> list[str]:
+    value = result.get("risk_notes") or result.get("riskNotes")
+    if not isinstance(value, list):
+        return []
+    notes: list[str] = []
+    for item in value:
+        text = optional_text(item, max_length=120)
+        if text:
+            notes.append(text)
+    return notes
+
+
+def has_blocking_exploratory_risk_note(result: dict[str, Any]) -> bool:
+    return any(note in EXPLORATORY_BLOCKING_RISK_NOTES for note in result_risk_notes(result))
+
+
+def exploratory_scorecard_sample_values(result: dict[str, Any]) -> tuple[int, Decimal | None]:
+    return (
+        int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize")),
+        decimal_value(result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR")),
+    )
+
+
+def exploratory_starter_candidate(result: dict[str, Any]) -> bool:
+    grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
+    type_ = setup_type(result.get("setup_type") or result.get("setupType"))
+    if grade not in ACTIONABLE_SETUP_GRADES or type_ == "no_trade":
+        return False
+    if has_blocking_exploratory_risk_note(result):
+        return False
+    sample_size, avg_realized_r = exploratory_scorecard_sample_values(result)
+    if sample_size > 0 or avg_realized_r is not None:
+        return False
+    expected_r = decimal_value(result.get("expected_r") or result.get("expectedR"))
+    return expected_r is not None and expected_r >= MIN_EXPLORATORY_ACTIONABLE_EXPECTED_R
+
+
+def actionable_expected_r_floor(result: dict[str, Any]) -> Decimal:
+    if exploratory_starter_candidate(result):
+        return MIN_EXPLORATORY_ACTIONABLE_EXPECTED_R
+    return MIN_ACTIONABLE_EXPECTED_R
+
+
 def result_side(result: dict[str, Any]) -> str:
     return schema_enum(result.get("side"), SYNTHESIS_SIDES, "buy")
 
@@ -1581,6 +1629,38 @@ def bracket_r_value(*, side: str, entry: Decimal, stop: Decimal, target: Decimal
     if risk <= 0 or reward <= 0:
         return None
     return reward / risk
+
+
+def exploratory_synthetic_bracket(
+    result: dict[str, Any],
+    *,
+    side: str,
+    direction: str,
+    entry: Decimal,
+) -> dict[str, Decimal | str] | None:
+    if not exploratory_starter_candidate(result):
+        return None
+    stop_distance = max(entry * EXPLORATORY_STOP_DISTANCE_PCT, ACCOUNT_MONEY_QUANT)
+    bracket_r = max(
+        EXPLORATORY_SYNTHETIC_BRACKET_R,
+        decimal_value(result.get("expected_r") or result.get("expectedR")) or EXPLORATORY_SYNTHETIC_BRACKET_R,
+    )
+    if direction == "buy":
+        stop = entry - stop_distance
+        target = entry + (stop_distance * bracket_r)
+    else:
+        stop = entry + stop_distance
+        target = entry - (stop_distance * bracket_r)
+    if stop <= 0 or target <= 0:
+        return None
+    actual_r = bracket_r_value(side=side, entry=entry, stop=stop, target=target)
+    if actual_r is None:
+        return None
+    return {
+        "stop": Decimal(quantized_decimal_text(stop, ACCOUNT_MONEY_QUANT)),
+        "target": Decimal(quantized_decimal_text(target, ACCOUNT_MONEY_QUANT)),
+        "actualR": actual_r,
+    }
 
 
 def derived_bracket_for_scan_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -1611,6 +1691,14 @@ def derived_bracket_for_scan_result(result: dict[str, Any]) -> dict[str, Any]:
         elif direction == "sell" and support is not None and support < entry:
             target = support
             target_source = "support"
+
+    if entry is not None and (stop is None or target is None):
+        synthetic = exploratory_synthetic_bracket(result, side=side, direction=direction, entry=entry)
+        if synthetic is not None:
+            stop = synthetic["stop"] if isinstance(synthetic["stop"], Decimal) else None
+            target = synthetic["target"] if isinstance(synthetic["target"], Decimal) else None
+            stop_source = "exploratory_synthetic_pct_stop"
+            target_source = "exploratory_synthetic_r_target"
 
     missing = []
     if entry is None:
@@ -1727,7 +1815,7 @@ def result_no_trade_reason(
     account: dict[str, Any] | None = None,
 ) -> str | None:
     reason = optional_text(result.get("no_trade_reason") or result.get("noTradeReason"), max_length=1000)
-    if reason:
+    if reason and not (reason == "expected_r_below_threshold" and exploratory_starter_candidate(result)):
         return reason
     if grade in {"C", "blocked"}:
         return "scanner_blocked_grade"
@@ -1740,12 +1828,14 @@ def result_no_trade_reason(
     expected_r = decimal_value(result.get("expected_r") or result.get("expectedR"))
     if expected_r is None:
         return "missing_expected_r"
-    if expected_r < MIN_ACTIONABLE_EXPECTED_R:
+    if expected_r < actionable_expected_r_floor(result):
         return "expected_r_below_threshold"
     bracket_reason = executable_bracket_no_trade_reason(result)
     if bracket_reason:
         return bracket_reason
     if scorecard_sample_size <= 0 or scorecard_avg_r is None or scorecard_avg_r <= 0:
+        if exploratory_starter_candidate(result):
+            return None
         return "positive_scorecard_edge_required"
     if scorecard_avg_r < MIN_SCORECARD_ACTIONABLE_AVG_REALIZED_R:
         return "scorecard_avg_realized_r_below_actionable_floor"
@@ -1943,6 +2033,39 @@ def scorecard_edge_weight(sample_size: int) -> Decimal:
 
 def scorecard_risk_directive(result: dict[str, Any], account: dict[str, Any] | None = None) -> dict[str, Any] | None:
     sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
+    if exploratory_starter_candidate(result):
+        directive: dict[str, Any] = {
+            "source": "exploratory_starter",
+            "mode": "starter_probe_without_scorecard_edge",
+            "riskMultiplier": "1.0",
+            "exploratoryRiskPct": normalized_quantized_decimal_text(
+                EXPLORATORY_RISK_EQUITY_PCT, ACCOUNT_RATIO_QUANT
+            ),
+            "minimumExpectedR": str(MIN_EXPLORATORY_ACTIONABLE_EXPECTED_R),
+            "syntheticBracketR": str(EXPLORATORY_SYNTHETIC_BRACKET_R),
+            "syntheticStopDistancePct": normalized_quantized_decimal_text(
+                EXPLORATORY_STOP_DISTANCE_PCT, ACCOUNT_RATIO_QUANT
+            ),
+            "reason": "exploratory_starter_no_scorecard",
+        }
+        risk_budget = risk_budget_for_account(account)
+        if risk_budget is not None:
+            directive["accountRiskBudget"] = risk_budget
+            equity = decimal_value(risk_budget.get("equity"))
+            if equity is not None:
+                recommended_risk_dollars = equity * EXPLORATORY_RISK_EQUITY_PCT
+                directive["recommendedRiskDollars"] = quantized_decimal_text(
+                    recommended_risk_dollars, ACCOUNT_MONEY_QUANT
+                )
+                max_notional = decimal_value(risk_budget.get("maxPositionNotionalDollars"))
+                position_size = position_size_for_bracket(
+                    bracket=derived_bracket_for_scan_result(result),
+                    recommended_risk_dollars=recommended_risk_dollars,
+                    max_position_notional_dollars=max_notional,
+                )
+                directive.update({key: value for key, value in position_size.items() if value is not None})
+                directive["positionSizeReason"] = str(position_size.get("reason"))
+        return directive
     if sample_size <= 0 or avg_realized_r is None or avg_realized_r <= 0:
         return None
     if avg_realized_r < MIN_SCORECARD_ACTIONABLE_AVG_REALIZED_R:
@@ -2065,7 +2188,7 @@ def actionable_candidate_for_result(
     expected_r = decimal_value(payload.get("expectedR"))
     if payload.get("status") != "candidate" or grade not in ACTIONABLE_SETUP_GRADES:
         return None
-    if expected_r is None or expected_r < MIN_ACTIONABLE_EXPECTED_R:
+    if expected_r is None or expected_r < actionable_expected_r_floor(result):
         return None
     ticket = tickets_by_idempotency_key.get(str(payload["idempotencyKey"]), {})
     return {
