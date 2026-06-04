@@ -56,6 +56,7 @@ from app.trading.submission_council import (
     _metric_window_activity_reason_codes,
     _rollback_runtime_ledger_status_session,
     _runtime_ledger_repair_reason_codes,
+    _runtime_ledger_repair_score,
     _runtime_ledger_status_query_timeout_ms,
     _refresh_runtime_summary_totals,
     _runtime_ledger_paper_probation_blockers,
@@ -2161,6 +2162,76 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             target["source_collection_next_action"],
             "materialize_runtime_ledger_source_window_refs",
+        )
+
+    def test_runtime_ledger_repair_score_prefers_source_backed_positive_candidate(
+        self,
+    ) -> None:
+        aggregate_profit_candidate = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "observed_stage": "paper",
+            "bucket_ended_at": "2026-05-13T17:30:00+00:00",
+            "submitted_order_count": 8,
+            "fill_count": 35,
+            "closed_trade_count": 2,
+            "filled_notional": "127090.02495200",
+            "net_strategy_pnl_after_costs": "567.44720578",
+            "post_cost_expectancy_bps": "44.64923238",
+            "reason_codes": [
+                "runtime_ledger_source_window_missing",
+                "runtime_ledger_source_refs_missing",
+                "execution_reconstruction_not_runtime_ledger_proof",
+            ],
+        }
+        source_backed_candidate = {
+            "hypothesis_id": "H-TSMOM-LIQ-01",
+            "candidate_id": "ca4e6e3c7d639e3363dc5860",
+            "observed_stage": "paper",
+            "bucket_ended_at": "2026-06-02T18:14:43.066253+00:00",
+            "submitted_order_count": 2,
+            "fill_count": 8,
+            "closed_trade_count": 5,
+            "filled_notional": "7546.75932928",
+            "net_strategy_pnl_after_costs": "44.74192128",
+            "post_cost_expectancy_bps": "59.28641313",
+            "reason_codes": ["runtime_ledger_stage_not_live"],
+            "runtime_ledger_bucket": {
+                "source_window_start": "2026-06-02T13:51:11.262153+00:00",
+                "source_window_end": "2026-06-02T18:14:43.066253+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 2,
+                    "executions": 2,
+                    "execution_order_events": 2,
+                    "order_feed_source_windows": 2,
+                },
+                "trade_decision_ids": ["decision-1", "decision-2"],
+                "execution_ids": ["execution-1", "execution-2"],
+                "execution_order_event_ids": ["event-1", "event-2"],
+                "source_window_ids": ["window-1", "window-2"],
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42},
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 43},
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
+                "filled_notional": "7546.75932928",
+                "cost_amount": "0.25000000",
+                "cost_basis_counts": {"broker_reported_zero_cost": 1},
+                "cost_model_hash_counts": {"cost-model": 1},
+            },
+        }
+
+        self.assertGreater(
+            _runtime_ledger_repair_score(source_backed_candidate),
+            _runtime_ledger_repair_score(aggregate_profit_candidate),
         )
 
     def test_runtime_ledger_source_collection_bucket_without_account_uses_sim_source(
