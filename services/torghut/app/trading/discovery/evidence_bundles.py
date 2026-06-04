@@ -595,6 +595,7 @@ def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ..
         "market_impact_stress_artifact_ref",
         "delay_adjusted_depth_stress_artifact_ref",
         "exact_replay_ledger_artifact_ref",
+        "adaptive_signal_falsification_artifact_ref",
     ):
         ref = _string(scorecard.get(key))
         if ref:
@@ -605,6 +606,7 @@ def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ..
         "market_limit_order_mix_artifact_refs",
         "order_type_ablation_artifact_refs",
         "exact_replay_ledger_artifact_refs",
+        "adaptive_signal_falsification_artifact_refs",
     ):
         raw_refs = scorecard.get(key)
         if isinstance(raw_refs, str):
@@ -1137,6 +1139,23 @@ def evidence_bundle_from_frontier_candidate(
             "best_day_share": _string(full_window.get("best_day_share")),
             "max_drawdown": _string(full_window.get("max_drawdown")),
         }
+    adaptive_signal_falsification_stress = _mapping(
+        candidate.get("fast_replay_adaptive_signal_falsification_stress")
+        or candidate.get("adaptive_signal_falsification_stress")
+    )
+    adaptive_signal_falsification_scorecard_patch = _mapping(
+        candidate.get(
+            "fast_replay_adaptive_signal_falsification_objective_scorecard_patch"
+        )
+        or adaptive_signal_falsification_stress.get("objective_scorecard_patch")
+    )
+    if adaptive_signal_falsification_scorecard_patch:
+        for key in ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS:
+            if key in adaptive_signal_falsification_scorecard_patch:
+                scorecard = {
+                    **scorecard,
+                    key: adaptive_signal_falsification_scorecard_patch[key],
+                }
     for key in REPLAY_ACTIVITY_SCORECARD_KEYS:
         if key in scorecard:
             continue
@@ -1458,6 +1477,7 @@ def evidence_bundle_from_frontier_candidate(
         cost_calibration=_mapping(candidate.get("cost_calibration"))
         or {"status": "provisional", "source": "frontier_replay"},
         null_comparator=_mapping(candidate.get("null_comparator"))
+        or _mapping(adaptive_signal_falsification_stress.get("null_comparator_patch"))
         or {
             "baseline_outperformed": bool(
                 float(str(scorecard.get("net_pnl_per_day") or 0)) > 0
