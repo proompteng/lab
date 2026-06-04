@@ -52,6 +52,7 @@ from app.trading.order_feed import (
     normalize_order_feed_record,
     persist_order_event,
     repair_order_feed_execution_links,
+    repair_order_feed_execution_states,
     repair_order_feed_fill_deltas,
 )
 
@@ -1823,6 +1824,152 @@ class TestOrderFeed(TestCase):
             unmatched_source_window.payload_json["linkage_blockers"],
             ["missing_execution_link", "missing_trade_decision_link"],
         )
+
+    def test_repair_order_feed_execution_states_reapplies_latest_stream_sequence(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session, account_label="TORGHUT_SIM")
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            partial_event_ts = datetime(
+                2026, 2, 1, 10, 0, 0, 360000, tzinfo=timezone.utc
+            )
+            execution.status = "partially_filled"
+            execution.filled_qty = Decimal("0.16140000")
+            execution.avg_fill_price = Decimal("311.01")
+            execution.order_feed_last_seq = 183689
+            execution.order_feed_last_event_ts = partial_event_ts
+            session.add(execution)
+            partial_event = ExecutionOrderEvent(
+                event_fingerprint="repair-state-partial-later-event-ts",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=66072,
+                feed_seq=183689,
+                alpaca_account_label="PA3SX7FYNUTF",
+                event_ts=partial_event_ts,
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                execution_id=execution_id,
+                trade_decision_id=trade_decision_id,
+                event_type="partial_fill",
+                status="partially_filled",
+                filled_qty=Decimal("0.1614"),
+                avg_fill_price=Decimal("311.01"),
+                raw_event={"event": "partial_fill"},
+            )
+            fill_event = ExecutionOrderEvent(
+                event_fingerprint="repair-state-fill-higher-feed-seq",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=66073,
+                feed_seq=183690,
+                alpaca_account_label="PA3SX7FYNUTF",
+                event_ts=datetime(2026, 2, 1, 10, 0, 0, 358000, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                execution_id=execution_id,
+                trade_decision_id=trade_decision_id,
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("311.01"),
+                raw_event={"event": "fill"},
+            )
+            session.add_all([partial_event, fill_event])
+            session.commit()
+
+            result = repair_order_feed_execution_states(
+                session,
+                account_label="TORGHUT_SIM",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(execution)
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 1,
+                "latest_event_found": 1,
+                "executions_updated": 1,
+                "out_of_order_events_skipped": 0,
+            },
+        )
+        self.assertEqual(execution.status, "filled")
+        self.assertEqual(execution.filled_qty, Decimal("1.00000000"))
+        self.assertEqual(execution.order_feed_last_seq, 183690)
+
+    def test_repair_order_feed_execution_states_counts_non_updating_outcomes(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            executions = [
+                self._seed_execution(
+                    session,
+                    account_label="TORGHUT_SIM",
+                    order_id=f"state-branch-order-{index}",
+                    client_order_id=f"state-branch-client-{index}",
+                )
+                for index in range(3)
+            ]
+            linked_events = []
+            for index, execution in enumerate(executions):
+                event = ExecutionOrderEvent(
+                    event_fingerprint=f"repair-state-branch-event-{index}",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=67000 + index,
+                    feed_seq=184000 + index,
+                    alpaca_account_label="TORGHUT_SIM",
+                    event_ts=datetime(2026, 2, 1, 10, index, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    alpaca_order_id=execution.alpaca_order_id,
+                    client_order_id=execution.client_order_id,
+                    execution_id=execution.id,
+                    trade_decision_id=execution.trade_decision_id,
+                    event_type="fill",
+                    status="filled",
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("311.01"),
+                    raw_event={"event": "fill"},
+                )
+                linked_events.append(event)
+            session.add_all(linked_events)
+            session.commit()
+
+            with (
+                patch.object(
+                    order_feed_module,
+                    "latest_order_event_for_execution",
+                    side_effect=[None, linked_events[1], linked_events[2]],
+                ) as latest_event,
+                patch.object(
+                    order_feed_module,
+                    "apply_order_event_to_execution",
+                    side_effect=[(False, True), (False, False)],
+                ) as apply_event,
+            ):
+                result = repair_order_feed_execution_states(
+                    session,
+                    account_label="TORGHUT_SIM",
+                    limit=10,
+                )
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 3,
+                "latest_event_found": 2,
+                "executions_updated": 0,
+                "out_of_order_events_skipped": 1,
+            },
+        )
+        self.assertEqual(latest_event.call_count, 3)
+        self.assertEqual(apply_event.call_count, 2)
 
     def test_repair_order_feed_execution_links_links_by_alpaca_order_id_only(
         self,

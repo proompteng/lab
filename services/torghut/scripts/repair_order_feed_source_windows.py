@@ -16,6 +16,7 @@ from app.trading.order_feed import (
     backfill_order_feed_events_from_executions,
     backfill_order_feed_source_windows,
     repair_order_feed_execution_links,
+    repair_order_feed_execution_states,
     repair_order_feed_fill_deltas,
 )
 
@@ -89,6 +90,18 @@ def _payload(
         ),
         "execution_link_account_alias_events_linked": sum(
             batch["execution_link_account_alias_events_linked"] for batch in batches
+        ),
+        "execution_state_candidates": sum(
+            batch["execution_state_candidates"] for batch in batches
+        ),
+        "execution_state_latest_event_found": sum(
+            batch["execution_state_latest_event_found"] for batch in batches
+        ),
+        "execution_state_executions_updated": sum(
+            batch["execution_state_executions_updated"] for batch in batches
+        ),
+        "execution_state_out_of_order_events_skipped": sum(
+            batch["execution_state_out_of_order_events_skipped"] for batch in batches
         ),
         "execution_event_backfill_candidates": sum(
             batch["execution_event_backfill_candidates"] for batch in batches
@@ -229,6 +242,14 @@ def main() -> int:
                 canonical_account_label=args.canonical_account_label,
                 limit=batch_size,
             )
+            execution_state_account_label = (
+                args.canonical_account_label or args.account_label
+            )
+            execution_state_batch = repair_order_feed_execution_states(
+                session,
+                account_label=execution_state_account_label,
+                limit=batch_size,
+            )
             execution_event_backfill_batch = (
                 backfill_order_feed_events_from_executions(
                     session,
@@ -268,6 +289,16 @@ def main() -> int:
                 "execution_link_account_alias_events_linked": execution_link_batch.get(
                     "account_alias_events_linked", 0
                 ),
+                "execution_state_candidates": execution_state_batch["selected"],
+                "execution_state_latest_event_found": execution_state_batch[
+                    "latest_event_found"
+                ],
+                "execution_state_executions_updated": execution_state_batch[
+                    "executions_updated"
+                ],
+                "execution_state_out_of_order_events_skipped": execution_state_batch[
+                    "out_of_order_events_skipped"
+                ],
                 "execution_event_backfill_candidates": execution_event_backfill_batch[
                     "selected"
                 ],
@@ -309,6 +340,7 @@ def main() -> int:
             if (
                 int(source_window_batch.get("selected") or 0) < batch_size
                 and int(execution_link_batch.get("selected") or 0) < batch_size
+                and int(execution_state_batch.get("selected") or 0) < batch_size
                 and int(execution_event_backfill_batch.get("selected") or 0)
                 < batch_size
                 and int(fill_delta_batch.get("selected") or 0) < batch_size

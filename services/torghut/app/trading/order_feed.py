@@ -1790,8 +1790,9 @@ def latest_order_event_for_execution(
         select(ExecutionOrderEvent)
         .where(or_(*filters))
         .order_by(
-            ExecutionOrderEvent.event_ts.desc().nullslast(),
             ExecutionOrderEvent.feed_seq.desc().nullslast(),
+            ExecutionOrderEvent.source_offset.desc().nullslast(),
+            ExecutionOrderEvent.event_ts.desc().nullslast(),
             ExecutionOrderEvent.created_at.desc(),
         )
         .limit(1)
@@ -2140,6 +2141,63 @@ def repair_order_feed_execution_links(
         counters["events_linked"] += linked
         if source_account_label is not None:
             counters["account_alias_events_linked"] += linked
+    return counters
+
+
+def repair_order_feed_execution_states(
+    session: Session,
+    *,
+    account_label: str | None = None,
+    limit: int = 1000,
+) -> dict[str, int]:
+    """Reapply linked order-feed lifecycle rows to durable executions.
+
+    Link repair can attach historical events after an execution already has
+    lifecycle state. This bounded pass lets the stream-authoritative latest
+    linked event correct stale partial-fill state without synthesizing fills.
+    """
+
+    bounded_limit = max(1, min(int(limit), 5000))
+    stmt = (
+        select(Execution)
+        .where(
+            Execution.trade_decision_id.is_not(None),
+            exists().where(ExecutionOrderEvent.execution_id == Execution.id),
+        )
+        .order_by(
+            Execution.order_feed_last_seq.desc().nullslast(),
+            Execution.order_feed_last_event_ts.desc().nullslast(),
+            Execution.updated_at.desc(),
+            Execution.created_at.desc(),
+            Execution.id.asc(),
+        )
+        .limit(bounded_limit)
+    )
+    if account_label:
+        stmt = stmt.where(Execution.alpaca_account_label == account_label)
+
+    executions = session.execute(stmt).scalars().all()
+    counters = {
+        "selected": len(executions),
+        "latest_event_found": 0,
+        "executions_updated": 0,
+        "out_of_order_events_skipped": 0,
+    }
+    for execution in executions:
+        latest_event = latest_order_event_for_execution(session, execution)
+        if latest_event is None:
+            continue
+        counters["latest_event_found"] += 1
+        updated, out_of_order = apply_order_event_to_execution(execution, latest_event)
+        if out_of_order:
+            counters["out_of_order_events_skipped"] += 1
+            continue
+        if not updated:
+            continue
+        _update_trade_decision_from_execution(session, execution)
+        upsert_execution_tca_metric(session, execution)
+        session.add(execution)
+        counters["executions_updated"] += 1
     return counters
 
 
@@ -3338,6 +3396,8 @@ def _is_stale_by_seq(execution: Execution, event: ExecutionOrderEvent) -> bool:
 
 
 def _is_stale_by_ts(execution: Execution, event: ExecutionOrderEvent) -> bool:
+    if execution.order_feed_last_seq is not None and event.feed_seq is not None:
+        return False
     candidate_ts = event.event_ts
     if candidate_ts is None:
         return False
@@ -3391,6 +3451,7 @@ __all__ = [
     "backfill_order_feed_source_windows",
     "link_order_events_to_execution",
     "repair_order_feed_execution_links",
+    "repair_order_feed_execution_states",
     "repair_order_feed_fill_deltas",
     "latest_order_event_for_execution",
 ]
