@@ -8908,8 +8908,18 @@ def _source_collection_target_has_materializable_lineage(
     return bool(source_refs)
 
 
+def _source_collection_target_has_bounded_bucket_materialization_seed(
+    target: Mapping[str, Any],
+) -> bool:
+    return (
+        _safe_text(target.get("runtime_ledger_bucket_ref")) is not None
+        and _safe_text(target.get("window_start")) is not None
+        and _safe_text(target.get("window_end")) is not None
+    )
+
+
 def _source_collection_import_target_allowed(target: Mapping[str, Any]) -> bool:
-    """Reject legacy replay buckets that cannot be materialized into source proof."""
+    """Reject replay buckets that have neither real lineage nor bounded materialization coordinates."""
 
     account_label = _safe_text(target.get("account_label"))
     source_account_label = (
@@ -8920,6 +8930,9 @@ def _source_collection_import_target_allowed(target: Mapping[str, Any]) -> bool:
         and source_account_label == "TORGHUT_REPLAY"
         and _safe_text(target.get("source_dsn_env")) == "DB_DSN"
         and not _source_collection_target_has_materializable_lineage(target)
+        and not _source_collection_target_has_bounded_bucket_materialization_seed(
+            target
+        )
     ):
         return False
     return True
