@@ -2746,6 +2746,20 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             "64.37503114",
         )
         self.assertIn(
+            "post_cost_costs_tca_and_execution_shortfall",
+            item["live_paper_evidence_requirements"],
+        )
+        self.assertIn(
+            "source_backed_runtime_ledger_lineage",
+            item["paper_probation_repair_plan"]["live_paper_evidence_requirements"],
+        )
+        self.assertIn(
+            "verify_closed_flat_positions_and_broker_runtime_ledger_reconciliation",
+            item["safe_evidence_collection_path"],
+        )
+        self.assertFalse(item["live_capital_authorized"])
+        self.assertFalse(item["paper_probation_repair_plan"]["live_capital_authorized"])
+        self.assertIn(
             "validate_target_notional_scale_capacity_before_paper_orders",
             item["paper_probation_repair_plan"]["repair_actions"],
         )

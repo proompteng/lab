@@ -8980,6 +8980,27 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             probation_candidate["selection_reason"], "target_met_but_oracle_blocked"
         )
+        self.assertEqual(probation_candidate["probation_target_shortfall"], "0")
+        self.assertEqual(probation_candidate["probation_target_progress_ratio"], "1.05")
+        self.assertEqual(
+            probation_candidate["required_notional_repair_scale_to_target"], "1"
+        )
+        self.assertIn(
+            "real_runtime_trade_decisions",
+            probation_candidate["live_paper_evidence_requirements"],
+        )
+        self.assertIn(
+            "broker_runtime_ledger_reconciliation",
+            probation_candidate["live_paper_evidence_requirements"],
+        )
+        self.assertIn(
+            "import_exact_replay_runtime_window_metadata_without_live_submit",
+            probation_candidate["safe_evidence_collection_path"],
+        )
+        self.assertFalse(probation_candidate["live_capital_authorized"])
+        self.assertTrue(
+            probation_candidate["final_promotion_requires_live_paper_runtime_proof"]
+        )
         self.assertEqual(
             probation_candidate["runtime_ledger_lineage_materialization_handoff"],
             expected_runtime_ledger_handoff,
@@ -9110,6 +9131,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(import_metadata["paper_probation_authorized"])
         self.assertFalse(import_metadata["promotion_allowed"])
         self.assertFalse(import_metadata["final_promotion_authorized"])
+        self.assertEqual(
+            import_metadata["required_notional_repair_scale_to_target"], "1"
+        )
+        self.assertIn(
+            "broker_fill_events",
+            import_metadata["live_paper_evidence_requirements"],
+        )
+        self.assertIn(
+            "materialize_source_backed_runtime_ledger_lineage_for_decisions_orders_fills_costs",
+            import_metadata["safe_evidence_collection_path"],
+        )
+        self.assertFalse(import_metadata["live_capital_authorized"])
         self.assertEqual(target["handoff"], "runtime_window_import_only")
         self.assertEqual(
             target["promotion_gate"], "existing_runtime_governance_fail_closed"
@@ -9407,6 +9440,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             probation_candidate["probation_lower_bound_net_pnl_per_day"], "430"
         )
         self.assertEqual(probation_candidate["probation_target_shortfall"], "70")
+        self.assertEqual(probation_candidate["probation_target_progress_ratio"], "0.86")
+        self.assertEqual(
+            probation_candidate["required_notional_repair_scale_to_target"], "1.1628"
+        )
+        self.assertIn(
+            "post_cost_costs_tca_and_execution_shortfall",
+            probation_candidate["live_paper_evidence_requirements"],
+        )
+        self.assertIn(
+            "verify_closed_flat_positions_and_broker_runtime_ledger_reconciliation",
+            probation_candidate["safe_evidence_collection_path"],
+        )
+        self.assertFalse(probation_candidate["live_capital_authorized"])
         self.assertEqual(
             probation_candidate["deployable_lower_bound_missing_count"],
             0,

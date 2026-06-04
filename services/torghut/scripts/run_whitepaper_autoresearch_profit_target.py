@@ -170,6 +170,23 @@ _REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS = (
     "post_cost_net_pnl",
     "executable_quote",
 )
+_PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS = (
+    "real_runtime_trade_decisions",
+    "broker_order_submissions_and_status_events",
+    "broker_fill_events",
+    "post_cost_costs_tca_and_execution_shortfall",
+    "source_backed_runtime_ledger_lineage",
+    "closed_flat_position_proof",
+    "broker_runtime_ledger_reconciliation",
+)
+_PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH = (
+    "preserve_final_promotion_gates_fail_closed",
+    "import_exact_replay_runtime_window_metadata_without_live_submit",
+    "run_bounded_live_paper_probe_with_configured_paper_account_only",
+    "materialize_source_backed_runtime_ledger_lineage_for_decisions_orders_fills_costs",
+    "verify_closed_flat_positions_and_broker_runtime_ledger_reconciliation",
+    "reevaluate_post_cost_runtime_profitability_before_any_final_promotion",
+)
 _CODE_COMMIT_ENV_VARS = (
     "TORGHUT_CODE_COMMIT",
     "TORGHUT_COMMIT",
@@ -1696,6 +1713,13 @@ def _decimal(value: Any, *, default: str = "0") -> Decimal:
         return Decimal(str(value if value is not None else default))
     except Exception:
         return Decimal(default)
+
+
+def _decimal_payload(value: Decimal) -> str:
+    text = format(value.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
@@ -10438,6 +10462,26 @@ def _candidate_board_lower_bound_net_pnl(row: Mapping[str, Any]) -> Decimal:
     return lower_bound
 
 
+def _candidate_board_target_progress_ratio(
+    *,
+    lower_bound: Decimal,
+    target: Decimal,
+) -> Decimal:
+    if target <= 0:
+        return Decimal("0")
+    return (lower_bound / target).quantize(Decimal("0.0001"))
+
+
+def _candidate_board_required_notional_repair_scale(
+    *,
+    lower_bound: Decimal,
+    target: Decimal,
+) -> Decimal:
+    if target <= 0 or lower_bound <= 0:
+        return Decimal("0")
+    return max(Decimal("1"), target / lower_bound).quantize(Decimal("0.0001"))
+
+
 def _candidate_board_best_executed_candidate(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any] | None:
@@ -10506,6 +10550,17 @@ def _paper_probation_candidate_payload(
 ) -> dict[str, Any]:
     payload = dict(candidate)
     lower_bound = _candidate_board_lower_bound_net_pnl(payload)
+    target_shortfall = max(target - lower_bound, Decimal("0"))
+    target_progress_ratio = _candidate_board_target_progress_ratio(
+        lower_bound=lower_bound,
+        target=target,
+    )
+    required_notional_repair_scale = (
+        _candidate_board_required_notional_repair_scale(
+            lower_bound=lower_bound,
+            target=target,
+        )
+    )
     deployable_missing_count = deployable_lower_bound_missing_count(payload)
     deployable_failed_gate_count = deployable_proof_failed_gate_count(payload)
     final_promotion_blockers = [
@@ -10529,8 +10584,23 @@ def _paper_probation_candidate_payload(
             if bool(payload.get("target_met"))
             else "closest_lower_bound_economics_below_target",
             "selected_by": "candidate_board_paper_probation_candidate",
-            "probation_lower_bound_net_pnl_per_day": str(lower_bound),
-            "probation_target_shortfall": str(max(target - lower_bound, Decimal("0"))),
+            "probation_lower_bound_net_pnl_per_day": _decimal_payload(lower_bound),
+            "probation_target_shortfall": _decimal_payload(target_shortfall),
+            "probation_target_progress_ratio": _decimal_payload(target_progress_ratio),
+            "required_notional_repair_scale_to_target": _decimal_payload(
+                required_notional_repair_scale
+            ),
+            "required_notional_repair_scale_authority": (
+                "linear_notional_sizing_estimate_for_repair_only_not_capital_authority"
+            ),
+            "live_paper_evidence_requirements": list(
+                _PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+            ),
+            "safe_evidence_collection_path": list(
+                _PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH
+            ),
+            "live_capital_authorized": False,
+            "final_promotion_requires_live_paper_runtime_proof": True,
             "deployable_lower_bound_missing_count": deployable_missing_count,
             "deployable_lower_bound_failed_gate_count": deployable_failed_gate_count,
             "promotion_allowed": False,
@@ -11095,6 +11165,25 @@ def _candidate_board_runtime_window_import_plan(
                     ),
                     "probation_target_shortfall": _string(
                         row.get("probation_target_shortfall")
+                    ),
+                    "probation_target_progress_ratio": _string(
+                        row.get("probation_target_progress_ratio")
+                    ),
+                    "required_notional_repair_scale_to_target": _string(
+                        row.get("required_notional_repair_scale_to_target")
+                    ),
+                    "required_notional_repair_scale_authority": _string(
+                        row.get("required_notional_repair_scale_authority")
+                    ),
+                    "live_paper_evidence_requirements": _string_list_from_value(
+                        row.get("live_paper_evidence_requirements")
+                    ),
+                    "safe_evidence_collection_path": _string_list_from_value(
+                        row.get("safe_evidence_collection_path")
+                    ),
+                    "live_capital_authorized": False,
+                    "final_promotion_requires_live_paper_runtime_proof": _boolish(
+                        row.get("final_promotion_requires_live_paper_runtime_proof")
                     ),
                     "promotion_allowed": False,
                     "final_promotion_authorized": False,
