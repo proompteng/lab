@@ -235,8 +235,16 @@ def _nested_mapping(payload: Mapping[str, Any], *keys: str) -> dict[str, Any]:
     return _to_str_map(current)
 
 
+def _target_bounded_materialization_authorized(target: Mapping[str, Any]) -> bool:
+    return _truthy(target.get("bounded_evidence_collection_authorized")) and _truthy(
+        target.get("evidence_collection_ok")
+    )
+
+
 def _target_materialization_score(target: Mapping[str, Any]) -> tuple[int, int, int]:
+    bounded_authorized = int(_target_bounded_materialization_authorized(target))
     return (
+        bounded_authorized,
         int(
             _safe_text(target.get("hypothesis_id"))
             == PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID
@@ -246,23 +254,22 @@ def _target_materialization_score(target: Mapping[str, Any]) -> tuple[int, int, 
             and _target_notional(target) > 0
             and _target_quantity(target) > 0
         ),
-        int(_truthy(target.get("bounded_evidence_collection_authorized"))),
     )
 
 
 def _plan_materialization_score(plan: Mapping[str, Any]) -> tuple[int, int, int, int]:
+    bounded_authorized = 0
     hpairs = 0
     materializable_shape = 0
-    bounded_authorized = 0
     targets = paper_route_target_plan_targets(plan)
     for target in targets:
-        target_hpairs, target_shape, target_authorized = _target_materialization_score(
+        target_authorized, target_hpairs, target_shape = _target_materialization_score(
             target
         )
+        bounded_authorized += target_authorized
         hpairs += target_hpairs
         materializable_shape += target_shape
-        bounded_authorized += target_authorized
-    return (materializable_shape, bounded_authorized, hpairs, len(targets))
+    return (bounded_authorized, hpairs, materializable_shape, len(targets))
 
 
 def _candidate_materialization_plans(
@@ -484,6 +491,9 @@ def _target_summaries(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
         actions = _target_symbol_actions(target)
         quantities = _target_symbol_quantities(target)
         target_notional = _target_notional(target)
+        bounded_evidence_collection_authorized = _truthy(
+            target.get("bounded_evidence_collection_authorized")
+        )
         summaries.append(
             {
                 "target_index": index,
@@ -507,6 +517,13 @@ def _target_summaries(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                 or _safe_text(target.get("observed_stage")),
                 "target_notional": _decimal_text(target_notional),
                 "target_quantity": _decimal_text(_target_quantity(target)),
+                "bounded_evidence_collection_authorized": (
+                    bounded_evidence_collection_authorized
+                ),
+                "bounded_materialization_authorized": (
+                    _target_bounded_materialization_authorized(target)
+                ),
+                "evidence_collection_ok": _truthy(target.get("evidence_collection_ok")),
                 "symbols": sorted(actions),
                 "symbol_actions": actions,
                 "symbol_quantities": {
@@ -829,6 +846,14 @@ def _safety_blockers(
         if _safe_decimal(summary.get("target_quantity")) <= 0:
             blockers.append(
                 f"paper_route_materialization_target_{index}_target_quantity_missing"
+            )
+        if not _truthy(summary.get("evidence_collection_ok")):
+            blockers.append(
+                f"paper_route_materialization_target_{index}_evidence_collection_ok_required"
+            )
+        if not _truthy(summary.get("bounded_evidence_collection_authorized")):
+            blockers.append(
+                f"paper_route_materialization_target_{index}_bounded_evidence_collection_authorized_required"
             )
         if not cast(Sequence[object], summary.get("symbols", [])):
             blockers.append(
