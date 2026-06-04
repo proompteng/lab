@@ -7240,7 +7240,7 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual(len(alpaca_client.submitted), 1)
         self.assertEqual(alpaca_client.submitted[0]["side"], "buy")
-        self.assertEqual(alpaca_client.submitted[0]["qty"], "2.5")
+        self.assertEqual(alpaca_client.submitted[0]["qty"], "2.4997")
         with self.session_local() as session:
             decisions = list(session.execute(select(TradeDecision)).scalars())
             executions = list(session.execute(select(Execution)).scalars())
@@ -7265,8 +7265,8 @@ class TestTradingPipeline(TestCase):
             )
 
             self.assertEqual(decision.status, "submitted")
-            self.assertEqual(Decimal(str(decision_json["qty"])), Decimal("2.5"))
-            self.assertEqual(execution.submitted_qty, Decimal("2.50000000"))
+            self.assertEqual(Decimal(str(decision_json["qty"])), Decimal("2.4997"))
+            self.assertEqual(execution.submitted_qty, Decimal("2.49970000"))
             created_at = decision.created_at
             if created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
@@ -7333,15 +7333,15 @@ class TestTradingPipeline(TestCase):
                 paper_route_probe["exit_due_at"],
                 "2026-05-26T15:30:00+00:00",
             )
-            self.assertEqual(paper_route_probe["capped_qty"], "2.5000")
+            self.assertEqual(paper_route_probe["capped_qty"], "2.4997")
             self.assertEqual(
-                Decimal(str(paper_route_probe["capped_notional"])), Decimal("250")
+                Decimal(str(paper_route_probe["capped_notional"])), Decimal("249.994997")
             )
             self.assertTrue(paper_route_probe["target_source_notional_sized"])
-            self.assertEqual(Decimal(str(simple_lane["final_qty"])), Decimal("2.5"))
-            self.assertEqual(Decimal(str(simple_lane["notional"])), Decimal("250"))
-            self.assertEqual(simple_lane_precheck["requested_qty"], "2.5000")
-            self.assertEqual(simple_lane_precheck["final_qty"], "2.5000")
+            self.assertEqual(Decimal(str(simple_lane["final_qty"])), Decimal("2.4997"))
+            self.assertEqual(Decimal(str(simple_lane["notional"])), Decimal("249.994997"))
+            self.assertEqual(simple_lane_precheck["requested_qty"], "2.4997")
+            self.assertEqual(simple_lane_precheck["final_qty"], "2.4997")
             self.assertEqual(
                 bounded_execution_policy["authority"],
                 "bounded_paper_route_collection_only",
@@ -8099,6 +8099,7 @@ class TestTradingPipeline(TestCase):
             state=TradingState(),
             account_label="TORGHUT_SIM",
             session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(Decimal("100")),
         )
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
@@ -8151,6 +8152,13 @@ class TestTradingPipeline(TestCase):
             typed_decision.event_ts,
             datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
         )
+        self.assertEqual(typed_decision.qty, Decimal("2.0000"))
+        sizing = typed_decision.params["paper_route_target_notional_sizing"]
+        self.assertEqual(sizing["sizing_source"], "target_notional")
+        self.assertEqual(sizing["requested_qty"], "1")
+        self.assertEqual(sizing["resolved_qty"], "2.0000")
+        self.assertEqual(sizing["symbol_notional_budget"], "200")
+        self.assertEqual(typed_decision.params["reference_price"], Decimal("100"))
 
         rejected = pipeline._paper_route_materialized_decision_with_execution_metadata(
             decision_row=decision_row,
@@ -9200,7 +9208,7 @@ class TestTradingPipeline(TestCase):
         evaluate_signals.assert_called_once()
         self.assertEqual(len(alpaca_client.submitted), 1)
         self.assertEqual(alpaca_client.submitted[0]["side"], "buy")
-        self.assertEqual(alpaca_client.submitted[0]["qty"], "0.25")
+        self.assertEqual(alpaca_client.submitted[0]["qty"], "0.2499")
         with self.session_local() as session:
             decision = session.execute(select(TradeDecision)).scalar_one()
             decision_json = cast(dict[str, Any], decision.decision_json)
