@@ -48,6 +48,10 @@ BOOTSTRAP_ROBUST_OPTIMIZATION_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], .
         "mechanism": "adaptive_specification_search_falsification_effective_multiplicity_and_walk_forward_inflation_gap_stress",
     },
 )
+BOOTSTRAP_ROBUST_OPTIMIZATION_STRESS_SOURCE_MARKERS: tuple[str, ...] = (
+    "bootstrap_robust_optimization_arxiv_2510_12725_2025",
+    "spurious_predictability_arxiv_2604_15531_2026",
+)
 
 _POST_COST_UTILITY_BPS_FIELDS = (
     "post_cost_utility_bps",
@@ -119,6 +123,7 @@ class BootstrapRobustOptimizationStressSummary:
                 dict(item)
                 for item in BOOTSTRAP_ROBUST_OPTIMIZATION_STRESS_PRIMARY_SOURCES
             ],
+            "source_markers": list(BOOTSTRAP_ROBUST_OPTIMIZATION_STRESS_SOURCE_MARKERS),
             "row_count": self.row_count,
             "utility_observation_count": self.utility_observation_count,
             "fold_observation_count": self.fold_observation_count,
@@ -196,6 +201,7 @@ def bootstrap_robust_optimization_stress_contract() -> dict[str, Any]:
         "source_papers": [
             dict(item) for item in BOOTSTRAP_ROBUST_OPTIMIZATION_STRESS_PRIMARY_SOURCES
         ],
+        "source_markers": list(BOOTSTRAP_ROBUST_OPTIMIZATION_STRESS_SOURCE_MARKERS),
         "stress_policy": "stationary_block_bootstrap_percentile_utility_and_selection_bias_replay_ranking",
         "stress_components": [
             "stationary_block_bootstrap_utility_p20_bps",

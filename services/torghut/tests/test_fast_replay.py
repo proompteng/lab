@@ -869,6 +869,10 @@ class TestFastReplayPreview(TestCase):
                 ]
             },
         )
+        self.assertIn(
+            "spurious_predictability_arxiv_2604_15531_2026",
+            row_payload["bootstrap_robust_optimization_stress"]["source_markers"],
+        )
         self.assertFalse(
             row_payload["bootstrap_robust_optimization_stress"]["proof_authority"]
         )

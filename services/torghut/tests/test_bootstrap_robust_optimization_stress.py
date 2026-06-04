@@ -86,6 +86,10 @@ class TestBootstrapRobustOptimizationStress(TestCase):
             "preview_only_bootstrap_robust_optimization_stress_ranking",
         )
         self.assertTrue(payload["stationary_block_bootstrap_preview"])
+        self.assertIn(
+            "bootstrap_robust_optimization_arxiv_2510_12725_2025",
+            payload["source_markers"],
+        )
         self.assertFalse(payload["proof_authority"])
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["final_authority_ok"])
@@ -106,6 +110,10 @@ class TestBootstrapRobustOptimizationStress(TestCase):
         )
         self.assertIn("arxiv-2510.12725", source_ids)
         self.assertIn("arxiv-2604.15531", source_ids)
+        self.assertIn(
+            "spurious_predictability_arxiv_2604_15531_2026",
+            contract["source_markers"],
+        )
         self.assertIn("missing_post_cost_utility_inputs", payload["warnings"])
         self.assertIn("missing_walk_forward_fold_inputs", payload["warnings"])
         self.assertTrue(contract["proof_neutrality"]["requires_exact_replay"])
