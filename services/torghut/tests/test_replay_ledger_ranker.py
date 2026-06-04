@@ -93,12 +93,25 @@ def _with_execution_quality(
     queue_position: str | None = None,
     opportunity_cost_bps: str | None = None,
     price_improvement_bps: str | None = None,
+    include_closing_auction_evidence: bool = True,
 ) -> list[dict[str, object]]:
     for row in rows:
         if row.get("event_type") in {"order_submitted", "fill"}:
             row["order_type"] = order_type
             row["execution_shortfall_bps"] = shortfall_bps
             row["fill_status"] = "filled"
+            if include_closing_auction_evidence:
+                row["closing_window"] = "late_session_close"
+                row["closing_auction"] = True
+                row["closing_auction_projection"] = {
+                    "projected_imbalance_shares": "12500",
+                    "projected_clearing_price": "100.42",
+                }
+                row["closing_auction_clearing_price"] = "100.44"
+                row["terminal_inventory_path"] = [
+                    {"minutes_to_close": 10, "qty": "1000"},
+                    {"minutes_to_close": 0, "qty": "0"},
+                ]
             if limit_fill_probability is not None:
                 row["limit_fill_probability"] = limit_fill_probability
             if queue_position is not None:
@@ -307,6 +320,86 @@ def test_ranker_uses_market_limit_queue_execution_quality_for_adjusted_ranking(
     assert Decimal(
         str(top["execution_quality_adjusted_window_net_pnl_per_day"])
     ) > Decimal(str(raw_winner["execution_quality_adjusted_window_net_pnl_per_day"]))
+
+
+def test_ranker_penalizes_missing_closing_auction_mechanism_evidence(
+    tmp_path: Path,
+) -> None:
+    complete = _payload(
+        "complete-closing-auction-evidence",
+        _with_execution_quality(
+            _round_trip(
+                day=18,
+                symbol="NVDA",
+                qty="1000",
+                buy_price="100",
+                sell_price="100.80",
+                prefix="complete-closing",
+            ),
+            order_type="limit",
+            shortfall_bps="1",
+            limit_fill_probability="0.80",
+            queue_position="0.20",
+            opportunity_cost_bps="2",
+            price_improvement_bps="3",
+        ),
+    )
+    missing_mechanism = _payload(
+        "missing-closing-auction-evidence",
+        _with_execution_quality(
+            _round_trip(
+                day=18,
+                symbol="NVDA",
+                qty="1000",
+                buy_price="100",
+                sell_price="100.82",
+                prefix="missing-closing",
+            ),
+            order_type="limit",
+            shortfall_bps="1",
+            limit_fill_probability="0.80",
+            queue_position="0.20",
+            opportunity_cost_bps="2",
+            price_improvement_bps="3",
+            include_closing_auction_evidence=False,
+        ),
+    )
+    complete_path = tmp_path / "complete.json"
+    missing_path = tmp_path / "missing.json"
+    complete_path.write_text(json.dumps(complete))
+    missing_path.write_text(json.dumps(missing_mechanism))
+
+    report = build_replay_ledger_ranking_report(
+        [complete_path, missing_path],
+        policy=ReplayLedgerRankingPolicy(
+            target_net_pnl_per_day=Decimal("1"),
+            min_window_weekday_count=1,
+            min_avg_filled_notional_per_day=Decimal("1"),
+            max_best_day_share=Decimal("1.0"),
+            max_gross_exposure_pct_equity=Decimal("1000.0"),
+            start_equity=Decimal("100000000"),
+        ),
+    )
+    top = report["candidates"][0]
+    missing = report["candidates"][1]
+
+    assert top["candidate_id"] == "complete-closing-auction-evidence"
+    assert top["execution_quality"]["closing_window_sample_count"] == 4
+    assert top["execution_quality"]["closing_auction_sample_count"] == 4
+    assert top["execution_quality"]["closing_auction_projection_sample_count"] == 4
+    assert top["execution_quality"]["closing_auction_clearing_price_sample_count"] == 4
+    assert top["execution_quality"]["terminal_inventory_path_sample_count"] == 4
+    assert "closing_window_evidence_incomplete" not in top["execution_quality_blockers"]
+    assert missing["candidate_id"] == "missing-closing-auction-evidence"
+    assert {
+        "closing_window_evidence_incomplete",
+        "closing_auction_evidence_incomplete",
+        "closing_auction_projection_evidence_incomplete",
+        "closing_auction_clearing_price_evidence_incomplete",
+        "terminal_inventory_path_evidence_incomplete",
+    }.issubset(set(missing["execution_quality_blockers"]))
+    assert Decimal(str(missing["execution_quality_penalty_bps"])) > Decimal("0")
+    assert missing["promotion_status"] == "blocked_pending_runtime_promotion_proof"
 
 
 def test_ranker_blocks_replay_only_and_over_equity_artifacts() -> None:

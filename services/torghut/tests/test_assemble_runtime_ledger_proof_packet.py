@@ -1370,6 +1370,52 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["authority_blockers"],
         )
 
+    def test_authority_packet_rejects_non_authoritative_target_notional_sizing(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import()
+        runtime_observation = cast(
+            dict[str, object],
+            cast(dict[str, object], runtime_import["imports"][0])["summary"],
+        )["runtime_observation"]
+        assert isinstance(runtime_observation, dict)
+        runtime_observation.update(
+            {
+                "paper_route_target_notional_sizing_required_count": 1,
+                "paper_route_target_notional_sizing_authoritative_count": 0,
+                "paper_route_target_notional_sizing_missing_count": 1,
+                "paper_route_target_notional_sizing_non_authoritative_count": 1,
+            }
+        )
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["final_authority_ok"], result)
+        self.assertIn(
+            "paper_route_target_notional_sizing_missing",
+            result["authority_blockers"],
+        )
+        self.assertIn(
+            "paper_route_target_notional_sizing_not_authoritative",
+            result["authority_blockers"],
+        )
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertEqual(
+            materialization["paper_route_target_notional_sizing_required_count"],
+            1,
+        )
+        self.assertEqual(
+            materialization["paper_route_target_notional_sizing_missing_count"],
+            1,
+        )
+
     def test_source_offsets_accept_mapping_and_skip_invalid_or_duplicate_values(
         self,
     ) -> None:

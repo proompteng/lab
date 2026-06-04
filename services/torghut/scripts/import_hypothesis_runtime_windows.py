@@ -663,6 +663,75 @@ def _source_decision_profit_proof_flag(row: Mapping[str, object]) -> bool | None
     return _first_bool(row, "profit_proof_eligible", "post_cost_promotion_eligible")
 
 
+def _source_decision_target_notional_sizing_audit(
+    row: Mapping[str, object],
+) -> dict[str, object] | None:
+    for payload in _source_decision_priority_payloads(row):
+        audit = _as_mapping(payload.get("paper_route_target_notional_sizing"))
+        if audit:
+            return {str(key): value for key, value in audit.items()}
+        simple_lane = _as_mapping(payload.get("simple_lane"))
+        audit = _as_mapping(simple_lane.get("paper_route_target_notional_sizing"))
+        if audit:
+            return {str(key): value for key, value in audit.items()}
+    return None
+
+
+def _source_decision_target_notional_sizing_summary(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    source_row_count = len(rows)
+    audits: list[dict[str, object]] = []
+    authoritative_count = 0
+    non_authoritative_source_counts: dict[str, int] = {}
+    blocker_counts: dict[str, int] = {}
+    for row in rows:
+        audit = _source_decision_target_notional_sizing_audit(row)
+        if audit is None:
+            continue
+        audits.append(audit)
+        sizing_source = _text_or_none(audit.get("sizing_source")) or "missing"
+        if sizing_source == "target_notional":
+            authoritative_count += 1
+        else:
+            non_authoritative_source_counts[sizing_source] = (
+                non_authoritative_source_counts.get(sizing_source, 0) + 1
+            )
+        for blocker in _metadata_text_list(audit.get("blockers")):
+            blocker_counts[blocker] = blocker_counts.get(blocker, 0) + 1
+
+    mode_counts = _source_decision_mode_counts(rows)
+    requires_target_notional_sizing = (
+        bool(audits)
+        or mode_counts.get("bounded_paper_route_collection", 0) > 0
+        or any(
+            _first_text(row, "paper_route_probe_target_notional", "target_notional")
+            for row in rows
+        )
+    )
+    missing_count = max(source_row_count - len(audits), 0)
+    blockers: list[str] = []
+    if requires_target_notional_sizing and missing_count:
+        blockers.append("paper_route_target_notional_sizing_missing")
+    if non_authoritative_source_counts:
+        blockers.append("paper_route_target_notional_sizing_not_authoritative")
+    blockers.extend(blocker_counts)
+    return {
+        "source_row_count": source_row_count,
+        "audit_count": len(audits),
+        "authoritative_target_notional_sizing_count": authoritative_count,
+        "missing_target_notional_sizing_count": (
+            missing_count if requires_target_notional_sizing else 0
+        ),
+        "non_authoritative_sizing_source_counts": dict(
+            sorted(non_authoritative_source_counts.items())
+        ),
+        "sizing_blocker_counts": dict(sorted(blocker_counts.items())),
+        "requires_target_notional_sizing": requires_target_notional_sizing,
+        "blockers": list(dict.fromkeys(blockers)),
+    }
+
+
 def _source_row_is_paper_route_probe_exit(row: Mapping[str, object]) -> bool:
     for payload in _source_decision_priority_payloads(row):
         metadata = _as_mapping(payload.get("paper_route_probe_exit"))
@@ -2415,6 +2484,10 @@ def _runtime_ledger_tca_materialization_metadata(
     authoritative_bucket_count = 0
     source_execution_materialized_count = 0
     execution_reconstruction_count = 0
+    target_notional_sizing_required_count = 0
+    target_notional_sizing_authoritative_count = 0
+    target_notional_sizing_missing_count = 0
+    target_notional_sizing_non_authoritative_count = 0
     authority_reasons: list[str] = []
     pnl_derivations: list[str] = []
     source_materializations: list[str] = []
@@ -2449,6 +2522,25 @@ def _runtime_ledger_tca_materialization_metadata(
         )
         if source_materialization is not None:
             source_materializations.append(source_materialization)
+        target_notional_sizing = _as_mapping(
+            row.get("paper_route_target_notional_sizing")
+            or bucket_payload.get("paper_route_target_notional_sizing")
+        )
+        if target_notional_sizing.get("requires_target_notional_sizing"):
+            target_notional_sizing_required_count += 1
+            target_notional_sizing_authoritative_count += _nonnegative_int(
+                target_notional_sizing.get("authoritative_target_notional_sizing_count")
+            )
+            target_notional_sizing_missing_count += _nonnegative_int(
+                target_notional_sizing.get("missing_target_notional_sizing_count")
+            )
+            target_notional_sizing_non_authoritative_count += sum(
+                _nonnegative_int(value)
+                for value in _as_mapping(
+                    target_notional_sizing.get("non_authoritative_sizing_source_counts")
+                ).values()
+            )
+            blockers.extend(_metadata_text_list(target_notional_sizing.get("blockers")))
         if runtime_ledger_promotion_source_authority_present(bucket_payload):
             source_execution_materialized_count += 1
         if authority_reason == "execution_reconstruction_not_runtime_ledger_proof":
@@ -2470,6 +2562,18 @@ def _runtime_ledger_tca_materialization_metadata(
         ),
         "runtime_ledger_execution_reconstruction_bucket_count": (
             execution_reconstruction_count
+        ),
+        "paper_route_target_notional_sizing_required_count": (
+            target_notional_sizing_required_count
+        ),
+        "paper_route_target_notional_sizing_authoritative_count": (
+            target_notional_sizing_authoritative_count
+        ),
+        "paper_route_target_notional_sizing_missing_count": (
+            target_notional_sizing_missing_count
+        ),
+        "paper_route_target_notional_sizing_non_authoritative_count": (
+            target_notional_sizing_non_authoritative_count
         ),
         "runtime_ledger_materialization_authority_reasons": sorted(
             dict.fromkeys(authority_reasons)
@@ -4179,6 +4283,9 @@ def _runtime_source_context_for_bucket(
         "source_decision_profit_proof_eligible": (
             _source_decision_rows_profit_proof_eligible(source_rows)
         ),
+        "paper_route_target_notional_sizing": (
+            _source_decision_target_notional_sizing_summary(source_rows)
+        ),
         "equity_denominator": _runtime_ledger_equity_denominator_from_rows(source_rows),
     }
 
@@ -4769,6 +4876,12 @@ def _build_realized_strategy_pnl_rows(
         source_decision_profit_proof_eligible = bool(
             source_context["source_decision_profit_proof_eligible"]
         )
+        target_notional_sizing = cast(
+            dict[str, object], source_context["paper_route_target_notional_sizing"]
+        )
+        target_notional_sizing_blockers = _metadata_text_list(
+            target_notional_sizing.get("blockers")
+        )
         source_refs = cast(list[str], source_context["source_refs"])
         source_row_counts = cast(dict[str, int], source_context["source_row_counts"])
         trade_decision_ids = cast(list[str], source_context["trade_decision_ids"])
@@ -4877,6 +4990,23 @@ def _build_realized_strategy_pnl_rows(
                     row["promotion_blocker"] = (
                         SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER
                     )
+                row["runtime_ledger_bucket"] = bucket_payload
+        if target_notional_sizing.get("requires_target_notional_sizing"):
+            row["paper_route_target_notional_sizing"] = target_notional_sizing
+            if isinstance(bucket_payload, Mapping):
+                bucket_payload = {
+                    **dict(bucket_payload),
+                    "paper_route_target_notional_sizing": target_notional_sizing,
+                }
+                if target_notional_sizing_blockers:
+                    blockers = list(bucket_payload.get("blockers") or [])
+                    for blocker in target_notional_sizing_blockers:
+                        if blocker not in blockers:
+                            blockers.append(blocker)
+                    bucket_payload["blockers"] = blockers
+                    row["runtime_ledger_blockers"] = blockers
+                    row["post_cost_promotion_eligible"] = False
+                    row["promotion_blocker"] = target_notional_sizing_blockers[0]
                 row["runtime_ledger_bucket"] = bucket_payload
         if isinstance(bucket_payload, Mapping):
             bucket_payload = _with_runtime_ledger_source_authority_context(

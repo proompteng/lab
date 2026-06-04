@@ -1326,6 +1326,29 @@ def _runtime_import_materialization_metadata_blockers(
         blockers.append(
             "runtime_window_import_source_execution_materialization_missing"
         )
+    target_notional_sizing_required_count = _int(
+        observation.get("paper_route_target_notional_sizing_required_count")
+    )
+    if target_notional_sizing_required_count > 0:
+        target_notional_sizing_authoritative_count = _int(
+            observation.get("paper_route_target_notional_sizing_authoritative_count")
+        )
+        target_notional_sizing_missing_count = _int(
+            observation.get("paper_route_target_notional_sizing_missing_count")
+        )
+        target_notional_sizing_non_authoritative_count = _int(
+            observation.get(
+                "paper_route_target_notional_sizing_non_authoritative_count"
+            )
+        )
+        if (
+            target_notional_sizing_missing_count > 0
+            or target_notional_sizing_authoritative_count
+            < target_notional_sizing_required_count
+        ):
+            blockers.append("paper_route_target_notional_sizing_missing")
+        if target_notional_sizing_non_authoritative_count > 0:
+            blockers.append("paper_route_target_notional_sizing_not_authoritative")
 
     source_materializations = _text_list(
         observation.get("runtime_ledger_source_materializations")
@@ -1555,6 +1578,10 @@ def _runtime_import_materialization_summary(
         "runtime_ledger_source_bucket_profit_proof_count": 0,
         "runtime_ledger_durable_bucket_profit_proof_count": 0,
         "runtime_ledger_artifact_tca_row_count": 0,
+        "paper_route_target_notional_sizing_required_count": 0,
+        "paper_route_target_notional_sizing_authoritative_count": 0,
+        "paper_route_target_notional_sizing_missing_count": 0,
+        "paper_route_target_notional_sizing_non_authoritative_count": 0,
     }
     for item in items:
         summary = _mapping(item.get("summary"))
@@ -1609,6 +1636,10 @@ def _runtime_import_materialization_summary(
             "runtime_ledger_source_bucket_profit_proof_count",
             "runtime_ledger_durable_bucket_profit_proof_count",
             "runtime_ledger_artifact_tca_row_count",
+            "paper_route_target_notional_sizing_required_count",
+            "paper_route_target_notional_sizing_authoritative_count",
+            "paper_route_target_notional_sizing_missing_count",
+            "paper_route_target_notional_sizing_non_authoritative_count",
         ):
             counts[key] += _int(observation.get(key))
         if observation.get("authoritative") is not True:
