@@ -514,6 +514,100 @@ def test_promotion_ready_bundle_blocks_required_uncertainty_and_tail_risk_gaps()
     assert "conformal_tail_risk_adjusted_net_pnl_non_positive" in blockers
 
 
+def test_promotion_ready_bundle_blocks_required_conformal_cost_buffer_gaps() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-conformal-cost-buffer-gap",
+        candidate_id="candidate-conformal-cost-buffer-gap",
+        candidate_spec_id="spec-conformal-cost-buffer-gap",
+        dataset_snapshot_id="snapshot-conformal-cost-buffer-gap",
+        feature_spec_hash="feature-conformal-cost-buffer-gap",
+        code_commit="commit-conformal-cost-buffer-gap",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_conformal_var_cost_buffer": True,
+            "required_seed_model_family_robustness": True,
+            "required_min_conformal_tail_risk_sample_count": "20",
+            "conformal_tail_risk_passed": True,
+            "conformal_tail_risk_sample_count": 12,
+            "conformal_tail_risk_adjusted_net_pnl_per_day": "525",
+            "conformal_tail_risk_target_net_pnl_per_day": "500",
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "conformal_tail_risk_sample_count_below_min" in blockers
+    assert "breakeven_transaction_cost_buffer_missing_or_failed" in blockers
+    assert "breakeven_transaction_cost_buffer_bps_missing" in blockers
+    assert "breakeven_transaction_cost_buffer_net_pnl_non_positive" in blockers
+    assert "seed_robustness_missing_or_failed" in blockers
+    assert "seed_robustness_sample_count_zero" in blockers
+    assert "model_family_robustness_missing_or_failed" in blockers
+    assert "model_family_robustness_family_count_below_min" in blockers
+    assert "conformal_tail_risk_adjusted_net_pnl_below_target" not in blockers
+
+
+def test_promotion_ready_bundle_accepts_materialized_conformal_cost_buffer() -> None:
+    bundle = CandidateEvidenceBundle(
+        schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
+        evidence_bundle_id="ev-conformal-cost-buffer-ok",
+        candidate_id="candidate-conformal-cost-buffer-ok",
+        candidate_spec_id="spec-conformal-cost-buffer-ok",
+        dataset_snapshot_id="snapshot-conformal-cost-buffer-ok",
+        feature_spec_hash="feature-conformal-cost-buffer-ok",
+        code_commit="commit-conformal-cost-buffer-ok",
+        replay_artifact_refs=("artifact://replay",),
+        objective_scorecard={
+            **_promotion_quality_scorecard(),
+            "requires_conformal_var_cost_buffer": True,
+            "required_seed_model_family_robustness": True,
+            "required_min_conformal_tail_risk_sample_count": "20",
+            "conformal_tail_risk_passed": True,
+            "conformal_tail_risk_sample_count": 24,
+            "conformal_tail_risk_adjusted_net_pnl_per_day": "525",
+            "conformal_tail_risk_target_net_pnl_per_day": "500",
+            "breakeven_transaction_cost_buffer_passed": True,
+            "breakeven_transaction_cost_buffer_bps": "3.5",
+            "post_cost_net_pnl_after_breakeven_transaction_cost_buffer": "525",
+            "seed_robustness_passed": True,
+            "seed_robustness_sample_count": 8,
+            "model_family_robustness_passed": True,
+            "model_family_robustness_family_count": 2,
+        },
+        fold_metrics=(),
+        stress_metrics=(),
+        cost_calibration={"status": "calibrated", "source": "route_tca"},
+        null_comparator={"baseline_outperformed": True},
+        promotion_readiness={
+            "stage": "paper_probation",
+            "status": "promotion_ready",
+            "promotable": True,
+        },
+    )
+
+    blockers = evidence_bundle_blockers(bundle)
+
+    assert "conformal_tail_risk_sample_count_below_min" not in blockers
+    assert "breakeven_transaction_cost_buffer_missing_or_failed" not in blockers
+    assert "breakeven_transaction_cost_buffer_bps_missing" not in blockers
+    assert "breakeven_transaction_cost_buffer_net_pnl_non_positive" not in blockers
+    assert "seed_robustness_missing_or_failed" not in blockers
+    assert "seed_robustness_sample_count_zero" not in blockers
+    assert "model_family_robustness_missing_or_failed" not in blockers
+    assert "model_family_robustness_family_count_below_min" not in blockers
+
+
 def test_promotion_ready_bundle_blocks_required_bootstrap_robust_gaps() -> None:
     bundle = CandidateEvidenceBundle(
         schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
@@ -1564,6 +1658,55 @@ def test_frontier_candidate_preserves_implementation_risk_parity_fields() -> Non
     assert "multi_engine_replay_missing_or_failed" not in blockers
     assert "engine_sensitivity_report_missing" not in blockers
     assert "conclusion_stability_missing_or_failed" not in blockers
+
+
+def test_frontier_candidate_preserves_conformal_cost_buffer_contract_fields() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-conformal-cost-buffer-preserved",
+        candidate={
+            "candidate_id": "candidate-conformal-cost-buffer-preserved",
+            "objective_scorecard": _promotion_quality_scorecard(),
+            "promotion_contract": {
+                "requires_conformal_var_cost_buffer": True,
+                "required_seed_model_family_robustness": True,
+            },
+            "required_min_conformal_tail_risk_sample_count": "20",
+            "conformal_tail_risk_passed": True,
+            "conformal_tail_risk_sample_count": 24,
+            "conformal_tail_risk_adjusted_net_pnl_per_day": "525",
+            "conformal_tail_risk_target_net_pnl_per_day": "500",
+            "breakeven_transaction_cost_buffer_passed": True,
+            "breakeven_transaction_cost_buffer_bps": "3.5",
+            "post_cost_net_pnl_after_breakeven_transaction_cost_buffer": "525",
+            "seed_robustness_passed": True,
+            "seed_robustness_sample_count": 8,
+            "model_family_robustness_passed": True,
+            "model_family_robustness_family_count": 2,
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-conformal-cost-buffer-preserved",
+        result_path="artifact://replay",
+        code_commit="commit-conformal-cost-buffer-preserved",
+    )
+
+    assert bundle.objective_scorecard["requires_conformal_var_cost_buffer"] is True
+    assert bundle.objective_scorecard["required_seed_model_family_robustness"] is True
+    assert bundle.objective_scorecard["conformal_tail_risk_sample_count"] == 24
+    assert (
+        bundle.objective_scorecard[
+            "post_cost_net_pnl_after_breakeven_transaction_cost_buffer"
+        ]
+        == "525"
+    )
+    blockers = evidence_bundle_blockers(bundle)
+    assert "breakeven_transaction_cost_buffer_missing_or_failed" not in blockers
+    assert "seed_robustness_missing_or_failed" not in blockers
+    assert "model_family_robustness_missing_or_failed" not in blockers
 
 
 def test_frontier_candidate_preserves_runtime_handoff_as_promotion_blocker() -> None:

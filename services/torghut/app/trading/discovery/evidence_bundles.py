@@ -19,6 +19,7 @@ DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS = (
     Decimal("250"),
 )
 DELAY_ADJUSTED_DEPTH_STRESS_COST_BPS = Decimal("1")
+MIN_CONFORMAL_TAIL_RISK_SAMPLE_COUNT = 20
 REPLAY_ACTIVITY_SCORECARD_KEYS = (
     "decision_count",
     "trade_decision_count",
@@ -106,6 +107,23 @@ MARKET_IMPACT_SCORECARD_KEYS = (
     "conformal_tail_risk_target_net_pnl_per_day",
     "conformal_tail_risk_passed",
     "conformal_tail_risk_source_markers",
+)
+CONFORMAL_COST_BUFFER_SCORECARD_KEYS = (
+    "requires_conformal_tail_risk",
+    "required_conformal_tail_risk",
+    "requires_conformal_var_cost_buffer",
+    "required_regime_weighted_conformal_cost_buffer",
+    "required_breakeven_transaction_cost_buffer",
+    "required_seed_model_family_robustness",
+    "required_min_conformal_tail_risk_sample_count",
+    "breakeven_transaction_cost_buffer_passed",
+    "breakeven_transaction_cost_buffer_bps",
+    "transaction_cost_buffer_bps",
+    "post_cost_net_pnl_after_breakeven_transaction_cost_buffer",
+    "seed_robustness_passed",
+    "seed_robustness_sample_count",
+    "model_family_robustness_passed",
+    "model_family_robustness_family_count",
 )
 DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS = (
     "delay_adjusted_depth_stress_passed",
@@ -1170,6 +1188,13 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for key in CONFORMAL_COST_BUFFER_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
     for key in (*DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS, *FILL_SURVIVAL_SCORECARD_KEYS):
         if key in scorecard:
             continue
@@ -1282,6 +1307,7 @@ def evidence_bundle_from_frontier_candidate(
             *OFI_RESPONSE_HORIZON_SCORECARD_KEYS,
             *ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS,
             *STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS,
+            *CONFORMAL_COST_BUFFER_SCORECARD_KEYS,
         ):
             if key in nested_contract and key not in scorecard:
                 scorecard = {**scorecard, key: nested_contract[key]}
@@ -2436,19 +2462,84 @@ def _stochastic_liquidity_resilience_blockers(
 
 
 def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    requires_cost_buffer = any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_conformal_var_cost_buffer",
+            "required_regime_weighted_conformal_cost_buffer",
+            "required_breakeven_transaction_cost_buffer",
+        )
+    )
     requires_conformal_tail_risk = _bool(
         scorecard.get("conformal_tail_risk_required")
-    ) or _bool(scorecard.get("requires_conformal_tail_risk"))
+    ) or any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_conformal_tail_risk",
+            "required_conformal_tail_risk",
+        )
+    )
+    requires_conformal_tail_risk = requires_conformal_tail_risk or requires_cost_buffer
     if not requires_conformal_tail_risk:
         return []
 
     blockers: list[str] = []
+    sample_count = _int(scorecard.get("conformal_tail_risk_sample_count"))
+    min_sample_count = max(
+        1,
+        _int(scorecard.get("required_min_conformal_tail_risk_sample_count"))
+        or (MIN_CONFORMAL_TAIL_RISK_SAMPLE_COUNT if requires_cost_buffer else 1),
+    )
     if not _bool(scorecard.get("conformal_tail_risk_passed")):
         blockers.append("conformal_tail_risk_failed")
-    if _int(scorecard.get("conformal_tail_risk_sample_count")) <= 0:
+    if sample_count <= 0:
         blockers.append("conformal_tail_risk_sample_count_zero")
-    if _decimal(scorecard.get("conformal_tail_risk_adjusted_net_pnl_per_day")) <= 0:
+    if sample_count < min_sample_count:
+        blockers.append("conformal_tail_risk_sample_count_below_min")
+    adjusted_net_pnl = _decimal(
+        scorecard.get("conformal_tail_risk_adjusted_net_pnl_per_day")
+    )
+    if adjusted_net_pnl <= 0:
         blockers.append("conformal_tail_risk_adjusted_net_pnl_non_positive")
+    target_net_pnl = _decimal(
+        scorecard.get("conformal_tail_risk_target_net_pnl_per_day")
+        or scorecard.get("target_net_pnl_per_day")
+    )
+    if (
+        requires_cost_buffer
+        and target_net_pnl > 0
+        and adjusted_net_pnl < target_net_pnl
+    ):
+        blockers.append("conformal_tail_risk_adjusted_net_pnl_below_target")
+    if requires_cost_buffer:
+        if not _bool(scorecard.get("breakeven_transaction_cost_buffer_passed")):
+            blockers.append("breakeven_transaction_cost_buffer_missing_or_failed")
+        if (
+            max(
+                _decimal(scorecard.get("breakeven_transaction_cost_buffer_bps")),
+                _decimal(scorecard.get("transaction_cost_buffer_bps")),
+            )
+            <= 0
+        ):
+            blockers.append("breakeven_transaction_cost_buffer_bps_missing")
+        if (
+            _decimal(
+                scorecard.get(
+                    "post_cost_net_pnl_after_breakeven_transaction_cost_buffer"
+                )
+            )
+            <= 0
+        ):
+            blockers.append("breakeven_transaction_cost_buffer_net_pnl_non_positive")
+    if _bool(scorecard.get("required_seed_model_family_robustness")):
+        if not _bool(scorecard.get("seed_robustness_passed")):
+            blockers.append("seed_robustness_missing_or_failed")
+        if _int(scorecard.get("seed_robustness_sample_count")) <= 0:
+            blockers.append("seed_robustness_sample_count_zero")
+        if not _bool(scorecard.get("model_family_robustness_passed")):
+            blockers.append("model_family_robustness_missing_or_failed")
+        if _int(scorecard.get("model_family_robustness_family_count")) < 2:
+            blockers.append("model_family_robustness_family_count_below_min")
     return blockers
 
 
