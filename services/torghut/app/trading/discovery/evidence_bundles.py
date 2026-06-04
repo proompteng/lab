@@ -205,6 +205,36 @@ BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS = (
     "out_of_sample_generalization_passed",
     "bootstrap_robust_optimization_source_markers",
 )
+ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS = (
+    "requires_adaptive_signal_falsification",
+    "required_adaptive_signal_falsification",
+    "requires_negative_control_falsification",
+    "required_negative_control_falsification",
+    "requires_label_permutation_test",
+    "required_label_permutation_test",
+    "requires_leakage_probe",
+    "required_leakage_probe",
+    "requires_effective_multiplicity_adjustment",
+    "required_effective_multiplicity_adjustment",
+    "rejects_adaptive_specification_search_as_profit_proof",
+    "rejects_in_sample_factor_generation_without_falsification",
+    "required_min_null_model_sample_count",
+    "required_max_effective_multiplicity_adjusted_p_value",
+    "adaptive_signal_falsification_passed",
+    "adaptive_signal_falsification_artifact_ref",
+    "adaptive_signal_falsification_artifact_refs",
+    "negative_control_passed",
+    "placebo_label_test_passed",
+    "label_permutation_test_passed",
+    "feature_permutation_stability_passed",
+    "leakage_probe_passed",
+    "walk_forward_falsification_passed",
+    "null_model_sample_count",
+    "effective_multiplicity_adjusted_p_value",
+    "candidate_vs_null_return_delta",
+    "candidate_vs_incumbent_return_delta",
+    "adaptive_signal_falsification_source_markers",
+)
 OFI_RESPONSE_HORIZON_SCORECARD_KEYS = (
     "requires_ofi_response_horizon_selection",
     "required_ofi_response_horizon_selection",
@@ -1142,6 +1172,13 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for key in ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
     for key in OFI_RESPONSE_HORIZON_SCORECARD_KEYS:
         if key in scorecard:
             continue
@@ -1222,6 +1259,7 @@ def evidence_bundle_from_frontier_candidate(
     ):
         for key in (
             *BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS,
+            *ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS,
             *OFI_RESPONSE_HORIZON_SCORECARD_KEYS,
             *ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS,
             *STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS,
@@ -1885,6 +1923,143 @@ def _bootstrap_robust_optimization_blockers(
     return blockers
 
 
+def _adaptive_signal_falsification_required(scorecard: Mapping[str, Any]) -> bool:
+    if any(
+        _bool(scorecard.get(key))
+        for key in (
+            "requires_adaptive_signal_falsification",
+            "required_adaptive_signal_falsification",
+            "requires_negative_control_falsification",
+            "required_negative_control_falsification",
+            "requires_label_permutation_test",
+            "required_label_permutation_test",
+            "requires_leakage_probe",
+            "required_leakage_probe",
+            "requires_effective_multiplicity_adjustment",
+            "required_effective_multiplicity_adjustment",
+            "rejects_adaptive_specification_search_as_profit_proof",
+            "rejects_in_sample_factor_generation_without_falsification",
+        )
+    ):
+        return True
+    hard_vetoes = {veto.lower() for veto in _string_list(scorecard.get("hard_vetoes"))}
+    if hard_vetoes.intersection(
+        {
+            "required_adaptive_signal_falsification",
+            "required_negative_control_falsification",
+            "required_label_permutation_test",
+            "required_leakage_probe",
+            "required_effective_multiplicity_adjustment",
+            "required_min_null_model_sample_count",
+            "required_max_effective_multiplicity_adjusted_p_value",
+        }
+    ):
+        return True
+    source_markers = {
+        marker.lower()
+        for marker in (
+            *_string_list(
+                scorecard.get("adaptive_signal_falsification_source_markers")
+            ),
+            *_string_list(
+                scorecard.get("bootstrap_robust_optimization_source_markers")
+            ),
+        )
+    }
+    return bool(
+        source_markers.intersection(
+            {
+                "spurious_predictability_arxiv_2604_15531_2026",
+                "adaptive_signal_discovery_agent_nvidia_2026",
+            }
+        )
+    )
+
+
+def _scorecard_or_null_comparator_value(
+    *,
+    scorecard: Mapping[str, Any],
+    null_comparator: Mapping[str, Any],
+    key: str,
+) -> Any:
+    if key in scorecard:
+        return scorecard.get(key)
+    return null_comparator.get(key)
+
+
+def _adaptive_signal_falsification_blockers(
+    *,
+    scorecard: Mapping[str, Any],
+    null_comparator: Mapping[str, Any],
+) -> list[str]:
+    if not _adaptive_signal_falsification_required(scorecard):
+        return []
+
+    blockers: list[str] = []
+    if not null_comparator:
+        blockers.append("adaptive_signal_null_comparator_missing")
+    if not _bool(scorecard.get("adaptive_signal_falsification_passed")):
+        blockers.append("adaptive_signal_falsification_missing_or_failed")
+    if not _has_artifact_ref(
+        scorecard,
+        "adaptive_signal_falsification_artifact_ref",
+        "adaptive_signal_falsification_artifact_refs",
+    ):
+        blockers.append("adaptive_signal_falsification_artifact_missing")
+    if not _bool(null_comparator.get("baseline_outperformed")):
+        blockers.append("adaptive_signal_baseline_not_outperformed")
+
+    raw_null_delta = _scorecard_or_null_comparator_value(
+        scorecard=scorecard,
+        null_comparator=null_comparator,
+        key="candidate_vs_null_return_delta",
+    )
+    if raw_null_delta is None:
+        blockers.append("candidate_vs_null_return_delta_missing")
+    elif _decimal(raw_null_delta) <= 0:
+        blockers.append("candidate_vs_null_return_delta_non_positive")
+
+    raw_incumbent_delta = _scorecard_or_null_comparator_value(
+        scorecard=scorecard,
+        null_comparator=null_comparator,
+        key="candidate_vs_incumbent_return_delta",
+    )
+    if raw_incumbent_delta is None:
+        blockers.append("candidate_vs_incumbent_return_delta_missing")
+    elif _decimal(raw_incumbent_delta) < 0:
+        blockers.append("candidate_vs_incumbent_return_delta_negative")
+
+    required_sample_count = max(
+        1,
+        _int(scorecard.get("required_min_null_model_sample_count") or 100),
+    )
+    if _int(scorecard.get("null_model_sample_count")) < required_sample_count:
+        blockers.append("null_model_sample_count_below_min")
+
+    raw_adjusted_p_value = scorecard.get("effective_multiplicity_adjusted_p_value")
+    required_max_p_value = _decimal(
+        scorecard.get("required_max_effective_multiplicity_adjusted_p_value") or "0.05"
+    )
+    if raw_adjusted_p_value is None:
+        blockers.append("effective_multiplicity_adjusted_p_value_missing")
+    elif _decimal(raw_adjusted_p_value) > required_max_p_value:
+        blockers.append("effective_multiplicity_adjusted_p_value_above_max")
+
+    if not _bool(scorecard.get("negative_control_passed")):
+        blockers.append("negative_control_missing_or_failed")
+    if not _bool(scorecard.get("placebo_label_test_passed")):
+        blockers.append("placebo_label_test_missing_or_failed")
+    if not _bool(scorecard.get("label_permutation_test_passed")):
+        blockers.append("label_permutation_test_missing_or_failed")
+    if not _bool(scorecard.get("feature_permutation_stability_passed")):
+        blockers.append("feature_permutation_stability_missing_or_failed")
+    if not _bool(scorecard.get("leakage_probe_passed")):
+        blockers.append("leakage_probe_missing_or_failed")
+    if not _bool(scorecard.get("walk_forward_falsification_passed")):
+        blockers.append("walk_forward_falsification_missing_or_failed")
+    return blockers
+
+
 def _ofi_response_horizon_required(scorecard: Mapping[str, Any]) -> bool:
     if any(
         _bool(scorecard.get(key))
@@ -2322,6 +2497,12 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         blockers.extend(_implementation_uncertainty_blockers(scorecard))
         blockers.extend(_implementation_risk_backtest_stability_blockers(scorecard))
         blockers.extend(_bootstrap_robust_optimization_blockers(scorecard))
+        blockers.extend(
+            _adaptive_signal_falsification_blockers(
+                scorecard=scorecard,
+                null_comparator=bundle.null_comparator,
+            )
+        )
         blockers.extend(_ofi_response_horizon_blockers(scorecard))
         blockers.extend(_alpha_decay_predictability_blockers(scorecard))
         blockers.extend(_stochastic_liquidity_resilience_blockers(scorecard))
