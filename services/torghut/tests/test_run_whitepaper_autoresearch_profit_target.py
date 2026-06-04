@@ -9045,6 +9045,22 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             probation_candidate["paper_probation_authorization_scope"],
             "evidence_collection_only",
         )
+        self.assertIn(
+            "seed_robustness_replay_grid",
+            probation_candidate["live_paper_evidence_requirements"],
+        )
+        self.assertIn(
+            "model_family_robustness_replay_grid",
+            probation_candidate["live_paper_evidence_requirements"],
+        )
+        self.assertIn(
+            "run_offline_seed_model_family_robustness_grid_before_paper_probation",
+            probation_candidate["safe_evidence_collection_path"],
+        )
+        self.assertIn(
+            "attach_seed_model_family_robustness_artifact_to_evidence_bundle",
+            probation_candidate["safe_evidence_collection_path"],
+        )
         self.assertEqual(probation_candidate["evidence_collection_stage"], "paper")
         self.assertEqual(
             probation_candidate["selection_reason"], "target_met_but_oracle_blocked"

@@ -10607,6 +10607,23 @@ def _paper_probation_candidate_payload(
     ]
     if not final_promotion_blockers:
         final_promotion_blockers.append("final_promotion_requires_runtime_governance")
+    live_paper_evidence_requirements = list(
+        _PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+    )
+    safe_evidence_collection_path = list(_PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH)
+    if bool(payload.get("required_seed_model_family_robustness")):
+        live_paper_evidence_requirements.extend(
+            (
+                "seed_robustness_replay_grid",
+                "model_family_robustness_replay_grid",
+            )
+        )
+        safe_evidence_collection_path.extend(
+            (
+                "run_offline_seed_model_family_robustness_grid_before_paper_probation",
+                "attach_seed_model_family_robustness_artifact_to_evidence_bundle",
+            )
+        )
     payload.update(
         {
             "candidate_selection": "oracle_recommended_paper_probation",
@@ -10631,10 +10648,10 @@ def _paper_probation_candidate_payload(
                 "linear_notional_sizing_estimate_for_repair_only_not_capital_authority"
             ),
             "live_paper_evidence_requirements": list(
-                _PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+                dict.fromkeys(live_paper_evidence_requirements)
             ),
             "safe_evidence_collection_path": list(
-                _PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH
+                dict.fromkeys(safe_evidence_collection_path)
             ),
             "live_capital_authorized": False,
             "final_promotion_requires_live_paper_runtime_proof": True,
