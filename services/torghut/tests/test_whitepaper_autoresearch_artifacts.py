@@ -959,6 +959,14 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                 "candidate_id": "cand-stage-proof",
                 "objective_scorecard": {
                     "net_pnl_per_day": "650",
+                    "market_impact_stress_passed": True,
+                    "market_impact_stress_artifact_ref": "/tmp/stage-proof.json",
+                    "market_impact_stress_model": "nonlinear_square_root_impact",
+                    "market_impact_stress_cost_bps": "1",
+                    "market_impact_stress_net_pnl_per_day": "650",
+                    "market_impact_stress_components": {
+                        "source_marker": "realistic_market_impact_arxiv_2603_29086_2026"
+                    },
                     "delay_adjusted_depth_stress_passed": True,
                     "delay_adjusted_depth_tail_coverage_passed": True,
                     "fill_survival_evidence_present": True,
