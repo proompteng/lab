@@ -159,7 +159,7 @@ spec:
           - name: selectionOnly
           - name: persistResults
       container:
-        image: registry.ide-newton.ts.net/lab/torghut@sha256:77f105b06a83d2a5cc798e2a052eba6c131334ddadc1ced6bbb6b442e7a829b3
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:78617d21a9174a95aea1c4bb4b59f83b2edb7e32417f3dd1bc00cfcb11a5d198
         imagePullPolicy: IfNotPresent
         command:
           - /bin/bash
@@ -182,9 +182,9 @@ spec:
           - name: TRADING_STRATEGY_CONFIG_PATH
             value: /etc/torghut/strategies.yaml
           - name: TORGHUT_COMMIT
-            value: 1b67ef2adf5b1e0ceb86ff6cc66435f1360d1492
+            value: 4371a4c9a01d3fe5951952f22f661b8f674d5c28
           - name: TORGHUT_IMAGE_DIGEST
-            value: sha256:77f105b06a83d2a5cc798e2a052eba6c131334ddadc1ced6bbb6b442e7a829b3
+            value: sha256:78617d21a9174a95aea1c4bb4b59f83b2edb7e32417f3dd1bc00cfcb11a5d198
           - name: TORGHUT_WHITEPAPER_SOURCE_JSONL_B64
             value: "{{inputs.parameters.sourceJsonlB64}}"
           - name: TORGHUT_WHITEPAPER_CANDIDATE_SPECS_JSONL_B64
