@@ -2340,14 +2340,24 @@ def _offline_replay_triage_candidate_from_ranking(
         "avg_filled_notional_per_window_weekday",
         "best_day_share",
         "max_single_fill_notional_pct_equity",
+        "execution_quality_penalty_bps",
+        "execution_quality_penalty_amount",
+        "execution_quality_adjusted_window_net_pnl_per_day",
     ):
         value = candidate.get(key)
         if value not in (None, ""):
             payload[key] = value
-    for key in ("promotion_blockers", "runtime_ledger_blockers"):
+    for key in (
+        "promotion_blockers",
+        "runtime_ledger_blockers",
+        "execution_quality_blockers",
+    ):
         values = _as_text_list(candidate.get(key))
         if values:
             payload[key] = values
+    execution_quality = _as_dict(candidate.get("execution_quality"))
+    if execution_quality:
+        payload["execution_quality"] = execution_quality
     return payload
 
 

@@ -34,6 +34,58 @@ _RUNTIME_CLOSURE_BLOCKERS = frozenset(
         "unclosed_position",
     }
 )
+_EXECUTION_QUALITY_ACTIONS = {
+    "order_type_mix_evidence_incomplete": (
+        "collect_order_type_mix_evidence",
+        "exact replay rows do not fully label market/limit order selection",
+        ["record_selected_order_type", "preserve_order_type_on_fill_rows"],
+    ),
+    "fill_order_type_evidence_incomplete": (
+        "preserve_fill_order_type_evidence",
+        "fills cannot be attributed to market/limit order type choices",
+        ["join_fills_to_submitted_order_type", "preserve_order_id_on_fills"],
+    ),
+    "execution_shortfall_evidence_incomplete": (
+        "collect_route_tca_shortfall_evidence",
+        "route TCA/shortfall is required before execution quality can influence collection",
+        ["route_tca_bps", "execution_shortfall_bps", "arrival_shortfall_bps"],
+    ),
+    "limit_fill_probability_evidence_incomplete": (
+        "collect_limit_fill_probability_evidence",
+        "limit-order candidates need real fill-probability evidence",
+        ["limit_fill_probability", "survival_fill_probability", "fill_probability"],
+    ),
+    "queue_position_survival_evidence_incomplete": (
+        "collect_queue_position_survival_fill_curve_evidence",
+        "queue-position/time-to-fill evidence is missing for limit-order candidates",
+        ["queue_position", "queue_ahead_qty", "time_to_fill_seconds"],
+    ),
+    "price_improvement_evidence_incomplete": (
+        "collect_limit_order_price_improvement_evidence",
+        "passive order price improvement is unverified",
+        ["price_improvement_bps", "realized_price_improvement_bps"],
+    ),
+    "nonfill_opportunity_cost_evidence_incomplete": (
+        "collect_nonfill_opportunity_cost_evidence",
+        "patient limit orders need missed-fill opportunity-cost evidence",
+        ["nonfill_opportunity_cost_bps", "missed_fill_opportunity_cost_bps"],
+    ),
+    "limit_fill_rate_below_execution_quality_floor": (
+        "tighten_or_downrank_low_fill_limit_policy",
+        "observed limit-fill rate is below the execution-quality floor",
+        ["raise_limit_fill_probability_floor", "compare_market_vs_limit_ablation"],
+    ),
+    "execution_shortfall_bps_above_quality_floor": (
+        "downrank_high_shortfall_execution_policy",
+        "realized shortfall is above the execution-quality floor",
+        ["lower_market_order_share", "route_tca_ablation", "spread_state_filter"],
+    ),
+    "nonfill_opportunity_cost_bps_above_quality_floor": (
+        "downrank_high_opportunity_cost_limit_policy",
+        "missed-fill opportunity cost is above the execution-quality floor",
+        ["cancel_replace_age_grid", "marketable_limit_fallback", "urgency_response"],
+    ),
+}
 
 
 def build_replay_ledger_remediation_report(
@@ -76,10 +128,17 @@ def build_replay_ledger_remediation_report(
 
     promotion_blockers = _string_list(best_candidate.get("promotion_blockers"))
     runtime_blockers = _string_list(best_candidate.get("runtime_ledger_blockers"))
+    execution_quality_blockers = _string_list(
+        best_candidate.get("execution_quality_blockers")
+    )
     blockers = _dedupe([*promotion_blockers, *runtime_blockers])
     blocker_remediations = [
         _blocker_remediation(blocker, best_candidate=best_candidate, policy=policy)
         for blocker in blockers
+    ]
+    execution_quality_actions = [
+        _execution_quality_remediation(blocker, best_candidate=best_candidate)
+        for blocker in execution_quality_blockers
     ]
     status = (
         "blocked_pending_runtime_promotion_proof"
@@ -97,6 +156,8 @@ def build_replay_ledger_remediation_report(
         "promotion_status": _string(best_candidate.get("promotion_status")),
         "promotion_blockers": promotion_blockers,
         "runtime_ledger_blockers": runtime_blockers,
+        "execution_quality_blockers": execution_quality_blockers,
+        "execution_quality": _mapping(best_candidate.get("execution_quality")),
         "required_evidence": list(_RUNTIME_PROMOTION_EVIDENCE),
         "metric_snapshot": _metric_snapshot(best_candidate, policy),
         "recommended_objective_adjustments": _recommended_objective_adjustments(
@@ -107,8 +168,9 @@ def build_replay_ledger_remediation_report(
             blockers=blockers,
             best_candidate=best_candidate,
             policy=policy,
-        ),
-        "blocker_remediations": blocker_remediations,
+        )
+        + execution_quality_actions,
+        "blocker_remediations": blocker_remediations + execution_quality_actions,
     }
 
 
@@ -319,6 +381,34 @@ def _blocker_remediation(
         "action": "fix_runtime_ledger_or_policy_blocker_before_research_continues",
         "reason": "unmapped_replay_ledger_blocker",
         "parameter_hints": ["inspect_exact_replay_ledger_rows", "inspect_policy"],
+    }
+
+
+def _execution_quality_remediation(
+    blocker: str,
+    *,
+    best_candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    action, reason, hints = _EXECUTION_QUALITY_ACTIONS.get(
+        blocker,
+        (
+            "inspect_execution_quality_blocker",
+            "execution-quality blocker has no specific remediation mapping yet",
+            ["inspect_execution_quality"],
+        ),
+    )
+    return {
+        "blocker": blocker,
+        "action": action,
+        "reason": reason,
+        "observed_penalty_bps": _string(
+            best_candidate.get("execution_quality_penalty_bps")
+        ),
+        "adjusted_window_net_pnl_per_day": _string(
+            best_candidate.get("execution_quality_adjusted_window_net_pnl_per_day")
+        ),
+        "authority": "research_ranking_only_final_promotion_still_requires_runtime_ledger",
+        "parameter_hints": list(hints),
     }
 
 

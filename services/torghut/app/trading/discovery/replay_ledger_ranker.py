@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -14,6 +14,7 @@ from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.runtime_ledger import RuntimeLedgerBucket, build_runtime_ledger_buckets
 
 EXACT_REPLAY_LEDGER_RANKING_SCHEMA_VERSION = "torghut.exact-replay-ledger-ranking.v1"
+EXECUTION_QUALITY_SCHEMA_VERSION = "torghut.exact-replay-execution-quality.v1"
 _LIVE_PROMOTION_AUTHORITIES = frozenset(
     {
         "live",
@@ -22,6 +23,78 @@ _LIVE_PROMOTION_AUTHORITIES = frozenset(
         "runtime_execution_ledger",
         "live_paper_runtime_ledger",
     }
+)
+_EXECUTION_QUALITY_SOURCE_PAPERS = (
+    {
+        "source_id": "rof-rfaf049",
+        "url": "https://doi.org/10.1093/rof/rfaf049",
+        "title": "Retail Limit Orders",
+        "mechanism": "market_limit_order_type_fill_probability_price_improvement_opportunity_cost",
+    },
+    {
+        "source_id": "arxiv-2507.06345",
+        "url": "https://arxiv.org/abs/2507.06345",
+        "title": "Reinforcement Learning for Trade Execution with Market and Limit Orders",
+        "mechanism": "dynamic_market_limit_order_allocation_with_fill_uncertainty",
+    },
+    {
+        "source_id": "arxiv-2512.05734",
+        "url": "https://arxiv.org/abs/2512.05734",
+        "title": "KANFormer for Predicting Fill Probabilities via Survival Analysis in Limit Order Books",
+        "mechanism": "queue_position_time_to_fill_survival_fill_probability",
+    },
+)
+_ORDER_TYPE_FIELDS = (
+    "order_type",
+    "order_kind",
+    "execution_order_type",
+    "execution_type",
+    "order_instruction",
+    "route_order_type",
+    "adjusted_order_type",
+    "selected_order_type",
+)
+_FILL_STATUS_FIELDS = (
+    "fill_status",
+    "order_fill_status",
+    "execution_status",
+    "route_fill_status",
+    "order_status",
+    "status",
+)
+_EXECUTION_SHORTFALL_FIELDS = (
+    "execution_shortfall_bps",
+    "realized_shortfall_bps",
+    "shortfall_bps",
+    "route_tca_bps",
+    "arrival_shortfall_bps",
+)
+_PRICE_IMPROVEMENT_FIELDS = (
+    "price_improvement_bps",
+    "realized_price_improvement_bps",
+    "price_improvement_against_arrival_bps",
+)
+_OPPORTUNITY_COST_FIELDS = (
+    "nonfill_opportunity_cost_bps",
+    "opportunity_cost_bps",
+    "missed_fill_opportunity_cost_bps",
+)
+_QUEUE_POSITION_FIELDS = (
+    "queue_position",
+    "queue_ahead",
+    "queue_ahead_qty",
+    "queue_ahead_size",
+    "queue_rank",
+    "limit_queue_position",
+    "queue_ratio",
+    "queue_ahead_ratio",
+    "queue_position_ratio",
+)
+_LIMIT_FILL_PROBABILITY_FIELDS = (
+    "limit_fill_probability",
+    "fill_probability",
+    "estimated_limit_fill_probability",
+    "survival_fill_probability",
 )
 
 
@@ -95,6 +168,11 @@ class ReplayLedgerCandidateRanking:
     fills_with_participation_rate: int
     fills_with_capacity_warning_contract: int
     capacity_warning_counts: Mapping[str, int]
+    execution_quality: Mapping[str, object]
+    execution_quality_blockers: tuple[str, ...]
+    execution_quality_penalty_bps: Decimal
+    execution_quality_penalty_amount: Decimal
+    execution_quality_adjusted_window_net_pnl_per_day: Decimal
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -158,6 +236,15 @@ class ReplayLedgerCandidateRanking:
             ),
             "capacity_warning_counts": dict(
                 sorted(self.capacity_warning_counts.items())
+            ),
+            "execution_quality": _payload_object(self.execution_quality),
+            "execution_quality_blockers": list(self.execution_quality_blockers),
+            "execution_quality_penalty_bps": str(self.execution_quality_penalty_bps),
+            "execution_quality_penalty_amount": str(
+                self.execution_quality_penalty_amount
+            ),
+            "execution_quality_adjusted_window_net_pnl_per_day": str(
+                self.execution_quality_adjusted_window_net_pnl_per_day
             ),
         }
 
@@ -240,6 +327,22 @@ def rank_replay_ledger_payload(
     candidate_identity = _mapping(payload.get("candidate_identity"))
     cost_lineage = _mapping(payload.get("cost_lineage"))
     capacity_summary = _capacity_lineage_summary(rows)
+    execution_quality = _execution_quality_summary(
+        rows=rows,
+        total_filled_notional=total_filled_notional,
+        window_weekday_count=window_weekday_count,
+    )
+    execution_quality_penalty_bps = cast(
+        Decimal, execution_quality["execution_quality_penalty_bps"]
+    )
+    execution_quality_penalty_amount = _safe_divide(
+        total_filled_notional * execution_quality_penalty_bps,
+        Decimal("10000"),
+    )
+    execution_quality_adjusted_window_net_pnl_per_day = _safe_divide(
+        total_net - execution_quality_penalty_amount,
+        Decimal(window_weekday_count),
+    )
     blockers = _promotion_blockers(
         payload=payload,
         rows=rows,
@@ -316,13 +419,20 @@ def rank_replay_ledger_payload(
         candidate_identity=candidate_identity,
         cost_lineage=cost_lineage,
         fills_with_adv_notional=capacity_summary["fills_with_adv_notional"],
-        fills_with_participation_rate=capacity_summary[
-            "fills_with_participation_rate"
-        ],
+        fills_with_participation_rate=capacity_summary["fills_with_participation_rate"],
         fills_with_capacity_warning_contract=capacity_summary[
             "fills_with_capacity_warning_contract"
         ],
         capacity_warning_counts=capacity_summary["capacity_warning_counts"],
+        execution_quality=execution_quality,
+        execution_quality_blockers=tuple(
+            cast(tuple[str, ...], execution_quality["execution_quality_blockers"])
+        ),
+        execution_quality_penalty_bps=execution_quality_penalty_bps,
+        execution_quality_penalty_amount=execution_quality_penalty_amount,
+        execution_quality_adjusted_window_net_pnl_per_day=(
+            execution_quality_adjusted_window_net_pnl_per_day
+        ),
     )
 
 
@@ -502,7 +612,8 @@ def _candidate_identity_blockers(payload: Mapping[str, Any]) -> list[str]:
     identity = _mapping(payload.get("candidate_identity"))
     identity_candidate_id = _text(identity.get("candidate_id"))
     identity_hash = _text(
-        payload.get("candidate_identity_hash") or identity.get("candidate_identity_hash")
+        payload.get("candidate_identity_hash")
+        or identity.get("candidate_identity_hash")
     )
     if not candidate_id:
         blockers.append("candidate_id_missing")
@@ -577,6 +688,162 @@ def _capacity_lineage_summary(
     }
 
 
+def _execution_quality_summary(
+    *,
+    rows: Sequence[Mapping[str, object]],
+    total_filled_notional: Decimal,
+    window_weekday_count: int,
+) -> Mapping[str, object]:
+    submitted_rows = [row for row in rows if _event_type(row) == "order_submitted"]
+    fill_rows = [row for row in rows if _event_type(row) == "fill"]
+    order_type_by_order_id: dict[str, str] = {}
+    for row in rows:
+        order_id = _text(row.get("order_id"))
+        order_type = _normalized_order_type(_first_text(row, _ORDER_TYPE_FIELDS))
+        if order_id and order_type:
+            order_type_by_order_id[order_id] = order_type
+
+    submitted_order_types = [
+        _order_type_for_row(row, order_type_by_order_id) for row in submitted_rows
+    ]
+    fill_order_types = [
+        _order_type_for_row(row, order_type_by_order_id) for row in fill_rows
+    ]
+    order_type_counts = _count_texts(
+        order_type for order_type in submitted_order_types if order_type
+    )
+    order_type_fill_counts = _count_texts(
+        order_type for order_type in fill_order_types if order_type
+    )
+    limit_order_count = sum(
+        count
+        for order_type, count in order_type_counts.items()
+        if "limit" in order_type
+    )
+    limit_fill_count = sum(
+        count
+        for order_type, count in order_type_fill_counts.items()
+        if "limit" in order_type
+    )
+    market_order_count = order_type_counts.get("market", 0)
+    order_type_sample_count = sum(
+        1 for order_type in submitted_order_types if order_type
+    )
+    fill_order_type_sample_count = sum(
+        1 for order_type in fill_order_types if order_type
+    )
+    route_tca_samples = [
+        value
+        for row in fill_rows
+        if (value := _first_decimal(row, _EXECUTION_SHORTFALL_FIELDS)) is not None
+    ]
+    price_improvement_samples = [
+        value
+        for row in fill_rows
+        if (value := _first_decimal(row, _PRICE_IMPROVEMENT_FIELDS)) is not None
+    ]
+    opportunity_cost_samples = [
+        value
+        for row in rows
+        if (value := _first_decimal(row, _OPPORTUNITY_COST_FIELDS)) is not None
+    ]
+    queue_position_sample_count = sum(
+        1 for row in rows if _first_decimal(row, _QUEUE_POSITION_FIELDS) is not None
+    )
+    limit_fill_probability_samples = [
+        value
+        for row in rows
+        if (value := _first_decimal(row, _LIMIT_FILL_PROBABILITY_FIELDS)) is not None
+    ]
+    filled_status_count = sum(1 for row in rows if _row_has_fill_status(row))
+    blockers: list[str] = []
+    penalty_bps = Decimal("0")
+    if submitted_rows and order_type_sample_count < len(submitted_rows):
+        blockers.append("order_type_mix_evidence_incomplete")
+        penalty_bps += Decimal("4")
+    if fill_rows and fill_order_type_sample_count < len(fill_rows):
+        blockers.append("fill_order_type_evidence_incomplete")
+        penalty_bps += Decimal("3")
+    if fill_rows and len(route_tca_samples) < len(fill_rows):
+        blockers.append("execution_shortfall_evidence_incomplete")
+        penalty_bps += Decimal("6")
+    if (
+        limit_order_count > 0
+        and len(limit_fill_probability_samples) < limit_order_count
+    ):
+        blockers.append("limit_fill_probability_evidence_incomplete")
+        penalty_bps += Decimal("6")
+    if limit_order_count > 0 and queue_position_sample_count < limit_order_count:
+        blockers.append("queue_position_survival_evidence_incomplete")
+        penalty_bps += Decimal("6")
+    if limit_order_count > 0 and not price_improvement_samples:
+        blockers.append("price_improvement_evidence_incomplete")
+        penalty_bps += Decimal("2")
+    if limit_order_count > 0 and not opportunity_cost_samples:
+        blockers.append("nonfill_opportunity_cost_evidence_incomplete")
+        penalty_bps += Decimal("2")
+    limit_fill_rate = (
+        _safe_divide(Decimal(limit_fill_count), Decimal(limit_order_count))
+        if limit_order_count > 0
+        else None
+    )
+    if limit_fill_rate is not None and limit_fill_rate < Decimal("0.50"):
+        blockers.append("limit_fill_rate_below_execution_quality_floor")
+        penalty_bps += (Decimal("0.50") - limit_fill_rate) * Decimal("20")
+    avg_shortfall_bps = _average_decimal(route_tca_samples)
+    if avg_shortfall_bps is not None and avg_shortfall_bps > Decimal("8"):
+        blockers.append("execution_shortfall_bps_above_quality_floor")
+        penalty_bps += avg_shortfall_bps - Decimal("8")
+    avg_opportunity_cost_bps = _average_decimal(opportunity_cost_samples)
+    if avg_opportunity_cost_bps is not None and avg_opportunity_cost_bps > Decimal("8"):
+        blockers.append("nonfill_opportunity_cost_bps_above_quality_floor")
+        penalty_bps += avg_opportunity_cost_bps - Decimal("8")
+    penalty_amount = _safe_divide(total_filled_notional * penalty_bps, Decimal("10000"))
+    return {
+        "schema_version": EXECUTION_QUALITY_SCHEMA_VERSION,
+        "source_papers": [dict(item) for item in _EXECUTION_QUALITY_SOURCE_PAPERS],
+        "proof_neutrality": {
+            "research_ranking_only": True,
+            "promotion_proof": False,
+            "proof_authority": False,
+            "promotion_authority": False,
+            "requires_exact_replay": True,
+            "requires_route_tca": True,
+            "requires_order_lifecycle_fill_evidence": True,
+            "requires_runtime_ledger": True,
+            "rejects_model_fill_probability_as_fill_authority": True,
+            "rejects_adjusted_pnl_as_promotion_authority": True,
+        },
+        "submitted_order_count": len(submitted_rows),
+        "fill_count": len(fill_rows),
+        "order_type_sample_count": order_type_sample_count,
+        "fill_order_type_sample_count": fill_order_type_sample_count,
+        "order_type_counts": order_type_counts,
+        "order_type_fill_counts": order_type_fill_counts,
+        "market_order_count": market_order_count,
+        "limit_order_count": limit_order_count,
+        "limit_fill_count": limit_fill_count,
+        "limit_fill_rate": limit_fill_rate,
+        "filled_status_count": filled_status_count,
+        "execution_shortfall_sample_count": len(route_tca_samples),
+        "avg_execution_shortfall_bps": avg_shortfall_bps,
+        "price_improvement_sample_count": len(price_improvement_samples),
+        "avg_price_improvement_bps": _average_decimal(price_improvement_samples),
+        "nonfill_opportunity_cost_sample_count": len(opportunity_cost_samples),
+        "avg_nonfill_opportunity_cost_bps": avg_opportunity_cost_bps,
+        "queue_position_sample_count": queue_position_sample_count,
+        "limit_fill_probability_sample_count": len(limit_fill_probability_samples),
+        "avg_limit_fill_probability": _average_decimal(limit_fill_probability_samples),
+        "execution_quality_blockers": tuple(_dedupe(blockers)),
+        "execution_quality_penalty_bps": penalty_bps,
+        "execution_quality_penalty_amount": penalty_amount,
+        "execution_quality_penalty_per_window_weekday": _safe_divide(
+            penalty_amount,
+            Decimal(window_weekday_count),
+        ),
+    }
+
+
 def _daily_bucket_ranges(
     start: datetime,
     end: datetime,
@@ -627,6 +894,88 @@ def _string_list(value: object) -> list[str]:
         if text:
             result.append(text)
     return result
+
+
+def _payload_object(value: object) -> object:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _payload_object(item)
+            for key, item in sorted(cast(Mapping[object, object], value).items())
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_payload_object(item) for item in cast(Sequence[object], value)]
+    return value
+
+
+def _first_text(row: Mapping[str, object], fields: Sequence[str]) -> str:
+    for field in fields:
+        text = _text(row.get(field))
+        if text:
+            return text
+    return ""
+
+
+def _first_decimal(
+    row: Mapping[str, object],
+    fields: Sequence[str],
+) -> Decimal | None:
+    for field in fields:
+        value = _decimal(row.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _decimal(value: object) -> Decimal | None:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _average_decimal(values: Sequence[Decimal]) -> Decimal | None:
+    if not values:
+        return None
+    return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _normalized_order_type(value: str) -> str:
+    normalized = value.lower().replace("-", "_").replace(" ", "_").strip()
+    if not normalized:
+        return ""
+    if "market" in normalized and "limit" in normalized:
+        return "marketable_limit"
+    if "limit" in normalized or "passive" in normalized:
+        return "limit"
+    if "market" in normalized:
+        return "market"
+    return normalized
+
+
+def _order_type_for_row(
+    row: Mapping[str, object],
+    order_type_by_order_id: Mapping[str, str],
+) -> str:
+    direct = _normalized_order_type(_first_text(row, _ORDER_TYPE_FIELDS))
+    if direct:
+        return direct
+    return order_type_by_order_id.get(_text(row.get("order_id")), "")
+
+
+def _count_texts(values: Iterable[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _row_has_fill_status(row: Mapping[str, object]) -> bool:
+    status = _first_text(row, _FILL_STATUS_FIELDS).lower().replace("-", "_")
+    if not status:
+        return False
+    return any(token in status for token in ("fill", "filled", "partial"))
 
 
 def _text(value: object) -> str:
@@ -756,8 +1105,10 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 
 def _ranking_sort_key(candidate: ReplayLedgerCandidateRanking) -> tuple[object, ...]:
     return (
+        -candidate.execution_quality_adjusted_window_net_pnl_per_day,
         -candidate.window_net_pnl_per_day,
         -candidate.total_net_pnl_after_costs,
+        candidate.execution_quality_penalty_bps,
         candidate.best_day_share,
         candidate.max_drawdown,
         candidate.candidate_id,
