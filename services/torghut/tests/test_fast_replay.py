@@ -303,6 +303,10 @@ class TestFastReplayPreview(TestCase):
             "metaorder_adverse_selection_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "bootstrap_robust_optimization_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -774,6 +778,34 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "metaorder_adverse_selection_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("bootstrap_robust_optimization_stress", row_payload)
+        self.assertEqual(
+            row_payload["bootstrap_robust_optimization_stress"]["status"],
+            "preview_only_bootstrap_robust_optimization_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2510.12725",
+            {
+                source["source_id"]
+                for source in row_payload["bootstrap_robust_optimization_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["bootstrap_robust_optimization_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["bootstrap_robust_optimization_stress"]["promotion_authority"]
+        )
+        self.assertIn(
+            "bootstrap_robust_optimization_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "bootstrap_robust_optimization_stress_downranks_only",
             row_payload["ranking_only_reasons"],
         )
         self.assertIn(
