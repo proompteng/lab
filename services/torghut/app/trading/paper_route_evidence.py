@@ -9145,6 +9145,10 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
         append_source_target(target)
     if not source_targets:
         return {}
+    profit_target_count = sum(
+        int(bool(target.get("source_collection_profit_target_candidate")))
+        for target in source_targets
+    )
     return {
         "schema_version": _safe_text(plan.get("schema_version"))
         or "torghut.runtime-ledger-paper-probation-import-plan.v1",
@@ -9163,6 +9167,7 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
         "target_count": len(source_targets),
         "paper_probation_target_count": 0,
         "source_collection_target_count": len(source_targets),
+        "source_collection_profit_target_count": profit_target_count,
         "skipped_target_count": 0,
         "targets": source_targets,
         "skipped_targets": [],
@@ -9707,6 +9712,24 @@ def build_paper_route_target_plan_payload(
             "promotion_eligible_total": _safe_int(
                 live_submission_gate.get("promotion_eligible_total")
             ),
+            "runtime_ledger_source_collection_candidate_total": _safe_int(
+                live_submission_gate.get(
+                    "runtime_ledger_source_collection_candidate_total"
+                )
+            )
+            or _safe_int(source_collection_import_plan.get("target_count")),
+            "runtime_ledger_source_collection_profit_target_candidate_total": (
+                _safe_int(
+                    live_submission_gate.get(
+                        "runtime_ledger_source_collection_profit_target_candidate_total"
+                    )
+                )
+                or _safe_int(
+                    source_collection_import_plan.get(
+                        "source_collection_profit_target_count"
+                    )
+                )
+            ),
             "runtime_ledger_paper_probation_import_plan": {
                 "schema_version": _safe_text(plan.get("schema_version")),
                 "target_count": _safe_int(plan.get("target_count") or len(targets)),
@@ -9714,6 +9737,12 @@ def build_paper_route_target_plan_payload(
                 "source_collection_target_count": _safe_int(
                     source_collection_import_plan.get("target_count")
                     or plan.get("source_collection_target_count")
+                ),
+                "source_collection_profit_target_count": _safe_int(
+                    source_collection_import_plan.get(
+                        "source_collection_profit_target_count"
+                    )
+                    or plan.get("source_collection_profit_target_count")
                 ),
                 "targets": _as_mapping_items(
                     source_collection_import_plan.get("targets")
@@ -10070,6 +10099,24 @@ def build_paper_route_evidence_audit(
             "promotion_eligible_total": _safe_int(
                 live_submission_gate.get("promotion_eligible_total")
             ),
+            "runtime_ledger_source_collection_candidate_total": _safe_int(
+                live_submission_gate.get(
+                    "runtime_ledger_source_collection_candidate_total"
+                )
+            )
+            or _safe_int(source_collection_import_plan.get("target_count")),
+            "runtime_ledger_source_collection_profit_target_candidate_total": (
+                _safe_int(
+                    live_submission_gate.get(
+                        "runtime_ledger_source_collection_profit_target_candidate_total"
+                    )
+                )
+                or _safe_int(
+                    source_collection_import_plan.get(
+                        "source_collection_profit_target_count"
+                    )
+                )
+            ),
             "runtime_ledger_paper_probation_import_plan": {
                 "schema_version": _safe_text(plan.get("schema_version")),
                 "target_count": _safe_int(plan.get("target_count") or len(targets)),
@@ -10077,6 +10124,12 @@ def build_paper_route_evidence_audit(
                 "source_collection_target_count": _safe_int(
                     source_collection_import_plan.get("target_count")
                     or plan.get("source_collection_target_count")
+                ),
+                "source_collection_profit_target_count": _safe_int(
+                    source_collection_import_plan.get(
+                        "source_collection_profit_target_count"
+                    )
+                    or plan.get("source_collection_profit_target_count")
                 ),
                 "targets": _as_mapping_items(
                     source_collection_import_plan.get("targets")
