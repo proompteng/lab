@@ -34,6 +34,9 @@ from app.trading.discovery.feed_lag_liquidity_stress import (
 from app.trading.discovery.intraday_jump_burst_stress import (
     extract_intraday_jump_burst_stress,
 )
+from app.trading.discovery.intraday_price_path_asymmetry_stress import (
+    extract_intraday_price_path_asymmetry_stress,
+)
 from app.trading.discovery.institutional_mechanism_fidelity_stress import (
     extract_institutional_mechanism_fidelity_stress,
 )
@@ -99,6 +102,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "nonlinear_impact_execution_stress",
     "option_gamma_flow_stress",
     "intraday_jump_burst_stress",
+    "intraday_price_path_asymmetry_stress",
     "rough_flow_volatility_impact_stress",
     "institutional_mechanism_fidelity_stress",
     "ofi_horizon_decay_regime_screen",
@@ -203,6 +207,9 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     intraday_jump_burst_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    intraday_price_path_asymmetry_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     rough_flow_volatility_stress: Mapping[str, Any] = field(
@@ -321,6 +328,9 @@ class FastReplayPreviewRow:
             ),
             "option_gamma_flow_stress": dict(self.option_gamma_flow_stress),
             "intraday_jump_burst_stress": dict(self.intraday_jump_burst_stress),
+            "intraday_price_path_asymmetry_stress": dict(
+                self.intraday_price_path_asymmetry_stress
+            ),
             "rough_flow_volatility_stress": dict(self.rough_flow_volatility_stress),
             "institutional_mechanism_fidelity_stress": dict(
                 self.institutional_mechanism_fidelity_stress
@@ -518,6 +528,7 @@ class FastReplayPreviewResult:
                 "nonlinear_impact_execution_stress": "deterministic real-tape participation-rate, square-root impact, and permanent-impact decay stress from arXiv:2603.29086 and arXiv:2502.16246; model costs are not PnL authority; preview ranking only",
                 "option_gamma_flow_stress": "deterministic replay-row option gamma, short-horizon option availability, and dealer-hedging feedback stress from SSRN:4692190 and SSRN:6703098; gamma proxies are not PnL authority; preview ranking only",
                 "intraday_jump_burst_stress": "deterministic replay-row intraday jump, volatility burst, and spurious-jump source-gap stress from SSRN:5223127, SSRN:5199540, and arXiv:2602.10925; jump proxies are not PnL authority; preview ranking only",
+                "intraday_price_path_asymmetry_stress": "deterministic range-based open-high-low intraday path asymmetry and late-session pressure stress from SSRN:6074846 and SSRN:5039009; next-session reversal proxies are not PnL authority; preview ranking only",
                 "rough_flow_volatility_impact_stress": "deterministic persistent signed-flow, rough traded-volume/volatility, Poisson-arrival, and power-law impact consistency stress from arXiv:2601.23172 and arXiv:2603.13170; roughness proxies are not PnL authority; preview ranking only",
                 "institutional_mechanism_fidelity_stress": "deterministic market-calendar, auction/session-boundary, price-limit, tick-size, latency, and asynchronous cross-asset mechanism-fidelity stress from arXiv:2604.18046 and arXiv:2511.02016; simulator realism proxies are not PnL authority; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
@@ -1182,6 +1193,7 @@ def _score_candidate_spec(
             nonlinear_impact_execution_stress={},
             option_gamma_flow_stress={},
             intraday_jump_burst_stress={},
+            intraday_price_path_asymmetry_stress={},
             rough_flow_volatility_stress={},
             institutional_mechanism_fidelity_stress={},
             candidate_frontier_hash=candidate_frontier_hash,
@@ -1389,6 +1401,20 @@ def _score_candidate_spec(
         )
         or 0.0
     )
+    intraday_price_path_asymmetry_stress = (
+        extract_intraday_price_path_asymmetry_stress(
+            matched_source_rows,
+            direction=direction,
+        ).to_payload()
+    )
+    intraday_price_path_asymmetry_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(intraday_price_path_asymmetry_stress.get("ranking_features")).get(
+                "replay_rank_penalty_bps"
+            )
+        )
+        or 0.0
+    )
     rough_flow_volatility_stress = extract_rough_flow_volatility_stress(
         matched_source_rows
     ).to_payload()
@@ -1470,6 +1496,7 @@ def _score_candidate_spec(
         - nonlinear_impact_execution_rank_penalty_bps * 0.06
         - option_gamma_flow_rank_penalty_bps * 0.05
         - intraday_jump_burst_rank_penalty_bps * 0.05
+        - intraday_price_path_asymmetry_rank_penalty_bps * 0.04
         - rough_flow_volatility_rank_penalty_bps * 0.06
         - institutional_mechanism_fidelity_rank_penalty_bps * 0.05
         - conformal_tail_risk_penalty_bps * 0.12
@@ -1514,6 +1541,7 @@ def _score_candidate_spec(
         - nonlinear_impact_execution_rank_penalty_bps * 0.03
         - option_gamma_flow_rank_penalty_bps * 0.03
         - intraday_jump_burst_rank_penalty_bps * 0.03
+        - intraday_price_path_asymmetry_rank_penalty_bps * 0.02
         - rough_flow_volatility_rank_penalty_bps * 0.03
         - institutional_mechanism_fidelity_rank_penalty_bps * 0.03
     )
@@ -1564,6 +1592,9 @@ def _score_candidate_spec(
         nonlinear_impact_execution_stress=dict(nonlinear_impact_execution_stress),
         option_gamma_flow_stress=dict(option_gamma_flow_stress),
         intraday_jump_burst_stress=dict(intraday_jump_burst_stress),
+        intraday_price_path_asymmetry_stress=dict(
+            intraday_price_path_asymmetry_stress
+        ),
         rough_flow_volatility_stress=dict(rough_flow_volatility_stress),
         institutional_mechanism_fidelity_stress=dict(
             institutional_mechanism_fidelity_stress
@@ -1615,6 +1646,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _nonlinear_impact_execution_rank_penalty_bps(row) * 0.04
         - _option_gamma_flow_rank_penalty_bps(row) * 0.04
         - _intraday_jump_burst_rank_penalty_bps(row) * 0.04
+        - _intraday_price_path_asymmetry_rank_penalty_bps(row) * 0.03
         - _rough_flow_volatility_rank_penalty_bps(row) * 0.04
         - _institutional_mechanism_fidelity_rank_penalty_bps(row) * 0.04
         - float(row.conformal_tail_risk_penalty_bps) * 0.10
@@ -1697,6 +1729,15 @@ def _option_gamma_flow_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
 
 def _intraday_jump_burst_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
     ranking_features = _mapping(row.intraday_jump_burst_stress.get("ranking_features"))
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _intraday_price_path_asymmetry_rank_penalty_bps(
+    row: FastReplayPreviewRow,
+) -> float:
+    ranking_features = _mapping(
+        row.intraday_price_path_asymmetry_stress.get("ranking_features")
+    )
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
 
@@ -1917,6 +1958,9 @@ def _row_with_rank_and_selection(
         nonlinear_impact_execution_stress=dict(row.nonlinear_impact_execution_stress),
         option_gamma_flow_stress=dict(row.option_gamma_flow_stress),
         intraday_jump_burst_stress=dict(row.intraday_jump_burst_stress),
+        intraday_price_path_asymmetry_stress=dict(
+            row.intraday_price_path_asymmetry_stress
+        ),
         rough_flow_volatility_stress=dict(row.rough_flow_volatility_stress),
         institutional_mechanism_fidelity_stress=dict(
             row.institutional_mechanism_fidelity_stress
@@ -1993,6 +2037,9 @@ def _row_with_frontier_dedupe(
         nonlinear_impact_execution_stress=dict(row.nonlinear_impact_execution_stress),
         option_gamma_flow_stress=dict(row.option_gamma_flow_stress),
         intraday_jump_burst_stress=dict(row.intraday_jump_burst_stress),
+        intraday_price_path_asymmetry_stress=dict(
+            row.intraday_price_path_asymmetry_stress
+        ),
         rough_flow_volatility_stress=dict(row.rough_flow_volatility_stress),
         institutional_mechanism_fidelity_stress=dict(
             row.institutional_mechanism_fidelity_stress
@@ -2816,6 +2863,8 @@ def _risk_flags_for_row(
         flags.add("option_gamma_flow_stress_penalty_active")
     if _intraday_jump_burst_rank_penalty_bps(row) > 0:
         flags.add("intraday_jump_burst_stress_penalty_active")
+    if _intraday_price_path_asymmetry_rank_penalty_bps(row) > 0:
+        flags.add("intraday_price_path_asymmetry_stress_penalty_active")
     if _rough_flow_volatility_rank_penalty_bps(row) > 0:
         flags.add("rough_flow_volatility_stress_penalty_active")
     if _institutional_mechanism_fidelity_rank_penalty_bps(row) > 0:
@@ -2872,6 +2921,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("option_gamma_flow_stress_downranks_only")
     if _intraday_jump_burst_rank_penalty_bps(row) > 0:
         reasons.add("intraday_jump_burst_stress_downranks_only")
+    if _intraday_price_path_asymmetry_rank_penalty_bps(row) > 0:
+        reasons.add("intraday_price_path_asymmetry_stress_downranks_only")
     if _rough_flow_volatility_rank_penalty_bps(row) > 0:
         reasons.add("rough_flow_volatility_stress_downranks_only")
     if _institutional_mechanism_fidelity_rank_penalty_bps(row) > 0:
@@ -2921,6 +2972,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("option_gamma_flow_stress_penalty")
     if _intraday_jump_burst_rank_penalty_bps(row) > 0:
         vetoes.add("intraday_jump_burst_stress_penalty")
+    if _intraday_price_path_asymmetry_rank_penalty_bps(row) > 0:
+        vetoes.add("intraday_price_path_asymmetry_stress_penalty")
     if _rough_flow_volatility_rank_penalty_bps(row) > 0:
         vetoes.add("rough_flow_volatility_stress_penalty")
     if _institutional_mechanism_fidelity_rank_penalty_bps(row) > 0:
