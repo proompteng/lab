@@ -4986,6 +4986,203 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "cross-impact",
+            "cross impact",
+            "cross_effects",
+            "cross-effects",
+            "cross effects",
+            "cross-hedging",
+            "cross hedging",
+            "multi-asset optimal trade execution",
+            "multi asset optimal trade execution",
+            "matrix-valued price impact",
+            "matrix valued price impact",
+            "matrix-valued impact",
+            "matrix valued impact",
+            "obizhaeva-wang",
+            "signed trade flow feedback",
+            "signed_trade_flow_feedback",
+            "spread and volume imbalance",
+            "volume imbalance state",
+        )
+    ):
+        overlay_ids.append("multi_asset_cross_impact_execution_grid")
+        overlay_contracts.append(
+            {
+                "overlay_id": "multi_asset_cross_impact_execution_grid",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2503.05594",
+                        "url": "https://arxiv.org/abs/2503.05594",
+                        "title": (
+                            "Multi-asset optimal trade execution with stochastic "
+                            "cross-effects: An Obizhaeva-Wang-type framework"
+                        ),
+                        "mechanism": (
+                            "matrix_valued_stochastic_price_impact_resilience_and_"
+                            "cross_hedging_execution_stress"
+                        ),
+                    },
+                    {
+                        "source_id": "arxiv-2603.24137",
+                        "url": "https://arxiv.org/abs/2603.24137",
+                        "title": "Bridging the Reality Gap in Limit Order Book Simulation",
+                        "mechanism": (
+                            "spread_volume_imbalance_state_projection_with_"
+                            "signed_flow_power_law_feedback_replay_parity"
+                        ),
+                    },
+                    {
+                        "source_id": "arxiv-2506.05755",
+                        "url": "https://arxiv.org/abs/2506.05755",
+                        "title": (
+                            "FlowOE: Imitation Learning with Flow Policy from Ensemble "
+                            "RL Experts for Optimal Execution under Heston Volatility "
+                            "and Concave Market Impacts"
+                        ),
+                        "mechanism": (
+                            "adaptive_execution_expert_grid_under_concave_impact_and_"
+                            "volatility_stress"
+                        ),
+                    },
+                ],
+                "required_evidence": [
+                    "pair_leg_order_flow_covariance",
+                    "cross_impact_matrix_fit",
+                    "impact_resilience_matrix_fit",
+                    "cross_hedge_leg_ablation",
+                    "signed_trade_flow_decay_feedback",
+                    "spread_volume_imbalance_state_projection",
+                    "execution_shortfall_by_leg",
+                    "route_tca",
+                    "runtime_ledger",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_cross_impact_resilience_stress"
+                ),
+                "evidence_policy": (
+                    "multi_asset_cross_impact_grid_is_candidate_input_only_and_"
+                    "requires_real_pair_leg_order_flow_route_tca_runtime_ledger_proof"
+                ),
+            }
+        )
+        parameter_space["multi_asset_cross_impact_execution_grid"] = {
+            "schema_version": "torghut.multi-asset-cross-impact-execution-grid.v1",
+            "source_ids": [
+                "arxiv-2503.05594",
+                "arxiv-2603.24137",
+                "arxiv-2506.05755",
+            ],
+            "candidate_search_inputs": {
+                "impact_matrix_structure_grid": [
+                    "diagonal_baseline",
+                    "sector_block_psd",
+                    "factor_low_rank_psd",
+                    "full_psd_shrinkage",
+                ],
+                "resilience_matrix_structure_grid": [
+                    "diagonal",
+                    "sector_block",
+                    "factor_low_rank",
+                ],
+                "cross_impact_shrinkage_grid": ["0.25", "0.50", "0.75"],
+                "cross_hedge_leg_notional_cap_pct_grid": ["0", "10", "25", "50"],
+                "pair_leg_execution_mode_grid": [
+                    "synchronous",
+                    "lead_lag_hedged",
+                    "resilience_staggered",
+                ],
+                "signed_flow_decay_kernel_grid": [
+                    "exponential",
+                    "power_law",
+                    "multi_exponential",
+                ],
+                "signed_flow_feedback_half_life_seconds_grid": [
+                    "5",
+                    "30",
+                    "120",
+                    "600",
+                ],
+                "cross_impact_penalty_bps_grid": ["1", "3", "6", "10"],
+                "flowoe_expert_policy_grid": [
+                    "almgren_chriss",
+                    "twap",
+                    "vwap",
+                    "impact_resilience",
+                ],
+            },
+            "stress_inputs_required": [
+                "pair_leg_signed_order_flow",
+                "pair_leg_return_covariance",
+                "cross_impact_matrix_bps",
+                "impact_resilience_matrix",
+                "spread_volume_imbalance_state",
+                "signed_trade_flow_decay_kernel",
+                "child_order_schedule_by_leg",
+                "execution_shortfall_bps_by_leg",
+                "route_tca_bps",
+                "runtime_ledger_post_cost_pnl",
+            ],
+            "diagnostics_required": [
+                "impact_matrix_positive_semidefinite",
+                "cross_impact_fit_error_bps",
+                "resilience_fit_error_bps",
+                "cross_hedge_ablation_delta_bps",
+                "price_manipulation_screen_passed",
+                "signed_flow_feedback_residual_bps",
+                "shortfall_dispersion_by_leg_bps",
+            ],
+            "proof_neutrality": {
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "requires_exact_replay": True,
+                "requires_real_pair_leg_order_flow": True,
+                "requires_real_cross_impact_fit": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_cross_impact_model_as_profit_proof": True,
+                "rejects_cross_hedge_ablation_as_fill_authority": True,
+                "rejects_flowoe_expert_policy_as_live_authority": True,
+            },
+        }
+        hard_vetoes.update(
+            {
+                "required_multi_asset_cross_impact_execution_grid": True,
+                "required_pair_leg_order_flow_covariance": True,
+                "required_cross_impact_matrix_fit": True,
+                "required_impact_resilience_matrix_fit": True,
+                "required_cross_hedge_leg_ablation": True,
+                "required_signed_trade_flow_decay_feedback": True,
+                "required_spread_volume_imbalance_state_projection": True,
+                "required_positive_semidefinite_impact_matrix": True,
+                "required_price_manipulation_screen_passed": True,
+                "required_max_cross_impact_fit_error_bps": "8",
+                "required_max_shortfall_dispersion_by_leg_bps": "10",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_multi_asset_cross_impact_execution_grid": True,
+                "requires_pair_leg_order_flow_covariance": True,
+                "requires_cross_impact_matrix_fit": True,
+                "requires_impact_resilience_matrix_fit": True,
+                "requires_cross_hedge_leg_ablation": True,
+                "requires_signed_trade_flow_decay_feedback": True,
+                "requires_spread_volume_imbalance_state_projection": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_cross_impact_model_as_profit_proof": True,
+                "rejects_cross_hedge_ablation_as_fill_authority": True,
+                "execution_impact_policy": (
+                    "multi_asset_cross_impact_resilience_validation_only"
+                ),
+            }
+        )
+
+    if has_any(
+        (
             "reality gap",
             "simulation reality",
             "sim-to-live",
@@ -5582,6 +5779,7 @@ def _apply_mechanism_overlay_strategy_params(
             "mixed_market_limit_execution_policy",
             "crumbling_quote_liquidity_erosion",
             "friction_aware_regime_conditioned_policy",
+            "multi_asset_cross_impact_execution_grid",
         }
         & overlay_ids
     ):
@@ -5600,6 +5798,12 @@ def _apply_mechanism_overlay_strategy_params(
         params.setdefault("cost_model_profile", "proportional_plus_impact")
         params.setdefault("turnover_budget_profile", "trade_space_trust_region")
         params.setdefault("regime_conditioning_profile", "volatility_liquidity")
+    if "multi_asset_cross_impact_execution_grid" in overlay_ids:
+        params.setdefault(
+            "cross_impact_stress_profile", "multi_asset_matrix_resilience"
+        )
+        params.setdefault("cross_impact_search_scope", "pair_leg_execution_cost")
+        params.setdefault("cross_hedge_live_authority", "disabled_candidate_only")
     next_overrides["params"] = params
     return next_overrides
 
@@ -5786,6 +5990,36 @@ def _family_scores_for_hypothesis(
             "clustered_arrival_regime",
         )
         bump("microbar_cross_sectional_pairs_v1", 2, "clustered_arrival_regime")
+    if has_any(
+        (
+            "cross-impact",
+            "cross impact",
+            "cross-effects",
+            "cross effects",
+            "cross-hedging",
+            "cross hedging",
+            "multi-asset optimal trade execution",
+            "multi asset optimal trade execution",
+            "matrix-valued price impact",
+            "matrix valued price impact",
+            "obizhaeva-wang",
+        )
+    ):
+        bump(
+            "microbar_cross_sectional_pairs_v1",
+            8,
+            "multi_asset_cross_impact_pairs_execution",
+        )
+        bump(
+            "microstructure_continuation_matched_filter_v1",
+            4,
+            "multi_asset_cross_impact_pairs_execution",
+        )
+        bump(
+            "intraday_tsmom_v2",
+            2,
+            "multi_asset_cross_impact_pairs_execution",
+        )
     impact_ranking_only = has_any(
         (
             "nonlinear impact",
