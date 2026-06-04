@@ -3193,9 +3193,6 @@ class SimpleTradingPipeline(TradingPipeline):
             .scalars()
             .all()
         )
-        normalized_allowed = {
-            symbol.strip().upper() for symbol in allowed_symbols if symbol.strip()
-        }
         decisions: list[StrategyDecision] = []
         seen: set[str] = set()
         expired_count = 0
@@ -3264,8 +3261,6 @@ class SimpleTradingPipeline(TradingPipeline):
             if symbol is None:
                 continue
             symbol = symbol.upper()
-            if normalized_allowed and symbol not in normalized_allowed:
-                continue
             strategy_symbols = self._paper_route_target_strategy_symbols(strategy)
             if strategy_symbols and symbol not in strategy_symbols:
                 continue
