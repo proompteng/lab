@@ -442,6 +442,7 @@ def _journal_source_batch(
     source: str,
     rows: list[Any],
     journal_one: Any,
+    journal_many: Any | None = None,
 ) -> dict[str, Any]:
     batch: dict[str, Any] = {
         "source": source,
@@ -460,6 +461,121 @@ def _journal_source_batch(
         source=source,
         selected=len(rows),
     )
+    if journal_many is not None and rows and not args.dry_run:
+        try:
+            with session.begin_nested():
+                refs = list(journal_many(rows))
+            if len(refs) != len(rows):
+                raise RuntimeError("tigerbeetle_journal_batch_result_count_mismatch")
+            for row, ref in zip(rows, refs):
+                if ref is None:
+                    batch["skipped"] = int(batch["skipped"]) + 1
+                    continue
+                if source == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET and isinstance(
+                    ref, TigerBeetleTransferRef
+                ):
+                    _attach_runtime_bucket_journal_payload(row, ref)
+                batch["journaled"] = int(batch["journaled"]) + 1
+        except Exception as exc:
+            if not isinstance(exc, TigerBeetleClientTimeoutError):
+                _emit_progress(
+                    "source_batch_fallback_row_by_row",
+                    source=source,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                for row in rows:
+                    try:
+                        with session.begin_nested():
+                            ref = journal_one(row)
+                        if ref is None:
+                            batch["skipped"] = int(batch["skipped"]) + 1
+                        else:
+                            if (
+                                source == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
+                                and isinstance(ref, TigerBeetleTransferRef)
+                            ):
+                                _attach_runtime_bucket_journal_payload(row, ref)
+                            batch["journaled"] = int(batch["journaled"]) + 1
+                            if bool(getattr(args, "commit_each_row", False)):
+                                session.commit()
+                                _reset_session_identity_map(session)
+                    except Exception as row_exc:
+                        batch["failed"] = int(batch["failed"]) + 1
+                        error_counts = batch["error_counts"]
+                        if isinstance(error_counts, dict):
+                            error_key = _error_summary(row_exc)
+                            error_counts[error_key] = (
+                                int(error_counts.get(error_key, 0)) + 1
+                            )
+                        sample_errors = batch["sample_errors"]
+                        if isinstance(sample_errors, list) and len(sample_errors) < 5:
+                            sample_errors.append(
+                                {
+                                    "row_id": str(getattr(row, "id", "unknown")),
+                                    "error_type": type(row_exc).__name__,
+                                    "error": str(row_exc),
+                                }
+                            )
+                        if isinstance(row_exc, TigerBeetleClientTimeoutError):
+                            batch["stopped_early"] = True
+                            batch["stop_reason"] = "tigerbeetle_rpc_timeout"
+                            _emit_progress(
+                                "source_batch_stopped",
+                                source=source,
+                                reason=batch["stop_reason"],
+                                failed=batch["failed"],
+                                journaled=batch["journaled"],
+                                skipped=batch["skipped"],
+                            )
+                            break
+                _emit_progress(
+                    "source_batch_complete",
+                    source=source,
+                    selected=batch["selected"],
+                    journaled=batch["journaled"],
+                    skipped=batch["skipped"],
+                    failed=batch["failed"],
+                    stopped_early=batch["stopped_early"],
+                    stop_reason=batch["stop_reason"],
+                )
+                return batch
+
+            batch["failed"] = int(batch["failed"]) + 1
+            error_counts = batch["error_counts"]
+            if isinstance(error_counts, dict):
+                error_key = _error_summary(exc)
+                error_counts[error_key] = int(error_counts.get(error_key, 0)) + 1
+            sample_errors = batch["sample_errors"]
+            if isinstance(sample_errors, list) and len(sample_errors) < 5:
+                sample_errors.append(
+                    {
+                        "row_id": "batch",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                )
+            batch["stopped_early"] = True
+            batch["stop_reason"] = "tigerbeetle_rpc_timeout"
+            _emit_progress(
+                "source_batch_stopped",
+                source=source,
+                reason=batch["stop_reason"],
+                failed=batch["failed"],
+                journaled=batch["journaled"],
+                skipped=batch["skipped"],
+            )
+        _emit_progress(
+            "source_batch_complete",
+            source=source,
+            selected=batch["selected"],
+            journaled=batch["journaled"],
+            skipped=batch["skipped"],
+            failed=batch["failed"],
+            stopped_early=batch["stopped_early"],
+            stop_reason=batch["stop_reason"],
+        )
+        return batch
     for row in rows:
         if progress_interval == 1:
             _emit_progress(
@@ -1112,6 +1228,10 @@ def main() -> int:
                         session,
                         event,
                     ),
+                    journal_many=lambda rows: journal.journal_order_events(
+                        session,
+                        rows,
+                    ),
                 )
                 if events.scan_failed:
                     event_batch["failed"] = (
@@ -1137,6 +1257,10 @@ def main() -> int:
                         session,
                         execution,
                     ),
+                    journal_many=lambda rows: journal.journal_executions(
+                        session,
+                        rows,
+                    ),
                 )
                 batches.append(execution_batch)
                 batch_lengths.append(len(executions))
@@ -1160,6 +1284,10 @@ def main() -> int:
                         session,
                         metric,
                     ),
+                    journal_many=lambda rows: journal.journal_execution_tca_metrics(
+                        session,
+                        rows,
+                    ),
                 )
                 batches.append(tca_batch)
                 batch_lengths.append(len(tca_metrics))
@@ -1182,6 +1310,10 @@ def main() -> int:
                     journal_one=lambda bucket: journal.journal_runtime_ledger_bucket(
                         session,
                         bucket,
+                    ),
+                    journal_many=lambda rows: journal.journal_runtime_ledger_buckets(
+                        session,
+                        rows,
                     ),
                 )
                 batches.append(runtime_batch)

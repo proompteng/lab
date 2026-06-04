@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -182,12 +183,26 @@ class FakeJournal:
             )
         return SimpleNamespace(transfer_id="1")
 
+    def journal_order_events(
+        self,
+        session: Session,
+        events: Sequence[ExecutionOrderEvent],
+    ) -> list[object | None]:
+        return [self.journal_order_event(session, event) for event in events]
+
     def journal_execution(
         self, session: Session, execution: Execution
     ) -> object | None:
         del session
         self.executions.append(execution.alpaca_order_id)
         return SimpleNamespace(transfer_id="2")
+
+    def journal_executions(
+        self,
+        session: Session,
+        executions: Sequence[Execution],
+    ) -> list[object | None]:
+        return [self.journal_execution(session, execution) for execution in executions]
 
     def journal_execution_tca_metric(
         self,
@@ -198,6 +213,15 @@ class FakeJournal:
         self.tca_metrics.append(metric.symbol)
         return SimpleNamespace(transfer_id="3")
 
+    def journal_execution_tca_metrics(
+        self,
+        session: Session,
+        metrics: Sequence[ExecutionTCAMetric],
+    ) -> list[object | None]:
+        return [
+            self.journal_execution_tca_metric(session, metric) for metric in metrics
+        ]
+
     def journal_runtime_ledger_bucket(
         self,
         session: Session,
@@ -206,6 +230,15 @@ class FakeJournal:
         del session
         self.runtime_buckets.append(bucket.run_id)
         return SimpleNamespace(transfer_id="4")
+
+    def journal_runtime_ledger_buckets(
+        self,
+        session: Session,
+        buckets: Sequence[StrategyRuntimeLedgerBucket],
+    ) -> list[object | None]:
+        return [
+            self.journal_runtime_ledger_bucket(session, bucket) for bucket in buckets
+        ]
 
     def client_for_reconciliation(self) -> object:
         return self.reconciliation_client
@@ -226,6 +259,70 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         FakeJournal.instances = []
         self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(self.engine)
+
+    def _add_runtime_bucket_with_ref(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+    ) -> tuple[StrategyRuntimeLedgerBucket, TigerBeetleTransferRef]:
+        settings_obj = Settings(
+            TORGHUT_TIGERBEETLE_ENABLED=True,
+            TORGHUT_TIGERBEETLE_JOURNAL_ENABLED=True,
+        )
+        observed_at = datetime.now(timezone.utc)
+        bucket = StrategyRuntimeLedgerBucket(
+            run_id=run_id,
+            candidate_id="candidate",
+            hypothesis_id="hypothesis",
+            observed_stage="paper",
+            bucket_started_at=observed_at,
+            bucket_ended_at=observed_at,
+            account_label="paper",
+            runtime_strategy_name="demo-runtime",
+            strategy_family="demo",
+            fill_count=1,
+            decision_count=1,
+            submitted_order_count=1,
+            cancelled_order_count=0,
+            rejected_order_count=0,
+            unfilled_order_count=0,
+            closed_trade_count=1,
+            open_position_count=0,
+            filled_notional=Decimal("190.25"),
+            gross_strategy_pnl=Decimal("3.00"),
+            cost_amount=Decimal("0.50"),
+            net_strategy_pnl_after_costs=Decimal("2.50"),
+            post_cost_expectancy_bps=Decimal("12.50"),
+            ledger_schema_version="torghut.runtime-ledger.v1",
+            pnl_basis="post_cost",
+            payload_json={
+                "source_refs": ["postgres:execution_order_events:event-1"],
+                "source_row_counts": {"execution_order_events": 1},
+                "source_window_refs": ["kafka:torghut.trade-updates.v1:0:1-2"],
+            },
+        )
+        session.add(bucket)
+        session.flush()
+        ref = TigerBeetleTransferRef(
+            cluster_id=settings_obj.tigerbeetle_cluster_id,
+            transfer_id=str(340282366920938463463374607431768000 + int(bucket.id)),
+            transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+            ledger=LEDGER_USD_MICRO,
+            code=TRANSFER_CODE_FILL_POST,
+            amount=Decimal("2500000"),
+            status="created",
+            runtime_ledger_bucket_id=bucket.id,
+            source_type=script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            source_id=str(bucket.id),
+            payload_json={
+                "debit_account_id": "100100100100100100100100100100100101",
+                "credit_account_id": "100100100100100100100100100100100102",
+            },
+        )
+        session.add(ref)
+        session.flush()
+        return bucket, ref
 
     def test_sqlalchemy_dsn_normalizes_postgres_urls(self) -> None:
         self.assertEqual(
@@ -870,6 +967,94 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         )
         self.assertFalse(
             payload["tigerbeetle_journal_parity"]["promotion_authority"],
+        )
+
+    def test_source_batch_uses_batch_refs_for_runtime_attach_and_skips(self) -> None:
+        with Session(self.engine) as session:
+            bucket, ref = self._add_runtime_bucket_with_ref(
+                session,
+                run_id="runtime-run-batch-attach",
+            )
+            skipped = SimpleNamespace(id="skipped-runtime-row")
+
+            batch = script._journal_source_batch(
+                session,
+                args=argparse.Namespace(dry_run=False, progress_interval=0),
+                source=script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                rows=[bucket, skipped],
+                journal_one=lambda row: (_ for _ in ()).throw(
+                    AssertionError(f"unexpected row fallback: {row!r}")
+                ),
+                journal_many=lambda rows: [ref, None],
+            )
+
+        self.assertEqual(batch["journaled"], 1)
+        self.assertEqual(batch["skipped"], 1)
+        self.assertEqual(batch["failed"], 0)
+        payload = bucket.payload_json
+        self.assertIsInstance(payload, dict)
+        self.assertIn(
+            f"postgres:tigerbeetle_transfer_refs:{ref.id}",
+            payload["source_refs"],
+        )
+        self.assertEqual(
+            payload["tigerbeetle_transfer_ids"],
+            [ref.transfer_id],
+        )
+
+    def test_source_batch_falls_back_from_count_mismatch_and_stops_on_timeout(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket, ref = self._add_runtime_bucket_with_ref(
+                session,
+                run_id="runtime-run-fallback-attach",
+            )
+            bucket_id = bucket.id
+            ref_id = ref.id
+            timeout_row = SimpleNamespace(id="timeout-row")
+            seen: list[str] = []
+
+            def journal_one(row: object) -> object:
+                seen.append(str(getattr(row, "id", "unknown")))
+                if row is timeout_row:
+                    raise TigerBeetleClientTimeoutError(
+                        "tigerbeetle_create_transfers_timeout:10.000s"
+                    )
+                return ref
+
+            batch = script._journal_source_batch(
+                session,
+                args=argparse.Namespace(
+                    dry_run=False,
+                    progress_interval=0,
+                    commit_each_row=True,
+                ),
+                source=script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                rows=[bucket, timeout_row],
+                journal_one=journal_one,
+                journal_many=lambda rows: [],
+            )
+            persisted_bucket = session.get(StrategyRuntimeLedgerBucket, bucket_id)
+            self.assertIsNotNone(persisted_bucket)
+            assert persisted_bucket is not None
+            payload = persisted_bucket.payload_json
+
+        self.assertEqual(seen, [str(bucket_id), "timeout-row"])
+        self.assertEqual(batch["journaled"], 1)
+        self.assertEqual(batch["failed"], 1)
+        self.assertTrue(batch["stopped_early"])
+        self.assertEqual(batch["stop_reason"], "tigerbeetle_rpc_timeout")
+        self.assertEqual(
+            batch["error_counts"],
+            {
+                "TigerBeetleClientTimeoutError:tigerbeetle_create_transfers_timeout:10.000s": 1
+            },
+        )
+        self.assertIsInstance(payload, dict)
+        self.assertIn(
+            f"postgres:tigerbeetle_transfer_refs:{ref_id}",
+            payload["source_refs"],
         )
 
     def test_runtime_bucket_journal_materializes_signed_ref_and_is_idempotent(
