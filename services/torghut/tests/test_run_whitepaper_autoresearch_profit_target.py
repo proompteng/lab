@@ -8862,6 +8862,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "breakeven_transaction_cost_buffer_bps": "5",
                 "transaction_cost_buffer_bps": "1",
                 "post_cost_net_pnl_after_breakeven_transaction_cost_buffer": "520",
+                "required_seed_model_family_robustness": True,
+                "seed_model_family_robustness_status": (
+                    "required_not_materialized_by_single_frontier_replay"
+                ),
+                "seed_robustness_passed": False,
+                "seed_robustness_sample_count": 0,
+                "model_family_robustness_passed": False,
+                "model_family_robustness_family_count": 0,
                 "delay_adjusted_depth_fill_survival_evidence_present": True,
                 "delay_adjusted_depth_fill_survival_sample_count": 9,
                 "delay_adjusted_depth_fill_survival_rate": "0.85",
@@ -8981,6 +8989,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             row["post_cost_net_pnl_after_breakeven_transaction_cost_buffer"],
             "520",
         )
+        self.assertTrue(row["required_seed_model_family_robustness"])
+        self.assertEqual(
+            row["seed_model_family_robustness_status"],
+            "required_not_materialized_by_single_frontier_replay",
+        )
+        self.assertFalse(row["seed_robustness_passed"])
+        self.assertEqual(row["seed_robustness_sample_count"], 0)
+        self.assertFalse(row["model_family_robustness_passed"])
+        self.assertEqual(row["model_family_robustness_family_count"], 0)
         expected_runtime_ledger_handoff = {
             "status": "requires_runtime_ledger_materialization_before_authoritative_pnl",
             "runtime_ledger_required": True,
