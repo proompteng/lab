@@ -218,6 +218,10 @@ class TestFastReplayPreview(TestCase):
             payload["implemented_mechanisms"],
         )
         self.assertIn(
+            "dynamic_lead_lag_cross_asset_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
             "queue_position_survival_fill_stress",
             payload["implemented_mechanisms"],
         )
@@ -308,6 +312,32 @@ class TestFastReplayPreview(TestCase):
                     "source_papers"
                 ]
             },
+        )
+        self.assertIn("lead_lag_cross_asset_stress", row_payload)
+        self.assertFalse(row_payload["lead_lag_cross_asset_stress"]["proof_authority"])
+        self.assertFalse(
+            row_payload["lead_lag_cross_asset_stress"]["promotion_authority"]
+        )
+        self.assertEqual(
+            row_payload["lead_lag_cross_asset_stress"]["status"],
+            "preview_only_lead_lag_cross_asset_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2511.00390",
+            {
+                source["source_id"]
+                for source in row_payload["lead_lag_cross_asset_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn(
+            "lead_lag_cross_asset_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "lead_lag_cross_asset_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
         )
         self.assertIn("queue_survival_fill_stress", row_payload)
         self.assertFalse(row_payload["queue_survival_fill_stress"]["proof_authority"])
