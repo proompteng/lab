@@ -5610,6 +5610,7 @@ class SimpleTradingPipeline(TradingPipeline):
                     Execution.side,
                     Execution.filled_qty,
                     TradeDecision.decision_json,
+                    Execution.created_at,
                 )
                 .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
                 .where(
@@ -5634,7 +5635,12 @@ class SimpleTradingPipeline(TradingPipeline):
             return True
 
         signed_qty = Decimal("0")
-        for side, filled_qty, raw_decision_json in rows:
+        latest_fill_at: datetime | None = None
+        for row in rows:
+            side = row[0]
+            filled_qty = row[1]
+            raw_decision_json = row[2]
+            created_at = row[3] if len(row) > 3 else None
             if not isinstance(raw_decision_json, Mapping):
                 continue
             decision_json = cast(Mapping[str, Any], raw_decision_json)
@@ -5660,7 +5666,22 @@ class SimpleTradingPipeline(TradingPipeline):
                 signed_qty -= qty
             else:
                 signed_qty += qty
-        return abs(signed_qty) > _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON
+            if isinstance(created_at, datetime):
+                latest_fill_at = (
+                    created_at
+                    if latest_fill_at is None or created_at > latest_fill_at
+                    else latest_fill_at
+                )
+        if abs(signed_qty) <= _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON:
+            return False
+        if SimpleTradingPipeline._paper_route_target_symbol_has_flat_repair_snapshot(
+            session=session,
+            account_label=account_label,
+            symbol=normalized_symbol,
+            after=latest_fill_at,
+        ):
+            return False
+        return True
 
     @staticmethod
     def _paper_route_target_symbol_has_open_position(
