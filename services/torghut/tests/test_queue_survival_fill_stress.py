@@ -268,6 +268,117 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertFalse(bad_replay["promotion_allowed"])
         self.assertFalse(bad_replay["final_authority_ok"])
 
+    def test_queue_allocation_rule_sensitivity_downranks_time_priority_edge(
+        self,
+    ) -> None:
+        time_priority_edge = extract_queue_survival_fill_stress(
+            (
+                self._row(
+                    offset=1,
+                    price="100.00",
+                    queue_ratio="0.01",
+                    bid_size="1800",
+                    volume="900",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=2,
+                    price="100.01",
+                    queue_ratio="0.02",
+                    bid_size="1750",
+                    volume="1100",
+                    event_type="trade",
+                    fill_qty="700",
+                    status="filled",
+                ),
+                self._row(
+                    offset=3,
+                    price="100.02",
+                    queue_ratio="0.02",
+                    bid_size="1700",
+                    volume="950",
+                    event_type="trade",
+                    fill_qty="650",
+                    status="filled",
+                ),
+                self._row(
+                    offset=4,
+                    price="100.03",
+                    queue_ratio="0.03",
+                    bid_size="1650",
+                    volume="850",
+                    event_type="trade",
+                    fill_qty="600",
+                    status="filled",
+                ),
+            ),
+            direction=1,
+            max_notional=10_000,
+        )
+        neutral_queue = extract_queue_survival_fill_stress(
+            (
+                self._row(
+                    offset=1,
+                    price="100.00",
+                    queue_ratio="0.48",
+                    bid_size="1800",
+                    volume="350",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=2,
+                    price="100.01",
+                    queue_ratio="0.50",
+                    bid_size="1750",
+                    volume="400",
+                    event_type="trade",
+                    fill_qty="120",
+                    status="filled",
+                ),
+                self._row(
+                    offset=3,
+                    price="100.02",
+                    queue_ratio="0.52",
+                    bid_size="1700",
+                    volume="300",
+                    event_type="cancel",
+                    status="cancelled",
+                ),
+                self._row(
+                    offset=4,
+                    price="100.03",
+                    queue_ratio="0.49",
+                    bid_size="1650",
+                    volume="360",
+                    event_type="add",
+                ),
+            ),
+            direction=1,
+            max_notional=10_000,
+        )
+
+        self.assertGreater(
+            time_priority_edge.time_priority_edge_concentration_score,
+            neutral_queue.time_priority_edge_concentration_score,
+        )
+        self.assertGreater(
+            time_priority_edge.randomized_priority_fill_gap_proxy_bps,
+            neutral_queue.randomized_priority_fill_gap_proxy_bps,
+        )
+        self.assertGreater(
+            time_priority_edge.queue_allocation_rule_sensitivity_penalty_bps,
+            neutral_queue.queue_allocation_rule_sensitivity_penalty_bps,
+        )
+        payload = time_priority_edge.to_payload()
+        self.assertTrue(payload["queue_allocation_rule_sensitivity_preview"])
+        self.assertFalse(payload["proof_authority"])
+        self.assertFalse(payload["promotion_authority"])
+        self.assertFalse(payload["final_authority_ok"])
+        self.assertIn(
+            "queue_allocation_rule_sensitivity_penalty_bps",
+            payload["ranking_features"],
+        )
+
     def test_contract_embeds_recent_sources_and_requires_authoritative_proof(
         self,
     ) -> None:
@@ -292,6 +403,8 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertIn("arxiv-2511.15262", source_ids)
         self.assertIn("ssrn-6440898", source_ids)
         self.assertIn("ssrn-6730443", source_ids)
+        self.assertIn("ssrn-6574208", source_ids)
+        self.assertIn("ssrn-6578978", source_ids)
         self.assertTrue(contract["proof_neutrality"]["requires_exact_replay"])
         self.assertTrue(contract["proof_neutrality"]["requires_route_tca"])
         self.assertTrue(
@@ -300,10 +413,18 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertTrue(
             contract["proof_neutrality"]["requires_queue_reactive_replay_parity"]
         )
+        self.assertTrue(
+            contract["proof_neutrality"]["requires_queue_allocation_rule_audit"]
+        )
         self.assertTrue(contract["proof_neutrality"]["requires_runtime_ledger"])
         self.assertTrue(
             contract["proof_neutrality"][
                 "rejects_queue_reactive_replay_parity_as_pnl_proof"
+            ]
+        )
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_time_priority_edge_as_mechanism_neutral_pnl_proof"
             ]
         )
         self.assertFalse(contract["proof_neutrality"]["promotion_proof"])

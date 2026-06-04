@@ -421,6 +421,22 @@ class TestFastReplayPreview(TestCase):
                 for source in row_payload["queue_survival_fill_stress"]["source_papers"]
             },
         )
+        self.assertIn(
+            "ssrn-6574208",
+            {
+                source["source_id"]
+                for source in row_payload["queue_survival_fill_stress"]["source_papers"]
+            },
+        )
+        self.assertIn(
+            "queue_allocation_rule_sensitivity_penalty_bps",
+            row_payload["queue_survival_fill_stress"]["ranking_features"],
+        )
+        self.assertTrue(
+            row_payload["queue_survival_fill_stress"][
+                "queue_allocation_rule_sensitivity_preview"
+            ]
+        )
         self.assertIn("feed_lag_liquidity_stress", row_payload)
         self.assertFalse(row_payload["feed_lag_liquidity_stress"]["proof_authority"])
         self.assertFalse(

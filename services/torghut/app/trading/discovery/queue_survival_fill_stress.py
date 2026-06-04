@@ -16,9 +16,9 @@ from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v2"
+QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v3"
 QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION = (
-    "torghut.queue-survival-fill-stress-contract.v2"
+    "torghut.queue-survival-fill-stress-contract.v3"
 )
 QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL = "queue_survival_fill_stress_preview_only_exact_replay_route_tca_order_lifecycle_runtime_ledger_required"
 QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
@@ -56,6 +56,20 @@ QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
         "title": "Reinforcement Learning in Queue-Reactive Models: Application to Optimal Execution",
         "date": "2025-11-19",
         "mechanism": "queue_reactive_counterfactual_execution_policy_depth_state_stress",
+    },
+    {
+        "source_id": "ssrn-6574208",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6574208",
+        "title": "Random Queue Priority in Continuous Limit Order Books: Evidence from a Large-Scale Controlled Simulation",
+        "date": "2026-04-14",
+        "mechanism": "allocation_rule_execution_quality_bias_time_priority_sensitivity",
+    },
+    {
+        "source_id": "ssrn-6578978",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6578978",
+        "title": "Beyond Time Priority: A Taxonomy of Queue Allocation Mechanisms in Continuous Limit Order Books",
+        "date": "2026-04-15",
+        "mechanism": "queue_allocation_mechanism_taxonomy_priority_rule_fragility",
     },
 )
 
@@ -109,6 +123,9 @@ class QueueSurvivalFillStressSummary:
     queue_reactive_event_mix_l1: float
     order_size_distribution_wasserstein_proxy: float
     queue_reactive_replay_parity_penalty_bps: float
+    time_priority_edge_concentration_score: float
+    randomized_priority_fill_gap_proxy_bps: float
+    queue_allocation_rule_sensitivity_penalty_bps: float
     estimated_limit_fill_probability: float
     nonfill_opportunity_cost_bps: float
     adverse_selection_after_touch_bps: float
@@ -150,6 +167,15 @@ class QueueSurvivalFillStressSummary:
             "queue_reactive_replay_parity_penalty_bps": _stable_float(
                 self.queue_reactive_replay_parity_penalty_bps
             ),
+            "time_priority_edge_concentration_score": _stable_float(
+                self.time_priority_edge_concentration_score
+            ),
+            "randomized_priority_fill_gap_proxy_bps": _stable_float(
+                self.randomized_priority_fill_gap_proxy_bps
+            ),
+            "queue_allocation_rule_sensitivity_penalty_bps": _stable_float(
+                self.queue_allocation_rule_sensitivity_penalty_bps
+            ),
             "estimated_limit_fill_probability": _stable_float(
                 self.estimated_limit_fill_probability
             ),
@@ -184,6 +210,15 @@ class QueueSurvivalFillStressSummary:
                 "queue_reactive_replay_parity_penalty_bps": _stable_float(
                     self.queue_reactive_replay_parity_penalty_bps
                 ),
+                "time_priority_edge_concentration_score": _stable_float(
+                    self.time_priority_edge_concentration_score
+                ),
+                "randomized_priority_fill_gap_proxy_bps": _stable_float(
+                    self.randomized_priority_fill_gap_proxy_bps
+                ),
+                "queue_allocation_rule_sensitivity_penalty_bps": _stable_float(
+                    self.queue_allocation_rule_sensitivity_penalty_bps
+                ),
                 "nonfill_opportunity_cost_bps": _stable_float(
                     self.nonfill_opportunity_cost_bps
                 ),
@@ -199,6 +234,7 @@ class QueueSurvivalFillStressSummary:
             "limit_fill_probability_preview": True,
             "queue_reactive_replay_parity_preview": True,
             "order_size_distribution_preview": True,
+            "queue_allocation_rule_sensitivity_preview": True,
             "research_ranking_only": True,
             "prefilter_only": True,
             "promotion_proof": False,
@@ -229,6 +265,9 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "queue_reactive_event_mix_l1",
             "order_size_distribution_wasserstein_proxy",
             "queue_reactive_replay_parity_penalty_bps",
+            "time_priority_edge_concentration_score",
+            "randomized_priority_fill_gap_proxy_bps",
+            "queue_allocation_rule_sensitivity_penalty_bps",
             "nonfill_opportunity_cost_bps",
             "adverse_selection_after_touch_bps",
         ],
@@ -245,10 +284,12 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "requires_route_tca": True,
             "requires_order_lifecycle_fill_evidence": True,
             "requires_queue_reactive_replay_parity": True,
+            "requires_queue_allocation_rule_audit": True,
             "requires_runtime_ledger": True,
             "rejects_queue_position_free_fill_assumptions": True,
             "rejects_queue_reactive_replay_parity_as_pnl_proof": True,
             "rejects_order_size_distribution_proxy_as_fill_authority": True,
+            "rejects_time_priority_edge_as_mechanism_neutral_pnl_proof": True,
         },
     }
 
@@ -383,6 +424,23 @@ def extract_queue_survival_fill_stress(
         cancellation_or_reject_share=cancellation_or_reject_share,
         observed_queue_position_count=observed_queue_position_count,
     )
+    time_priority_edge_concentration_score = _time_priority_edge_concentration_score(
+        median_queue_ahead_ratio=median_queue_ahead_ratio,
+        execution_turnover_ratio=execution_turnover_ratio,
+        cancellation_or_reject_share=cancellation_or_reject_share,
+        fill_probability=estimated_limit_fill_probability,
+        observed_queue_position_count=observed_queue_position_count,
+    )
+    randomized_priority_fill_gap_proxy_bps = _randomized_priority_fill_gap_proxy_bps(
+        time_priority_edge_concentration_score=time_priority_edge_concentration_score,
+        median_spread_bps=_median(tuple(spread for spread in spreads if spread > 0.0)),
+        visible_depth_notional_shortfall_share=visible_depth_notional_shortfall_share,
+    )
+    queue_allocation_rule_sensitivity_penalty_bps = (
+        randomized_priority_fill_gap_proxy_bps
+        + time_priority_edge_concentration_score * 5.0
+        + queue_reactive_event_mix_l1 * 1.5
+    )
     nonfill_opportunity_cost_bps = _nonfill_opportunity_cost_bps(
         valid_prices,
         direction=signed_direction,
@@ -405,6 +463,7 @@ def extract_queue_survival_fill_stress(
     replay_rank_penalty_bps = (
         queue_delay_penalty_bps
         + queue_reactive_replay_parity_penalty_bps
+        + queue_allocation_rule_sensitivity_penalty_bps
         + nonfill_opportunity_cost_bps
         + adverse_selection_after_touch_bps
         + missing_penalty_bps
@@ -423,6 +482,9 @@ def extract_queue_survival_fill_stress(
         queue_reactive_event_mix_l1=queue_reactive_event_mix_l1,
         order_size_distribution_wasserstein_proxy=order_size_distribution_wasserstein_proxy,
         queue_reactive_replay_parity_penalty_bps=queue_reactive_replay_parity_penalty_bps,
+        time_priority_edge_concentration_score=time_priority_edge_concentration_score,
+        randomized_priority_fill_gap_proxy_bps=randomized_priority_fill_gap_proxy_bps,
+        queue_allocation_rule_sensitivity_penalty_bps=queue_allocation_rule_sensitivity_penalty_bps,
         estimated_limit_fill_probability=estimated_limit_fill_probability,
         nonfill_opportunity_cost_bps=nonfill_opportunity_cost_bps,
         adverse_selection_after_touch_bps=adverse_selection_after_touch_bps,
@@ -471,6 +533,60 @@ def _estimated_fill_probability(
     )
     probability = 1.0 / (1.0 + exp(-logit))
     return min(0.98, max(0.02, probability))
+
+
+def _time_priority_edge_concentration_score(
+    *,
+    median_queue_ahead_ratio: float,
+    execution_turnover_ratio: float,
+    cancellation_or_reject_share: float,
+    fill_probability: float,
+    observed_queue_position_count: int,
+) -> float:
+    """Bounded proxy for FIFO-specific early-queue ownership reliance.
+
+    Recent queue-allocation mechanism papers show that measured execution
+    quality can depend on the priority rule itself. This proxy does not
+    estimate fills; it downranks replay rows whose apparent edge is highly
+    concentrated in being early in a price-time queue.
+    """
+
+    if observed_queue_position_count <= 0:
+        return 0.0
+    front_of_queue_advantage = max(0.0, 0.50 - median_queue_ahead_ratio) * 2.0
+    turnover_support = min(1.0, max(0.0, execution_turnover_ratio) / 2.0)
+    cancellation_survival = max(0.0, 1.0 - cancellation_or_reject_share)
+    return min(
+        1.0,
+        front_of_queue_advantage
+        * turnover_support
+        * cancellation_survival
+        * max(0.0, min(1.0, fill_probability)),
+    )
+
+
+def _randomized_priority_fill_gap_proxy_bps(
+    *,
+    time_priority_edge_concentration_score: float,
+    median_spread_bps: float,
+    visible_depth_notional_shortfall_share: float,
+) -> float:
+    """Estimate ranking penalty for mechanism-specific time-priority edge.
+
+    SSRN:6574208 reports that randomized priority reduced the fast/slow
+    execution-quality gap by 35.6% in a controlled dual-engine simulation.
+    Torghut uses the effect size only as a stress multiplier and never as fill,
+    PnL, or promotion authority.
+    """
+
+    clob_speed_gap_decline_fraction = 0.356
+    spread_floor_bps = max(1.0, median_spread_bps)
+    fifo_edge_bps = time_priority_edge_concentration_score * spread_floor_bps * 2.0
+    depth_uncertainty_bps = visible_depth_notional_shortfall_share * 1.5
+    return min(
+        25.0,
+        fifo_edge_bps * clob_speed_gap_decline_fraction + depth_uncertainty_bps,
+    )
 
 
 def _queue_reactive_event_mix_l1(
