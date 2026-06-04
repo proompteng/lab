@@ -9,7 +9,6 @@ FROM ${NODE_BASE_IMAGE}:${NODE_VERSION}-bookworm AS base
 ARG BUN_VERSION
 ENV BUN_INSTALL="/root/.bun"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
-ENV HUSKY=0
 ENV CI=true
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
 WORKDIR /workspace

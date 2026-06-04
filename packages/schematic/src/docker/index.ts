@@ -3,7 +3,6 @@ ARG BUN_VERSION=1.3.14
 
 FROM oven/bun:${'$'}{BUN_VERSION} AS builder
 WORKDIR /workspace
-ENV HUSKY=0
 
 COPY bun.lock package.json tsconfig.base.json tsconfig.json turbo.json ./
 COPY services ./services

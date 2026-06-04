@@ -89,8 +89,7 @@
     }
   },
   "scripts": {
-    "build": "tsc --project tsconfig.json --pretty false",
-    "prepare": "bun run build",
+    "build": "node -e \"require('child_process').execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '--project', 'tsconfig.json', '--pretty', 'false'], { stdio: 'inherit' })\"",
     "test": "bun test"
   },
   "devDependencies": {

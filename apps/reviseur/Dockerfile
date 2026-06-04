@@ -11,13 +11,11 @@ RUN apk add --no-cache bash curl
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
 
 COPY package.json bun.lock .npmrc* tsconfig.base.json ./
-COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY --parents apps/*/package.json ./
 COPY --parents packages/*/package.json ./
 COPY --parents services/*/package.json ./
 # Root workspaces include `services/jangar/*`, so include nested workspace manifests too.
 COPY --parents services/jangar/*/package.json ./
-ENV HUSKY=0
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM deps AS builder

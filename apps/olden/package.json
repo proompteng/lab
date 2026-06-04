@@ -6,7 +6,7 @@
     "build": "next build",
     "dev": "next dev --turbo",
     "start": "next start",
-    "postinstall": "fumadocs-mdx",
+    "fumadocs:generate": "node node_modules/fumadocs-mdx/dist/bin.js",
     "test": "bun test",
     "lint": "bunx oxfmt --check .",
     "format": "bunx oxfmt .",

@@ -6,7 +6,6 @@ ARG CODEX_VERSION=latest
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps
 WORKDIR /app
-ENV HUSKY=0
 
 COPY package.json bun.lock tsconfig.base.json ./
 COPY packages/codex/package.json ./packages/codex/package.json
@@ -29,8 +28,7 @@ FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS runner
 ARG NODE_VERSION
 ARG CODEX_VERSION
 WORKDIR /app
-ENV NODE_ENV=production \
-  HUSKY=0
+ENV NODE_ENV=production
 
 RUN --mount=type=cache,target=/var/cache/apt \
   --mount=type=cache,target=/var/lib/apt/lists \

@@ -9,7 +9,6 @@ RUN apk add --no-cache python3 make g++
 
 # Copy monorepo manifests and scripts so workspace installs can run
 COPY package.json bun.lock .npmrc* ./
-COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY --parents apps/*/package.json ./
 COPY --parents packages/*/package.json ./
 COPY --parents services/*/package.json ./
@@ -21,7 +20,6 @@ COPY apps/kitty-krew ./apps/kitty-krew
 COPY packages ./packages
 
 # Install dependencies for the kitty-krew workspace using the root Bun lockfile
-ENV HUSKY=0
 RUN bun install --frozen-lockfile --ignore-scripts
 
 # Build the application

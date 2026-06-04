@@ -6,7 +6,6 @@ ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps
 WORKDIR /app
-ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
 # Turbo prune keeps the root workspace list; drop entries that don't exist in the pruned context.
@@ -20,7 +19,6 @@ RUN bun --cwd=packages/discord run build
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS deps-prod
 WORKDIR /app
-ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
 RUN bun -e "const fs = require('fs'); const p = 'package.json'; const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/*' && entry !== 'services/jangar/agentctl'); fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\\n'); }"

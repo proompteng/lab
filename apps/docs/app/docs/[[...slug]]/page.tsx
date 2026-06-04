@@ -5,6 +5,8 @@ import { notFound } from 'next/navigation'
 import { getPageImage, source } from '@/lib/source'
 import { getMDXComponents } from '@/mdx-components'
 
+const relativeLinkSource = source as unknown as Parameters<typeof createRelativeLink>[0]
+
 export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const params = await props.params
   const page = source.getPage(params.slug)
@@ -20,7 +22,7 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
         <MDX
           components={getMDXComponents({
             // this allows you to link to other pages with relative file paths
-            a: createRelativeLink(source, page),
+            a: createRelativeLink(relativeLinkSource, page),
           })}
         />
       </DocsBody>
