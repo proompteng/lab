@@ -18,10 +18,10 @@ from typing import Any, Callable, cast
 from app.trading.models import SignalEnvelope
 
 NONLINEAR_IMPACT_EXECUTION_STRESS_SCHEMA_VERSION = (
-    "torghut.nonlinear-impact-execution-stress.v1"
+    "torghut.nonlinear-impact-execution-stress.v2"
 )
 NONLINEAR_IMPACT_EXECUTION_STRESS_CONTRACT_SCHEMA_VERSION = (
-    "torghut.nonlinear-impact-execution-stress-contract.v1"
+    "torghut.nonlinear-impact-execution-stress-contract.v2"
 )
 NONLINEAR_IMPACT_EXECUTION_STRESS_PROOF_SEMANTICS_LABEL = (
     "nonlinear_impact_execution_stress_preview_only_exact_replay_route_tca_"
@@ -42,10 +42,18 @@ NONLINEAR_IMPACT_EXECUTION_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...]
         "date": "2025-08-04",
         "mechanism": "child_order_square_root_impact_with_inverse_square_root_time_decay",
     },
+    {
+        "source_id": "arxiv-2510.19950",
+        "url": "https://arxiv.org/abs/2510.19950",
+        "title": "Robust Reinforcement Learning in Finance: Modeling Market Impact with Elliptic Uncertainty Sets",
+        "date": "2026-01-23",
+        "mechanism": "directional_market_impact_uncertainty_set_worst_case_participation_stress",
+    },
 )
 NONLINEAR_IMPACT_EXECUTION_STRESS_SOURCE_MARKERS: tuple[str, ...] = (
     "realistic_market_impact_arxiv_2603_29086_2026",
     "double_square_root_impact_arxiv_2502_16246_2025",
+    "elliptic_market_impact_uncertainty_arxiv_2510_19950_2026",
 )
 
 _PRICE_FIELDS = ("price", "mid_price", "mid", "mark", "last_price", "close")
@@ -101,6 +109,9 @@ class NonlinearImpactExecutionStressSummary:
     square_root_impact_cost_bps: float
     linear_cost_bps: float
     nonlinear_cost_uplift_bps: float
+    directional_impact_uncertainty_score: float
+    elliptic_uncertainty_worst_case_cost_bps: float
+    robust_impact_cost_bps: float
     permanent_impact_residual_bps: float
     impact_decay_shortfall_bps: float
     adverse_decay_reversal_share: float
@@ -136,6 +147,13 @@ class NonlinearImpactExecutionStressSummary:
             ),
             "linear_cost_bps": _stable_float(self.linear_cost_bps),
             "nonlinear_cost_uplift_bps": _stable_float(self.nonlinear_cost_uplift_bps),
+            "directional_impact_uncertainty_score": _stable_float(
+                self.directional_impact_uncertainty_score
+            ),
+            "elliptic_uncertainty_worst_case_cost_bps": _stable_float(
+                self.elliptic_uncertainty_worst_case_cost_bps
+            ),
+            "robust_impact_cost_bps": _stable_float(self.robust_impact_cost_bps),
             "permanent_impact_residual_bps": _stable_float(
                 self.permanent_impact_residual_bps
             ),
@@ -165,6 +183,13 @@ class NonlinearImpactExecutionStressSummary:
                 "nonlinear_cost_uplift_bps": _stable_float(
                     self.nonlinear_cost_uplift_bps
                 ),
+                "directional_impact_uncertainty_score": _stable_float(
+                    self.directional_impact_uncertainty_score
+                ),
+                "elliptic_uncertainty_worst_case_cost_bps": _stable_float(
+                    self.elliptic_uncertainty_worst_case_cost_bps
+                ),
+                "robust_impact_cost_bps": _stable_float(self.robust_impact_cost_bps),
                 "permanent_impact_residual_bps": _stable_float(
                     self.permanent_impact_residual_bps
                 ),
@@ -180,6 +205,7 @@ class NonlinearImpactExecutionStressSummary:
             "square_root_market_impact_preview": True,
             "permanent_impact_decay_preview": True,
             "participation_rate_capacity_preview": True,
+            "directional_elliptic_uncertainty_preview": True,
             "trade_level_logging_required_downstream": True,
             "research_ranking_only": True,
             "prefilter_only": True,
@@ -208,6 +234,9 @@ def nonlinear_impact_execution_stress_contract() -> dict[str, Any]:
             "square_root_impact_cost_bps",
             "participation_rate_tail",
             "nonlinear_cost_uplift_bps",
+            "directional_impact_uncertainty_score",
+            "elliptic_uncertainty_worst_case_cost_bps",
+            "robust_impact_cost_bps",
             "permanent_impact_residual_bps",
             "impact_decay_shortfall_bps",
             "adverse_decay_reversal_share",
@@ -224,7 +253,9 @@ def nonlinear_impact_execution_stress_contract() -> dict[str, Any]:
             "requires_order_lifecycle_fill_evidence": True,
             "requires_runtime_ledger": True,
             "requires_trade_level_logging": True,
+            "requires_directional_impact_uncertainty_audit": True,
             "rejects_model_cost_as_realized_pnl_authority": True,
+            "rejects_robust_impact_model_as_realized_pnl_authority": True,
             "rejects_synthetic_fill_authority": True,
         },
     }
@@ -312,6 +343,23 @@ def extract_nonlinear_impact_execution_stress(
     )
     linear_cost_bps = _weighted_average(linear_costs) if linear_costs else 0.0
     nonlinear_cost_uplift_bps = max(0.0, square_root_impact_cost_bps - linear_cost_bps)
+    directional_impact_uncertainty_score = _directional_impact_uncertainty_score(
+        median_participation_rate=median_participation_rate,
+        p90_participation_rate=p90_participation_rate,
+        high_participation_share=high_participation_share,
+        extreme_participation_share=extreme_participation_share,
+    )
+    # arXiv:2510.19950 motivates directional worst-case impact under elliptic
+    # uncertainty sets.  This bounded proxy is ranking-only: it perturbs modeled
+    # impact cost for stress ordering and cannot stand in for realized fill/PnL.
+    elliptic_uncertainty_worst_case_cost_bps = _elliptic_uncertainty_cost_bps(
+        square_root_impact_cost_bps=square_root_impact_cost_bps,
+        nonlinear_cost_uplift_bps=nonlinear_cost_uplift_bps,
+        directional_impact_uncertainty_score=directional_impact_uncertainty_score,
+    )
+    robust_impact_cost_bps = (
+        square_root_impact_cost_bps + elliptic_uncertainty_worst_case_cost_bps
+    )
 
     half_life_events = (
         median(decay_half_life_values)
@@ -346,6 +394,8 @@ def extract_nonlinear_impact_execution_stress(
         0.0,
         square_root_impact_cost_bps * 0.65
         + nonlinear_cost_uplift_bps * 0.80
+        + elliptic_uncertainty_worst_case_cost_bps * 0.55
+        + directional_impact_uncertainty_score * 6.0
         + permanent_impact_residual_bps * 0.25
         + impact_decay_shortfall_bps * 0.35
         + high_participation_share * 10.0
@@ -380,6 +430,9 @@ def extract_nonlinear_impact_execution_stress(
         square_root_impact_cost_bps=square_root_impact_cost_bps,
         linear_cost_bps=linear_cost_bps,
         nonlinear_cost_uplift_bps=nonlinear_cost_uplift_bps,
+        directional_impact_uncertainty_score=directional_impact_uncertainty_score,
+        elliptic_uncertainty_worst_case_cost_bps=elliptic_uncertainty_worst_case_cost_bps,
+        robust_impact_cost_bps=robust_impact_cost_bps,
         permanent_impact_residual_bps=permanent_impact_residual_bps,
         impact_decay_shortfall_bps=impact_decay_shortfall_bps,
         adverse_decay_reversal_share=adverse_decay_reversal_share,
@@ -387,6 +440,37 @@ def extract_nonlinear_impact_execution_stress(
         warnings=tuple(sorted(warnings)),
         feature_schema_hash=build_nonlinear_impact_execution_stress_schema_hash(),
     )
+
+
+def _directional_impact_uncertainty_score(
+    *,
+    median_participation_rate: float,
+    p90_participation_rate: float,
+    high_participation_share: float,
+    extreme_participation_share: float,
+) -> float:
+    participation_tail = min(1.0, max(0.0, p90_participation_rate) / 0.25)
+    median_pressure = min(1.0, max(0.0, median_participation_rate) / 0.10)
+    return min(
+        1.0,
+        median_pressure * 0.25
+        + participation_tail * 0.35
+        + high_participation_share * 0.25
+        + extreme_participation_share * 0.35,
+    )
+
+
+def _elliptic_uncertainty_cost_bps(
+    *,
+    square_root_impact_cost_bps: float,
+    nonlinear_cost_uplift_bps: float,
+    directional_impact_uncertainty_score: float,
+) -> float:
+    impact_base = (
+        max(0.0, square_root_impact_cost_bps)
+        + max(0.0, nonlinear_cost_uplift_bps) * 0.50
+    )
+    return impact_base * min(1.0, max(0.0, directional_impact_uncertainty_score))
 
 
 def _extract_price(row: SignalEnvelope) -> float | None:
