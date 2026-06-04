@@ -644,6 +644,35 @@ class TigerBeetleReconciliationRun(Base, TimestampMixin):
     source_missing_count: Mapped[int] = mapped_column(
         BigInteger(), nullable=False, server_default=text("0")
     )
+    account_ref_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    transfer_ref_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    runtime_ledger_ref_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    runtime_ledger_signed_ref_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    runtime_ledger_missing_signed_ref_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    runtime_ledger_missing_account_ref_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    stable_ref_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    stable_ref_missing_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    stable_ref_mismatch_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    blockers_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    ref_counts_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (

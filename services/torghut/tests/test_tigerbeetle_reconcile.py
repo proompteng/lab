@@ -75,6 +75,7 @@ from app.trading.tigerbeetle_reconcile import (
     _usd_to_micros,
     _uuid_or_none,
     latest_tigerbeetle_reconciliation_payload,
+    latest_tigerbeetle_reconciliation_status_payload,
     reconcile_tigerbeetle_transfers,
     tigerbeetle_ref_counts,
 )
@@ -217,6 +218,18 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["blockers"], [])
             self.assertEqual(payload["checked_transfer_count"], 1)
+            run = session.execute(select(TigerBeetleReconciliationRun)).scalar_one()
+            self.assertEqual(run.blockers_json, [])
+            self.assertEqual(run.transfer_ref_count, 1)
+            self.assertIsInstance(run.ref_counts_json, dict)
+            compact_payload = latest_tigerbeetle_reconciliation_status_payload(
+                session,
+                cluster_id=2001,
+            )
+            self.assertIsNotNone(compact_payload)
+            assert compact_payload is not None
+            self.assertTrue(compact_payload["compact_status"])
+            self.assertEqual(compact_payload["transfer_ref_count"], 1)
 
     def test_reconciliation_closes_owned_tigerbeetle_client(self) -> None:
         with Session(self.engine) as session:

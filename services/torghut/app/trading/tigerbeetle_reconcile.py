@@ -75,6 +75,31 @@ BLOCKER_STABLE_REF_PAYLOAD_MISMATCH = "tigerbeetle_stable_ref_payload_mismatch"
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_client_unavailable"
 BLOCKER_RECONCILIATION_STALE = "tigerbeetle_reconciliation_stale"
 SAMPLE_LIMIT = 50
+REF_COUNT_FIELD_NAMES = (
+    "account_ref_count",
+    "transfer_ref_count",
+    "runtime_ledger_ref_count",
+    "runtime_ledger_signed_ref_count",
+    "runtime_ledger_missing_signed_ref_count",
+    "runtime_ledger_missing_account_ref_count",
+    "stable_ref_count",
+    "stable_ref_missing_count",
+    "stable_ref_mismatch_count",
+)
+COMPACT_REF_COUNT_KEYS = (
+    *REF_COUNT_FIELD_NAMES,
+    "order_event_ref_count",
+    "execution_ref_count",
+    "cost_ref_count",
+    "runtime_ledger_required_bucket_count",
+    "runtime_ledger_account_ref_count",
+    "stable_ref_sample_size",
+    "runtime_ledger_ref_sample_size",
+)
+COMPACT_REF_COUNT_FLAG_KEYS = (
+    "stable_ref_diagnostic_bounded",
+    "runtime_ledger_ref_coverage_bounded",
+)
 
 
 def _attr(value: object, name: str) -> Any:
@@ -358,6 +383,62 @@ def _payload_string_list(payload: Mapping[str, object], key: str) -> list[str]:
     if value is None:
         return []
     return [str(value)]
+
+
+def _source_materialization_payload() -> dict[str, object]:
+    return {
+        "account_ref_table": "tigerbeetle_account_refs",
+        "transfer_ref_table": "tigerbeetle_transfer_refs",
+        "reconciliation_run_table": "tigerbeetle_reconciliation_runs",
+        "runtime_ledger_source_table": "strategy_runtime_ledger_buckets",
+        "runtime_ledger_source_type": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+        "runtime_ledger_transfer_kind": TRANSFER_KIND_RUNTIME_NET_PNL,
+    }
+
+
+def _compact_reconciliation_ref_counts(
+    ref_counts: Mapping[str, object],
+    *,
+    cluster_id: int,
+) -> dict[str, object]:
+    raw_by_source = ref_counts.get("by_source_type")
+    by_source: dict[str, int] = {}
+    if isinstance(raw_by_source, Mapping):
+        for source_type, count in cast(Mapping[object, object], raw_by_source).items():
+            by_source[str(source_type)] = _payload_int({"count": count}, "count")
+
+    runtime_ledger_ref_count = _payload_int(ref_counts, "runtime_ledger_ref_count")
+    if runtime_ledger_ref_count and SOURCE_TYPE_RUNTIME_LEDGER_BUCKET not in by_source:
+        by_source[SOURCE_TYPE_RUNTIME_LEDGER_BUCKET] = runtime_ledger_ref_count
+
+    raw_source_materialization = ref_counts.get("source_materialization")
+    source_materialization = (
+        dict(cast(Mapping[str, object], raw_source_materialization))
+        if isinstance(raw_source_materialization, Mapping)
+        else _source_materialization_payload()
+    )
+    compact: dict[str, object] = {
+        "schema_version": "torghut.tigerbeetle-ref-counts.v1",
+        "cluster_id": cluster_id,
+        "by_source_type": by_source,
+        "source_materialization": source_materialization,
+    }
+    for key in COMPACT_REF_COUNT_KEYS:
+        if key in REF_COUNT_FIELD_NAMES or key in ref_counts:
+            compact[key] = _payload_int(ref_counts, key)
+    for key in COMPACT_REF_COUNT_FLAG_KEYS:
+        if key in ref_counts:
+            compact[key] = bool(ref_counts[key])
+    compact.setdefault(
+        "order_event_ref_count",
+        by_source.get(SOURCE_TYPE_EXECUTION_ORDER_EVENT, 0),
+    )
+    compact.setdefault("execution_ref_count", by_source.get(SOURCE_TYPE_EXECUTION, 0))
+    compact.setdefault(
+        "cost_ref_count",
+        by_source.get(SOURCE_TYPE_EXECUTION_TCA_METRIC, 0),
+    )
+    return compact
 
 
 def _as_aware_utc(value: datetime) -> datetime:
@@ -902,17 +983,7 @@ def _latest_run_payload(
     ref_count_field_names = sorted(
         {
             key
-            for key in (
-                "account_ref_count",
-                "transfer_ref_count",
-                "runtime_ledger_ref_count",
-                "runtime_ledger_signed_ref_count",
-                "runtime_ledger_missing_signed_ref_count",
-                "runtime_ledger_missing_account_ref_count",
-                "stable_ref_count",
-                "stable_ref_missing_count",
-                "stable_ref_mismatch_count",
-            )
+            for key in REF_COUNT_FIELD_NAMES
             if key in payload or key in ref_counts
         }
     )
@@ -1055,6 +1126,171 @@ def _latest_run_payload(
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
         "blockers": blockers,
     }
+
+
+def _latest_run_compact_status_payload(
+    row: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if row is None:
+        return None
+    raw_blockers_json = row.get("blockers_json")
+    raw_ref_counts_json = row.get("ref_counts_json")
+    if raw_blockers_json is None and raw_ref_counts_json is None:
+        return None
+
+    blockers = _payload_string_list({"blockers": raw_blockers_json}, "blockers")
+    raw_ref_counts = (
+        cast(Mapping[str, object], raw_ref_counts_json)
+        if isinstance(raw_ref_counts_json, Mapping)
+        else cast(Mapping[str, object], {})
+    )
+    ref_count_source = dict(raw_ref_counts)
+    for key in REF_COUNT_FIELD_NAMES:
+        ref_count_source[key] = _payload_int(row, key)
+
+    cluster_id = _payload_int(row, "cluster_id")
+    ref_counts = _compact_reconciliation_ref_counts(
+        ref_count_source,
+        cluster_id=cluster_id,
+    )
+
+    raw_started_at = row.get("started_at")
+    started_at = (
+        _as_aware_utc(raw_started_at)
+        if isinstance(raw_started_at, datetime)
+        else datetime.now(timezone.utc)
+    )
+    raw_finished_at = row.get("finished_at")
+    finished_at = (
+        _as_aware_utc(raw_finished_at)
+        if isinstance(raw_finished_at, datetime)
+        else None
+    )
+    observed_at = finished_at or started_at
+    age_seconds = max(
+        0,
+        int((datetime.now(timezone.utc) - observed_at).total_seconds()),
+    )
+    max_age_seconds = max(1, int(settings.tigerbeetle_reconcile_max_age_seconds))
+    stale = age_seconds > max_age_seconds
+    status = str(row.get("status") or "unknown")
+    source_missing_count = _payload_int(row, "source_missing_count")
+    mismatched_transfer_count = _payload_int(row, "mismatched_transfer_count")
+    client_lookup_ok = status == "ok" and BLOCKER_CLIENT_UNAVAILABLE not in blockers
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "ok": status == "ok" and not blockers,
+        "cluster_id": cluster_id,
+        "status": status,
+        "age_seconds": age_seconds,
+        "reconciliation_max_age_seconds": max_age_seconds,
+        "reconciliation_stale": stale,
+        "reconciliation_freshness": {
+            "observed_at": observed_at.isoformat(),
+            "age_seconds": age_seconds,
+            "max_age_seconds": max_age_seconds,
+            "stale": stale,
+        },
+        "authority": "accounting_parity_only",
+        "promotion_authority": False,
+        "overrides_runtime_ledger_authority": False,
+        "client_lookup_ok": client_lookup_ok,
+        "client_error": None,
+        "account_ref_count": _payload_int(row, "account_ref_count"),
+        "transfer_ref_count": _payload_int(row, "transfer_ref_count"),
+        "checked_transfer_count": _payload_int(row, "checked_transfer_count"),
+        "missing_transfer_count": _payload_int(row, "missing_transfer_count"),
+        "mismatched_transfer_count": mismatched_transfer_count,
+        "mismatched_ref_count": mismatched_transfer_count,
+        "source_missing_count": source_missing_count,
+        "source_row_missing_count": source_missing_count,
+        "missing_source_row_count": source_missing_count,
+        "source_amount_mismatch_count": 0,
+        "legacy_source_amount_unverifiable_count": 0,
+        "runtime_ledger_checked_transfer_count": 0,
+        "runtime_ledger_signed_transfer_count": 0,
+        "runtime_ledger_ref_count": _payload_int(row, "runtime_ledger_ref_count"),
+        "runtime_ledger_signed_ref_count": _payload_int(
+            row,
+            "runtime_ledger_signed_ref_count",
+        ),
+        "runtime_ledger_missing_signed_ref_count": _payload_int(
+            row,
+            "runtime_ledger_missing_signed_ref_count",
+        ),
+        "runtime_ledger_missing_account_ref_count": _payload_int(
+            row,
+            "runtime_ledger_missing_account_ref_count",
+        ),
+        "stable_ref_count": _payload_int(row, "stable_ref_count"),
+        "stable_ref_missing_count": _payload_int(row, "stable_ref_missing_count"),
+        "stable_ref_mismatch_count": _payload_int(row, "stable_ref_mismatch_count"),
+        "archived_runtime_ledger_source_missing_count": 0,
+        "runtime_ledger_direction_mismatch_count": 0,
+        "runtime_ledger_metadata_mismatch_count": 0,
+        "unlinked_event_count": 0,
+        "unlinked_order_event_ref_count": 0,
+        "unlinked_execution_count": 0,
+        "unlinked_execution_ref_count": 0,
+        "unlinked_cost_count": 0,
+        "unlinked_cost_ref_count": 0,
+        "unlinked_runtime_ledger_count": 0,
+        "unlinked_runtime_ledger_ref_count": 0,
+        "missing_transfer_refs": [],
+        "mismatched_refs": [],
+        "missing_source_rows": [],
+        "unlinked_refs": [],
+        "legacy_source_amount_unverifiable_refs": [],
+        "blocker_details": {},
+        "ref_counts": ref_counts,
+        "ref_count_field_names": list(REF_COUNT_FIELD_NAMES),
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat() if finished_at else None,
+        "blockers": blockers,
+        "compact_status": True,
+        "payload_json_skipped": True,
+    }
+
+
+def latest_tigerbeetle_reconciliation_status_payload(
+    session: Session,
+    *,
+    cluster_id: int,
+) -> dict[str, object] | None:
+    row = (
+        session.execute(
+            select(
+                TigerBeetleReconciliationRun.id,
+                TigerBeetleReconciliationRun.cluster_id,
+                TigerBeetleReconciliationRun.started_at,
+                TigerBeetleReconciliationRun.finished_at,
+                TigerBeetleReconciliationRun.status,
+                TigerBeetleReconciliationRun.checked_transfer_count,
+                TigerBeetleReconciliationRun.missing_transfer_count,
+                TigerBeetleReconciliationRun.mismatched_transfer_count,
+                TigerBeetleReconciliationRun.source_missing_count,
+                TigerBeetleReconciliationRun.account_ref_count,
+                TigerBeetleReconciliationRun.transfer_ref_count,
+                TigerBeetleReconciliationRun.runtime_ledger_ref_count,
+                TigerBeetleReconciliationRun.runtime_ledger_signed_ref_count,
+                TigerBeetleReconciliationRun.runtime_ledger_missing_signed_ref_count,
+                TigerBeetleReconciliationRun.runtime_ledger_missing_account_ref_count,
+                TigerBeetleReconciliationRun.stable_ref_count,
+                TigerBeetleReconciliationRun.stable_ref_missing_count,
+                TigerBeetleReconciliationRun.stable_ref_mismatch_count,
+                TigerBeetleReconciliationRun.blockers_json,
+                TigerBeetleReconciliationRun.ref_counts_json,
+            )
+            .where(TigerBeetleReconciliationRun.cluster_id == cluster_id)
+            .order_by(TigerBeetleReconciliationRun.started_at.desc())
+            .limit(1)
+        )
+        .mappings()
+        .first()
+    )
+    return _latest_run_compact_status_payload(
+        None if row is None else cast(Mapping[str, object], row)
+    )
 
 
 def latest_tigerbeetle_reconciliation_payload(
@@ -1499,6 +1735,10 @@ def reconcile_tigerbeetle_transfers(
         session,
         cluster_id=settings_obj.tigerbeetle_cluster_id,
     )
+    compact_ref_counts = _compact_reconciliation_ref_counts(
+        ref_counts,
+        cluster_id=settings_obj.tigerbeetle_cluster_id,
+    )
     runtime_ledger_missing_signed_ref_count = _payload_int(
         ref_counts,
         "runtime_ledger_missing_signed_ref_count",
@@ -1623,6 +1863,33 @@ def reconcile_tigerbeetle_transfers(
                 missing_transfer_count=missing_transfer_count,
                 mismatched_transfer_count=mismatched_transfer_count,
                 source_missing_count=source_missing_count,
+                account_ref_count=_payload_int(compact_ref_counts, "account_ref_count"),
+                transfer_ref_count=_payload_int(compact_ref_counts, "transfer_ref_count"),
+                runtime_ledger_ref_count=_payload_int(
+                    compact_ref_counts,
+                    "runtime_ledger_ref_count",
+                ),
+                runtime_ledger_signed_ref_count=_payload_int(
+                    compact_ref_counts,
+                    "runtime_ledger_signed_ref_count",
+                ),
+                runtime_ledger_missing_signed_ref_count=(
+                    runtime_ledger_missing_signed_ref_count
+                ),
+                runtime_ledger_missing_account_ref_count=(
+                    runtime_ledger_missing_account_ref_count
+                ),
+                stable_ref_count=_payload_int(compact_ref_counts, "stable_ref_count"),
+                stable_ref_missing_count=_payload_int(
+                    compact_ref_counts,
+                    "stable_ref_missing_count",
+                ),
+                stable_ref_mismatch_count=max(
+                    stable_ref_mismatch_count,
+                    ref_count_stable_ref_mismatch_count,
+                ),
+                blockers_json=coerce_json_payload(unique_blockers),
+                ref_counts_json=coerce_json_payload(compact_ref_counts),
                 payload_json=coerce_json_payload(payload),
             )
         )

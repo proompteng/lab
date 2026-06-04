@@ -180,6 +180,128 @@ class TestTigerBeetleStatus(TestCase):
         self.assertTrue(ref_counts["bounded_status_live_query_skipped"])
         self.assertNotIn("tigerbeetle_ref_counts_unavailable", payload["blockers"])
 
+    def test_status_uses_compact_reconciliation_without_payload_or_ref_scan(
+        self,
+    ) -> None:
+        observed_at = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                TigerBeetleReconciliationRun(
+                    cluster_id=2001,
+                    started_at=observed_at,
+                    finished_at=observed_at,
+                    status="ok",
+                    checked_transfer_count=7,
+                    missing_transfer_count=0,
+                    mismatched_transfer_count=0,
+                    source_missing_count=0,
+                    account_ref_count=54_129,
+                    transfer_ref_count=28_993,
+                    runtime_ledger_ref_count=26,
+                    runtime_ledger_signed_ref_count=26,
+                    runtime_ledger_missing_signed_ref_count=0,
+                    runtime_ledger_missing_account_ref_count=0,
+                    stable_ref_count=28_993,
+                    stable_ref_missing_count=0,
+                    stable_ref_mismatch_count=0,
+                    blockers_json=[],
+                    ref_counts_json={
+                        "by_source_type": {"strategy_runtime_ledger_bucket": 26},
+                        "source_materialization": {},
+                    },
+                    payload_json={
+                        "blockers": ["legacy_payload_should_not_be_read"],
+                        "ref_counts": {
+                            "runtime_ledger_missing_signed_ref_count": 99,
+                        },
+                    },
+                )
+            )
+            session.flush()
+            with (
+                patch(
+                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                    side_effect=AssertionError("legacy payload query was called"),
+                ),
+                patch(
+                    "app.main.tigerbeetle_ref_counts",
+                    side_effect=AssertionError("live ref-count scan was called"),
+                ),
+            ):
+                payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["claimed_by_runtime_evidence"])
+        self.assertEqual(payload["blockers"], [])
+        self.assertEqual(payload["runtime_ledger_ref_count"], 26)
+        self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 0)
+        latest_reconciliation = payload["latest_reconciliation"]
+        self.assertIsInstance(latest_reconciliation, dict)
+        assert isinstance(latest_reconciliation, dict)
+        self.assertTrue(latest_reconciliation["compact_status"])
+        self.assertTrue(latest_reconciliation["payload_json_skipped"])
+        self.assertEqual(latest_reconciliation["transfer_ref_count"], 28_993)
+        ref_counts = payload["ref_counts"]
+        self.assertIsInstance(ref_counts, dict)
+        assert isinstance(ref_counts, dict)
+        self.assertTrue(ref_counts["bounded_status_live_query_skipped"])
+        self.assertEqual(ref_counts["transfer_ref_count"], 28_993)
+
+    def test_compact_reconciliation_status_keeps_persisted_blockers_fail_closed(
+        self,
+    ) -> None:
+        settings.tigerbeetle_reconcile_required = True
+        observed_at = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                TigerBeetleReconciliationRun(
+                    cluster_id=2001,
+                    started_at=observed_at,
+                    finished_at=observed_at,
+                    status="degraded",
+                    checked_transfer_count=2,
+                    missing_transfer_count=0,
+                    mismatched_transfer_count=1,
+                    source_missing_count=0,
+                    account_ref_count=1,
+                    transfer_ref_count=2,
+                    runtime_ledger_ref_count=0,
+                    runtime_ledger_signed_ref_count=0,
+                    runtime_ledger_missing_signed_ref_count=0,
+                    runtime_ledger_missing_account_ref_count=0,
+                    stable_ref_count=2,
+                    stable_ref_missing_count=0,
+                    stable_ref_mismatch_count=1,
+                    blockers_json=["tigerbeetle_transfer_code_mismatch"],
+                    ref_counts_json={"by_source_type": {}},
+                    payload_json={
+                        "blockers": [],
+                        "ref_counts": {"transfer_ref_count": 0},
+                    },
+                )
+            )
+            session.flush()
+            with (
+                patch(
+                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                    side_effect=AssertionError("legacy payload query was called"),
+                ),
+                patch(
+                    "app.main.tigerbeetle_ref_counts",
+                    side_effect=AssertionError("live ref-count scan was called"),
+                ),
+            ):
+                payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["reconciliation_ok"])
+        self.assertIn("tigerbeetle_transfer_code_mismatch", payload["blockers"])
+        latest_reconciliation = payload["latest_reconciliation"]
+        self.assertIsInstance(latest_reconciliation, dict)
+        assert isinstance(latest_reconciliation, dict)
+        self.assertTrue(latest_reconciliation["compact_status"])
+        self.assertEqual(latest_reconciliation["blockers"], ["tigerbeetle_transfer_code_mismatch"])
+
     def test_ref_count_failure_degrades_without_status_exception(self) -> None:
         with Session(self.engine) as session:
             with patch(

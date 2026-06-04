@@ -186,6 +186,7 @@ from .trading.tigerbeetle_client import check_tigerbeetle_health
 from .trading.tigerbeetle_reconcile import (
     BLOCKER_RECONCILIATION_STALE,
     latest_tigerbeetle_reconciliation_payload,
+    latest_tigerbeetle_reconciliation_status_payload,
     tigerbeetle_ref_counts,
 )
 from .trading.zero_notional_repair_executor import run_zero_notional_repair
@@ -7118,10 +7119,15 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     reconciliation_status_available = True
     try:
         _apply_status_read_statement_timeout(session, milliseconds=750)
-        latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
+        latest_reconciliation = latest_tigerbeetle_reconciliation_status_payload(
             session,
             cluster_id=settings.tigerbeetle_cluster_id,
         )
+        if latest_reconciliation is None:
+            latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
+                session,
+                cluster_id=settings.tigerbeetle_cluster_id,
+            )
     except SQLAlchemyError as exc:
         logger.warning("TigerBeetle reconciliation status unavailable: %s", exc)
         session.rollback()
