@@ -755,6 +755,67 @@ def _runtime_window_target_plan_target_truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes"}
 
 
+def _runtime_window_target_plan_positive_mapping_count(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    for raw_count in value.values():
+        try:
+            if int(str(raw_count or "0")) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _runtime_window_source_collection_target_has_materializable_lineage(
+    target: Mapping[str, Any],
+) -> bool:
+    for key in (
+        "source_window_ids",
+        "runtime_ledger_source_window_ids",
+        "execution_order_event_ids",
+        "runtime_ledger_execution_order_event_ids",
+        "execution_ids",
+        "trade_decision_ids",
+        "source_offsets",
+    ):
+        if _as_sequence(target.get(key)):
+            return True
+        if _as_text(target.get(key)) is not None:
+            return True
+    if _as_text(target.get("source_materialization")) is not None:
+        return True
+    if _as_text(target.get("authority_class")) is not None:
+        return True
+    if _runtime_window_target_plan_positive_mapping_count(
+        target.get("source_row_counts")
+    ):
+        return True
+    source_refs = [
+        ref
+        for ref in _as_text_list(target.get("source_refs"))
+        if "strategy_runtime_ledger_buckets" not in ref
+    ]
+    return bool(source_refs)
+
+
+def _runtime_window_source_collection_target_allowed(
+    target: Mapping[str, Any],
+) -> bool:
+    account_label = _as_text(target.get("account_label"))
+    source_account_label = _as_text(target.get("source_account_label")) or account_label
+    if (
+        account_label == "TORGHUT_REPLAY"
+        and source_account_label == "TORGHUT_REPLAY"
+        and _as_text(target.get("source_dsn_env")) == "DB_DSN"
+        and not _runtime_window_source_collection_target_has_materializable_lineage(
+            target
+        )
+    ):
+        return False
+    return True
+
+
 def _runtime_window_target_plan_source_collection_targets(
     gate_plan: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
@@ -771,7 +832,8 @@ def _runtime_window_target_plan_source_collection_targets(
             or handoff == "runtime_ledger_source_collection_import"
             or selected_by == "runtime_ledger_source_collection"
         ):
-            targets.append(target)
+            if _runtime_window_source_collection_target_allowed(target):
+                targets.append(target)
     return targets
 
 

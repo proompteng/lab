@@ -1421,6 +1421,119 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertFalse(plan["targets"][0]["promotion_allowed"])
         self.assertFalse(plan["targets"][0]["final_promotion_allowed"])
 
+    def test_runtime_window_target_plan_skips_aggregate_replay_source_collection(
+        self,
+    ) -> None:
+        plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-paper-route",
+                            "hypothesis_id": "H-PAPER-ROUTE",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "window_start": "2026-06-04T13:30:00+00:00",
+                            "window_end": "2026-06-04T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "live_submission_gate": {
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "candidate_id": "aggregate-replay",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "source-collection-candidate-v1",
+                                "account_label": "TORGHUT_REPLAY",
+                                "source_account_label": "TORGHUT_REPLAY",
+                                "source_dsn_env": "DB_DSN",
+                                "target_dsn_env": "SIM_DB_DSN",
+                                "source_kind": "runtime_ledger_source_collection_candidate",
+                                "source_collection_authorized": True,
+                                "source_collection_reason_codes": [
+                                    "runtime_ledger_source_window_missing",
+                                    "runtime_ledger_source_refs_missing",
+                                    "runtime_ledger_execution_order_event_refs_missing",
+                                    "runtime_ledger_source_offsets_missing",
+                                    "runtime_ledger_source_materialization_missing",
+                                    "runtime_ledger_authority_class_missing",
+                                ],
+                                "runtime_ledger_bucket_ref": (
+                                    "strategy_runtime_ledger_buckets:"
+                                    "rt-ledger-vwap-cap-safe-20260512-20260521-c88421d6:"
+                                    "2026-05-13T17:00:00+00:00:"
+                                    "2026-05-13T17:30:00+00:00"
+                                ),
+                                "window_start": "2026-05-13T17:00:00+00:00",
+                                "window_end": "2026-05-13T17:30:00+00:00",
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+
+        self.assertNotIn("merged_live_submission_gate_source_collection", plan)
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(
+            [target["hypothesis_id"] for target in plan["targets"]],
+            ["H-PAPER-ROUTE"],
+        )
+
+    def test_runtime_window_target_plan_allows_source_collection_with_materializable_lineage(
+        self,
+    ) -> None:
+        base_target = {
+            "candidate_id": "source-backed-replay",
+            "hypothesis_id": "H-PAIRS-01",
+            "strategy_name": "source-collection-candidate-v1",
+            "account_label": "TORGHUT_REPLAY",
+            "source_account_label": "TORGHUT_REPLAY",
+            "source_dsn_env": "DB_DSN",
+            "source_kind": "runtime_ledger_source_collection_candidate",
+            "source_collection_authorized": True,
+        }
+
+        self.assertFalse(
+            renewal._runtime_window_target_plan_positive_mapping_count(
+                {"execution_order_events": "not-an-int", "trade_decisions": 0}
+            )
+        )
+        self.assertTrue(
+            renewal._runtime_window_target_plan_positive_mapping_count(
+                {"execution_order_events": "2"}
+            )
+        )
+
+        for lineage in (
+            {"source_window_ids": ["window-1"]},
+            {"source_window_ids": "window-1"},
+            {"source_materialization": "execution_order_events"},
+            {"authority_class": "event_sourced_runtime_ledger_profit_proof"},
+            {"source_row_counts": {"execution_order_events": 2}},
+            {"source_refs": ["postgres:execution_order_events:event-1"]},
+        ):
+            target = {**base_target, **lineage}
+
+            self.assertTrue(
+                renewal._runtime_window_source_collection_target_has_materializable_lineage(
+                    target
+                )
+            )
+            self.assertTrue(
+                renewal._runtime_window_source_collection_target_allowed(target)
+            )
+
     def test_runtime_window_gate_source_collection_merge_requires_pending_or_sim_count(
         self,
     ) -> None:
