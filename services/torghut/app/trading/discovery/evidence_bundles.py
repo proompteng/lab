@@ -149,6 +149,9 @@ FILL_SURVIVAL_SCORECARD_KEYS = (
     "post_cost_survival_rate",
     "gross_positive_killed_by_cost_count",
 )
+RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS = (
+    "runtime_ledger_lineage_materialization_handoff",
+)
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -437,6 +440,66 @@ def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ..
             if ref:
                 refs.append(ref)
     return tuple(dict.fromkeys(refs))
+
+
+def _runtime_ledger_lineage_handoff(
+    *,
+    scorecard: Mapping[str, Any],
+    promotion_readiness: Mapping[str, Any],
+) -> dict[str, Any]:
+    return _mapping(
+        scorecard.get("runtime_ledger_lineage_materialization_handoff")
+    ) or _mapping(
+        promotion_readiness.get("runtime_ledger_lineage_materialization_handoff")
+    )
+
+
+def _runtime_ledger_lineage_handoff_blockers(
+    *,
+    scorecard: Mapping[str, Any],
+    promotion_readiness: Mapping[str, Any],
+) -> list[str]:
+    handoff = _runtime_ledger_lineage_handoff(
+        scorecard=scorecard,
+        promotion_readiness=promotion_readiness,
+    )
+    if not handoff:
+        return []
+
+    blockers: list[str] = []
+    if _bool(handoff.get("zero_authoritative_daily_pnl_until_materialized")):
+        blockers.append("authoritative_daily_pnl_missing")
+
+    requires_runtime_ledger = (
+        _bool(handoff.get("runtime_ledger_required"))
+        or _bool(handoff.get("source_backed_runtime_ledger_required"))
+        or _string(handoff.get("status"))
+        == "requires_runtime_ledger_materialization_before_authoritative_pnl"
+    )
+    materialized = (
+        _bool(handoff.get("runtime_ledger_materialized"))
+        or _string(handoff.get("status")) == "runtime_ledger_materialized"
+    )
+    if requires_runtime_ledger and not materialized:
+        blockers.append("runtime_ledger_lineage_materialization_missing")
+
+    for key, blocker in (
+        ("proof_authority", "runtime_ledger_handoff_not_proof_authority"),
+        ("promotion_allowed", "runtime_ledger_handoff_not_promotion_authority"),
+        ("final_authority_ok", "runtime_ledger_handoff_final_authority_blocked"),
+    ):
+        if key in handoff and not _bool(handoff.get(key)):
+            blockers.append(blocker)
+
+    required_artifacts = handoff.get("required_materialized_artifacts")
+    if (
+        isinstance(required_artifacts, Sequence)
+        and not isinstance(required_artifacts, (str, bytes, bytearray))
+        and not materialized
+    ):
+        blockers.append("runtime_ledger_required_artifacts_unmaterialized")
+
+    return blockers
 
 
 def _p10(values: Sequence[Decimal]) -> Decimal:
@@ -918,6 +981,13 @@ def evidence_bundle_from_frontier_candidate(
             if key in source:
                 scorecard = {**scorecard, key: source[key]}
                 break
+    for key in RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS:
+        if key in scorecard:
+            continue
+        for source in (candidate, summary, full_window):
+            if key in source:
+                scorecard = {**scorecard, key: source[key]}
+                break
     for source in (candidate, summary, full_window):
         for key, value in _order_type_execution_metrics(source).items():
             if key not in scorecard:
@@ -1345,6 +1415,12 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
     ):
         blockers.append("synthetic_evidence_not_promotion_proof")
     if _requires_promotion_proof(bundle):
+        blockers.extend(
+            _runtime_ledger_lineage_handoff_blockers(
+                scorecard=scorecard,
+                promotion_readiness=bundle.promotion_readiness,
+            )
+        )
         blockers.extend(_delay_depth_survival_blockers(scorecard))
     return tuple(dict.fromkeys(blockers))
 
