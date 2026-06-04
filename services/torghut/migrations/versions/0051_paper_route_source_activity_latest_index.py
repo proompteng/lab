@@ -35,7 +35,10 @@ def upgrade() -> None:
     existing_indexes = {index["name"] for index in inspector.get_indexes(TABLE_NAME)}
     if INDEX_NAME in existing_indexes:
         return
-    op.create_index(INDEX_NAME, TABLE_NAME, list(INDEX_COLUMNS))
+    with op.get_context().autocommit_block():
+        op.create_index(
+            INDEX_NAME, TABLE_NAME, list(INDEX_COLUMNS), postgresql_concurrently=True
+        )
 
 
 def downgrade() -> None:
@@ -46,4 +49,5 @@ def downgrade() -> None:
     existing_indexes = {index["name"] for index in inspector.get_indexes(TABLE_NAME)}
     if INDEX_NAME not in existing_indexes:
         return
-    op.drop_index(INDEX_NAME, table_name=TABLE_NAME)
+    with op.get_context().autocommit_block():
+        op.drop_index(INDEX_NAME, table_name=TABLE_NAME, postgresql_concurrently=True)
