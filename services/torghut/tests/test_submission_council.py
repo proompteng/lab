@@ -55,6 +55,7 @@ from app.trading.submission_council import (
     _maybe_set_runtime_ledger_status_statement_timeout,
     _metric_window_activity_reason_codes,
     _rollback_runtime_ledger_status_session,
+    _runtime_ledger_paper_probation_candidates,
     _runtime_ledger_repair_reason_codes,
     _runtime_ledger_repair_score,
     _runtime_ledger_status_query_timeout_ms,
@@ -2183,6 +2184,113 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             target["safe_evidence_collection_path"][0],
             "materialize_runtime_ledger_source_window_refs",
+        )
+
+    def test_htsmom_runtime_candidate_alias_unlocks_paper_probation_only(
+        self,
+    ) -> None:
+        candidate = {
+            "source": "strategy_runtime_ledger_buckets",
+            "hypothesis_id": "H-TSMOM-LIQ-01",
+            "candidate_id": "ca4e6e3c7d639e3363dc5860",
+            "strategy_id": "intraday_tsmom_v2@research",
+            "strategy_family": "intraday_tsmom_consistent",
+            "runtime_strategy_name": "intraday-tsmom-profit-v3",
+            "account": "TORGHUT_SIM",
+            "observed_stage": "paper",
+            "bucket_started_at": "2026-06-02T13:51:11.262153+00:00",
+            "bucket_ended_at": "2026-06-02T18:14:43.066253+00:00",
+            "decision_count": 2,
+            "submitted_order_count": 6,
+            "fill_count": 8,
+            "closed_trade_count": 5,
+            "open_position_count": 0,
+            "filled_notional": "7546.75932928",
+            "cost_amount": "0.25000000",
+            "net_strategy_pnl_after_costs": "44.74192128",
+            "post_cost_expectancy_bps": "59.28627021",
+            "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+            "execution_policy_hash_counts": {"policy": 5},
+            "cost_model_hash_counts": {"cost": 8},
+            "lineage_hash_counts": {"lineage": 17},
+            "source_window_start": "2026-06-02T13:53:19.908725+00:00",
+            "source_window_end": "2026-06-02T18:14:43.066253+00:00",
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_tca_metrics",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+                "postgres:tigerbeetle_transfer_refs",
+                "postgres:tigerbeetle_account_refs",
+                "postgres:strategy_runtime_ledger_buckets:365d7c3a-2ea3-407f-a421-11ca3bf27c02",
+                "postgres:tigerbeetle_transfer_refs:4b104eae-e7ae-4424-b4e6-f785b95dc8d4",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 2,
+                "executions": 2,
+                "execution_tca_metrics": 2,
+                "execution_order_events": 2,
+                "order_feed_source_windows": 2,
+                "tigerbeetle_account_refs": 3,
+                "tigerbeetle_transfer_refs": 1,
+            },
+            "source_window_ids": ["window-1", "window-2"],
+            "trade_decision_ids": ["decision-1", "decision-2"],
+            "execution_ids": ["execution-1", "execution-2"],
+            "execution_order_event_ids": ["event-1", "event-2"],
+            "source_offsets": [
+                {"topic": "torghut.trade-updates.v1", "partition": 1, "offset": 7091},
+                {"topic": "torghut.trade-updates.v1", "partition": 1, "offset": 7092},
+            ],
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
+            "reason_codes": ["runtime_ledger_stage_not_live"],
+        }
+
+        mismatch_reasons = _runtime_ledger_repair_reason_codes(
+            candidate,
+            manifest={
+                "candidate_id": "H-TSMOM-LIQ-01",
+                "strategy_family": "intraday_tsmom_consistent",
+            },
+        )
+        alias_reasons = _runtime_ledger_repair_reason_codes(
+            candidate,
+            manifest={
+                "candidate_id": "H-TSMOM-LIQ-01",
+                "paper_probation_candidate_ids": [
+                    "H-TSMOM-LIQ-01",
+                    "ca4e6e3c7d639e3363dc5860",
+                ],
+                "strategy_family": "intraday_tsmom_consistent",
+            },
+        )
+
+        self.assertIn("runtime_ledger_candidate_mismatch", mismatch_reasons)
+        self.assertEqual(alias_reasons, ["runtime_ledger_stage_not_live"])
+
+        probation_candidates = _runtime_ledger_paper_probation_candidates(
+            [{**candidate, "reason_codes": alias_reasons}]
+        )
+        self.assertEqual(len(probation_candidates), 1)
+        probation_candidate = probation_candidates[0]
+        self.assertTrue(probation_candidate["paper_probation_eligible"])
+        self.assertTrue(probation_candidate["bounded_live_paper_collection_authorized"])
+        self.assertFalse(probation_candidate["capital_promotion_allowed"])
+        self.assertFalse(probation_candidate["final_promotion_allowed"])
+
+        plan = _runtime_ledger_paper_probation_import_plan(probation_candidates)
+        self.assertEqual(plan["paper_probation_target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "ca4e6e3c7d639e3363dc5860")
+        self.assertTrue(target["paper_probation_authorized"])
+        self.assertEqual(target["max_notional"], "0")
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertIn(
+            "live_runtime_ledger_required", target["final_promotion_blockers"]
         )
 
     def test_source_collection_target_progress_payload_handles_zero_pnl(self) -> None:
