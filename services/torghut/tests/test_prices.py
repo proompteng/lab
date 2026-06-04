@@ -6,7 +6,12 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.trading.models import SignalEnvelope
-from app.trading.prices import ClickHousePriceFetcher, _midpoint, _quote_spread_bps
+from app.trading.prices import (
+    ClickHousePriceFetcher,
+    _midpoint,
+    _quote_row_reject_reason,
+    _quote_spread_bps,
+)
 
 
 class FakeClickHousePriceFetcher(ClickHousePriceFetcher):
@@ -257,6 +262,72 @@ class TestClickHousePriceFetcher(TestCase):
         self.assertIn(
             "event_ts <= toDateTime64('2026-01-01 12:01:00", fetcher.queries[1]
         )
+
+    def test_fetch_market_snapshot_records_forward_naive_quote_diagnostics(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29", "c": "200.25", "spread": "0.03"}
+            ],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:45",
+                    "imbalance_bid_px": "100.00",
+                    "imbalance_ask_px": "101.00",
+                }
+            ],
+            quote_forward_seconds=30,
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.25"))
+        diagnostics = snapshot.quote_lookup_diagnostics or {}
+        self.assertEqual(
+            diagnostics.get("latest_quote_rejected_reason"),
+            "spread_bps_exceeded",
+        )
+        self.assertIn(
+            "event_ts <= toDateTime64('2026-01-01 12:01:00", fetcher.queries[-1]
+        )
+
+    def test_quote_row_reject_reason_records_invalid_quote_shapes(self) -> None:
+        cases = [
+            ({"imbalance_ask_px": "101.00"}, "missing_bid"),
+            ({"imbalance_bid_px": "100.00"}, "missing_ask"),
+            (
+                {"imbalance_bid_px": "0", "imbalance_ask_px": "101.00"},
+                "non_positive_bid",
+            ),
+            (
+                {"imbalance_bid_px": "100.00", "imbalance_ask_px": "0"},
+                "non_positive_ask",
+            ),
+            (
+                {"imbalance_bid_px": "102.00", "imbalance_ask_px": "101.00"},
+                "crossed_quote",
+            ),
+        ]
+
+        for row, expected_reason in cases:
+            with self.subTest(expected_reason=expected_reason):
+                self.assertEqual(_quote_row_reject_reason(row), expected_reason)
+
+        with patch("app.trading.prices._quote_spread_bps", return_value=None):
+            self.assertEqual(
+                _quote_row_reject_reason(
+                    {"imbalance_bid_px": "100.00", "imbalance_ask_px": "101.00"}
+                ),
+                "invalid_spread",
+            )
 
     def test_fetch_market_snapshot_returns_none_without_price_or_quote(
         self,
@@ -672,6 +743,44 @@ class TestClickHousePriceFetcher(TestCase):
         self.assertEqual(snapshot.price, Decimal("200.25"))
         self.assertEqual(snapshot.spread, Decimal("0.03"))
         self.assertEqual(snapshot.source, "ta_microbars")
+
+    def test_fetch_market_snapshot_records_wide_quote_diagnostics(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29Z", "c": "200.25", "spread": "0.03"}
+            ],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:28Z",
+                    "imbalance_bid_px": "100.00",
+                    "imbalance_ask_px": "101.00",
+                }
+            ],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.25"))
+        self.assertIsNone(snapshot.bid)
+        self.assertIsNone(snapshot.ask)
+        diagnostics = snapshot.quote_lookup_diagnostics or {}
+        self.assertEqual(diagnostics.get("latest_quote_present"), True)
+        self.assertEqual(diagnostics.get("latest_quote_accepted"), False)
+        self.assertEqual(
+            diagnostics.get("latest_quote_rejected_reason"),
+            "spread_bps_exceeded",
+        )
+        self.assertEqual(diagnostics.get("latest_quote_bid"), "100.00")
+        self.assertEqual(diagnostics.get("latest_quote_ask"), "101.00")
 
     def test_fetch_market_snapshot_keeps_price_when_quote_lookup_fails(
         self,
