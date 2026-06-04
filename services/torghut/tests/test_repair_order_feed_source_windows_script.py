@@ -95,6 +95,16 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             ) as backfill_execution_events,
             patch.object(
                 script,
+                "repair_order_feed_execution_states",
+                return_value={
+                    "selected": 7,
+                    "latest_event_found": 6,
+                    "executions_updated": 5,
+                    "out_of_order_events_skipped": 1,
+                },
+            ) as repair_states,
+            patch.object(
+                script,
                 "repair_order_feed_fill_deltas",
                 return_value={
                     "selected": 6,
@@ -128,6 +138,10 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_link_decision_events_linked"], 1)
         self.assertEqual(payload["execution_link_events_without_execution"], 1)
         self.assertEqual(payload["execution_link_events_without_decision"], 0)
+        self.assertEqual(payload["execution_state_candidates"], 7)
+        self.assertEqual(payload["execution_state_latest_event_found"], 6)
+        self.assertEqual(payload["execution_state_executions_updated"], 5)
+        self.assertEqual(payload["execution_state_out_of_order_events_skipped"], 1)
         self.assertEqual(payload["execution_event_backfill_candidates"], 0)
         self.assertEqual(payload["execution_event_backfill_events_created"], 0)
         self.assertEqual(payload["execution_event_backfill_source_windows_created"], 0)
@@ -154,6 +168,11 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             limit=5000,
         )
         backfill_execution_events.assert_not_called()
+        repair_states.assert_called_once_with(
+            fake_session,
+            account_label=None,
+            limit=5000,
+        )
         repair_deltas.assert_called_once_with(
             fake_session,
             account_label=None,
@@ -238,6 +257,24 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             ) as backfill_execution_events,
             patch.object(
                 script,
+                "repair_order_feed_execution_states",
+                side_effect=[
+                    {
+                        "selected": 2,
+                        "latest_event_found": 2,
+                        "executions_updated": 2,
+                        "out_of_order_events_skipped": 0,
+                    },
+                    {
+                        "selected": 1,
+                        "latest_event_found": 1,
+                        "executions_updated": 0,
+                        "out_of_order_events_skipped": 1,
+                    },
+                ],
+            ) as repair_states,
+            patch.object(
+                script,
                 "repair_order_feed_fill_deltas",
                 side_effect=[
                     {
@@ -277,6 +314,10 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_link_decision_events_linked"], 0)
         self.assertEqual(payload["execution_link_events_without_execution"], 0)
         self.assertEqual(payload["execution_link_events_without_decision"], 0)
+        self.assertEqual(payload["execution_state_candidates"], 3)
+        self.assertEqual(payload["execution_state_latest_event_found"], 3)
+        self.assertEqual(payload["execution_state_executions_updated"], 2)
+        self.assertEqual(payload["execution_state_out_of_order_events_skipped"], 1)
         self.assertEqual(payload["fill_delta_candidates"], 3)
         self.assertEqual(payload["fill_delta_events_repaired"], 2)
         self.assertEqual(payload["fill_delta_non_increasing_events_marked"], 1)
@@ -291,6 +332,9 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertIsNone(repair_links.call_args.kwargs["canonical_account_label"])
         self.assertEqual(repair_links.call_args.kwargs["limit"], 2)
         backfill_execution_events.assert_not_called()
+        self.assertEqual(repair_states.call_count, 2)
+        self.assertEqual(repair_states.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertEqual(repair_states.call_args.kwargs["limit"], 2)
         self.assertEqual(repair_deltas.call_count, 2)
         self.assertEqual(repair_deltas.call_args.kwargs["account_label"], "TORGHUT_SIM")
         self.assertEqual(repair_deltas.call_args.kwargs["limit"], 2)
@@ -361,6 +405,16 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             ) as backfill_execution_events,
             patch.object(
                 script,
+                "repair_order_feed_execution_states",
+                return_value={
+                    "selected": 0,
+                    "latest_event_found": 0,
+                    "executions_updated": 0,
+                    "out_of_order_events_skipped": 0,
+                },
+            ) as repair_states,
+            patch.object(
+                script,
                 "repair_order_feed_fill_deltas",
                 return_value={
                     "selected": 0,
@@ -380,6 +434,8 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_event_backfill_enabled"], True)
         self.assertIsNone(payload["execution_event_backfill_skip_reason"])
         self.assertEqual(payload["account_label"], "PA3SX7FYNUTF")
+        self.assertEqual(payload["execution_state_candidates"], 0)
+        self.assertEqual(payload["execution_state_executions_updated"], 0)
         self.assertEqual(payload["execution_event_backfill_candidates"], 7)
         self.assertEqual(payload["execution_event_backfill_events_created"], 6)
         self.assertEqual(payload["execution_event_backfill_source_windows_created"], 6)
@@ -388,6 +444,11 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["fill_delta_events_repaired"], 0)
         self.assertEqual(fake_session.commits, 1)
         backfill_execution_events.assert_called_once_with(
+            fake_session,
+            account_label="PA3SX7FYNUTF",
+            limit=100,
+        )
+        repair_states.assert_called_once_with(
             fake_session,
             account_label="PA3SX7FYNUTF",
             limit=100,
@@ -461,6 +522,16 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             ) as backfill_execution_events,
             patch.object(
                 script,
+                "repair_order_feed_execution_states",
+                return_value={
+                    "selected": 1,
+                    "latest_event_found": 1,
+                    "executions_updated": 1,
+                    "out_of_order_events_skipped": 0,
+                },
+            ) as repair_states,
+            patch.object(
+                script,
                 "repair_order_feed_fill_deltas",
                 return_value={
                     "selected": 0,
@@ -485,7 +556,14 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_event_backfill_candidates"], 0)
         self.assertEqual(payload["execution_event_backfill_events_created"], 0)
         self.assertEqual(payload["execution_link_account_alias_events_linked"], 1)
+        self.assertEqual(payload["execution_state_candidates"], 1)
+        self.assertEqual(payload["execution_state_executions_updated"], 1)
         backfill_execution_events.assert_not_called()
+        repair_states.assert_called_once_with(
+            fake_session,
+            account_label="TORGHUT_SIM",
+            limit=100,
+        )
 
     def test_main_requires_configured_dsn_env(self) -> None:
         with (
