@@ -83,7 +83,11 @@ TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING = (
 )
 
 
-def _official_status_name(value: object) -> str | None:
+def _official_status_name(
+    value: object,
+    *,
+    status_type_names: Sequence[str],
+) -> str | None:
     if not isinstance(value, int):
         return None
     fallback_statuses = {46: "exists", 4294967295: "created"}
@@ -92,7 +96,7 @@ def _official_status_name(value: object) -> str | None:
     except Exception:
         return fallback_statuses.get(value)
 
-    for status_type_name in ("CreateTransferStatus", "CreateAccountStatus"):
+    for status_type_name in status_type_names:
         status_type = getattr(tb, status_type_name, None)
         if status_type is None:
             continue
@@ -105,18 +109,31 @@ def _official_status_name(value: object) -> str | None:
     return fallback_statuses.get(value)
 
 
-def _normalize_result_status(value: object) -> str:
-    official_name = _official_status_name(value)
+def _normalize_result_status(
+    value: object,
+    *,
+    status_type_names: Sequence[str],
+) -> str:
+    official_name = _official_status_name(
+        value,
+        status_type_names=status_type_names,
+    )
     if official_name is not None:
         return official_name
     return str(value or "").split(".")[-1].lower()
 
 
-def _result_status(result: object) -> str:
+def _result_status(result: object, *, status_type_names: Sequence[str]) -> str:
     if isinstance(result, Mapping):
         result_mapping = cast(Mapping[str, object], result)
-        return _normalize_result_status(result_mapping.get("status"))
-    return _normalize_result_status(getattr(result, "status", ""))
+        return _normalize_result_status(
+            result_mapping.get("status"),
+            status_type_names=status_type_names,
+        )
+    return _normalize_result_status(
+        getattr(result, "status", ""),
+        status_type_names=status_type_names,
+    )
 
 
 def _result_index(result: object, fallback: int) -> int:
@@ -138,13 +155,17 @@ def _result_statuses_by_index(
     *,
     count: int,
     default_status: str,
+    status_type_names: Sequence[str],
 ) -> dict[int, str]:
     statuses = {index: default_status for index in range(count)}
     for fallback_index, result in enumerate(results):
         index = _result_index(result, fallback_index)
         if index < 0 or index >= count:
             raise RuntimeError(f"tigerbeetle_result_index_out_of_range:{index}")
-        statuses[index] = _result_status(result)
+        statuses[index] = _result_status(
+            result,
+            status_type_names=status_type_names,
+        )
     return statuses
 
 
@@ -1601,6 +1622,7 @@ class TigerBeetleLedgerJournal:
             client.create_accounts(account_specs),
             count=len(account_specs),
             default_status="created",
+            status_type_names=("CreateAccountStatus",),
         )
         for index, status in account_statuses.items():
             if status not in {"created", "exists"}:
@@ -1614,6 +1636,7 @@ class TigerBeetleLedgerJournal:
             client.create_transfers(transfer_specs),
             count=len(transfer_specs),
             default_status="created",
+            status_type_names=("CreateTransferStatus",),
         )
         for batch_index, (original_index, prepared, payload_json) in enumerate(
             new_writes

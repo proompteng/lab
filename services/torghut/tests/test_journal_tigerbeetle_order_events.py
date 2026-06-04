@@ -31,6 +31,7 @@ from app.models import (
     TigerBeetleAccountRef,
     TigerBeetleTransferRef,
 )
+from app.trading import tigerbeetle_journal as journal_model
 from app.trading.tigerbeetle_journal import (
     TigerBeetleLedgerJournal,
     build_runtime_ledger_bucket_transfer_plan,
@@ -354,6 +355,32 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual(script._parse_sources("all"), script.DEFAULT_SOURCES)
         with self.assertRaises(ValueError):
             script._parse_sources("unknown-source")
+
+    def test_tigerbeetle_status_decoder_uses_operation_specific_enum(self) -> None:
+        fake_tigerbeetle = SimpleNamespace(
+            CreateAccountStatus=SimpleNamespace(exists=21),
+            CreateTransferStatus=SimpleNamespace(debit_account_not_found=21),
+        )
+
+        with patch.dict(sys.modules, {"tigerbeetle": fake_tigerbeetle}):
+            self.assertEqual(
+                journal_model._result_statuses_by_index(
+                    [{"index": 0, "status": 21}],
+                    count=1,
+                    default_status="created",
+                    status_type_names=("CreateAccountStatus",),
+                ),
+                {0: "exists"},
+            )
+            self.assertEqual(
+                journal_model._result_statuses_by_index(
+                    [{"index": 0, "status": 21}],
+                    count=1,
+                    default_status="created",
+                    status_type_names=("CreateTransferStatus",),
+                ),
+                {0: "debit_account_not_found"},
+            )
 
     def test_payload_summarizes_batches(self) -> None:
         args = argparse.Namespace(
