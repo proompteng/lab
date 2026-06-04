@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "build": "node -e \"require('child_process').execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', 'tsconfig.json'], { stdio: 'inherit' })\"",
     "example": "bun run examples/run-example.ts",
     "test": "vitest run",
     "generate:app-server-types": "codex app-server generate-ts --experimental --out src/app-server",
