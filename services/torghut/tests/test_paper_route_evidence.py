@@ -5084,6 +5084,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "source_collection_reason_codes": [
                                     "runtime_ledger_source_decisions_missing"
                                 ],
+                                "source_collection_profit_target_candidate": True,
                                 "promotion_allowed": True,
                                 "final_promotion_authorized": True,
                                 "max_notional": "25000",
@@ -5131,6 +5132,19 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "runtime_ledger_paper_probation_import_plan"
         ]
         self.assertEqual(gate_plan["source_collection_target_count"], 1)
+        self.assertEqual(
+            payload["live_submission_gate"][
+                "runtime_ledger_source_collection_candidate_total"
+            ],
+            1,
+        )
+        self.assertEqual(
+            payload["live_submission_gate"][
+                "runtime_ledger_source_collection_profit_target_candidate_total"
+            ],
+            1,
+        )
+        self.assertEqual(gate_plan["source_collection_profit_target_count"], 1)
         self.assertEqual(len(gate_plan["targets"]), 1)
         self.assertEqual(
             gate_plan["targets"][0]["handoff"],
@@ -5145,6 +5159,85 @@ class TestPaperRouteEvidenceAudit(TestCase):
             payload["summary"]["promotion_authority"]["blockers"],
             ["live_runtime_ledger_required"],
         )
+
+    def test_evidence_audit_surfaces_source_collection_profit_target_totals(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 6, 2, 15, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "source_collection_pending",
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                                "source_collection_authorized": True,
+                                "source_collection_profit_target_candidate": True,
+                                "source_collection_priority": (
+                                    "profit_target_source_materialization"
+                                ),
+                                "source_collection_net_strategy_pnl_after_costs": (
+                                    "567.44720578"
+                                ),
+                                "source_collection_filled_notional": "127090.02495200",
+                                "source_collection_post_cost_expectancy_bps": (
+                                    "44.64923238"
+                                ),
+                                "source_collection_next_action": (
+                                    "materialize_runtime_ledger_source_window_refs"
+                                ),
+                                "promotion_allowed": True,
+                                "final_promotion_authorized": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": False,
+                        "active": False,
+                        "eligible_symbols": [],
+                        "active_symbols": [],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=generated_at,
+                target_account_audit_available=False,
+            )
+
+        gate = payload["live_submission_gate"]
+        self.assertEqual(gate["runtime_ledger_source_collection_candidate_total"], 1)
+        self.assertEqual(
+            gate["runtime_ledger_source_collection_profit_target_candidate_total"],
+            1,
+        )
+        gate_plan = gate["runtime_ledger_paper_probation_import_plan"]
+        self.assertEqual(gate_plan["source_collection_target_count"], 1)
+        self.assertEqual(gate_plan["source_collection_profit_target_count"], 1)
+        self.assertEqual(len(gate_plan["targets"]), 1)
+        self.assertFalse(gate_plan["targets"][0]["promotion_allowed"])
+        self.assertFalse(gate_plan["targets"][0]["final_promotion_allowed"])
 
     def test_source_collection_import_plan_sanitizer_filters_and_preserves_refs(
         self,
@@ -5229,6 +5322,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
 
         self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["source_collection_profit_target_count"], 1)
         target = plan["targets"][0]
         self.assertEqual(target["candidate_id"], "keep-source-collection")
         self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
