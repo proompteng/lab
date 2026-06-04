@@ -1052,6 +1052,84 @@ def test_frontier_candidate_preserves_adaptive_signal_falsification_fields() -> 
     assert "adaptive_signal_baseline_not_outperformed" not in blockers
 
 
+def test_frontier_candidate_applies_fast_replay_adaptive_falsification_patch() -> None:
+    bundle = evidence_bundle_from_frontier_candidate(
+        candidate_spec_id="spec-fast-replay-adaptive-falsification",
+        candidate={
+            "candidate_id": "candidate-fast-replay-adaptive-falsification",
+            "objective_scorecard": _promotion_quality_scorecard(),
+            "fast_replay_adaptive_signal_falsification_stress": {
+                "status": (
+                    "research_only_adaptive_signal_falsification_evidence_collection"
+                ),
+                "artifact_ref": "artifact://adaptive-falsification/fast-replay",
+                "adaptive_signal_falsification_passed": False,
+                "objective_scorecard_patch": {
+                    "required_adaptive_signal_falsification": True,
+                    "requires_negative_control_falsification": True,
+                    "requires_label_permutation_test": True,
+                    "requires_leakage_probe": True,
+                    "requires_effective_multiplicity_adjustment": True,
+                    "adaptive_signal_falsification_passed": False,
+                    "adaptive_signal_falsification_artifact_ref": (
+                        "artifact://adaptive-falsification/fast-replay"
+                    ),
+                    "negative_control_passed": False,
+                    "placebo_label_test_passed": False,
+                    "label_permutation_test_passed": False,
+                    "feature_permutation_stability_passed": False,
+                    "leakage_probe_passed": False,
+                    "walk_forward_falsification_passed": False,
+                    "null_model_sample_count": 0,
+                    "required_min_null_model_sample_count": 30,
+                    "effective_multiplicity_adjusted_p_value": 1.0,
+                    "required_max_effective_multiplicity_adjusted_p_value": 0.05,
+                    "candidate_vs_null_return_delta": 0.0,
+                    "candidate_vs_incumbent_return_delta": 0.0,
+                    "adaptive_signal_falsification_source_markers": [
+                        "spurious_predictability_arxiv_2604_15531_2026",
+                    ],
+                },
+                "null_comparator_patch": {
+                    "baseline_outperformed": False,
+                    "candidate_vs_null_return_delta": 0.0,
+                    "candidate_vs_incumbent_return_delta": 0.0,
+                    "null_model_sample_count": 0,
+                },
+            },
+            "promotion_readiness": {
+                "stage": "paper_probation",
+                "status": "promotion_ready",
+                "promotable": True,
+            },
+            "cost_calibration": {"status": "calibrated", "source": "route_tca"},
+        },
+        dataset_snapshot_id="snapshot-fast-replay-adaptive-falsification",
+        result_path="artifact://replay",
+        code_commit="commit-fast-replay-adaptive-falsification",
+    )
+
+    assert bundle.objective_scorecard["required_adaptive_signal_falsification"] is True
+    assert bundle.objective_scorecard["adaptive_signal_falsification_passed"] is False
+    assert (
+        bundle.objective_scorecard["adaptive_signal_falsification_artifact_ref"]
+        == "artifact://adaptive-falsification/fast-replay"
+    )
+    assert bundle.objective_scorecard[
+        "adaptive_signal_falsification_source_markers"
+    ] == ["spurious_predictability_arxiv_2604_15531_2026"]
+    assert bundle.null_comparator["baseline_outperformed"] is False
+    assert (
+        "artifact://adaptive-falsification/fast-replay" in bundle.replay_artifact_refs
+    )
+    blockers = evidence_bundle_blockers(bundle)
+    assert "adaptive_signal_falsification_missing_or_failed" in blockers
+    assert "adaptive_signal_falsification_artifact_missing" not in blockers
+    assert "adaptive_signal_baseline_not_outperformed" in blockers
+    assert "null_model_sample_count_below_min" in blockers
+    assert "leakage_probe_missing_or_failed" in blockers
+
+
 def test_frontier_candidate_preserves_ofi_response_fields() -> None:
     bundle = evidence_bundle_from_frontier_candidate(
         candidate_spec_id="spec-ofi-response-preserved",
