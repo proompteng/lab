@@ -4641,6 +4641,173 @@ def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
 
     if has_any(
         (
+            "transient impact",
+            "transient price impact",
+            "transient market impact",
+            "propagator model",
+            "propagator impact",
+            "nonlinear propagator",
+            "power-law decay",
+            "power law decay",
+            "exponential decay kernel",
+            "impact decay kernel",
+            "impact_kernel",
+            "self-exciting order flow",
+            "self exciting order flow",
+            "bivariate hawkes",
+            "mutually exciting hawkes",
+            "samuelson effect",
+            "gate closure",
+            "n-player execution",
+            "n trader execution",
+            "predatory execution",
+            "execution predator",
+            "cost of anarchy",
+            "block-trade regularization",
+            "block trade regularization",
+            "fredholm",
+        )
+    ):
+        overlay_ids.append("transient_impact_hawkes_propagator_grid")
+        overlay_contracts.append(
+            {
+                "overlay_id": "transient_impact_hawkes_propagator_grid",
+                "source_papers": [
+                    {
+                        "source_id": "arxiv-2504.10282",
+                        "url": "https://arxiv.org/abs/2504.10282",
+                        "title": "Optimal Execution in Intraday Energy Markets under Hawkes Processes with Transient Impact",
+                        "mechanism": "bivariate_hawkes_order_flow_with_transient_impact_schedule_stress",
+                    },
+                    {
+                        "source_id": "arxiv-2503.04323",
+                        "url": "https://arxiv.org/abs/2503.04323",
+                        "title": "Fredholm Approach to Nonlinear Propagator Models",
+                        "mechanism": "nonlinear_propagator_alpha_signal_execution_under_exponential_and_power_law_decay",
+                    },
+                    {
+                        "source_id": "arxiv-2501.09638",
+                        "url": "https://arxiv.org/abs/2501.09638",
+                        "title": "Optimal Execution among N Traders with Transient Price Impact",
+                        "mechanism": "n_trader_transient_impact_predator_and_block_regularization_stress",
+                    },
+                ],
+                "required_evidence": [
+                    "transient_impact_kernel_fit",
+                    "impact_decay_residuals",
+                    "hawkes_self_cross_excitation_matrix",
+                    "execution_trajectory_trace",
+                    "twap_vwap_benchmark_shortfall",
+                    "alpha_signal_trace",
+                    "predator_cost_of_anarchy_stress",
+                    "route_tca",
+                    "runtime_ledger",
+                ],
+                "rank_metric": (
+                    "post_cost_net_pnl_after_transient_impact_hawkes_predator_stress"
+                ),
+                "evidence_policy": (
+                    "transient_impact_propagator_grid_is_candidate_input_only_"
+                    "and_requires_real_route_tca_kernel_fit_runtime_ledger_proof"
+                ),
+            }
+        )
+        parameter_space["transient_impact_hawkes_propagator_grid"] = {
+            "schema_version": "torghut.transient-impact-hawkes-propagator-grid.v1",
+            "source_ids": [
+                "arxiv-2504.10282",
+                "arxiv-2503.04323",
+                "arxiv-2501.09638",
+            ],
+            "candidate_search_inputs": {
+                "impact_decay_kernel_family_grid": [
+                    "exponential",
+                    "power_law",
+                    "multi_exponential",
+                ],
+                "impact_decay_half_life_seconds_grid": ["5", "30", "120", "600"],
+                "impact_concavity_exponent_grid": ["0.35", "0.50", "0.65", "1.00"],
+                "hawkes_self_excitation_grid": ["0.10", "0.30", "0.55"],
+                "hawkes_cross_excitation_grid": ["0.05", "0.20", "0.40"],
+                "trajectory_benchmark_grid": [
+                    "twap",
+                    "vwap",
+                    "front_loaded",
+                    "back_loaded",
+                ],
+                "predator_count_grid": ["0", "1", "3", "5"],
+                "block_trade_regularization_bps_grid": ["0", "1", "3", "6"],
+                "alpha_signal_half_life_seconds_grid": ["30", "120", "600"],
+            },
+            "stress_inputs_required": [
+                "signed_order_flow",
+                "hawkes_event_arrivals",
+                "child_order_schedule",
+                "realized_impact_bps",
+                "impact_decay_after_child_order",
+                "alpha_signal_return",
+                "route_tca_bps",
+                "runtime_ledger_post_cost_pnl",
+            ],
+            "diagnostics_required": [
+                "impact_kernel_fit_error_bps",
+                "hawkes_branching_ratio",
+                "self_cross_excitation_l1",
+                "twap_shortfall_bps",
+                "vwap_shortfall_bps",
+                "predator_cost_of_anarchy_bps",
+                "price_manipulation_screen_passed",
+            ],
+            "proof_neutrality": {
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "requires_exact_replay": True,
+                "requires_real_order_flow": True,
+                "requires_real_impact_decay_fit": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_modeled_transient_impact_as_profit_proof": True,
+                "rejects_hawkes_generated_order_flow_as_fill_authority": True,
+                "rejects_predator_stress_as_runtime_ledger_authority": True,
+            },
+        }
+        hard_vetoes.update(
+            {
+                "required_transient_impact_hawkes_propagator_grid": True,
+                "required_transient_impact_kernel_fit": True,
+                "required_impact_decay_residuals": True,
+                "required_hawkes_self_cross_excitation_matrix": True,
+                "required_execution_trajectory_trace": True,
+                "required_twap_vwap_benchmark_shortfall": True,
+                "required_predator_cost_of_anarchy_stress": True,
+                "required_price_manipulation_screen_passed": True,
+                "required_max_transient_impact_fit_error_bps": "8",
+                "required_max_predator_cost_of_anarchy_bps": "10",
+            }
+        )
+        promotion_contract.update(
+            {
+                "requires_transient_impact_hawkes_propagator_grid": True,
+                "requires_transient_impact_kernel_fit": True,
+                "requires_impact_decay_residuals": True,
+                "requires_hawkes_self_cross_excitation_matrix": True,
+                "requires_execution_trajectory_trace": True,
+                "requires_twap_vwap_benchmark_shortfall": True,
+                "requires_predator_cost_of_anarchy_stress": True,
+                "requires_route_tca": True,
+                "requires_runtime_ledger": True,
+                "rejects_modeled_transient_impact_as_profit_proof": True,
+                "rejects_hawkes_generated_order_flow_as_fill_authority": True,
+                "execution_impact_policy": (
+                    "transient_impact_hawkes_propagator_validation_only"
+                ),
+            }
+        )
+
+    if has_any(
+        (
             "reality gap",
             "simulation reality",
             "sim-to-live",
