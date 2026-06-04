@@ -468,6 +468,93 @@ class TestCandidateSpecs(TestCase):
             "post_cost_nonlinear_impact",
         )
 
+    def test_transient_impact_claim_adds_hawkes_propagator_grid(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-transient-impact-hawkes-propagator",
+            claims=[
+                {
+                    "claim_id": "transient-impact-hawkes-propagator-execution",
+                    "claim_type": "execution_assumption",
+                    "claim_text": (
+                        "Transient price impact with a nonlinear propagator model, "
+                        "power-law decay, bivariate Hawkes self-exciting order flow, "
+                        "and N-player execution predator cost-of-anarchy stress "
+                        "should change intraday execution trajectory ranking."
+                    ),
+                    "data_requirements": [
+                        "transient_impact_kernel_fit",
+                        "impact_decay_residuals",
+                        "hawkes_self_cross_excitation_matrix",
+                        "execution_trajectory_trace",
+                        "twap_vwap_benchmark_shortfall",
+                        "predator_cost_of_anarchy_stress",
+                        "route_tca",
+                    ],
+                    "confidence": "0.76",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "transient_impact_hawkes_propagator_grid",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        grid = specs[0].parameter_space["transient_impact_hawkes_propagator_grid"]
+        self.assertEqual(
+            grid["schema_version"],
+            "torghut.transient-impact-hawkes-propagator-grid.v1",
+        )
+        self.assertEqual(
+            set(grid["source_ids"]),
+            {"arxiv-2504.10282", "arxiv-2503.04323", "arxiv-2501.09638"},
+        )
+        self.assertIn(
+            "impact_decay_kernel_family_grid",
+            grid["candidate_search_inputs"],
+        )
+        self.assertIn("predator_count_grid", grid["candidate_search_inputs"])
+        self.assertIn("impact_decay_after_child_order", grid["stress_inputs_required"])
+        self.assertIn("price_manipulation_screen_passed", grid["diagnostics_required"])
+        self.assertFalse(grid["proof_neutrality"]["proof_authority"])
+        self.assertTrue(
+            grid["proof_neutrality"][
+                "rejects_hawkes_generated_order_flow_as_fill_authority"
+            ]
+        )
+        self.assertTrue(
+            specs[0].hard_vetoes["required_transient_impact_hawkes_propagator_grid"]
+        )
+        self.assertEqual(
+            specs[0].hard_vetoes["required_max_predator_cost_of_anarchy_bps"],
+            "10",
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "requires_transient_impact_hawkes_propagator_grid"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_modeled_transient_impact_as_profit_proof"
+            ]
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        contract = next(
+            item
+            for item in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if item["overlay_id"] == "transient_impact_hawkes_propagator_grid"
+        )
+        self.assertEqual(
+            contract["rank_metric"],
+            "post_cost_net_pnl_after_transient_impact_hawkes_predator_stress",
+        )
+
     def test_lob_simulation_reality_gap_claim_adds_implementation_risk_overlay(
         self,
     ) -> None:
