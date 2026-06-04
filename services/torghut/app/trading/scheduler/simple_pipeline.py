@@ -1360,6 +1360,30 @@ class SimpleTradingPipeline(TradingPipeline):
                     batch,
                     quality_signals=[],
                 )
+                context = self._build_run_context(session)
+                if context is not None:
+                    _account_snapshot, account, positions, allowed_symbols = context
+                    self._process_paper_route_probe_exit_decisions(
+                        session=session,
+                        strategies=strategies,
+                        account=account,
+                        positions=positions,
+                        allowed_symbols=allowed_symbols,
+                    )
+                    self._process_paper_route_materialized_decisions(
+                        session=session,
+                        strategies=strategies,
+                        account=account,
+                        positions=positions,
+                        allowed_symbols=allowed_symbols,
+                    )
+                    self._process_paper_route_probe_retry_decisions(
+                        session=session,
+                        strategies=strategies,
+                        account=account,
+                        positions=positions,
+                        allowed_symbols=allowed_symbols,
+                    )
                 self._record_bounded_signal_ingest_blocker(
                     batch=batch,
                     signal_scope=signal_scope,

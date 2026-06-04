@@ -7464,6 +7464,225 @@ class TestTradingPipeline(TestCase):
                 self.assertFalse(params["promotion_allowed"])
                 self.assertFalse(params["final_promotion_authorized"])
 
+    def test_simple_pipeline_processes_materialized_target_plan_when_signal_ingest_unavailable(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_pipeline_mode": config.settings.trading_pipeline_mode,
+            "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
+            "trading_fractional_equities_enabled": config.settings.trading_fractional_equities_enabled,
+            "trading_simple_paper_route_probe_enabled": (
+                config.settings.trading_simple_paper_route_probe_enabled
+            ),
+            "trading_simple_paper_route_probe_max_notional": (
+                config.settings.trading_simple_paper_route_probe_max_notional
+            ),
+            "trading_paper_route_target_plan_url": config.settings.trading_paper_route_target_plan_url,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "trading_universe_static_fallback_enabled": (
+                config.settings.trading_universe_static_fallback_enabled
+            ),
+            "trading_universe_static_fallback_symbols_raw": (
+                config.settings.trading_universe_static_fallback_symbols_raw
+            ),
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 500.0
+        config.settings.trading_paper_route_target_plan_url = ""
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="bounded H-PAIRS materialized target",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+                materialized = materialize_bounded_paper_route_target_plan(
+                    session,
+                    {
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_account_label": "TORGHUT_REPLAY",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_plan_ref": (
+                                    "s3://torghut-proof/hpairs/current-window.json"
+                                ),
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/h-pairs.json"
+                                ),
+                                "observed_stage": "paper",
+                                "bounded_collection_stage": (
+                                    "bounded_paper_collection"
+                                ),
+                                "target_notional": "200",
+                                "target_quantity": "1",
+                                "paper_route_probe_next_session_max_notional": "200",
+                                "paper_route_probe_window_start": (
+                                    window_start.isoformat()
+                                ),
+                                "paper_route_probe_window_end": (
+                                    window_end.isoformat()
+                                ),
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "paper_route_probe_symbol_actions": {"AAPL": "buy"},
+                                "paper_route_probe_symbol_quantities": {"AAPL": "1"},
+                                "paper_route_probe_pair_balance_state": "balanced",
+                                "paper_route_clean_window_baseline_state": {
+                                    "state": "clean",
+                                    "blockers": [],
+                                },
+                                "paper_route_clean_window_state": "clean",
+                                "source_decision_readiness": {
+                                    "ready": True,
+                                    "blockers": [],
+                                },
+                                "bounded_evidence_collection_authorized": True,
+                                "bounded_live_paper_collection_authorized": True,
+                                "canary_collection_authorized": True,
+                                "evidence_collection_ok": True,
+                                "bounded_evidence_collection_blockers": [],
+                                "runtime_window_import_health_gate_blockers": [],
+                                "paper_route_target_account_audit_state": {
+                                    "state": "available",
+                                    "audit_available": True,
+                                    "blockers": [],
+                                },
+                                "paper_route_target_account_audit_blockers": [],
+                                "paper_route_account_pre_session_blockers": [],
+                                "paper_route_hpairs_symbol_blockers": [],
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "final_promotion_allowed": False,
+                            },
+                        ]
+                    },
+                    generated_at=now,
+                    bounded_notional_limit=Decimal("500"),
+                )
+                self.assertEqual(len(materialized["decisions"]), 1)
+                session.commit()
+
+            alpaca_client = FakeAlpacaClient()
+            ingestor = NoSignalReasonIngestor(
+                no_signal_reason="clickhouse_url_missing"
+            )
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=ingestor,
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="TORGHUT_SIM",
+                session_factory=self.session_local,
+                price_fetcher=FakePriceFetcher(
+                    Decimal("100"),
+                    spread=Decimal("0.02"),
+                    bid=Decimal("99.99"),
+                    ask=Decimal("100.01"),
+                ),
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            with (
+                patch.object(
+                    SimpleTradingPipeline,
+                    "_profitability_proof_floor",
+                    return_value={
+                        "route_state": "repair_only",
+                        "capital_state": "zero_notional",
+                        "max_notional": "0",
+                        "market_window": {"session_open": True},
+                        "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+                    },
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    return_value=now,
+                ),
+                patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+                patch("app.trading.simulation.trading_now", return_value=now),
+            ):
+                pipeline.run_once()
+
+            self.assertEqual(len(alpaca_client.submitted), 1)
+            self.assertEqual(alpaca_client.submitted[0]["symbol"], "AAPL")
+            self.assertEqual(alpaca_client.submitted[0]["side"], "buy")
+            blocker = pipeline.state.last_bounded_evidence_collection_blocker
+            self.assertEqual(blocker["reason"], "clickhouse_url_missing")
+            with self.session_local() as session:
+                decision = session.execute(select(TradeDecision)).scalar_one()
+                self.assertEqual(decision.status, "submitted")
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_pipeline_mode = original["trading_pipeline_mode"]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_fractional_equities_enabled = original[
+                "trading_fractional_equities_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_enabled = original[
+                "trading_simple_paper_route_probe_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_max_notional = original[
+                "trading_simple_paper_route_probe_max_notional"
+            ]
+            config.settings.trading_paper_route_target_plan_url = original[
+                "trading_paper_route_target_plan_url"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.trading_universe_static_fallback_enabled = original[
+                "trading_universe_static_fallback_enabled"
+            ]
+            config.settings.trading_universe_static_fallback_symbols_raw = original[
+                "trading_universe_static_fallback_symbols_raw"
+            ]
+
     def test_materialized_target_plan_helpers_reject_bad_source_payloads(
         self,
     ) -> None:
