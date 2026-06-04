@@ -1378,7 +1378,7 @@ class SimpleTradingPipeline(TradingPipeline):
                         positions=positions,
                         allowed_symbols=allowed_symbols,
                     )
-                    self._process_paper_route_probe_retry_decisions(
+                    self._process_paper_route_probe_retry_decisions_unless_target_reserved(
                         session=session,
                         strategies=strategies,
                         account=account,
@@ -1414,14 +1414,14 @@ class SimpleTradingPipeline(TradingPipeline):
                     positions=positions,
                     allowed_symbols=allowed_symbols,
                 )
-                self._process_paper_route_probe_retry_decisions(
+                self._process_paper_route_target_source_decisions(
                     session=session,
                     strategies=strategies,
                     account=account,
                     positions=positions,
                     allowed_symbols=allowed_symbols,
                 )
-                self._process_paper_route_target_source_decisions(
+                self._process_paper_route_probe_retry_decisions_unless_target_reserved(
                     session=session,
                     strategies=strategies,
                     account=account,
@@ -1485,7 +1485,7 @@ class SimpleTradingPipeline(TradingPipeline):
                 positions=positions,
                 allowed_symbols=allowed_symbols,
             )
-            self._process_paper_route_probe_retry_decisions(
+            self._process_paper_route_probe_retry_decisions_unless_target_reserved(
                 session=session,
                 strategies=strategies,
                 account=account,
@@ -2836,6 +2836,32 @@ class SimpleTradingPipeline(TradingPipeline):
                 self.state.metrics.record_decision_rejection_reasons(
                     ["broker_submit_failed"]
                 )
+
+    def _process_paper_route_probe_retry_decisions_unless_target_reserved(
+        self,
+        *,
+        session: Session,
+        strategies: list[Strategy],
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        allowed_symbols: set[str],
+    ) -> None:
+        if self._paper_route_target_plan_reserves_account(
+            allowed_symbols=allowed_symbols
+        ):
+            logger.info(
+                "Skipping generic paper-route probe retries while bounded target-plan "
+                "evidence collection owns account=%s",
+                self.account_label,
+            )
+            return
+        self._process_paper_route_probe_retry_decisions(
+            session=session,
+            strategies=strategies,
+            account=account,
+            positions=positions,
+            allowed_symbols=allowed_symbols,
+        )
 
     @staticmethod
     def _paper_route_materialized_source_payload(
