@@ -84,6 +84,32 @@ def _round_trip(
     ]
 
 
+def _with_execution_quality(
+    rows: list[dict[str, object]],
+    *,
+    order_type: str,
+    shortfall_bps: str,
+    limit_fill_probability: str | None = None,
+    queue_position: str | None = None,
+    opportunity_cost_bps: str | None = None,
+    price_improvement_bps: str | None = None,
+) -> list[dict[str, object]]:
+    for row in rows:
+        if row.get("event_type") in {"order_submitted", "fill"}:
+            row["order_type"] = order_type
+            row["execution_shortfall_bps"] = shortfall_bps
+            row["fill_status"] = "filled"
+            if limit_fill_probability is not None:
+                row["limit_fill_probability"] = limit_fill_probability
+            if queue_position is not None:
+                row["queue_position"] = queue_position
+            if opportunity_cost_bps is not None:
+                row["nonfill_opportunity_cost_bps"] = opportunity_cost_bps
+            if price_improvement_bps is not None:
+                row["price_improvement_bps"] = price_improvement_bps
+    return rows
+
+
 def _payload(
     candidate_id: str,
     rows: list[dict[str, object]],
@@ -206,6 +232,81 @@ def test_ranker_uses_runtime_ledger_net_pnl_and_window_day_ranking(
     assert top["total_net_pnl_after_costs"] == "120.0"
     assert top["window_net_pnl_per_day"] == "24.0"
     assert top["active_net_pnl_per_day"] == "40.0"
+
+
+def test_ranker_uses_market_limit_queue_execution_quality_for_adjusted_ranking(
+    tmp_path: Path,
+) -> None:
+    cleaner = _payload(
+        "cleaner-limit-fill-evidence",
+        _with_execution_quality(
+            _round_trip(
+                day=18,
+                symbol="NVDA",
+                qty="1000",
+                buy_price="100",
+                sell_price="100.90",
+                prefix="cleaner",
+            ),
+            order_type="limit",
+            shortfall_bps="1",
+            limit_fill_probability="0.82",
+            queue_position="0.15",
+            opportunity_cost_bps="2",
+            price_improvement_bps="3",
+        ),
+    )
+    raw_winner_execution_risk = _payload(
+        "raw-winner-execution-risk",
+        _with_execution_quality(
+            _round_trip(
+                day=18,
+                symbol="NVDA",
+                qty="1000",
+                buy_price="100",
+                sell_price="101.00",
+                prefix="riskier",
+            ),
+            order_type="limit",
+            shortfall_bps="18",
+        ),
+    )
+    cleaner_path = tmp_path / "cleaner.json"
+    riskier_path = tmp_path / "riskier.json"
+    cleaner_path.write_text(json.dumps(cleaner))
+    riskier_path.write_text(json.dumps(raw_winner_execution_risk))
+
+    report = build_replay_ledger_ranking_report(
+        [cleaner_path, riskier_path],
+        policy=ReplayLedgerRankingPolicy(
+            target_net_pnl_per_day=Decimal("1"),
+            min_window_weekday_count=1,
+            min_avg_filled_notional_per_day=Decimal("1"),
+            max_best_day_share=Decimal("1.0"),
+            max_gross_exposure_pct_equity=Decimal("1000.0"),
+            start_equity=Decimal("100000000"),
+        ),
+    )
+    top = report["candidates"][0]
+    raw_winner = report["candidates"][1]
+
+    assert top["candidate_id"] == "cleaner-limit-fill-evidence"
+    assert top["execution_quality_penalty_bps"] == "0"
+    assert top["execution_quality"]["limit_fill_rate"] == "1"
+    assert top["execution_quality"]["limit_fill_probability_sample_count"] == 4
+    assert top["execution_quality"]["queue_position_sample_count"] == 4
+    assert raw_winner["candidate_id"] == "raw-winner-execution-risk"
+    assert (
+        "limit_fill_probability_evidence_incomplete"
+        in raw_winner["execution_quality_blockers"]
+    )
+    assert (
+        "queue_position_survival_evidence_incomplete"
+        in raw_winner["execution_quality_blockers"]
+    )
+    assert Decimal(
+        str(top["execution_quality_adjusted_window_net_pnl_per_day"])
+    ) > Decimal(str(raw_winner["execution_quality_adjusted_window_net_pnl_per_day"]))
 
 
 def test_ranker_blocks_replay_only_and_over_equity_artifacts() -> None:

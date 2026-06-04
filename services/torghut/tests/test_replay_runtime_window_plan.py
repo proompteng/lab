@@ -178,21 +178,27 @@ def test_handoff_builds_non_promotional_runtime_window_target(
     target = plan["targets"][0]
     assert target["candidate_id"] == "candidate-strong-one-day"
     assert (
-        target["replay_candidate_identity_hash"]
-        == "identity-candidate-strong-one-day"
+        target["replay_candidate_identity_hash"] == "identity-candidate-strong-one-day"
     )
     assert target["replay_cost_lineage_hash"] == "cost-lineage-candidate-strong-one-day"
     assert target["replay_fills_with_adv_notional"] == 2
     assert target["replay_fills_with_participation_rate"] == 2
     assert target["replay_fills_with_capacity_warning_contract"] == 2
     assert target["replay_capacity_warning_counts"] == {}
+    assert target["replay_execution_quality"]["schema_version"] == (
+        "torghut.exact-replay-execution-quality.v1"
+    )
+    assert (
+        "order_type_mix_evidence_incomplete"
+        in target["replay_execution_quality_blockers"]
+    )
+    assert target["replay_execution_quality_penalty_bps"] != "0"
+    assert "replay_execution_quality_adjusted_window_net_pnl_per_day" in target
     assert target["hypothesis_id"] == "H-PAIRS-01"
     assert target["strategy_family"] == "microbar_cross_sectional_pairs"
     assert target["strategy_name"] == "microbar-cross-sectional-pairs-v1"
     assert target["dataset_snapshot_ref"] == "snapshot-1"
-    assert target["exact_replay_ledger_artifact_refs"] == [
-        str(artifact_path.resolve())
-    ]
+    assert target["exact_replay_ledger_artifact_refs"] == [str(artifact_path.resolve())]
     assert target["exact_replay_ledger_artifact_row_count"] == 6
     assert target["exact_replay_ledger_artifact_fill_count"] == 2
     assert "runtime_ledger_artifact_ref" not in target

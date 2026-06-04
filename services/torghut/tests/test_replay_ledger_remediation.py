@@ -124,6 +124,51 @@ class TestReplayLedgerRemediation(TestCase):
             "start_runtime_paper_validation",
         )
 
+    def test_report_surfaces_execution_quality_actions_without_promotion(self) -> None:
+        report = build_replay_ledger_remediation_report(
+            {
+                "schema_version": "torghut.exact-replay-ledger-ranking.v1",
+                "policy": {"target_net_pnl_per_day": "500"},
+                "candidates": [
+                    {
+                        "candidate_id": "candidate-needs-fill-curve",
+                        "promotion_status": "candidate_replay_evidence_only",
+                        "promotion_blockers": ["replay_artifact_only_not_live"],
+                        "runtime_ledger_blockers": [],
+                        "execution_quality_blockers": [
+                            "limit_fill_probability_evidence_incomplete",
+                            "queue_position_survival_evidence_incomplete",
+                        ],
+                        "execution_quality_penalty_bps": "12",
+                        "execution_quality_adjusted_window_net_pnl_per_day": "480",
+                        "execution_quality": {
+                            "schema_version": "torghut.exact-replay-execution-quality.v1",
+                            "limit_order_count": 4,
+                            "limit_fill_probability_sample_count": 0,
+                        },
+                    }
+                ],
+            }
+        )
+
+        self.assertFalse(report["promotion_allowed"])
+        self.assertEqual(
+            report["execution_quality"]["schema_version"],
+            "torghut.exact-replay-execution-quality.v1",
+        )
+        actions = {
+            item["action"]: item for item in report["recommended_search_actions"]
+        }
+        self.assertIn("collect_limit_fill_probability_evidence", actions)
+        self.assertIn(
+            "collect_queue_position_survival_fill_curve_evidence",
+            actions,
+        )
+        self.assertEqual(
+            actions["collect_queue_position_survival_fill_curve_evidence"]["authority"],
+            "research_ranking_only_final_promotion_still_requires_runtime_ledger",
+        )
+
     def test_report_handles_malformed_shapes_without_promotion(self) -> None:
         report = build_replay_ledger_remediation_report(
             {
