@@ -972,9 +972,7 @@ def _target_probe_symbol_notional_budget(
     if target_notional <= 0 or max_notional <= 0:
         return None
     budget = min(target_notional, max_notional)
-    normalized_symbols = [
-        item.strip().upper() for item in symbols if item.strip()
-    ]
+    normalized_symbols = [item.strip().upper() for item in symbols if item.strip()]
     if symbol not in normalized_symbols:
         return None
     weights = {
@@ -2794,6 +2792,37 @@ class SimpleTradingPipeline(TradingPipeline):
         return restored_qty
 
     @staticmethod
+    def _execution_adapter_positions(
+        execution_adapter: Any | None,
+    ) -> list[dict[str, Any]] | None:
+        if execution_adapter is None:
+            return None
+        list_positions = getattr(execution_adapter, "list_positions", None)
+        if not callable(list_positions):
+            return None
+        try:
+            raw_positions = list_positions()
+        except Exception as exc:
+            logger.warning(
+                "Failed to refresh paper route probe exit broker positions error=%s",
+                exc,
+            )
+            return None
+        if raw_positions is None or isinstance(
+            raw_positions,
+            (str, bytes, bytearray),
+        ):
+            return None
+        if not isinstance(raw_positions, Sequence):
+            return None
+        raw_position_items = cast(Sequence[object], raw_positions)
+        return [
+            dict(cast(Mapping[str, Any], position))
+            for position in raw_position_items
+            if isinstance(position, Mapping)
+        ]
+
+    @staticmethod
     def _prepare_paper_route_probe_exit_position(
         positions: list[dict[str, Any]],
         decision: StrategyDecision,
@@ -2803,7 +2832,13 @@ class SimpleTradingPipeline(TradingPipeline):
     ) -> StrategyDecision | None:
         if SimpleTradingPipeline._paper_route_probe_exit_metadata(decision) is None:
             return decision
-        current_qty = position_qty_for_symbol(positions, decision.symbol)
+        broker_positions = SimpleTradingPipeline._execution_adapter_positions(
+            execution_adapter
+        )
+        current_qty = position_qty_for_symbol(
+            broker_positions if broker_positions is not None else positions,
+            decision.symbol,
+        )
         params = dict(decision.params)
         metadata = dict(cast(Mapping[str, Any], params["paper_route_probe_exit"]))
         simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
@@ -2836,6 +2871,8 @@ class SimpleTradingPipeline(TradingPipeline):
             effective_position_qty = restored_qty
         else:
             effective_position_qty = abs(current_qty)
+            if broker_positions is not None:
+                metadata["position_source"] = "execution_adapter_positions"
         if effective_position_qty < decision.qty:
             decision = decision.model_copy(update={"qty": effective_position_qty})
             metadata["qty_capped_to_position"] = True
@@ -2863,11 +2900,19 @@ class SimpleTradingPipeline(TradingPipeline):
     ) -> None:
         decisions = self._paper_route_probe_retry_decisions(session=session)
         for decision in decisions:
+            prepared_decision = self._prepare_paper_route_probe_exit_position(
+                positions,
+                decision,
+                execution_adapter=self.execution_adapter,
+                trading_mode=settings.trading_mode,
+            )
+            if prepared_decision is None:
+                continue
             self.state.metrics.decisions_total += 1
             try:
                 submitted = self._handle_decision(
                     session,
-                    decision,
+                    prepared_decision,
                     strategies,
                     account,
                     positions,
@@ -2883,9 +2928,9 @@ class SimpleTradingPipeline(TradingPipeline):
             except Exception:
                 logger.exception(
                     "Paper route probe retry handling failed strategy_id=%s symbol=%s timeframe=%s",
-                    decision.strategy_id,
-                    decision.symbol,
-                    decision.timeframe,
+                    prepared_decision.strategy_id,
+                    prepared_decision.symbol,
+                    prepared_decision.timeframe,
                 )
                 self.state.metrics.orders_rejected_total += 1
                 self.state.metrics.record_decision_rejection_reasons(
@@ -3174,9 +3219,7 @@ class SimpleTradingPipeline(TradingPipeline):
             )
         event_ts = event_ts.astimezone(timezone.utc)
         timeframe = (
-            _safe_text(payload.get("timeframe"))
-            or strategy.base_timeframe
-            or "1Min"
+            _safe_text(payload.get("timeframe")) or strategy.base_timeframe or "1Min"
         )
         payload_qty = _optional_decimal(payload.get("qty"))
         if payload_qty is not None and payload_qty <= 0:
@@ -5899,12 +5942,9 @@ class SimpleTradingPipeline(TradingPipeline):
                     quantity_resolution.audit
                 )
                 simple_lane["target_source_notional_sized"] = (
-                    quantity_resolution.audit.get("sizing_source")
-                    == "target_notional"
+                    quantity_resolution.audit.get("sizing_source") == "target_notional"
                 )
-                params["paper_route_target_notional_sizing"] = (
-                    quantity_resolution.audit
-                )
+                params["paper_route_target_notional_sizing"] = quantity_resolution.audit
                 params.update(quantity_resolution.price_params)
                 decisions.append(
                     StrategyDecision(

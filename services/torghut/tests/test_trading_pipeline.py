@@ -83,6 +83,7 @@ from app.trading.scheduler.simple_pipeline import (
     _parse_target_datetime,
     _safe_int,
     _target_probe_action,
+    _target_probe_symbol_notional_budget,
     _target_probe_window,
     _target_truthy,
 )
@@ -6524,6 +6525,19 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(lineage["source_decision_mode"], "strategy_signal_paper")
         self.assertTrue(lineage["profit_proof_eligible"])
 
+    def test_target_probe_symbol_notional_budget_normalizes_symbols(
+        self,
+    ) -> None:
+        budget = _target_probe_symbol_notional_budget(
+            target={"target_notional": "150"},
+            symbol="AAPL",
+            symbols=[" aapl ", "AMZN"],
+            symbol_quantities={"AAPL": Decimal("2"), "AMZN": Decimal("1")},
+            max_notional=Decimal("120"),
+        )
+
+        self.assertEqual(budget, Decimal("80"))
+
     def test_simple_pipeline_reopens_rejected_paper_route_probe_exit(
         self,
     ) -> None:
@@ -6622,6 +6636,146 @@ class TestTradingPipeline(TestCase):
             )
             self.assertNotIn("risk_reasons", exit_payload)
             self.assertNotIn("reject_reason_atomic", exit_payload)
+
+    def test_simple_pipeline_skips_probe_exit_retry_without_broker_inventory(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="INTC",
+            event_ts=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("34.6997"),
+            rationale="paper-route-probe-exit",
+            params={
+                "price": Decimal("108.37"),
+                "paper_route_probe_exit": {
+                    "mode": "paper_route_exit",
+                    "db_open_qty": "34.69970000",
+                    "db_open_side": "long",
+                },
+                "simple_lane": {
+                    "quantity_resolution": {
+                        "action": "sell",
+                        "symbol": "INTC",
+                        "position_qty": "34.6997",
+                    },
+                },
+            },
+        )
+        stale_cached_positions = [{"symbol": "INTC", "qty": "34.6997", "side": "long"}]
+        broker_adapter = PositionedAlpacaClient([])
+
+        prepared = SimpleTradingPipeline._prepare_paper_route_probe_exit_position(
+            stale_cached_positions,
+            decision,
+            execution_adapter=broker_adapter,
+            trading_mode="paper",
+        )
+
+        self.assertIsNone(prepared)
+
+    def test_simple_pipeline_ignores_unusable_execution_adapter_positions(
+        self,
+    ) -> None:
+        class RaisingPositionsAdapter:
+            def list_positions(self) -> list[dict[str, str]]:
+                raise RuntimeError("broker unavailable")
+
+        class RawPositionsAdapter:
+            def __init__(self, raw_positions: object) -> None:
+                self.raw_positions = raw_positions
+
+            def list_positions(self) -> object:
+                return self.raw_positions
+
+        self.assertIsNone(SimpleTradingPipeline._execution_adapter_positions(None))
+        self.assertIsNone(SimpleTradingPipeline._execution_adapter_positions(object()))
+        self.assertIsNone(
+            SimpleTradingPipeline._execution_adapter_positions(
+                RaisingPositionsAdapter()
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._execution_adapter_positions(
+                RawPositionsAdapter("not positions")
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._execution_adapter_positions(
+                RawPositionsAdapter({"symbol": "AAPL", "qty": "1"})
+            )
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._execution_adapter_positions(
+                RawPositionsAdapter([{"symbol": "AAPL", "qty": "1"}, "ignored"])
+            ),
+            [{"symbol": "AAPL", "qty": "1"}],
+        )
+
+    def test_simple_pipeline_skips_probe_exit_retry_submission_when_broker_flat(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="INTC",
+            event_ts=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("34.6997"),
+            rationale="paper-route-probe-exit",
+            params={
+                "price": Decimal("108.37"),
+                "paper_route_probe_exit": {
+                    "mode": "paper_route_exit",
+                    "db_open_qty": "34.69970000",
+                    "db_open_side": "long",
+                },
+                "simple_lane": {
+                    "quantity_resolution": {
+                        "action": "sell",
+                        "symbol": "INTC",
+                        "position_qty": "34.6997",
+                    },
+                },
+            },
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=PositionedAlpacaClient([]),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        positions = [{"symbol": "INTC", "qty": "34.6997", "side": "long"}]
+
+        with (
+            self.session_local() as session,
+            patch.object(
+                pipeline,
+                "_paper_route_probe_retry_decisions",
+                return_value=[decision],
+            ),
+            patch.object(pipeline, "_handle_decision") as handle_decision,
+        ):
+            pipeline._process_paper_route_probe_retry_decisions(
+                session=session,
+                strategies=[],
+                account={"equity": "10000", "cash": "10000", "buying_power": "10000"},
+                positions=positions,
+                allowed_symbols={"INTC"},
+            )
+
+        handle_decision.assert_not_called()
+        self.assertEqual(pipeline.state.metrics.decisions_total, 0)
 
     def test_simple_pipeline_does_not_exit_without_broker_inventory(
         self,
@@ -7335,11 +7489,14 @@ class TestTradingPipeline(TestCase):
             )
             self.assertEqual(paper_route_probe["capped_qty"], "2.4997")
             self.assertEqual(
-                Decimal(str(paper_route_probe["capped_notional"])), Decimal("249.994997")
+                Decimal(str(paper_route_probe["capped_notional"])),
+                Decimal("249.994997"),
             )
             self.assertTrue(paper_route_probe["target_source_notional_sized"])
             self.assertEqual(Decimal(str(simple_lane["final_qty"])), Decimal("2.4997"))
-            self.assertEqual(Decimal(str(simple_lane["notional"])), Decimal("249.994997"))
+            self.assertEqual(
+                Decimal(str(simple_lane["notional"])), Decimal("249.994997")
+            )
             self.assertEqual(simple_lane_precheck["requested_qty"], "2.4997")
             self.assertEqual(simple_lane_precheck["final_qty"], "2.4997")
             self.assertEqual(
