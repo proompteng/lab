@@ -3131,6 +3131,41 @@ class SimpleTradingPipeline(TradingPipeline):
             params=params,
         )
 
+    @staticmethod
+    def _expire_stale_materialized_paper_route_decision(
+        *,
+        decision_row: TradeDecision,
+        payload: Mapping[str, Any],
+        window_end: datetime,
+        now: datetime,
+        reason: str = "paper_route_materialized_window_expired_unsubmitted",
+    ) -> bool:
+        if decision_row.status != "planned":
+            return False
+        if now < window_end.astimezone(timezone.utc):
+            return False
+        decision_json = dict(payload)
+        params = dict(cast(Mapping[str, Any], decision_json.get("params") or {}))
+        expiry_payload = {
+            "schema_version": "torghut.paper-route-materialized-expiry.v1",
+            "reason": reason,
+            "window_end": window_end.astimezone(timezone.utc).isoformat(),
+            "expired_at": now.astimezone(timezone.utc).isoformat(),
+            "previous_submission_stage": _safe_text(
+                decision_json.get("submission_stage")
+            )
+            or "bounded_paper_route_materialized",
+        }
+        params["paper_route_materialized_unsubmitted"] = expiry_payload
+        decision_json["params"] = params
+        decision_json["submission_stage"] = "expired_paper_route_materialized_window"
+        decision_json["submission_block_reason"] = reason
+        decision_json["reject_reason_atomic"] = [reason]
+        decision_json["paper_route_materialized_unsubmitted"] = expiry_payload
+        decision_row.status = "rejected"
+        decision_row.decision_json = decision_json
+        return True
+
     def _paper_route_materialized_planned_decisions(
         self,
         *,
@@ -3144,8 +3179,6 @@ class SimpleTradingPipeline(TradingPipeline):
         if not settings.trading_simple_paper_route_probe_enabled:
             return []
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        if not self._is_market_session_open(now):
-            return []
 
         rows = (
             session.execute(
@@ -3165,6 +3198,7 @@ class SimpleTradingPipeline(TradingPipeline):
         }
         decisions: list[StrategyDecision] = []
         seen: set[str] = set()
+        expired_count = 0
         for decision_row in rows:
             if str(decision_row.id) in seen:
                 continue
@@ -3202,7 +3236,19 @@ class SimpleTradingPipeline(TradingPipeline):
             if window is None:
                 continue
             window_start, window_end = window
+            if self._expire_stale_materialized_paper_route_decision(
+                decision_row=decision_row,
+                payload=payload,
+                window_end=window_end,
+                now=now,
+            ):
+                session.add(decision_row)
+                expired_count += 1
+                seen.add(str(decision_row.id))
+                continue
             if now < window_start or now >= window_end:
+                continue
+            if not self._is_market_session_open(now):
                 continue
             target_cap = _target_probe_cap(target)
             if target_cap is None or target_cap <= 0:
@@ -3273,6 +3319,13 @@ class SimpleTradingPipeline(TradingPipeline):
                 continue
             decisions.append(decision)
             seen.add(str(decision_row.id))
+        if expired_count:
+            session.commit()
+            logger.warning(
+                "Expired stale materialized paper-route target source decisions account_label=%s count=%s",
+                self.account_label,
+                expired_count,
+            )
         return decisions
 
     def _process_paper_route_materialized_decisions(

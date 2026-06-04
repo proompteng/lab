@@ -1074,6 +1074,166 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(activity["raw_decision_count"], 1)
         self.assertEqual(activity["lineage_matched_decision_count"], 1)
 
+    def test_source_activity_surfaces_expired_materialized_target_row(self) -> None:
+        window_start = datetime(2026, 6, 3, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 3, 20, 0, tzinfo=timezone.utc)
+        candidate_id = "c88421d619759b2cfaa6f4d0"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+            )
+            session.add(strategy)
+            session.flush()
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    timeframe="1Sec",
+                    decision_json={
+                        "submission_stage": "bounded_paper_route_materialized",
+                        "action": "buy",
+                        "qty": "1",
+                        "candidate_id": candidate_id,
+                        "hypothesis_id": "H-PAIRS-01",
+                        "params": {
+                            "paper_route_target_plan_materialized": True,
+                            "source_decision_mode": ("bounded_paper_route_collection"),
+                            "candidate_id": candidate_id,
+                            "hypothesis_id": "H-PAIRS-01",
+                            "paper_route_target_plan_source_decision": {
+                                "mode": "paper_route_target_plan_source_decision",
+                                "source": "paper_route_target_plan_materializer",
+                                "source_decision_mode": (
+                                    "bounded_paper_route_collection"
+                                ),
+                                "candidate_id": candidate_id,
+                                "hypothesis_id": "H-PAIRS-01",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "paper_route_probe_window_start": (
+                                    window_start.isoformat()
+                                ),
+                                "paper_route_probe_window_end": (
+                                    window_end.isoformat()
+                                ),
+                            },
+                        },
+                    },
+                    rationale="expired materialized H-PAIRS source row",
+                    status="planned",
+                    created_at=window_start + timedelta(minutes=5),
+                )
+            )
+            session.commit()
+
+            source_activity = _strategy_source_activity(
+                session,
+                strategy_name="microbar-cross-sectional-pairs-v1",
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL", "AMZN"],
+                window_start=window_start,
+                window_end=window_end,
+                candidate_id=candidate_id,
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+            )
+
+        self.assertTrue(source_activity["missing"])
+        self.assertEqual(source_activity["decision_count"], 1)
+        self.assertEqual(
+            source_activity["materialized_unsubmitted_decision_count"],
+            1,
+        )
+        self.assertIn(
+            "source_materialized_window_expired_unsubmitted",
+            source_activity["missing_reasons"],
+        )
+        self.assertIn(
+            "source_materialized_window_expired_unsubmitted",
+            source_activity["submitted_order_blockers"],
+        )
+        self.assertIn(
+            "source_materialized_window_expired_unsubmitted",
+            source_activity["source_lifecycle_blockers"],
+        )
+
+    def test_materialized_unsubmitted_reason_classifies_expiry_payloads(self) -> None:
+        window_end = datetime(2026, 6, 3, 20, 0, tzinfo=timezone.utc)
+
+        explicit_expired = TradeDecision(
+            status="rejected",
+            decision_json={
+                "paper_route_materialized_unsubmitted": {
+                    "reason": "paper_route_materialized_window_expired_unsubmitted"
+                }
+            },
+        )
+        self.assertEqual(
+            paper_route_evidence._trade_decision_materialized_unsubmitted_reason(
+                explicit_expired,
+                window_end=window_end,
+            ),
+            "source_materialized_window_expired_unsubmitted",
+        )
+
+        custom_expired = TradeDecision(
+            status="rejected",
+            decision_json={
+                "params": {
+                    "paper_route_materialized_unsubmitted": {
+                        "reason": "paper_route_submit_blocked"
+                    }
+                }
+            },
+        )
+        self.assertEqual(
+            paper_route_evidence._trade_decision_materialized_unsubmitted_reason(
+                custom_expired,
+                window_end=window_end,
+            ),
+            "paper_route_submit_blocked",
+        )
+
+        missing_window = TradeDecision(
+            status="planned",
+            decision_json={
+                "submission_stage": "bounded_paper_route_materialized",
+                "params": {"paper_route_target_plan_materialized": True},
+            },
+        )
+        self.assertIsNone(
+            paper_route_evidence._trade_decision_materialized_unsubmitted_reason(
+                missing_window,
+                window_end=window_end,
+            )
+        )
+
+        future_window = TradeDecision(
+            status="planned",
+            decision_json={
+                "submission_stage": "bounded_paper_route_materialized",
+                "params": {
+                    "paper_route_target_plan_source_decision": {
+                        "paper_route_probe_window_end": (
+                            window_end + timedelta(minutes=1)
+                        ).isoformat()
+                    }
+                },
+            },
+        )
+        self.assertIsNone(
+            paper_route_evidence._trade_decision_materialized_unsubmitted_reason(
+                future_window,
+                window_end=window_end,
+            )
+        )
+
     def test_source_activity_order_event_query_timeout_fails_closed(self) -> None:
         activity, rollback_count = self._source_activity_with_failing_query(
             failure_call=3
