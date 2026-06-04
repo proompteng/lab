@@ -253,6 +253,10 @@ class TestFastReplayPreview(TestCase):
             "intraday_jump_burst_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "rough_flow_volatility_impact_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -481,6 +485,24 @@ class TestFastReplayPreview(TestCase):
                 source["source_id"]
                 for source in row_payload["intraday_jump_burst_stress"]["source_papers"]
             },
+        )
+        self.assertIn("rough_flow_volatility_stress", row_payload)
+        self.assertEqual(
+            row_payload["rough_flow_volatility_stress"]["status"],
+            "preview_only_rough_flow_volatility_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2601.23172",
+            {
+                source["source_id"]
+                for source in row_payload["rough_flow_volatility_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(row_payload["rough_flow_volatility_stress"]["proof_authority"])
+        self.assertFalse(
+            row_payload["rough_flow_volatility_stress"]["promotion_authority"]
         )
         self.assertIn(
             "intraday_jump_burst_stress_penalty_active",
