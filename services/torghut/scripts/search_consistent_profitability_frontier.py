@@ -188,6 +188,7 @@ _PAPER_PROBATION_QUEUE_SURVIVAL_REASONS = frozenset(
         "queue_position_survival_stress_net_pnl_non_positive",
     }
 )
+_PAPER_PROBATION_TARGET_SCALE_QUANTUM = Decimal("0.000001")
 _CONSISTENCY_REPAIR_ENTRY_KEYS = (
     "max_entries_per_session",
     "max_entries_per_day",
@@ -4653,18 +4654,18 @@ def _paper_probation_required_actions(hard_vetoes: Sequence[str]) -> list[str]:
     return actions
 
 
-def _paper_probation_notional_scale(
+def _paper_probation_notional_scale_decimal(
     *,
     item: Mapping[str, Any],
     objective_veto_policy: ObjectiveVetoPolicy,
     hard_vetoes: Sequence[str],
-) -> str:
+) -> Decimal:
     if not (
         {str(reason) for reason in hard_vetoes}
         & _PAPER_PROBATION_CAPITAL_REPAIR_REASONS
     ):
-        return "1"
-    scale = _capital_repair_exposure_scale(
+        return Decimal("1")
+    return _capital_repair_exposure_scale(
         {
             "max_gross_exposure_pct_equity": _candidate_metric_value(
                 item,
@@ -4686,7 +4687,37 @@ def _paper_probation_notional_scale(
         ),
         policy_required_min_cash=objective_veto_policy.required_min_cash,
     )
+
+
+def _paper_probation_notional_scale(
+    *,
+    item: Mapping[str, Any],
+    objective_veto_policy: ObjectiveVetoPolicy,
+    hard_vetoes: Sequence[str],
+) -> str:
+    scale = _paper_probation_notional_scale_decimal(
+        item=item,
+        objective_veto_policy=objective_veto_policy,
+        hard_vetoes=hard_vetoes,
+    )
     return _decimal_payload(scale)
+
+
+def _paper_probation_target_notional_scale(
+    *,
+    capital_repaired_net_pnl_per_day: Decimal,
+    target_net_pnl_per_day: Decimal,
+) -> Decimal:
+    if target_net_pnl_per_day <= 0:
+        return Decimal("1")
+    if capital_repaired_net_pnl_per_day <= 0:
+        return Decimal("0")
+    if capital_repaired_net_pnl_per_day >= target_net_pnl_per_day:
+        return Decimal("1")
+    return (target_net_pnl_per_day / capital_repaired_net_pnl_per_day).quantize(
+        _PAPER_PROBATION_TARGET_SCALE_QUANTUM,
+        rounding=ROUND_CEILING,
+    )
 
 
 def _candidate_metric_decimal(
@@ -5073,12 +5104,24 @@ def _paper_probation_repair_plan(
     handoff_diagnostics: Sequence[Mapping[str, Any]],
     net_pnl_per_day: Decimal,
     target_net_pnl_per_day: Decimal,
+    capital_repair_notional_scale: Decimal,
+    capital_repaired_net_pnl_per_day: Decimal,
+    target_notional_scale_after_capital_repair: Decimal,
 ) -> dict[str, Any]:
     repair_actions = _paper_probation_repair_actions(
         blockers=blockers,
         hard_vetoes=hard_vetoes,
     )
     target_shortfall = max(target_net_pnl_per_day - net_pnl_per_day, Decimal("0"))
+    capital_repaired_target_shortfall = max(
+        target_net_pnl_per_day - capital_repaired_net_pnl_per_day,
+        Decimal("0"),
+    )
+    target_scale_required = target_notional_scale_after_capital_repair > Decimal("1")
+    if target_scale_required:
+        repair_actions.append(
+            "validate_target_notional_scale_capacity_before_paper_orders"
+        )
     repair_required = bool(blockers)
     return {
         "schema_version": "torghut.paper-probation-repair-plan.v1",
@@ -5089,6 +5132,20 @@ def _paper_probation_repair_plan(
         "target_net_pnl_per_day": _decimal_payload(target_net_pnl_per_day),
         "observed_net_pnl_per_day": _decimal_payload(net_pnl_per_day),
         "target_shortfall": _decimal_payload(target_shortfall),
+        "capital_repair_notional_scale": _decimal_payload(
+            capital_repair_notional_scale
+        ),
+        "capital_repaired_net_pnl_per_day": _decimal_payload(
+            capital_repaired_net_pnl_per_day
+        ),
+        "capital_repaired_target_shortfall": _decimal_payload(
+            capital_repaired_target_shortfall
+        ),
+        "target_notional_scale_after_capital_repair": _decimal_payload(
+            target_notional_scale_after_capital_repair
+        ),
+        "target_scale_required": target_scale_required,
+        "target_scale_authority": "planning_only_requires_bounded_paper_validation",
         "target_progress_ratio": _decimal_payload(
             _paper_probation_target_progress(
                 net_pnl_per_day=net_pnl_per_day,
@@ -5128,7 +5185,7 @@ def _build_paper_probation_shortlist(
     ]
 
     shortlist_candidates: list[
-        tuple[bool, bool, Decimal, Decimal, Decimal, str, dict[str, Any]]
+        tuple[bool, bool, Decimal, Decimal, Decimal, Decimal, str, dict[str, Any]]
     ] = []
     for item in visible_items:
         hard_vetoes = [
@@ -5212,6 +5269,24 @@ def _build_paper_probation_shortlist(
             scorecard_key="net_pnl",
             full_window_key="net_pnl",
         )
+        capital_repair_notional_scale = _paper_probation_notional_scale_decimal(
+            item=item,
+            objective_veto_policy=objective_veto_policy,
+            hard_vetoes=hard_vetoes,
+        )
+        capital_repaired_net_pnl_per_day = (
+            net_pnl_per_day * capital_repair_notional_scale
+        )
+        capital_repaired_target_shortfall = max(
+            target_net_pnl_per_day - capital_repaired_net_pnl_per_day,
+            Decimal("0"),
+        )
+        target_notional_scale_after_capital_repair = (
+            _paper_probation_target_notional_scale(
+                capital_repaired_net_pnl_per_day=capital_repaired_net_pnl_per_day,
+                target_net_pnl_per_day=target_net_pnl_per_day,
+            )
+        )
         target_shortfall = max(target_net_pnl_per_day - net_pnl_per_day, Decimal("0"))
         repair_plan = _paper_probation_repair_plan(
             item=item,
@@ -5220,7 +5295,17 @@ def _build_paper_probation_shortlist(
             handoff_diagnostics=handoff_diagnostics,
             net_pnl_per_day=net_pnl_per_day,
             target_net_pnl_per_day=target_net_pnl_per_day,
+            capital_repair_notional_scale=capital_repair_notional_scale,
+            capital_repaired_net_pnl_per_day=capital_repaired_net_pnl_per_day,
+            target_notional_scale_after_capital_repair=(
+                target_notional_scale_after_capital_repair
+            ),
         )
+        required_actions = _paper_probation_required_actions(hard_vetoes)
+        if target_notional_scale_after_capital_repair > Decimal("1"):
+            required_actions.append(
+                "validate_target_notional_scale_capacity_before_paper_orders"
+            )
         entry = {
             "candidate_id": str(item.get("candidate_id") or ""),
             "strategy_name": str(item.get("strategy_name") or ""),
@@ -5235,14 +5320,25 @@ def _build_paper_probation_shortlist(
             "handoff_diagnostics": handoff_diagnostics,
             "bounded_sim_handoff": bounded_sim_handoff,
             "paper_probation_repair_plan": repair_plan,
-            "required_actions_before_or_during_probation": (
-                _paper_probation_required_actions(hard_vetoes)
+            "required_actions_before_or_during_probation": list(
+                dict.fromkeys(required_actions)
             ),
-            "recommended_notional_scale": _paper_probation_notional_scale(
-                item=item,
-                objective_veto_policy=objective_veto_policy,
-                hard_vetoes=hard_vetoes,
+            "recommended_notional_scale": _decimal_payload(
+                capital_repair_notional_scale
             ),
+            "capital_repaired_net_pnl_per_day": _decimal_payload(
+                capital_repaired_net_pnl_per_day
+            ),
+            "capital_repaired_target_shortfall": _decimal_payload(
+                capital_repaired_target_shortfall
+            ),
+            "target_notional_scale_after_capital_repair": _decimal_payload(
+                target_notional_scale_after_capital_repair
+            ),
+            "target_scale_required": (
+                target_notional_scale_after_capital_repair > Decimal("1")
+            ),
+            "target_scale_authority": "planning_only_requires_bounded_paper_validation",
             "exact_replay_ledger_artifact_refs": artifact_refs,
             "exact_replay_ledger_artifact_row_count": (exact_replay_ledger_row_count),
             "exact_replay_ledger_artifact_fill_count": (exact_replay_ledger_fill_count),
@@ -5308,7 +5404,8 @@ def _build_paper_probation_shortlist(
             (
                 paper_probation_allowed,
                 bool(bounded_sim_handoff["evidence_collection_ok"]),
-                target_shortfall,
+                capital_repaired_target_shortfall,
+                target_notional_scale_after_capital_repair,
                 net_pnl_per_day,
                 net_pnl,
                 entry["candidate_id"],
@@ -5321,12 +5418,13 @@ def _build_paper_probation_shortlist(
             0 if candidate[0] else 1,
             0 if candidate[1] else 1,
             candidate[2],
-            -candidate[3],
+            candidate[3],
             -candidate[4],
-            candidate[5],
+            -candidate[5],
+            candidate[6],
         )
     )
-    return [candidate[6] for candidate in shortlist_candidates[: max(1, int(top_n))]]
+    return [candidate[7] for candidate in shortlist_candidates[: max(1, int(top_n))]]
 
 
 def _frontier_state_item(item: Mapping[str, Any]) -> dict[str, Any]:

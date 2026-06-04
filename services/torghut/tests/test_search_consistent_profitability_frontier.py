@@ -2728,10 +2728,26 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(item["stage"], "paper_evidence_collection_only")
         self.assertEqual(item["target_net_pnl_per_day"], "500")
         self.assertEqual(item["target_shortfall"], "93.42")
+        self.assertEqual(item["capital_repaired_net_pnl_per_day"], "64.37503114")
+        self.assertEqual(item["capital_repaired_target_shortfall"], "435.62496886")
+        self.assertEqual(item["target_notional_scale_after_capital_repair"], "7.766987")
+        self.assertTrue(item["target_scale_required"])
+        self.assertEqual(
+            item["target_scale_authority"],
+            "planning_only_requires_bounded_paper_validation",
+        )
         self.assertEqual(item["target_progress_ratio"], "0.8132")
         self.assertEqual(
             item["paper_probation_repair_plan"]["status"],
             "ready_for_bounded_paper_evidence_collection",
+        )
+        self.assertEqual(
+            item["paper_probation_repair_plan"]["capital_repaired_net_pnl_per_day"],
+            "64.37503114",
+        )
+        self.assertIn(
+            "validate_target_notional_scale_capacity_before_paper_orders",
+            item["paper_probation_repair_plan"]["repair_actions"],
         )
         self.assertFalse(item["paper_probation_repair_plan"]["promotion_allowed"])
         self.assertFalse(item["paper_probation_repair_plan"]["final_promotion_allowed"])
@@ -2746,6 +2762,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
         self.assertIn(
             "collect_tail_risk_and_fill_survival_evidence",
+            item["required_actions_before_or_during_probation"],
+        )
+        self.assertIn(
+            "validate_target_notional_scale_capacity_before_paper_orders",
             item["required_actions_before_or_during_probation"],
         )
 
@@ -2855,6 +2875,87 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertFalse(item["bounded_sim_handoff"]["promotion_allowed"])
         self.assertFalse(item["bounded_sim_handoff"]["final_promotion_allowed"])
         self.assertEqual(item["probation_blockers"], [])
+
+    def test_paper_probation_shortlist_ranks_by_capital_repaired_target_gap(
+        self,
+    ) -> None:
+        evidence_fields = {
+            "exact_replay_ledger_artifact_row_count": 10,
+            "exact_replay_ledger_artifact_fill_count": 4,
+            "runtime_ledger_cost_basis_count": 4,
+            "runtime_ledger_post_cost_expectancy_bps": "18",
+            "runtime_ledger_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+            "runtime_ledger_open_position_count": 0,
+            "dataset_snapshot_id": "snapshot",
+            "replay_lineage": {"lineage_hash": "lineage"},
+        }
+        items = [
+            {
+                **evidence_fields,
+                "candidate_id": "raw-high-capital-repaired-low",
+                "strategy_name": "capital-repaired",
+                "family": "microbar",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "900",
+                    "net_pnl": "1800",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "max_drawdown": "50",
+                    "worst_day_loss": "25",
+                    "max_gross_exposure_pct_equity": "9.5",
+                    "min_cash": "100",
+                },
+                "full_window": {"net_per_day": "900", "net_pnl": "1800"},
+                "exact_replay_ledger_artifact_ref": (
+                    "/tmp/raw-high-capital-repaired-low-exact-replay-ledger.json"
+                ),
+                "replay_artifact_refs": [
+                    "/tmp/raw-high-capital-repaired-low-exact-replay-ledger.json"
+                ],
+                "candidate_evaluation_key": "eval-raw-high",
+                "hard_vetoes": ["gross_exposure_pct_equity_above_max"],
+            },
+            {
+                **evidence_fields,
+                "candidate_id": "raw-lower-target-close",
+                "strategy_name": "target-close",
+                "family": "hpairs",
+                "objective_scorecard": {
+                    "net_pnl_per_day": "450",
+                    "net_pnl": "900",
+                    "active_day_ratio": "1",
+                    "positive_day_ratio": "1",
+                    "max_drawdown": "50",
+                    "worst_day_loss": "25",
+                    "max_gross_exposure_pct_equity": "0.5",
+                    "min_cash": "100",
+                },
+                "full_window": {"net_per_day": "450", "net_pnl": "900"},
+                "exact_replay_ledger_artifact_ref": (
+                    "/tmp/raw-lower-target-close-exact-replay-ledger.json"
+                ),
+                "replay_artifact_refs": [
+                    "/tmp/raw-lower-target-close-exact-replay-ledger.json"
+                ],
+                "candidate_evaluation_key": "eval-raw-lower",
+                "hard_vetoes": [],
+            },
+        ]
+
+        shortlist = frontier._build_paper_probation_shortlist(
+            items,
+            top_n=1,
+            objective_veto_policy=frontier.ObjectiveVetoPolicy(
+                required_max_gross_exposure_pct_equity=Decimal("1"),
+                required_min_cash=Decimal("0"),
+            ),
+        )
+
+        item = shortlist[0]
+        self.assertEqual(item["candidate_id"], "raw-lower-target-close")
+        self.assertEqual(item["capital_repaired_net_pnl_per_day"], "450")
+        self.assertEqual(item["capital_repaired_target_shortfall"], "50")
+        self.assertEqual(item["target_notional_scale_after_capital_repair"], "1.111112")
 
     def test_paper_probation_shortlist_blocks_missing_ledger_artifact(self) -> None:
         shortlist = frontier._build_paper_probation_shortlist(
@@ -3868,6 +3969,41 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 policy_required_min_cash=Decimal("0"),
             ),
             Decimal("0.116117"),
+        )
+
+    def test_paper_probation_notional_scale_helpers_cover_edge_cases(self) -> None:
+        policy = frontier.ObjectiveVetoPolicy(
+            required_max_gross_exposure_pct_equity=Decimal("1"),
+            required_min_cash=Decimal("0"),
+        )
+        item = {
+            "objective_scorecard": {
+                "max_gross_exposure_pct_equity": "8",
+                "min_cash": "100",
+            }
+        }
+
+        self.assertEqual(
+            frontier._paper_probation_notional_scale(
+                item=item,
+                objective_veto_policy=policy,
+                hard_vetoes=["gross_exposure_pct_equity_above_max"],
+            ),
+            "0.11875",
+        )
+        self.assertEqual(
+            frontier._paper_probation_target_notional_scale(
+                capital_repaired_net_pnl_per_day=Decimal("100"),
+                target_net_pnl_per_day=Decimal("0"),
+            ),
+            Decimal("1"),
+        )
+        self.assertEqual(
+            frontier._paper_probation_target_notional_scale(
+                capital_repaired_net_pnl_per_day=Decimal("0"),
+                target_net_pnl_per_day=Decimal("500"),
+            ),
+            Decimal("0"),
         )
 
     def test_positive_capital_safe_summary_rejects_non_finite_values(self) -> None:
