@@ -214,6 +214,10 @@ class TestFastReplayPreview(TestCase):
             payload["implemented_mechanisms"],
         )
         self.assertIn(
+            "order_flow_entropy_hmm_regime_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
             "queue_position_survival_fill_stress",
             payload["implemented_mechanisms"],
         )
@@ -283,6 +287,26 @@ class TestFastReplayPreview(TestCase):
             {
                 source["source_id"]
                 for source in row_payload["order_transition_stress"]["source_papers"]
+            },
+        )
+        self.assertIn("order_flow_entropy_regime_stress", row_payload)
+        self.assertFalse(
+            row_payload["order_flow_entropy_regime_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["order_flow_entropy_regime_stress"]["promotion_authority"]
+        )
+        self.assertEqual(
+            row_payload["order_flow_entropy_regime_stress"]["status"],
+            "preview_only_order_flow_entropy_regime_stress_ranking",
+        )
+        self.assertIn(
+            "ssrn-5315733",
+            {
+                source["source_id"]
+                for source in row_payload["order_flow_entropy_regime_stress"][
+                    "source_papers"
+                ]
             },
         )
         self.assertIn("queue_survival_fill_stress", row_payload)
