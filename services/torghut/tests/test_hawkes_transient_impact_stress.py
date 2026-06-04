@@ -95,6 +95,14 @@ class TestHawkesTransientImpactStress(TestCase):
             "preview_only_hawkes_transient_impact_stress_ranking",
         )
         self.assertTrue(payload["hawkes_excitation_preview"])
+        self.assertIn(
+            "hawkes_transient_impact_arxiv_2504_10282_2025",
+            payload["source_markers"],
+        )
+        self.assertIn(
+            "state_dependent_hawkes_arxiv_2604_23961_2026",
+            payload["source_markers"],
+        )
         self.assertTrue(payload["transient_impact_preview"])
         self.assertTrue(payload["square_root_impact_preview"])
         self.assertFalse(payload["proof_authority"])
@@ -151,6 +159,16 @@ class TestHawkesTransientImpactStress(TestCase):
         source_ids = {source["source_id"] for source in contract["source_papers"]}
         self.assertIn("arxiv-2504.10282", source_ids)
         self.assertIn("arxiv-2603.29086", source_ids)
+        self.assertIn("ssrn-5170318", source_ids)
+        self.assertIn("arxiv-2604.23961", source_ids)
+        self.assertIn(
+            "orderbook_hawkes_random_environment_ssrn_5170318_2025",
+            contract["source_markers"],
+        )
+        self.assertIn(
+            "state_dependent_hawkes_arxiv_2604_23961_2026",
+            contract["source_markers"],
+        )
         proof_neutrality = contract["proof_neutrality"]
         self.assertTrue(proof_neutrality["requires_exact_replay"])
         self.assertTrue(proof_neutrality["requires_event_time_replay"])

@@ -39,6 +39,26 @@ HAWKES_TRANSIENT_IMPACT_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = 
         "date": "2026-04-04",
         "mechanism": "nonlinear_square_root_impact_permanent_decay_and_trade_level_cost_logging_change_replay_rankings",
     },
+    {
+        "source_id": "ssrn-5170318",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5170318",
+        "title": "Assessing the Impact of the Order Book with a Hawkes Process in a Random Environment",
+        "date": "2025-03-08",
+        "mechanism": "order_book_conditioned_hawkes_arrivals_require_session_specific_execution_context",
+    },
+    {
+        "source_id": "arxiv-2604.23961",
+        "url": "https://arxiv.org/abs/2604.23961",
+        "title": "Extended State-dependent Hawkes Process for Limit Order Books: Mathematical Foundation and the Reproduction of Volatility Signature Plots",
+        "date": "2026-04-27",
+        "mechanism": "state_dependent_lob_hawkes_models_require_physical_consistency_and_marketable_limit_order_context",
+    },
+)
+HAWKES_TRANSIENT_IMPACT_STRESS_SOURCE_MARKERS: tuple[str, ...] = (
+    "hawkes_transient_impact_arxiv_2504_10282_2025",
+    "realistic_market_impact_arxiv_2603_29086_2026",
+    "orderbook_hawkes_random_environment_ssrn_5170318_2025",
+    "state_dependent_hawkes_arxiv_2604_23961_2026",
 )
 
 _PRICE_FIELDS = ("price", "mid_price", "mid", "mark", "last_price", "close")
@@ -139,6 +159,7 @@ class HawkesTransientImpactStressSummary:
             "source_papers": [
                 dict(item) for item in HAWKES_TRANSIENT_IMPACT_STRESS_PRIMARY_SOURCES
             ],
+            "source_markers": list(HAWKES_TRANSIENT_IMPACT_STRESS_SOURCE_MARKERS),
             "row_count": self.row_count,
             "event_observation_count": self.event_observation_count,
             "signed_event_count": self.signed_event_count,
@@ -209,6 +230,7 @@ def hawkes_transient_impact_stress_contract() -> dict[str, Any]:
         "source_papers": [
             dict(item) for item in HAWKES_TRANSIENT_IMPACT_STRESS_PRIMARY_SOURCES
         ],
+        "source_markers": list(HAWKES_TRANSIENT_IMPACT_STRESS_SOURCE_MARKERS),
         "stress_policy": "hawkes_event_time_transient_impact_execution_replay_guard",
         "stress_components": [
             "burst_event_share",
