@@ -3192,6 +3192,75 @@ class SimpleTradingPipeline(TradingPipeline):
         decision_row.decision_json = decision_json
         return True
 
+    def _active_materialized_paper_route_client_order_ids(
+        self,
+        *,
+        session: Session,
+        rows: Sequence[TradeDecision],
+        strategies: Sequence[Strategy],
+        positions: Sequence[Mapping[str, Any]],
+        now: datetime,
+    ) -> set[str]:
+        client_order_ids: set[str] = set()
+        for decision_row in rows:
+            decision_hash = _safe_text(decision_row.decision_hash)
+            if decision_hash is None:
+                continue
+            payload = self._paper_route_materialized_source_payload(decision_row)
+            if payload is None:
+                continue
+            if self.executor.execution_exists(session, decision_row):
+                continue
+            raw_target = self._paper_route_materialized_target_from_payload(payload)
+            if raw_target is None:
+                continue
+            target = _bounded_sim_collection_target_with_runtime_account_audit(
+                raw_target,
+                positions=positions,
+                account_label=self.account_label,
+            )
+            if not _target_requires_bounded_sim_collection_gate(target):
+                continue
+            collection_blockers = _bounded_sim_collection_blockers(
+                target,
+                account_label=self.account_label,
+            )
+            if collection_blockers:
+                continue
+            window = _target_probe_window(target)
+            if window is None:
+                continue
+            window_start, window_end = window
+            if now < window_start or now >= window_end:
+                continue
+            target_cap = _target_probe_cap(target)
+            if target_cap is None or target_cap <= 0:
+                continue
+            strategy = session.get(Strategy, decision_row.strategy_id)
+            if strategy is None:
+                strategy = self._paper_route_target_strategy(target, strategies)
+            if strategy is None:
+                continue
+            symbol = _safe_text(decision_row.symbol) or _safe_text(
+                payload.get("symbol")
+            )
+            if symbol is None:
+                continue
+            symbol = symbol.upper()
+            strategy_symbols = self._paper_route_target_strategy_symbols(strategy)
+            if strategy_symbols and symbol not in strategy_symbols:
+                continue
+            symbol_actions = _target_probe_symbol_actions(target, [symbol])
+            action_text = _safe_text(payload.get("action")) or symbol_actions.get(
+                symbol
+            )
+            if action_text not in {"buy", "sell"}:
+                action_text = _target_probe_action(target)
+            if action_text == "sell" and not settings.trading_allow_shorts:
+                continue
+            client_order_ids.add(decision_hash)
+        return client_order_ids
+
     def _paper_route_materialized_planned_decisions(
         self,
         *,
@@ -3222,6 +3291,21 @@ class SimpleTradingPipeline(TradingPipeline):
         decisions: list[StrategyDecision] = []
         seen: set[str] = set()
         expired_count = 0
+        materialized_client_order_ids = (
+            self._active_materialized_paper_route_client_order_ids(
+                session=session,
+                rows=rows,
+                strategies=strategies,
+                positions=positions,
+                now=now,
+            )
+        )
+        flat_check_positions = (
+            self._paper_route_positions_without_materialized_open_order_projections(
+                positions,
+                materialized_client_order_ids,
+            )
+        )
         for decision_row in rows:
             if str(decision_row.id) in seen:
                 continue
@@ -3299,14 +3383,16 @@ class SimpleTradingPipeline(TradingPipeline):
             action = cast(Literal["buy", "sell"], action_text)
             if action == "sell" and not settings.trading_allow_shorts:
                 continue
-            if self._paper_route_target_account_has_open_exposure(positions):
+            if self._paper_route_target_account_has_open_exposure(flat_check_positions):
                 logger.warning(
                     "Skipping materialized paper-route target source decision because "
                     "account is not flat for bounded SIM evidence decision_id=%s",
                     decision_row.id,
                 )
                 continue
-            if self._paper_route_target_symbol_has_open_position(positions, symbol):
+            if self._paper_route_target_symbol_has_open_position(
+                flat_check_positions, symbol
+            ):
                 continue
             if self._paper_route_target_symbol_has_open_strategy_exposure(
                 session=session,
@@ -5850,6 +5936,50 @@ class SimpleTradingPipeline(TradingPipeline):
             if market_value is not None and market_value != 0:
                 return True
         return False
+
+    @staticmethod
+    def _paper_route_positions_without_materialized_open_order_projections(
+        positions: Sequence[Mapping[str, Any]] | None,
+        materialized_client_order_ids: set[str],
+    ) -> list[Mapping[str, Any]]:
+        if not positions:
+            return []
+        if not materialized_client_order_ids:
+            return [position for position in positions]
+
+        filtered_positions: list[Mapping[str, Any]] = []
+        for position in positions:
+            if SimpleTradingPipeline._paper_route_position_is_materialized_projection(
+                position,
+                materialized_client_order_ids,
+            ):
+                continue
+            filtered_positions.append(position)
+        return filtered_positions
+
+    @staticmethod
+    def _paper_route_position_is_materialized_projection(
+        position: Mapping[str, Any],
+        materialized_client_order_ids: set[str],
+    ) -> bool:
+        if not bool(position.get("open_order_projection")):
+            return False
+        if not bool(position.get("open_order_projection_only")):
+            return False
+        raw_ids = position.get("open_order_client_order_ids")
+        client_order_ids: set[str] = set()
+        if isinstance(raw_ids, list):
+            client_order_ids.update(
+                str(item).strip()
+                for item in cast(list[Any], raw_ids)
+                if str(item).strip()
+            )
+        raw_id = str(position.get("open_order_client_order_id") or "").strip()
+        if raw_id:
+            client_order_ids.add(raw_id)
+        if not client_order_ids:
+            return False
+        return client_order_ids.issubset(materialized_client_order_ids)
 
     @staticmethod
     def _paper_route_target_account_has_open_exposure(

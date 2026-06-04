@@ -38,6 +38,7 @@ _PROJECTED_ORDER_ACTIONS = {"buy", "sell"}
 _PROJECTED_ORDER_TYPES = {"market", "limit", "stop", "stop_limit"}
 _PROJECTED_ORDER_TIME_IN_FORCE = {"day", "gtc", "ioc", "fok"}
 
+
 def _runtime_uncertainty_gate_rank(action: RuntimeUncertaintyGateAction) -> int:
     ranking: dict[RuntimeUncertaintyGateAction, int] = {
         "pass": 0,
@@ -82,6 +83,7 @@ def _autonomy_gate_report_is_saturated_fail_sentinel(
 
 def _clone_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [dict(position) for position in positions]
+
 
 def _resolve_llm_unavailable_reject_reason(reason: str | None) -> str:
     normalized = _normalize_reason_metric(reason)
@@ -191,6 +193,7 @@ def _format_order_submit_rejection(error: Exception) -> str:
             parts.append(f"existing_order_id={existing_order_id}")
         return " ".join(parts)
     return f"alpaca_order_submit_failed {type(error).__name__}: {error}"
+
 
 def _coerce_json(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
@@ -384,6 +387,7 @@ def _coerce_strategy_symbols(raw: object) -> set[str]:
         return {symbol.strip() for symbol in raw.split(",") if symbol.strip()}
     return set()
 
+
 def _optional_decimal(value: Any) -> Optional[Decimal]:
     if value is None:
         return None
@@ -575,12 +579,44 @@ def _project_open_orders_onto_positions(
         action = str(side).strip().lower()
         if action not in _PROJECTED_ORDER_ACTIONS:
             continue
-        order_type = str(order.get("type") or order.get("order_type") or "market").strip().lower()
+        order_type = (
+            str(order.get("type") or order.get("order_type") or "market")
+            .strip()
+            .lower()
+        )
         if order_type not in _PROJECTED_ORDER_TYPES:
             order_type = "market"
         time_in_force = str(order.get("time_in_force") or "day").strip().lower()
         if time_in_force not in _PROJECTED_ORDER_TIME_IN_FORCE:
             time_in_force = "day"
+        existing_positions = [
+            position
+            for position in positions
+            if str(position.get("symbol") or "").strip().upper() == symbol
+        ]
+        existing_projection_ids: list[str] = []
+        existing_projection_only = True
+        existing_projection_count = 0
+        for position in existing_positions:
+            if not bool(position.get("open_order_projection")):
+                existing_projection_only = False
+                continue
+            existing_projection_count += int(
+                position.get("open_order_projection_count") or 1
+            )
+            raw_ids = position.get("open_order_client_order_ids")
+            if isinstance(raw_ids, list):
+                existing_projection_ids.extend(
+                    str(item).strip()
+                    for item in cast(list[Any], raw_ids)
+                    if str(item).strip()
+                )
+            raw_id = str(position.get("open_order_client_order_id") or "").strip()
+            if raw_id:
+                existing_projection_ids.append(raw_id)
+        client_order_id = str(
+            order.get("client_order_id") or order.get("client_orderid") or ""
+        ).strip()
         projected_total += 1
         _apply_projected_position_decision(
             positions,
@@ -591,11 +627,30 @@ def _project_open_orders_onto_positions(
                 timeframe="open_order",
                 action=cast(Literal["buy", "sell"], action),
                 qty=remaining_qty,
-                order_type=cast(Literal["market", "limit", "stop", "stop_limit"], order_type),
+                order_type=cast(
+                    Literal["market", "limit", "stop", "stop_limit"], order_type
+                ),
                 time_in_force=cast(Literal["day", "gtc", "ioc", "fok"], time_in_force),
                 params=params,
             ),
         )
+        for position in positions:
+            if str(position.get("symbol") or "").strip().upper() != symbol:
+                continue
+            projection_ids = [*existing_projection_ids]
+            if client_order_id:
+                projection_ids.append(client_order_id)
+                position["open_order_client_order_id"] = client_order_id
+            if projection_ids:
+                position["open_order_client_order_ids"] = list(
+                    dict.fromkeys(projection_ids)
+                )
+            position["open_order_projection"] = True
+            position["open_order_projection_only"] = existing_projection_only and bool(
+                projection_ids or not existing_positions
+            )
+            position["open_order_projection_count"] = existing_projection_count + 1
+            break
     return projected_total
 
 

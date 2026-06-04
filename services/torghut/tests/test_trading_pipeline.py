@@ -8406,6 +8406,252 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(decisions[0].action, "buy")
         self.assertEqual(blocked_by_exposure, [])
 
+    def test_materialized_target_plan_reconciles_matching_open_order_projections(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_allow_shorts = True
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="bounded H-PAIRS materialized target",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+            materialize_bounded_paper_route_target_plan(
+                session,
+                {
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "c88421d619759b2cfaa6f4d0",
+                            "runtime_strategy_name": (
+                                "microbar-cross-sectional-pairs-v1"
+                            ),
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_REPLAY",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "source_plan_ref": (
+                                "s3://torghut-proof/hpairs/current-window.json"
+                            ),
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-pairs.json"
+                            ),
+                            "observed_stage": "paper",
+                            "bounded_collection_stage": "bounded_paper_collection",
+                            "target_notional": "200",
+                            "target_quantity": "2",
+                            "paper_route_probe_next_session_max_notional": "200",
+                            "paper_route_probe_window_start": (
+                                window_start.isoformat()
+                            ),
+                            "paper_route_probe_window_end": window_end.isoformat(),
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                            "paper_route_probe_symbol_actions": {
+                                "AAPL": "buy",
+                                "AMZN": "sell",
+                            },
+                            "paper_route_probe_symbol_quantities": {
+                                "AAPL": "1",
+                                "AMZN": "1",
+                            },
+                            "paper_route_probe_pair_balance_state": "balanced",
+                            "paper_route_clean_window_baseline_state": {
+                                "state": "clean",
+                                "blockers": [],
+                            },
+                            "paper_route_clean_window_state": "clean",
+                            "source_decision_readiness": {
+                                "ready": True,
+                                "blockers": [],
+                            },
+                            "bounded_evidence_collection_authorized": True,
+                            "bounded_live_paper_collection_authorized": True,
+                            "canary_collection_authorized": True,
+                            "evidence_collection_ok": True,
+                            "runtime_window_import_health_gate_blockers": [],
+                            "paper_route_target_account_audit_state": {
+                                "state": "available",
+                                "audit_available": True,
+                                "blockers": [],
+                            },
+                            "paper_route_target_account_audit_blockers": [],
+                            "paper_route_account_pre_session_blockers": [],
+                            "paper_route_hpairs_symbol_blockers": [],
+                            "promotion_allowed": False,
+                            "final_promotion_authorized": False,
+                            "final_promotion_allowed": False,
+                        },
+                    ]
+                },
+                generated_at=now,
+                bounded_notional_limit=Decimal("500"),
+            )
+            session.commit()
+            rows = list(
+                session.execute(select(TradeDecision).order_by(TradeDecision.symbol))
+                .scalars()
+                .all()
+            )
+            hashes_by_symbol = {str(row.symbol): str(row.decision_hash) for row in rows}
+
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="TORGHUT_SIM",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            matching_projection_positions = [
+                {
+                    "symbol": "AAPL",
+                    "qty": "1",
+                    "side": "long",
+                    "market_value": "100",
+                    "open_order_projection": True,
+                    "open_order_projection_only": True,
+                    "open_order_client_order_ids": [hashes_by_symbol["AAPL"]],
+                },
+                {
+                    "symbol": "AMZN",
+                    "qty": "1",
+                    "side": "short",
+                    "market_value": "-100",
+                    "open_order_projection": True,
+                    "open_order_projection_only": True,
+                    "open_order_client_order_ids": [hashes_by_symbol["AMZN"]],
+                },
+            ]
+            unrelated_projection_positions = [
+                {
+                    "symbol": "AAPL",
+                    "qty": "1",
+                    "side": "long",
+                    "market_value": "100",
+                    "open_order_projection": True,
+                    "open_order_projection_only": True,
+                    "open_order_client_order_ids": ["unrelated-client-order-id"],
+                }
+            ]
+
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=now,
+            ):
+                decisions = pipeline._paper_route_materialized_planned_decisions(
+                    session=session,
+                    strategies=[strategy],
+                    allowed_symbols={"AAPL", "AMZN"},
+                    positions=matching_projection_positions,
+                )
+                blocked_by_unrelated_projection = (
+                    pipeline._paper_route_materialized_planned_decisions(
+                        session=session,
+                        strategies=[strategy],
+                        allowed_symbols={"AAPL", "AMZN"},
+                        positions=unrelated_projection_positions,
+                    )
+                )
+
+        self.assertEqual(
+            {decision.symbol: decision.action for decision in decisions},
+            {"AAPL": "buy", "AMZN": "sell"},
+        )
+        self.assertEqual(blocked_by_unrelated_projection, [])
+
+    def test_materialized_target_plan_projection_helpers_fail_closed(self) -> None:
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_position_is_materialized_projection(
+                {
+                    "symbol": "AAPL",
+                    "open_order_projection": True,
+                    "open_order_projection_only": False,
+                    "open_order_client_order_ids": ["matching-client-order-id"],
+                },
+                {"matching-client-order-id"},
+            )
+        )
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_position_is_materialized_projection(
+                {
+                    "symbol": "AAPL",
+                    "open_order_projection": True,
+                    "open_order_projection_only": True,
+                    "open_order_client_order_id": "matching-client-order-id",
+                },
+                {"matching-client-order-id"},
+            )
+        )
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_position_is_materialized_projection(
+                {
+                    "symbol": "AAPL",
+                    "open_order_projection": True,
+                    "open_order_projection_only": True,
+                },
+                {"matching-client-order-id"},
+            )
+        )
+
+        with self.session_local() as session:
+            decision_without_hash = TradeDecision(
+                strategy_id=uuid4(),
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={},
+                decision_hash=None,
+                status="planned",
+            )
+            self.assertEqual(
+                pipeline._active_materialized_paper_route_client_order_ids(
+                    session=session,
+                    rows=[decision_without_hash],
+                    strategies=[],
+                    positions=[],
+                    now=datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
+                ),
+                set(),
+            )
+
     def test_materialized_target_plan_ignores_transient_batch_symbol_filter(
         self,
     ) -> None:
@@ -18333,6 +18579,7 @@ class TestTradingPipeline(TestCase):
                     "limit_price": "100",
                     "type": "limit",
                     "time_in_force": "day",
+                    "client_order_id": "client-aapl-buy",
                 }
             ],
         )
@@ -18340,7 +18587,19 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(projected, 1)
         self.assertEqual(
             positions,
-            [{"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}],
+            [
+                {
+                    "symbol": "AAPL",
+                    "qty": "2",
+                    "side": "long",
+                    "market_value": "200",
+                    "open_order_projection": True,
+                    "open_order_projection_only": True,
+                    "open_order_client_order_id": "client-aapl-buy",
+                    "open_order_client_order_ids": ["client-aapl-buy"],
+                    "open_order_projection_count": 1,
+                }
+            ],
         )
 
     def test_project_open_orders_onto_positions_projects_sell_against_existing_long(
@@ -18368,7 +18627,74 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(projected, 1)
         self.assertEqual(
             positions,
-            [{"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}],
+            [
+                {
+                    "symbol": "AAPL",
+                    "qty": "2",
+                    "side": "long",
+                    "market_value": "200",
+                    "open_order_projection": True,
+                    "open_order_projection_only": False,
+                    "open_order_projection_count": 1,
+                }
+            ],
+        )
+
+    def test_project_open_orders_onto_positions_preserves_projection_client_ids(
+        self,
+    ) -> None:
+        positions: list[dict[str, Any]] = [
+            {"symbol": "MSFT", "qty": "1", "side": "long"},
+            {
+                "symbol": "AAPL",
+                "qty": "1",
+                "side": "long",
+                "market_value": "100",
+                "open_order_projection": True,
+                "open_order_projection_only": True,
+                "open_order_client_order_id": "legacy-client",
+                "open_order_client_order_ids": ["existing-client"],
+                "open_order_projection_count": 1,
+            },
+        ]
+
+        projected = _project_open_orders_onto_positions(
+            positions,
+            [
+                {
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "qty": "1",
+                    "filled_qty": "0",
+                    "limit_price": "100",
+                    "type": "limit",
+                    "time_in_force": "day",
+                    "client_order_id": "new-client",
+                }
+            ],
+        )
+
+        self.assertEqual(projected, 1)
+        self.assertEqual(
+            positions,
+            [
+                {"symbol": "MSFT", "qty": "1", "side": "long"},
+                {
+                    "symbol": "AAPL",
+                    "qty": "2",
+                    "side": "long",
+                    "market_value": "200",
+                    "open_order_client_order_id": "new-client",
+                    "open_order_client_order_ids": [
+                        "existing-client",
+                        "legacy-client",
+                        "new-client",
+                    ],
+                    "open_order_projection": True,
+                    "open_order_projection_only": True,
+                    "open_order_projection_count": 2,
+                },
+            ],
         )
 
     def test_resolve_execution_context_positions_projects_open_orders(self) -> None:
@@ -18399,7 +18725,17 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual(
             positions,
-            [{"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}],
+            [
+                {
+                    "symbol": "AAPL",
+                    "qty": "2",
+                    "side": "long",
+                    "market_value": "200",
+                    "open_order_projection": True,
+                    "open_order_projection_only": True,
+                    "open_order_projection_count": 1,
+                }
+            ],
         )
 
     def test_resolve_execution_context_positions_tags_matching_strategy_fill(
