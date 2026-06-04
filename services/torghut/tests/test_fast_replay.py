@@ -117,6 +117,18 @@ class TestFastReplayPreview(TestCase):
                 "jump_bps": Decimal("120") if stress else Decimal("2"),
                 "news_event_window": stress,
                 "session_open_window": stress,
+                "forecast_return_bps": Decimal("1.0") if stress else Decimal("12.0"),
+                "transaction_cost_bps": Decimal("4.0"),
+                "cost_filtered_action": "buy",
+                "walk_forward_fold_id": f"wf-{offset}",
+                "multi_scale_trend_score": Decimal("0.60")
+                if stress
+                else Decimal("0.85"),
+                "dynamic_variable_weights": {
+                    "ofi": "0.35",
+                    "spread": "0.20",
+                    "volume": "0.15",
+                },
             },
             ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
         )
@@ -271,6 +283,10 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "microstructure_regime_tokenization_stress",
+            payload["implemented_mechanisms"],
+        )
+        self.assertIn(
+            "cost_aware_forecast_filter_stress",
             payload["implemented_mechanisms"],
         )
         self.assertEqual(
@@ -631,6 +647,43 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "microstructure_regime_tokenization_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("cost_aware_forecast_filter_stress", row_payload)
+        self.assertEqual(
+            row_payload["cost_aware_forecast_filter_stress"]["status"],
+            "preview_only_cost_aware_forecast_filter_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2606.00060",
+            {
+                source["source_id"]
+                for source in row_payload["cost_aware_forecast_filter_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertIn(
+            "arxiv-2512.12727",
+            {
+                source["source_id"]
+                for source in row_payload["cost_aware_forecast_filter_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["cost_aware_forecast_filter_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["cost_aware_forecast_filter_stress"]["promotion_authority"]
+        )
+        self.assertIn(
+            "cost_aware_forecast_filter_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "cost_aware_forecast_filter_stress_downranks_only",
             row_payload["ranking_only_reasons"],
         )
         self.assertIn(
