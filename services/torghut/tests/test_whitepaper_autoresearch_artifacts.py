@@ -981,6 +981,17 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                     "fill_survival_fill_rate": "0.75",
                     "queue_ahead_depletion_evidence_present": True,
                     "queue_ahead_depletion_sample_count": 8,
+                    "queue_position_survival_fill_curve_evidence_present": True,
+                    "queue_position_survival_sample_count": 8,
+                    "queue_position_survival_fill_rate": "0.75",
+                    "queue_position_survival_queue_ahead_depletion_evidence_present": (
+                        True
+                    ),
+                    "queue_position_survival_queue_ahead_depletion_sample_count": 8,
+                    "queue_position_survival_adjusted_fillable_ratio": "0.75",
+                    "post_cost_net_pnl_after_queue_position_survival_fill_stress": (
+                        "487.50"
+                    ),
                 },
                 "promotion_readiness": {
                     "stage": "paper_probation",
@@ -996,6 +1007,17 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         blockers = evidence_bundle_blockers(bundle)
 
         self.assertEqual(bundle.objective_scorecard["fill_survival_fill_rate"], "0.75")
+        self.assertTrue(
+            bundle.objective_scorecard[
+                "queue_position_survival_fill_curve_evidence_present"
+            ]
+        )
+        self.assertEqual(
+            bundle.objective_scorecard[
+                "post_cost_net_pnl_after_queue_position_survival_fill_stress"
+            ],
+            "487.50",
+        )
         self.assertEqual(blockers, ())
 
     def test_evidence_bundle_blocks_stage_promotion_with_missing_depth_fields(

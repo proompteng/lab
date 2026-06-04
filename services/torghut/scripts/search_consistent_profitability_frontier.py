@@ -169,6 +169,25 @@ _PAPER_PROBATION_TAIL_RISK_REASONS = frozenset(
         "fill_survival_rate_below_min",
     }
 )
+_PAPER_PROBATION_QUEUE_SURVIVAL_REASONS = frozenset(
+    {
+        "fill_survival_sample_count_below_min",
+        "fill_survival_rate_below_min",
+        "required_min_queue_position_survival_sample_count",
+        "queue_position_survival_fill_curve_evidence_present_failed",
+        "queue_position_survival_sample_count_failed",
+        "queue_position_survival_fill_rate_failed",
+        "queue_position_survival_nonfill_opportunity_cost_present_failed",
+        "queue_position_survival_nonfill_opportunity_cost_bps_failed",
+        "queue_position_survival_fill_curve_evidence_missing",
+        "queue_position_survival_sample_count_zero",
+        "queue_position_survival_fill_rate_non_positive",
+        "queue_position_survival_queue_ahead_depletion_evidence_missing",
+        "queue_position_survival_queue_ahead_depletion_sample_count_zero",
+        "queue_position_survival_adjusted_fillable_ratio_non_positive",
+        "queue_position_survival_stress_net_pnl_non_positive",
+    }
+)
 _CONSISTENCY_REPAIR_ENTRY_KEYS = (
     "max_entries_per_session",
     "max_entries_per_day",
@@ -4627,6 +4646,8 @@ def _paper_probation_required_actions(hard_vetoes: Sequence[str]) -> list[str]:
         actions.append("collect_consistency_and_activity_evidence")
     if reasons & _PAPER_PROBATION_TAIL_RISK_REASONS:
         actions.append("collect_tail_risk_and_fill_survival_evidence")
+    if reasons & _PAPER_PROBATION_QUEUE_SURVIVAL_REASONS:
+        actions.append("collect_queue_position_survival_fill_curve_evidence")
     if "stale_dataset_snapshot" in reasons:
         actions.append("refresh_dataset_snapshot_before_paper_orders")
     return actions
@@ -5028,6 +5049,8 @@ def _paper_probation_repair_actions(
         actions.append("close_or_exclude_open_replay_position_windows")
     if "proof_only_full_window_replay_not_probation_authority" in blocker_set:
         actions.append("rerun_exact_replay_with_authoritative_runtime_events")
+    if blocker_set & _PAPER_PROBATION_QUEUE_SURVIVAL_REASONS:
+        actions.append("collect_queue_position_survival_fill_curve_evidence")
     actions.append("keep_final_promotion_gates_fail_closed")
     return list(dict.fromkeys(actions))
 
