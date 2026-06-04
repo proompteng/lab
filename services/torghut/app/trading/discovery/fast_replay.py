@@ -54,6 +54,9 @@ from app.trading.discovery.option_gamma_flow_stress import (
 from app.trading.discovery.order_transition_stress import (
     extract_order_transition_stress,
 )
+from app.trading.discovery.order_flow_entropy_regime_stress import (
+    extract_order_flow_entropy_regime_stress,
+)
 from app.trading.discovery.queue_survival_fill_stress import (
     extract_queue_survival_fill_stress,
 )
@@ -77,6 +80,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "mpc_market_limit_execution_schedule_stress",
     "order_book_observability_feedback_stress",
     "markov_order_transition_latent_regime_stress",
+    "order_flow_entropy_hmm_regime_stress",
     "queue_position_survival_fill_stress",
     "public_feed_lag_quoted_liquidity_stress",
     "lob_simulation_reality_gap_execution_stress",
@@ -157,6 +161,9 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     order_transition_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    order_flow_entropy_regime_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     queue_survival_fill_stress: Mapping[str, Any] = field(
@@ -275,6 +282,9 @@ class FastReplayPreviewRow:
                 self.order_book_observability_stress
             ),
             "order_transition_stress": dict(self.order_transition_stress),
+            "order_flow_entropy_regime_stress": dict(
+                self.order_flow_entropy_regime_stress
+            ),
             "queue_survival_fill_stress": dict(self.queue_survival_fill_stress),
             "feed_lag_liquidity_stress": dict(self.feed_lag_liquidity_stress),
             "lob_reality_gap_stress": dict(self.lob_reality_gap_stress),
@@ -472,6 +482,7 @@ class FastReplayPreviewResult:
                 "mpc_market_limit_execution_schedule_stress": "deterministic MPC-style schedule deviation/opportunity-cost/market-limit-mix stress from arXiv:2603.28898 and arXiv:2507.06345; preview ranking only",
                 "order_book_observability_feedback_stress": "deterministic order-book feedback/censored-trade and state-dependent spread-cost stress from arXiv:2605.19584 and arXiv:2507.09196; preview ranking only",
                 "markov_order_transition_latent_regime_stress": "deterministic Markov transition entropy/inertia plus latent rising-edge stress from arXiv:2502.07625 and arXiv:2604.20949; preview ranking only",
+                "order_flow_entropy_hmm_regime_stress": "deterministic OFI Markov entropy, asymmetric HMM-regime, and multi-scale volatility/intensity stress from SSRN:5315733, arXiv:2512.15720, and arXiv:2603.20456; entropy is not directional alpha proof; preview ranking only",
                 "queue_position_survival_fill_stress": "deterministic queue-position survival fill probability, depth-delay, and nonfill opportunity-cost stress from arXiv:2512.05734, SSRN:6440898, and SSRN:6730443; preview ranking only",
                 "public_feed_lag_quoted_liquidity_stress": "deterministic public-feed delay, quoted-liquidity reliability, stale-quote, and authoritative trade-direction join stress from SSRN:6675338, arXiv:2604.24366, and arXiv:2511.20606; preview ranking only",
                 "lob_simulation_reality_gap_execution_stress": "deterministic spread-volume imbalance, latency-race mode, power-law signed-flow impact, and odd-lot liquidity reliability stress from arXiv:2603.24137, OFR WP 25-01, and arXiv:2507.06345; preview ranking only",
@@ -1132,6 +1143,7 @@ def _score_candidate_spec(
             execution_schedule_stress={},
             order_book_observability_stress={},
             order_transition_stress={},
+            order_flow_entropy_regime_stress={},
             queue_survival_fill_stress={},
             feed_lag_liquidity_stress={},
             lob_reality_gap_stress={},
@@ -1218,6 +1230,18 @@ def _score_candidate_spec(
     order_transition_rank_penalty_bps = (
         _float_or_none(
             _mapping(order_transition_stress.get("ranking_features")).get(
+                "replay_rank_penalty_bps"
+            )
+        )
+        or 0.0
+    )
+    order_flow_entropy_regime_stress = extract_order_flow_entropy_regime_stress(
+        matched_source_rows,
+        direction=direction,
+    ).to_payload()
+    order_flow_entropy_regime_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(order_flow_entropy_regime_stress.get("ranking_features")).get(
                 "replay_rank_penalty_bps"
             )
         )
@@ -1368,6 +1392,7 @@ def _score_candidate_spec(
         - execution_schedule_rank_penalty_bps * 0.14
         - order_book_observability_rank_penalty_bps * 0.12
         - order_transition_rank_penalty_bps * 0.11
+        - order_flow_entropy_regime_rank_penalty_bps * 0.09
         - queue_survival_fill_rank_penalty_bps * 0.13
         - feed_lag_liquidity_rank_penalty_bps * 0.10
         - lob_reality_gap_rank_penalty_bps * 0.09
@@ -1408,6 +1433,7 @@ def _score_candidate_spec(
         - execution_schedule_rank_penalty_bps * 0.05
         - order_book_observability_rank_penalty_bps * 0.04
         - order_transition_rank_penalty_bps * 0.04
+        - order_flow_entropy_regime_rank_penalty_bps * 0.04
         - queue_survival_fill_rank_penalty_bps * 0.05
         - feed_lag_liquidity_rank_penalty_bps * 0.04
         - lob_reality_gap_rank_penalty_bps * 0.04
@@ -1454,6 +1480,7 @@ def _score_candidate_spec(
         execution_schedule_stress=dict(execution_schedule_stress),
         order_book_observability_stress=dict(order_book_observability_stress),
         order_transition_stress=dict(order_transition_stress),
+        order_flow_entropy_regime_stress=dict(order_flow_entropy_regime_stress),
         queue_survival_fill_stress=dict(queue_survival_fill_stress),
         feed_lag_liquidity_stress=dict(feed_lag_liquidity_stress),
         lob_reality_gap_stress=dict(lob_reality_gap_stress),
@@ -1499,6 +1526,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _execution_schedule_rank_penalty_bps(row) * 0.08
         - _order_book_observability_rank_penalty_bps(row) * 0.07
         - _order_transition_rank_penalty_bps(row) * 0.06
+        - _order_flow_entropy_regime_rank_penalty_bps(row) * 0.05
         - _queue_survival_fill_rank_penalty_bps(row) * 0.07
         - _feed_lag_liquidity_rank_penalty_bps(row) * 0.06
         - _lob_reality_gap_rank_penalty_bps(row) * 0.05
@@ -1525,6 +1553,15 @@ def _order_book_observability_rank_penalty_bps(row: FastReplayPreviewRow) -> flo
 
 def _order_transition_rank_penalty_bps(row: FastReplayPreviewRow) -> float:
     ranking_features = _mapping(row.order_transition_stress.get("ranking_features"))
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _order_flow_entropy_regime_rank_penalty_bps(
+    row: FastReplayPreviewRow,
+) -> float:
+    ranking_features = _mapping(
+        row.order_flow_entropy_regime_stress.get("ranking_features")
+    )
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
 
@@ -1765,6 +1802,7 @@ def _row_with_rank_and_selection(
         execution_schedule_stress=dict(row.execution_schedule_stress),
         order_book_observability_stress=dict(row.order_book_observability_stress),
         order_transition_stress=dict(row.order_transition_stress),
+        order_flow_entropy_regime_stress=dict(row.order_flow_entropy_regime_stress),
         queue_survival_fill_stress=dict(row.queue_survival_fill_stress),
         feed_lag_liquidity_stress=dict(row.feed_lag_liquidity_stress),
         lob_reality_gap_stress=dict(row.lob_reality_gap_stress),
@@ -1835,6 +1873,7 @@ def _row_with_frontier_dedupe(
         execution_schedule_stress=dict(row.execution_schedule_stress),
         order_book_observability_stress=dict(row.order_book_observability_stress),
         order_transition_stress=dict(row.order_transition_stress),
+        order_flow_entropy_regime_stress=dict(row.order_flow_entropy_regime_stress),
         queue_survival_fill_stress=dict(row.queue_survival_fill_stress),
         feed_lag_liquidity_stress=dict(row.feed_lag_liquidity_stress),
         lob_reality_gap_stress=dict(row.lob_reality_gap_stress),
@@ -2644,6 +2683,8 @@ def _risk_flags_for_row(
         flags.add("order_book_observability_stress_penalty_active")
     if _order_transition_rank_penalty_bps(row) > 0:
         flags.add("order_transition_stress_penalty_active")
+    if _order_flow_entropy_regime_rank_penalty_bps(row) > 0:
+        flags.add("order_flow_entropy_regime_stress_penalty_active")
     if _queue_survival_fill_rank_penalty_bps(row) > 0:
         flags.add("queue_survival_fill_stress_penalty_active")
     if _feed_lag_liquidity_rank_penalty_bps(row) > 0:
@@ -2692,6 +2733,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("order_book_observability_stress_downranks_only")
     if _order_transition_rank_penalty_bps(row) > 0:
         reasons.add("order_transition_stress_downranks_only")
+    if _order_flow_entropy_regime_rank_penalty_bps(row) > 0:
+        reasons.add("order_flow_entropy_regime_stress_downranks_only")
     if _queue_survival_fill_rank_penalty_bps(row) > 0:
         reasons.add("queue_survival_fill_stress_downranks_only")
     if _feed_lag_liquidity_rank_penalty_bps(row) > 0:
@@ -2733,6 +2776,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("order_book_observability_stress_penalty")
     if _order_transition_rank_penalty_bps(row) > 0:
         vetoes.add("order_transition_stress_penalty")
+    if _order_flow_entropy_regime_rank_penalty_bps(row) > 0:
+        vetoes.add("order_flow_entropy_regime_stress_penalty")
     if _queue_survival_fill_rank_penalty_bps(row) > 0:
         vetoes.add("queue_survival_fill_stress_penalty")
     if _feed_lag_liquidity_rank_penalty_bps(row) > 0:
