@@ -365,8 +365,35 @@ class TestCandidateSpecs(TestCase):
             specs[0].parameter_space["mechanism_overlay_ids"],
         )
         self.assertIn(
+            "hawkes_lob_event_replay_harness",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertIn(
             "ofi_lob_continuation_response",
             specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        hawkes_harness = specs[0].parameter_space["hawkes_lob_event_replay_harness"]
+        self.assertEqual(
+            hawkes_harness["schema_version"],
+            "torghut.hawkes-lob-event-replay-harness.v1",
+        )
+        self.assertEqual(
+            set(hawkes_harness["source_ids"]),
+            {"arxiv-2502.17417", "arxiv-2510.08085"},
+        )
+        self.assertGreaterEqual(len(hawkes_harness["required_event_taxonomy"]), 12)
+        self.assertIn(
+            "time_rescaling_ks_pvalue",
+            hawkes_harness["diagnostics_required"],
+        )
+        self.assertFalse(hawkes_harness["proof_neutrality"]["promotion_authority"])
+        self.assertTrue(
+            specs[0].hard_vetoes["required_hawkes_lob_event_replay_harness"]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_hawkes_simulated_fills_as_pnl_authority"
+            ]
         )
         self.assertEqual(
             specs[0].hard_vetoes["required_min_event_cluster_stability_score"],
@@ -652,6 +679,30 @@ class TestCandidateSpecs(TestCase):
             "mixed_market_limit_execution_policy",
             specs[0].parameter_space["mechanism_overlay_ids"],
         )
+        self.assertIn(
+            "logistic_normal_market_limit_allocation_grid",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        allocation_grid = specs[0].parameter_space[
+            "logistic_normal_market_limit_allocation_grid"
+        ]
+        self.assertEqual(
+            allocation_grid["schema_version"],
+            "torghut.logistic-normal-market-limit-allocation-grid.v1",
+        )
+        self.assertEqual(
+            allocation_grid["allocation_dimensions"],
+            ["market_order_share", "best_limit_share", "passive_limit_share"],
+        )
+        self.assertIn(
+            "allocation_covariance_scale_grid",
+            allocation_grid["candidate_search_inputs"],
+        )
+        self.assertIn("arxiv-2507.06345", allocation_grid["source_ids"])
+        self.assertFalse(allocation_grid["proof_neutrality"]["proof_authority"])
+        self.assertTrue(
+            specs[0].hard_vetoes["required_logistic_normal_allocation_grid"]
+        )
         self.assertTrue(specs[0].hard_vetoes["required_order_type_ablation_passed"])
         self.assertEqual(
             specs[0].hard_vetoes["required_min_order_type_ablation_sample_count"],
@@ -668,6 +719,9 @@ class TestCandidateSpecs(TestCase):
         )
         self.assertTrue(specs[0].promotion_contract["requires_order_type_ablation"])
         self.assertTrue(specs[0].promotion_contract["requires_market_limit_order_mix"])
+        self.assertTrue(
+            specs[0].promotion_contract["requires_logistic_normal_allocation_grid"]
+        )
 
     def test_intraday_volume_forecast_claim_adds_periodicity_capacity_contract(
         self,
