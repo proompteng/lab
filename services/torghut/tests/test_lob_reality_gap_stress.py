@@ -66,6 +66,7 @@ class TestLobRealityGapStress(TestCase):
                     trade_size="5",
                     odd_lot_bid_size="40",
                     odd_lot_ask_size="42",
+                    event_type="add",
                 ),
                 self._row(
                     offset=2,
@@ -77,6 +78,7 @@ class TestLobRealityGapStress(TestCase):
                     trade_size="4",
                     odd_lot_bid_size="41",
                     odd_lot_ask_size="43",
+                    event_type="cancel",
                 ),
                 self._row(
                     offset=3,
@@ -157,6 +159,10 @@ class TestLobRealityGapStress(TestCase):
         )
         self.assertGreater(fragile.odd_lot_vanish_share, stable.odd_lot_vanish_share)
         self.assertGreater(
+            fragile.responsive_simulation_gap_score,
+            stable.responsive_simulation_gap_score,
+        )
+        self.assertGreater(
             fragile.replay_rank_penalty_bps, stable.replay_rank_penalty_bps
         )
         payload = fragile.to_payload()
@@ -165,6 +171,10 @@ class TestLobRealityGapStress(TestCase):
         )
         self.assertTrue(payload["power_law_signed_flow_impact_preview"])
         self.assertTrue(payload["odd_lot_liquidity_reliability_preview"])
+        self.assertTrue(payload["responsive_exchange_simulation_preview"])
+        self.assertGreater(
+            payload["ranking_features"]["responsive_simulation_gap_score"], 0
+        )
         self.assertFalse(payload["proof_authority"])
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["final_authority_ok"])
@@ -205,11 +215,20 @@ class TestLobRealityGapStress(TestCase):
         self.assertIn("arxiv-2603.24137", source_ids)
         self.assertIn("ofr-25-01", source_ids)
         self.assertIn("arxiv-2507.06345", source_ids)
+        self.assertIn("arxiv-2502.07071", source_ids)
+        self.assertIn(
+            "responsive_event_concentration_share", contract["stress_components"]
+        )
         self.assertTrue(contract["proof_neutrality"]["requires_exact_replay"])
         self.assertTrue(contract["proof_neutrality"]["requires_route_tca"])
         self.assertTrue(
             contract["proof_neutrality"]["requires_order_lifecycle_fill_evidence"]
         )
         self.assertTrue(contract["proof_neutrality"]["requires_runtime_ledger"])
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_responsive_simulator_only_pnl_authority"
+            ]
+        )
         self.assertFalse(contract["proof_neutrality"]["promotion_proof"])
         self.assertFalse(payload["promotion_authority"])

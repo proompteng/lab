@@ -532,7 +532,7 @@ class FastReplayPreviewResult:
                 "dynamic_lead_lag_cross_asset_stress": "deterministic event-grid dynamic pair-specific lead-lag, cross-market LOB/order-flow predictability, and one-second OFI endogeneity stress from arXiv:2511.00390, SSRN:5523878, and arXiv:2508.06788; lead-lag is not alpha proof; preview ranking only",
                 "queue_position_survival_fill_stress": "deterministic queue-position survival fill probability, depth-delay, and nonfill opportunity-cost stress from arXiv:2512.05734, SSRN:6440898, and SSRN:6730443; preview ranking only",
                 "public_feed_lag_quoted_liquidity_stress": "deterministic public-feed delay, quoted-liquidity reliability, stale-quote, and authoritative trade-direction join stress from SSRN:6675338, arXiv:2604.24366, and arXiv:2511.20606; preview ranking only",
-                "lob_simulation_reality_gap_execution_stress": "deterministic spread-volume imbalance, latency-race mode, power-law signed-flow impact, and odd-lot liquidity reliability stress from arXiv:2603.24137, OFR WP 25-01, and arXiv:2507.06345; preview ranking only",
+                "lob_simulation_reality_gap_execution_stress": "deterministic spread-volume imbalance, latency-race mode, power-law signed-flow impact, odd-lot liquidity reliability, and responsive exchange event-mix stress from arXiv:2603.24137, OFR WP 25-01, arXiv:2507.06345, and arXiv:2502.07071; preview ranking only",
                 "alpha_decay_predictability_stress": "deterministic multi-horizon spread-adjusted alpha decay, cost-crossover, latency-horizon mismatch, and efficiency-regime compression stress from arXiv:2601.02310 and SSRN:6608199; preview ranking only",
                 "counterfactual_regime_replay_stress": "deterministic real-tape regime support, edge concentration, and temporal Wasserstein shift stress from arXiv:2602.03776 and SSRN:6232459; no synthetic PnL; preview ranking only",
                 "nonlinear_impact_execution_stress": "deterministic real-tape participation-rate, square-root impact, and permanent-impact decay stress from arXiv:2603.29086 and arXiv:2502.16246; model costs are not PnL authority; preview ranking only",
@@ -1413,12 +1413,10 @@ def _score_candidate_spec(
         )
         or 0.0
     )
-    intraday_price_path_asymmetry_stress = (
-        extract_intraday_price_path_asymmetry_stress(
-            matched_source_rows,
-            direction=direction,
-        ).to_payload()
-    )
+    intraday_price_path_asymmetry_stress = extract_intraday_price_path_asymmetry_stress(
+        matched_source_rows,
+        direction=direction,
+    ).to_payload()
     intraday_price_path_asymmetry_rank_penalty_bps = (
         _float_or_none(
             _mapping(intraday_price_path_asymmetry_stress.get("ranking_features")).get(
@@ -1620,9 +1618,7 @@ def _score_candidate_spec(
         nonlinear_impact_execution_stress=dict(nonlinear_impact_execution_stress),
         option_gamma_flow_stress=dict(option_gamma_flow_stress),
         intraday_jump_burst_stress=dict(intraday_jump_burst_stress),
-        intraday_price_path_asymmetry_stress=dict(
-            intraday_price_path_asymmetry_stress
-        ),
+        intraday_price_path_asymmetry_stress=dict(intraday_price_path_asymmetry_stress),
         rough_flow_volatility_stress=dict(rough_flow_volatility_stress),
         institutional_mechanism_fidelity_stress=dict(
             institutional_mechanism_fidelity_stress
