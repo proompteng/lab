@@ -8917,6 +8917,9 @@ def _sanitized_runtime_ledger_source_collection_target(
         "source_collection_reason_codes": _unique_text_items(
             target.get("source_collection_reason_codes")
         ),
+        "source_collection_profit_target_candidate": _truthy_plan_value(
+            target.get("source_collection_profit_target_candidate")
+        ),
         "proof_mode": "probation",
         "evidence_collection_ok": True,
         "canary_collection_authorized": False,
@@ -8951,6 +8954,16 @@ def _sanitized_runtime_ledger_source_collection_target(
             or target.get("final_promotion_authorized")
         ),
     }
+    for key in (
+        "source_collection_priority",
+        "source_collection_profit_target_net_pnl_after_costs",
+        "source_collection_filled_notional",
+        "source_collection_net_strategy_pnl_after_costs",
+        "source_collection_post_cost_expectancy_bps",
+        "source_collection_next_action",
+    ):
+        if value := _safe_text(target.get(key)):
+            sanitized[key] = value
     sanitized.update(_runtime_window_import_target_metadata(target))
     if runtime_ledger_bucket_ref := _safe_text(target.get("runtime_ledger_bucket_ref")):
         sanitized["runtime_ledger_bucket_ref"] = runtime_ledger_bucket_ref

@@ -88,6 +88,13 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "source_collection_authorized",
     "source_collection_authorization_scope",
     "source_collection_reason_codes",
+    "source_collection_priority",
+    "source_collection_profit_target_candidate",
+    "source_collection_profit_target_net_pnl_after_costs",
+    "source_collection_filled_notional",
+    "source_collection_net_strategy_pnl_after_costs",
+    "source_collection_post_cost_expectancy_bps",
+    "source_collection_next_action",
     "bounded_evidence_collection_authorized",
     "bounded_evidence_collection_scope",
     "bounded_evidence_collection_max_notional",
@@ -850,9 +857,7 @@ def _runtime_window_target_plan_from_payload(
             plan = direct_plan
         else:
             gate = _as_dict(payload.get("live_submission_gate"))
-            gate_plan = _as_dict(
-                gate.get("runtime_ledger_paper_probation_import_plan")
-            )
+            gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
             if gate_plan:
                 plan = gate_plan
             else:

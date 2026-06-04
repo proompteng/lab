@@ -1073,9 +1073,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             {
                 "schema_version": "torghut.paper-route-evidence.v1",
                 "source_runtime_window_import_plan": {
-                    "schema_version": (
-                        "torghut.source-runtime-window-import-plan.v1"
-                    ),
+                    "schema_version": ("torghut.source-runtime-window-import-plan.v1"),
                     "target_count": 5,
                     "targets": [
                         {
@@ -2589,6 +2587,15 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 "source_collection_reason_codes": [
                     "source_window_evidence_collection_pending"
                 ],
+                "source_collection_priority": "profit_target_source_materialization",
+                "source_collection_profit_target_candidate": True,
+                "source_collection_profit_target_net_pnl_after_costs": "567.44720578",
+                "source_collection_filled_notional": "127090.02495200",
+                "source_collection_net_strategy_pnl_after_costs": "567.44720578",
+                "source_collection_post_cost_expectancy_bps": "44.64923238",
+                "source_collection_next_action": (
+                    "materialize_runtime_ledger_source_window_refs"
+                ),
                 "bounded_evidence_collection_authorized": True,
                 "bounded_evidence_collection_scope": (
                     "paper_route_probe_next_session_only"
@@ -2609,6 +2616,30 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(
             metadata["source_collection_reason_codes"],
             ["source_window_evidence_collection_pending"],
+        )
+        self.assertEqual(
+            metadata["source_collection_priority"],
+            "profit_target_source_materialization",
+        )
+        self.assertTrue(metadata["source_collection_profit_target_candidate"])
+        self.assertEqual(
+            metadata["source_collection_profit_target_net_pnl_after_costs"],
+            "567.44720578",
+        )
+        self.assertEqual(
+            metadata["source_collection_filled_notional"], "127090.02495200"
+        )
+        self.assertEqual(
+            metadata["source_collection_net_strategy_pnl_after_costs"],
+            "567.44720578",
+        )
+        self.assertEqual(
+            metadata["source_collection_post_cost_expectancy_bps"],
+            "44.64923238",
+        )
+        self.assertEqual(
+            metadata["source_collection_next_action"],
+            "materialize_runtime_ledger_source_window_refs",
         )
         self.assertTrue(metadata["bounded_evidence_collection_authorized"])
         self.assertEqual(
