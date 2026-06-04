@@ -75,6 +75,9 @@ from app.trading.discovery.nonlinear_impact_execution_stress import (
 from app.trading.discovery.order_book_observability_stress import (
     extract_order_book_observability_stress,
 )
+from app.trading.discovery.ofi_response_horizon_stress import (
+    extract_ofi_response_horizon_stress,
+)
 from app.trading.discovery.option_gamma_flow_stress import (
     extract_option_gamma_flow_stress,
 )
@@ -96,8 +99,8 @@ from app.trading.discovery.signal_adaptive_execution_resilience_stress import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v13"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v14"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v14"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v15"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -132,6 +135,7 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "adaptive_market_limit_allocation_stress",
     "metaorder_adverse_selection_stress",
     "hawkes_transient_impact_execution_stress",
+    "ofi_response_horizon_execution_stress",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -308,6 +312,9 @@ class FastReplayPreviewRow:
     hawkes_transient_impact_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
+    ofi_response_horizon_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
     bootstrap_robust_optimization_stress: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
@@ -428,6 +435,7 @@ class FastReplayPreviewRow:
                 self.intraday_price_path_asymmetry_stress
             ),
             "rough_flow_volatility_stress": dict(self.rough_flow_volatility_stress),
+            "ofi_response_horizon_stress": dict(self.ofi_response_horizon_stress),
             "institutional_mechanism_fidelity_stress": dict(
                 self.institutional_mechanism_fidelity_stress
             ),
@@ -659,6 +667,7 @@ class FastReplayPreviewResult:
                 "metaorder_adverse_selection_stress": "deterministic Hawkes-style event clustering, same-direction metaorder footprint, adverse-selection drift, and liquidity-replenishment gap stress from arXiv:2510.27334 and DOI:10.1007/s10203-026-00570-z; metaorder footprints and Hawkes intensity are not fill or PnL authority; preview ranking only",
                 "bootstrap_robust_optimization_stress": "deterministic stationary-block bootstrap percentile utility, parameter-instability, and adaptive-search selection-bias stress from arXiv:2510.12725 and arXiv:2604.15531; model utility is not PnL authority; preview ranking only",
                 "hawkes_transient_impact_execution_stress": "deterministic event-time Hawkes burst/self-excitation, transient-impact pressure, and square-root impact pressure stress from arXiv:2504.10282 and arXiv:2603.29086; intensity and modeled impact are not fill or PnL authority; preview ranking only",
+                "ofi_response_horizon_execution_stress": "deterministic one-second and multi-horizon OFI response-ratio, memory-reversal, shock-dissipation, and macro-news distortion stress from arXiv:2505.17388 and arXiv:2508.06788; OFI response is not PnL or promotion authority; preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -1679,6 +1688,18 @@ def _score_candidate_spec(
         )
         or 0.0
     )
+    ofi_response_horizon_stress = extract_ofi_response_horizon_stress(
+        matched_source_rows,
+        direction=direction,
+    ).to_payload()
+    ofi_response_horizon_rank_penalty_bps = (
+        _float_or_none(
+            _mapping(ofi_response_horizon_stress.get("ranking_features")).get(
+                "replay_rank_penalty_bps"
+            )
+        )
+        or 0.0
+    )
     bootstrap_robust_optimization_stress = extract_bootstrap_robust_optimization_stress(
         matched_source_rows,
         post_cost_utilities_bps=post_cost_utilities_bps,
@@ -1744,6 +1765,7 @@ def _score_candidate_spec(
         - adaptive_market_limit_allocation_rank_penalty_bps * 0.05
         - metaorder_adverse_selection_rank_penalty_bps * 0.05
         - hawkes_transient_impact_rank_penalty_bps * 0.06
+        - ofi_response_horizon_rank_penalty_bps * 0.06
         - bootstrap_robust_optimization_rank_penalty_bps * 0.07
         - conformal_tail_risk_penalty_bps * 0.12
         - macro_stress_veto_score * 18.0
@@ -1796,6 +1818,7 @@ def _score_candidate_spec(
         - adaptive_market_limit_allocation_rank_penalty_bps * 0.03
         - metaorder_adverse_selection_rank_penalty_bps * 0.03
         - hawkes_transient_impact_rank_penalty_bps * 0.04
+        - ofi_response_horizon_rank_penalty_bps * 0.04
         - bootstrap_robust_optimization_rank_penalty_bps * 0.04
     )
     return FastReplayPreviewRow(
@@ -1862,6 +1885,7 @@ def _score_candidate_spec(
         ),
         metaorder_adverse_selection_stress=dict(metaorder_adverse_selection_stress),
         hawkes_transient_impact_stress=dict(hawkes_transient_impact_stress),
+        ofi_response_horizon_stress=dict(ofi_response_horizon_stress),
         bootstrap_robust_optimization_stress=dict(bootstrap_robust_optimization_stress),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
@@ -1919,6 +1943,7 @@ def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
         - _adaptive_market_limit_allocation_rank_penalty_bps(row) * 0.04
         - _metaorder_adverse_selection_rank_penalty_bps(row) * 0.04
         - _hawkes_transient_impact_rank_penalty_bps(row) * 0.05
+        - _ofi_response_horizon_rank_penalty_bps(row) * 0.05
         - _bootstrap_robust_optimization_rank_penalty_bps(row) * 0.05
         - float(row.conformal_tail_risk_penalty_bps) * 0.10
     )
@@ -2079,6 +2104,13 @@ def _hawkes_transient_impact_rank_penalty_bps(
     ranking_features = _mapping(
         row.hawkes_transient_impact_stress.get("ranking_features")
     )
+    return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
+
+
+def _ofi_response_horizon_rank_penalty_bps(
+    row: FastReplayPreviewRow,
+) -> float:
+    ranking_features = _mapping(row.ofi_response_horizon_stress.get("ranking_features"))
     return _float_or_none(ranking_features.get("replay_rank_penalty_bps")) or 0.0
 
 
@@ -2311,6 +2343,7 @@ def _row_with_rank_and_selection(
         ),
         metaorder_adverse_selection_stress=dict(row.metaorder_adverse_selection_stress),
         hawkes_transient_impact_stress=dict(row.hawkes_transient_impact_stress),
+        ofi_response_horizon_stress=dict(row.ofi_response_horizon_stress),
         bootstrap_robust_optimization_stress=dict(
             row.bootstrap_robust_optimization_stress
         ),
@@ -2405,6 +2438,7 @@ def _row_with_frontier_dedupe(
         ),
         metaorder_adverse_selection_stress=dict(row.metaorder_adverse_selection_stress),
         hawkes_transient_impact_stress=dict(row.hawkes_transient_impact_stress),
+        ofi_response_horizon_stress=dict(row.ofi_response_horizon_stress),
         bootstrap_robust_optimization_stress=dict(
             row.bootstrap_robust_optimization_stress
         ),
@@ -3346,6 +3380,8 @@ def _risk_flags_for_row(
         flags.add("metaorder_adverse_selection_stress_penalty_active")
     if _hawkes_transient_impact_rank_penalty_bps(row) > 0:
         flags.add("hawkes_transient_impact_stress_penalty_active")
+    if _ofi_response_horizon_rank_penalty_bps(row) > 0:
+        flags.add("ofi_response_horizon_stress_penalty_active")
     if _bootstrap_robust_optimization_rank_penalty_bps(row) > 0:
         flags.add("bootstrap_robust_optimization_stress_penalty_active")
     if row.matched_symbol_count < row.requested_symbol_count:
@@ -3418,6 +3454,8 @@ def _ranking_only_reasons_for_row(
         reasons.add("metaorder_adverse_selection_stress_downranks_only")
     if _hawkes_transient_impact_rank_penalty_bps(row) > 0:
         reasons.add("hawkes_transient_impact_stress_downranks_only")
+    if _ofi_response_horizon_rank_penalty_bps(row) > 0:
+        reasons.add("ofi_response_horizon_stress_downranks_only")
     if _bootstrap_robust_optimization_rank_penalty_bps(row) > 0:
         reasons.add("bootstrap_robust_optimization_stress_downranks_only")
     if row.selection_reason == "insufficient_replay_tape_rows":
@@ -3483,6 +3521,8 @@ def _risk_veto_reasons_for_row(
         vetoes.add("metaorder_adverse_selection_stress_penalty")
     if _hawkes_transient_impact_rank_penalty_bps(row) > 0:
         vetoes.add("hawkes_transient_impact_stress_penalty")
+    if _ofi_response_horizon_rank_penalty_bps(row) > 0:
+        vetoes.add("ofi_response_horizon_stress_penalty")
     if _bootstrap_robust_optimization_rank_penalty_bps(row) > 0:
         vetoes.add("bootstrap_robust_optimization_stress_penalty")
     if row.robust_lower_percentile_post_cost_utility_bps <= 0:
