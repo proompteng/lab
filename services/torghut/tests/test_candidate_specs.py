@@ -960,6 +960,84 @@ class TestCandidateSpecs(TestCase):
             "mpc_dynamic_schedule_validation_only",
         )
 
+    def test_liquidity_uncertainty_claim_adds_resilience_execution_grid(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-liquidity-uncertainty-execution",
+            claims=[
+                {
+                    "claim_id": "stochastic-liquidity-resilience-execution",
+                    "claim_type": "execution_assumption",
+                    "claim_text": (
+                        "Optimal execution under liquidity uncertainty needs "
+                        "regime-switching liquidity, stochastic market depth, "
+                        "LOB shape parameters, and liquidity resilience after "
+                        "child orders."
+                    ),
+                    "data_requirements": [
+                        "liquidity_regime_transition_trace",
+                        "stochastic_market_depth_state",
+                        "lob_shape_parameter_history",
+                        "resilience_decay_half_life",
+                        "depth_recovery_after_child_order",
+                        "execution_shortfall_by_liquidity_regime",
+                        "route_tca",
+                    ],
+                    "confidence": "0.73",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        self.assertIn(
+            "stochastic_liquidity_resilience_execution_grid",
+            specs[0].parameter_space["mechanism_overlay_ids"],
+        )
+        grid = specs[0].parameter_space[
+            "stochastic_liquidity_resilience_execution_grid"
+        ]
+        self.assertEqual(
+            grid["schema_version"],
+            "torghut.stochastic-liquidity-resilience-execution-grid.v1",
+        )
+        self.assertEqual(set(grid["source_ids"]), {"arxiv-2506.11813", "ssrn-3798235"})
+        self.assertIn(
+            "resilience_half_life_seconds_grid",
+            grid["candidate_search_inputs"],
+        )
+        self.assertIn("depth_recovery_after_trade", grid["stress_inputs_required"])
+        self.assertIn("impact_recovery_residual_bps", grid["diagnostics_required"])
+        self.assertFalse(grid["proof_neutrality"]["proof_authority"])
+        self.assertTrue(
+            specs[0].hard_vetoes[
+                "required_stochastic_liquidity_resilience_execution_grid"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "requires_stochastic_liquidity_resilience_execution_grid"
+            ]
+        )
+        self.assertTrue(
+            specs[0].promotion_contract[
+                "rejects_modeled_liquidity_resilience_as_profit_proof"
+            ]
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        contract = next(
+            item
+            for item in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if item["overlay_id"] == "stochastic_liquidity_resilience_execution_grid"
+        )
+        self.assertEqual(
+            contract["rank_metric"],
+            "post_cost_net_pnl_after_liquidity_regime_resilience_shortfall_stress",
+        )
+
     def test_friction_aware_regime_claim_adds_policy_overlay(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-frlux-regime-friction",
