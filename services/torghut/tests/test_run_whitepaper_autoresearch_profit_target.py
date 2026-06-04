@@ -8858,6 +8858,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "implementation_uncertainty_lower_net_pnl_per_day": "525",
                 "conformal_tail_risk_passed": True,
                 "conformal_tail_risk_adjusted_net_pnl_per_day": "525",
+                "breakeven_transaction_cost_buffer_passed": True,
+                "breakeven_transaction_cost_buffer_bps": "5",
+                "transaction_cost_buffer_bps": "1",
+                "post_cost_net_pnl_after_breakeven_transaction_cost_buffer": "520",
                 "delay_adjusted_depth_fill_survival_evidence_present": True,
                 "delay_adjusted_depth_fill_survival_sample_count": 9,
                 "delay_adjusted_depth_fill_survival_rate": "0.85",
@@ -8970,6 +8974,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ["live_paper_parity", "route_tca", "runtime_ledger"],
         )
         self.assertEqual(row["paper_required_evidence_count"], 3)
+        self.assertTrue(row["breakeven_transaction_cost_buffer_passed"])
+        self.assertEqual(row["breakeven_transaction_cost_buffer_bps"], "5")
+        self.assertEqual(row["transaction_cost_buffer_bps"], "1")
+        self.assertEqual(
+            row["post_cost_net_pnl_after_breakeven_transaction_cost_buffer"],
+            "520",
+        )
         expected_runtime_ledger_handoff = {
             "status": "requires_runtime_ledger_materialization_before_authoritative_pnl",
             "runtime_ledger_required": True,

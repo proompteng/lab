@@ -1279,6 +1279,138 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
         self.assertGreaterEqual(penalties, Decimal("140"))
 
+    def test_consistency_penalty_emits_breakeven_transaction_cost_buffer(self) -> None:
+        penalties, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-04-01",
+                end_date="2026-04-07",
+                daily_net={
+                    "2026-04-01": "700",
+                    "2026-04-02": "700",
+                    "2026-04-03": "700",
+                    "2026-04-06": "700",
+                    "2026-04-07": "700",
+                },
+                daily_filled_notional={
+                    "2026-04-01": "100000",
+                    "2026-04-02": "100000",
+                    "2026-04-03": "100000",
+                    "2026-04-06": "100000",
+                    "2026-04-07": "100000",
+                },
+                daily_liquidity_notional={
+                    "2026-04-01": "10000000000",
+                    "2026-04-02": "10000000000",
+                    "2026-04-03": "10000000000",
+                    "2026-04-06": "10000000000",
+                    "2026-04-07": "10000000000",
+                },
+                decision_count=5,
+                filled_count=5,
+                wins=5,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("500"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=5,
+                min_active_ratio=Decimal("1"),
+                min_positive_days=4,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=1,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertTrue(summary["breakeven_transaction_cost_buffer_passed"])
+        self.assertTrue(summary["required_breakeven_transaction_cost_buffer"])
+        self.assertEqual(summary["transaction_cost_buffer_bps"], "1")
+        self.assertEqual(
+            Decimal(str(summary["breakeven_transaction_cost_buffer_bps"])),
+            Decimal("20"),
+        )
+        self.assertEqual(
+            Decimal(
+                str(
+                    summary["post_cost_net_pnl_after_breakeven_transaction_cost_buffer"]
+                )
+            ),
+            Decimal("690"),
+        )
+        self.assertIn(
+            "realistic_market_impact_arxiv_2603_29086_2026",
+            summary["breakeven_transaction_cost_buffer_source_markers"],
+        )
+        self.assertEqual(penalties, Decimal("0"))
+
+    def test_consistency_penalty_blocks_breakeven_transaction_cost_shortfall(
+        self,
+    ) -> None:
+        penalties, summary = frontier._consistency_penalty(
+            full_window_payload=self._payload(
+                start_date="2026-04-01",
+                end_date="2026-04-07",
+                daily_net={
+                    "2026-04-01": "510",
+                    "2026-04-02": "510",
+                    "2026-04-03": "510",
+                    "2026-04-06": "510",
+                    "2026-04-07": "510",
+                },
+                daily_filled_notional={
+                    "2026-04-01": "200000",
+                    "2026-04-02": "200000",
+                    "2026-04-03": "200000",
+                    "2026-04-06": "200000",
+                    "2026-04-07": "200000",
+                },
+                daily_liquidity_notional={
+                    "2026-04-01": "10000000000",
+                    "2026-04-02": "10000000000",
+                    "2026-04-03": "10000000000",
+                    "2026-04-06": "10000000000",
+                    "2026-04-07": "10000000000",
+                },
+                decision_count=5,
+                filled_count=5,
+                wins=5,
+                losses=0,
+            ),
+            policy=frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("500"),
+                min_daily_net_pnl=Decimal("-1000"),
+                min_active_days=5,
+                min_active_ratio=Decimal("1"),
+                min_positive_days=4,
+                max_worst_day_loss=Decimal("1000"),
+                max_negative_days=1,
+                max_drawdown=Decimal("1000"),
+                max_best_day_share_of_total_pnl=Decimal("1"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertFalse(summary["breakeven_transaction_cost_buffer_passed"])
+        self.assertEqual(
+            Decimal(str(summary["breakeven_transaction_cost_buffer_bps"])),
+            Decimal("0.5"),
+        )
+        self.assertEqual(
+            Decimal(
+                str(
+                    summary["post_cost_net_pnl_after_breakeven_transaction_cost_buffer"]
+                )
+            ),
+            Decimal("490"),
+        )
+        self.assertGreaterEqual(penalties, Decimal("10"))
+
     def test_consistency_penalty_caps_impossible_count_activity_gates(self) -> None:
         penalties, summary = frontier._consistency_penalty(
             full_window_payload=self._payload(

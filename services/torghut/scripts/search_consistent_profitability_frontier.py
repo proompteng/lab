@@ -2514,6 +2514,7 @@ DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS = (
     Decimal("250"),
 )
 CONFORMAL_TAIL_RISK_ALPHA = Decimal("0.20")
+BREAKEVEN_TRANSACTION_COST_BUFFER_MIN_BPS = Decimal("1")
 MARKET_IMPACT_STRESS_SOURCE_MARKERS = (
     "realistic_market_impact_arxiv_2603_29086_2026",
     "double_square_root_impact_arxiv_2502_16246_2025",
@@ -2570,6 +2571,54 @@ def _conformal_tail_risk_metrics(
         "conformal_tail_risk_passed": passed,
         "conformal_tail_risk_source_markers": [
             "regime_weighted_conformal_var_arxiv_2602_03903_2026"
+        ],
+    }
+
+
+def _breakeven_transaction_cost_buffer_metrics(
+    *,
+    target_net_per_day: Decimal,
+    conformal_adjusted_net_per_day: Decimal,
+    avg_filled_notional_per_day: Decimal,
+    required_cost_buffer_bps: Decimal,
+) -> dict[str, Any]:
+    selected_cost_buffer_bps = max(
+        BREAKEVEN_TRANSACTION_COST_BUFFER_MIN_BPS,
+        required_cost_buffer_bps,
+    )
+    breakeven_surplus_per_day = max(
+        Decimal("0"),
+        conformal_adjusted_net_per_day - target_net_per_day,
+    )
+    breakeven_buffer_bps = (
+        breakeven_surplus_per_day / avg_filled_notional_per_day * Decimal("10000")
+        if avg_filled_notional_per_day > 0
+        else Decimal("0")
+    )
+    buffer_cost_per_day = (
+        avg_filled_notional_per_day * selected_cost_buffer_bps / Decimal("10000")
+    )
+    buffered_net_per_day = conformal_adjusted_net_per_day - buffer_cost_per_day
+    passed = (
+        avg_filled_notional_per_day > 0
+        and breakeven_buffer_bps >= selected_cost_buffer_bps
+        and buffered_net_per_day >= target_net_per_day
+    )
+    return {
+        "required_breakeven_transaction_cost_buffer": True,
+        "breakeven_transaction_cost_buffer_passed": passed,
+        "breakeven_transaction_cost_buffer_bps": str(breakeven_buffer_bps),
+        "transaction_cost_buffer_bps": str(selected_cost_buffer_bps),
+        "transaction_cost_buffer_cost_per_day": str(buffer_cost_per_day),
+        "post_cost_net_pnl_after_breakeven_transaction_cost_buffer": str(
+            buffered_net_per_day
+        ),
+        "breakeven_transaction_cost_buffer_target_net_pnl_per_day": str(
+            target_net_per_day
+        ),
+        "breakeven_transaction_cost_buffer_source_markers": [
+            "regime_weighted_conformal_var_arxiv_2602_03903_2026",
+            "realistic_market_impact_arxiv_2603_29086_2026",
         ],
     }
 
@@ -3018,6 +3067,20 @@ def _consistency_penalty(
         net_per_day=summary.net_per_day,
         daily_net=summary.daily_net,
     )
+    breakeven_cost_buffer_metrics = _breakeven_transaction_cost_buffer_metrics(
+        target_net_per_day=policy.target_net_per_day,
+        conformal_adjusted_net_per_day=Decimal(
+            str(
+                conformal_tail_risk_metrics[
+                    "conformal_tail_risk_adjusted_net_pnl_per_day"
+                ]
+            )
+        ),
+        avg_filled_notional_per_day=avg_filled_notional_per_day,
+        required_cost_buffer_bps=Decimal(
+            str(replay_stress_metrics.get("market_impact_stress_cost_bps") or "0")
+        ),
+    )
     best_day_share_of_total_pnl = _max_best_day_share_of_total_pnl(
         daily_net=summary.daily_net,
         total_net_pnl=summary.net_pnl,
@@ -3152,6 +3215,20 @@ def _consistency_penalty(
                 )
             ),
         )
+    if not bool(
+        breakeven_cost_buffer_metrics["breakeven_transaction_cost_buffer_passed"]
+    ):
+        penalties += max(
+            Decimal("0"),
+            policy.target_net_per_day
+            - Decimal(
+                str(
+                    breakeven_cost_buffer_metrics[
+                        "post_cost_net_pnl_after_breakeven_transaction_cost_buffer"
+                    ]
+                )
+            ),
+        )
 
     return (
         penalties,
@@ -3186,6 +3263,7 @@ def _consistency_penalty(
             "avg_liquidity_notional_per_day": str(avg_liquidity_notional_per_day),
             **replay_stress_metrics,
             **conformal_tail_risk_metrics,
+            **breakeven_cost_buffer_metrics,
             "best_day_share_of_total_pnl": str(best_day_share_of_total_pnl),
             "max_gross_exposure_pct_equity": str(max_gross_exposure_pct_equity),
             "max_gross_exposure_pct_equity_required": str(
@@ -6795,6 +6873,10 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     )
                 if not bool(full_window_summary.get("conformal_tail_risk_passed")):
                     hard_vetoes.append("conformal_tail_risk_below_target")
+                if not bool(
+                    full_window_summary.get("breakeven_transaction_cost_buffer_passed")
+                ):
+                    hard_vetoes.append("breakeven_transaction_cost_buffer_below_target")
                 if (
                     objective_scorecard.symbol_concentration_share
                     > consistency_policy.max_symbol_concentration_share
@@ -7180,6 +7262,53 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 Sequence[Any],
                                 full_window_summary.get(
                                     "conformal_tail_risk_source_markers"
+                                )
+                                or (),
+                            )
+                        ),
+                        "required_breakeven_transaction_cost_buffer": bool(
+                            full_window_summary.get(
+                                "required_breakeven_transaction_cost_buffer"
+                            )
+                        ),
+                        "breakeven_transaction_cost_buffer_passed": bool(
+                            full_window_summary.get(
+                                "breakeven_transaction_cost_buffer_passed"
+                            )
+                        ),
+                        "breakeven_transaction_cost_buffer_bps": str(
+                            full_window_summary.get(
+                                "breakeven_transaction_cost_buffer_bps"
+                            )
+                            or "0"
+                        ),
+                        "transaction_cost_buffer_bps": str(
+                            full_window_summary.get("transaction_cost_buffer_bps")
+                            or "0"
+                        ),
+                        "transaction_cost_buffer_cost_per_day": str(
+                            full_window_summary.get(
+                                "transaction_cost_buffer_cost_per_day"
+                            )
+                            or "0"
+                        ),
+                        "post_cost_net_pnl_after_breakeven_transaction_cost_buffer": str(
+                            full_window_summary.get(
+                                "post_cost_net_pnl_after_breakeven_transaction_cost_buffer"
+                            )
+                            or "0"
+                        ),
+                        "breakeven_transaction_cost_buffer_target_net_pnl_per_day": str(
+                            full_window_summary.get(
+                                "breakeven_transaction_cost_buffer_target_net_pnl_per_day"
+                            )
+                            or "0"
+                        ),
+                        "breakeven_transaction_cost_buffer_source_markers": list(
+                            cast(
+                                Sequence[Any],
+                                full_window_summary.get(
+                                    "breakeven_transaction_cost_buffer_source_markers"
                                 )
                                 or (),
                             )
