@@ -575,16 +575,81 @@ def _bounded_sim_collection_reserves_account(
     return bool(_BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS.intersection(blockers))
 
 
-def _target_requires_bounded_sim_collection_gate(target: Mapping[str, Any]) -> bool:
+def _target_owns_bounded_sim_collection_account(target: Mapping[str, Any]) -> bool:
     hypothesis_id = _safe_text(target.get("hypothesis_id"))
     candidate_id = _safe_text(target.get("candidate_id"))
-    account_label = _safe_text(target.get("account_label"))
     family_tokens = _target_strategy_family_tokens(target)
     return (
         hypothesis_id == "H-PAIRS-01"
         or candidate_id == "c88421d619759b2cfaa6f4d0"
-        or account_label == _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
         or any("microbar_cross_sectional_pairs" in token for token in family_tokens)
+    )
+
+
+def _target_runtime_account_matches(
+    target: Mapping[str, Any],
+    *,
+    account_label: str | None,
+) -> bool:
+    normalized_account = _safe_text(account_label)
+    if not normalized_account:
+        return False
+    labels = set(_lineage_text_values(target.get("account_label")))
+    for key in (
+        "execution_account_label",
+        "runtime_account_label",
+        "paper_account_label",
+        "paper_route_runtime_account_label",
+    ):
+        labels.update(_lineage_text_values(target.get(key)))
+    identity = target.get("account_stage_runtime_identity")
+    if isinstance(identity, Mapping):
+        identity_mapping = cast(Mapping[str, Any], identity)
+        labels.update(_lineage_text_values(identity_mapping.get("account_label")))
+        for key in (
+            "execution_account_label",
+            "runtime_account_label",
+            "paper_account_label",
+            "paper_route_runtime_account_label",
+        ):
+            labels.update(_lineage_text_values(identity_mapping.get(key)))
+    return normalized_account in labels
+
+
+def _target_active_in_window(target: Mapping[str, Any], now: datetime) -> bool:
+    window = _target_probe_window(target)
+    if window is None:
+        return False
+    window_start, window_end = window
+    return window_start <= now < window_end
+
+
+def _target_plan_has_active_bounded_sim_collection_owner(
+    targets: Sequence[Mapping[str, Any]],
+    *,
+    account_label: str | None,
+    now: datetime,
+) -> bool:
+    for target in targets:
+        if not _target_owns_bounded_sim_collection_account(target):
+            continue
+        if not _target_runtime_account_matches(target, account_label=account_label):
+            continue
+        if not _bounded_sim_collection_reserves_account(
+            target,
+            account_label=account_label,
+        ):
+            continue
+        if _target_active_in_window(target, now):
+            return True
+    return False
+
+
+def _target_requires_bounded_sim_collection_gate(target: Mapping[str, Any]) -> bool:
+    account_label = _safe_text(target.get("account_label"))
+    return (
+        _target_owns_bounded_sim_collection_account(target)
+        or account_label == _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
     )
 
 
@@ -5671,6 +5736,11 @@ class SimpleTradingPipeline(TradingPipeline):
         normalized_allowed = {
             symbol.strip().upper() for symbol in allowed_symbols if symbol.strip()
         }
+        bounded_sim_owner_active = _target_plan_has_active_bounded_sim_collection_owner(
+            target_plan_targets,
+            account_label=self.account_label,
+            now=now,
+        )
         decisions: list[StrategyDecision] = []
         seen: set[tuple[str, str, str, str]] = set()
         for raw_target in target_plan_targets:
@@ -5683,6 +5753,24 @@ class SimpleTradingPipeline(TradingPipeline):
                 ),
                 account_label=self.account_label,
             )
+            if (
+                bounded_sim_owner_active
+                and _target_runtime_account_matches(
+                    target,
+                    account_label=self.account_label,
+                )
+                and not _target_owns_bounded_sim_collection_account(target)
+            ):
+                logger.warning(
+                    "Skipping paper-route target source collection because bounded "
+                    "H-PAIRS evidence collection owns account=%s hypothesis_id=%s "
+                    "candidate_id=%s runtime_strategy_name=%s",
+                    self.account_label,
+                    _safe_text(target.get("hypothesis_id")),
+                    _safe_text(target.get("candidate_id")),
+                    _safe_text(target.get("runtime_strategy_name")),
+                )
+                continue
             if _target_requires_bounded_sim_collection_gate(target):
                 collection_blockers = _bounded_sim_collection_blockers(
                     target,
@@ -6020,9 +6108,6 @@ class SimpleTradingPipeline(TradingPipeline):
             return False
         if not target_symbols:
             return False
-        normalized_allowed = {
-            symbol.strip().upper() for symbol in allowed_symbols if symbol.strip()
-        }
         for target in target_plan_targets:
             if not _target_requires_bounded_sim_collection_gate(target):
                 continue
@@ -6031,16 +6116,9 @@ class SimpleTradingPipeline(TradingPipeline):
                 account_label=self.account_label,
             ):
                 continue
-            window = _target_probe_window(target)
-            if window is None:
-                continue
-            window_start, window_end = window
-            if now < window_start or now >= window_end:
-                continue
-            symbols = _target_symbols(target) & target_symbols
-            if normalized_allowed:
-                symbols = {symbol for symbol in symbols if symbol in normalized_allowed}
-            if symbols:
+            if _target_owns_bounded_sim_collection_account(
+                target
+            ) and _target_active_in_window(target, now):
                 return True
         return False
 

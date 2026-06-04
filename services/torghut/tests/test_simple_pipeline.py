@@ -20,8 +20,10 @@ from app.trading.scheduler.simple_pipeline import (
     _quote_snapshot_reference_price,
     _quote_snapshot_matches_symbol,
     _target_metadata_quote_snapshot,
+    _target_active_in_window,
     _target_probe_symbol_notional_budget,
     _target_probe_symbol_quantities,
+    _target_runtime_account_matches,
     _target_symbols,
 )
 from app.trading.runtime_window_import import (
@@ -1616,6 +1618,97 @@ def test_source_collection_authorization_emits_bounded_lineage_decisions_without
         settings.trading_allow_shorts = allow_shorts_before
 
 
+def test_hpairs_owner_skips_other_source_collection_targets_for_same_paper_account(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    allow_shorts_before = settings.trading_allow_shorts
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_allow_shorts = True
+        now = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
+        hpairs_target = _bounded_hpairs_target(
+            paper_route_probe_window_start="2026-06-02T13:30:00+00:00",
+            paper_route_probe_window_end="2026-06-02T20:00:00+00:00",
+            paper_route_probe_next_session_max_notional="75000",
+            paper_route_probe_symbol_actions={"AAPL": "buy", "AMZN": "sell"},
+            paper_route_probe_symbol_quantities={"AAPL": "120.1614", "AMZN": "1"},
+        )
+        tsmom_target = _bounded_hpairs_target(
+            hypothesis_id="H-TSMOM-LIQ-01",
+            candidate_id="ca4e6e3c7d639e3363dc5860",
+            strategy_family="intraday_tsmom_consistent",
+            strategy_name="intraday-tsmom-profit-v3",
+            runtime_strategy_name="intraday-tsmom-profit-v3",
+            source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
+            paper_route_probe_symbols=["NVDA", "INTC"],
+            paper_route_probe_pair_balance_state="not_required",
+            paper_route_probe_window_start="2026-06-02T13:30:00+00:00",
+            paper_route_probe_window_end="2026-06-02T20:00:00+00:00",
+            paper_route_probe_next_session_max_notional="75000",
+            paper_route_probe_symbol_actions={"NVDA": "buy", "INTC": "buy"},
+            paper_route_probe_symbol_quantities={"NVDA": "1", "INTC": "34.6997"},
+        )
+        hpairs_strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="H-PAIRS proof owner",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        tsmom_strategy = Strategy(
+            name="intraday-tsmom-profit-v3",
+            description="non-owner source collection target",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["NVDA", "INTC"],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline.price_fetcher = SimpleNamespace(
+            fetch_market_snapshot=lambda signal: MarketSnapshot(
+                symbol=signal.symbol,
+                as_of=signal.event_ts,
+                price=Decimal("100"),
+                spread=Decimal("0"),
+                source="fixture",
+                bid=Decimal("100"),
+                ask=Decimal("100"),
+            )
+        )
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            {"AAPL", "AMZN", "NVDA", "INTC"},
+            None,
+            [hpairs_target, tsmom_target],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[hpairs_strategy, tsmom_strategy],
+            allowed_symbols={"AAPL", "AMZN", "NVDA", "INTC"},
+            positions=[],
+            session=None,
+        )
+
+        assert {decision.symbol for decision in decisions} == {"AAPL", "AMZN"}
+        assert {
+            decision.params["paper_route_target_plan_source_decision"]["hypothesis_id"]
+            for decision in decisions
+        } == {"H-PAIRS-01"}
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_allow_shorts = allow_shorts_before
+
+
 def test_stale_unfilled_hpairs_closeout_does_not_block_retry_with_source_lineage(
     monkeypatch,
 ) -> None:
@@ -2004,6 +2097,9 @@ def test_contaminated_bounded_window_still_reserves_paper_account(monkeypatch) -
         assert pipeline._paper_route_target_plan_reserves_account(
             allowed_symbols={"AAPL", "AMZN"},
         )
+        assert pipeline._paper_route_target_plan_reserves_account(
+            allowed_symbols={"NVDA", "INTC"},
+        )
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
@@ -2058,6 +2154,23 @@ def test_target_account_audit_unavailable_still_reserves_paper_account(
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+
+
+def test_target_runtime_account_and_window_helpers_cover_identity_edges() -> None:
+    target = {
+        "account_label": "OTHER",
+        "account_stage_runtime_identity": {
+            "account_label": "PA3SX7FYNUTF",
+            "runtime_account_label": "TORGHUT_SIM",
+        },
+    }
+
+    assert not _target_runtime_account_matches(target, account_label="")
+    assert _target_runtime_account_matches(target, account_label="TORGHUT_SIM")
+    assert not _target_active_in_window(
+        target,
+        datetime(2026, 6, 1, 18, 0, tzinfo=timezone.utc),
+    )
 
 
 def test_target_plan_fetch_error_reserves_configured_paper_account(
