@@ -1861,6 +1861,131 @@ class TestCandidateSpecs(TestCase):
             "double_selection_factor_screen_is_prefilter_not_promotion_proof",
         )
 
+    def test_latent_crumbling_quote_claim_adds_veto_grid(self) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-latent-crumbling-quote-regime",
+            claims=[
+                {
+                    "claim_id": "latent-crumbling-quote-regime-detector",
+                    "claim_type": "execution_assumption",
+                    "claim_text": (
+                        "Early detection of latent microstructure regimes uses a "
+                        "stable to latent build-up to stress model with MAX "
+                        "aggregation, rising-edge triggers, and adaptive thresholds. "
+                        "When quotes crumble, calibrated crumbling quote probability "
+                        "distinguishes mechanical liquidity erosion from repricing."
+                    ),
+                    "data_requirements": [
+                        "point_in_time_lob_feature_panel",
+                        "latent_build_up_regime_trace",
+                        "max_channel_aggregation_trace",
+                        "rising_edge_trigger_trace",
+                        "adaptive_threshold_trace",
+                        "early_warning_lead_time",
+                        "crumbling_quote_probability",
+                        "mechanical_liquidity_erosion_probability",
+                        "execution_veto_ablation",
+                        "route_tca",
+                    ],
+                    "confidence": "0.78",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        first = specs[0]
+        self.assertEqual(
+            first.family_template_id,
+            "microstructure_continuation_matched_filter_v1",
+        )
+        self.assertIn(
+            "latent_crumbling_quote_regime",
+            first.feature_contract["family_selection"]["reasons"],
+        )
+        self.assertIn(
+            "crumbling_quote_liquidity_erosion",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertIn(
+            "latent_crumbling_quote_regime_grid",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        grid = first.parameter_space["latent_crumbling_quote_regime_grid"]
+        self.assertEqual(
+            grid["schema_version"],
+            "torghut.latent-crumbling-quote-regime-grid.v1",
+        )
+        self.assertEqual(
+            grid["source_ids"],
+            ["arxiv-2604.20949", "arxiv-2604.21993"],
+        )
+        self.assertIn(
+            "crumbling_probability_veto_grid",
+            grid["candidate_search_inputs"],
+        )
+        self.assertIn("route_tca_bps", grid["stress_inputs_required"])
+        self.assertIn(
+            "reactive_baseline_lead_time_delta",
+            grid["diagnostics_required"],
+        )
+        self.assertFalse(grid["proof_neutrality"]["proof_authority"])
+        self.assertTrue(grid["proof_neutrality"]["requires_runtime_ledger"])
+        self.assertTrue(
+            grid["proof_neutrality"]["rejects_early_warning_score_as_profit_proof"]
+        )
+        self.assertTrue(
+            first.hard_vetoes["required_latent_crumbling_quote_regime_grid"]
+        )
+        self.assertTrue(first.hard_vetoes["required_early_warning_lead_time"])
+        self.assertEqual(
+            first.hard_vetoes["required_min_early_warning_mean_lead_time_ticks"],
+            "1",
+        )
+        self.assertTrue(
+            first.promotion_contract["requires_latent_crumbling_quote_regime_grid"]
+        )
+        self.assertTrue(first.promotion_contract["requires_runtime_ledger"])
+        self.assertTrue(
+            first.promotion_contract[
+                "rejects_agent_based_crumbling_labels_as_live_authority"
+            ]
+        )
+        self.assertEqual(
+            first.strategy_overrides["params"]["microstructure_stress_veto_profile"],
+            "latent_crumbling_quote",
+        )
+        self.assertEqual(
+            first.strategy_overrides["params"]["crumbling_quote_live_authority"],
+            "disabled_candidate_only",
+        )
+        mechanism_overlays = candidate_specs_module._mechanism_overlays_for_card(
+            cards[0]
+        )
+        crumbling_contract = next(
+            item
+            for item in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if item["overlay_id"] == "crumbling_quote_liquidity_erosion"
+        )
+        self.assertEqual(
+            crumbling_contract["source_papers"][0]["source_id"], "arxiv-2604.21993"
+        )
+        latent_contract = next(
+            item
+            for item in mechanism_overlays["feature_contract"]["mechanism_overlays"]
+            if item["overlay_id"] == "latent_crumbling_quote_regime_grid"
+        )
+        self.assertEqual(
+            latent_contract["source_papers"][0]["source_id"], "arxiv-2604.20949"
+        )
+        self.assertEqual(
+            latent_contract["rank_metric"],
+            "post_cost_net_pnl_after_latent_crumbling_quote_veto_stress",
+        )
+        self.assertIn("runtime_ledger", latent_contract["required_evidence"])
+
     def test_attention_factor_stat_arb_claim_adds_pairs_grid(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-attention-factor-stat-arb-pairs",
