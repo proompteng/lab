@@ -307,6 +307,10 @@ class TestFastReplayPreview(TestCase):
             "bootstrap_robust_optimization_stress",
             payload["implemented_mechanisms"],
         )
+        self.assertIn(
+            "hawkes_transient_impact_execution_stress",
+            payload["implemented_mechanisms"],
+        )
         self.assertEqual(
             row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
             "500",
@@ -778,6 +782,34 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn(
             "metaorder_adverse_selection_stress_downranks_only",
+            row_payload["ranking_only_reasons"],
+        )
+        self.assertIn("hawkes_transient_impact_stress", row_payload)
+        self.assertEqual(
+            row_payload["hawkes_transient_impact_stress"]["status"],
+            "preview_only_hawkes_transient_impact_stress_ranking",
+        )
+        self.assertIn(
+            "arxiv-2504.10282",
+            {
+                source["source_id"]
+                for source in row_payload["hawkes_transient_impact_stress"][
+                    "source_papers"
+                ]
+            },
+        )
+        self.assertFalse(
+            row_payload["hawkes_transient_impact_stress"]["proof_authority"]
+        )
+        self.assertFalse(
+            row_payload["hawkes_transient_impact_stress"]["promotion_authority"]
+        )
+        self.assertIn(
+            "hawkes_transient_impact_stress_penalty_active",
+            row_payload["risk_flags"],
+        )
+        self.assertIn(
+            "hawkes_transient_impact_stress_downranks_only",
             row_payload["ranking_only_reasons"],
         )
         self.assertIn("bootstrap_robust_optimization_stress", row_payload)
