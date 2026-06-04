@@ -49,6 +49,28 @@ spec:
                 secretKeyRef:
                   name: torghut-db-app
                   key: uri
+            - name: TORGHUT_SIM_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: host
+            - name: TORGHUT_SIM_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: port
+            - name: TORGHUT_SIM_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: username
+            - name: TORGHUT_SIM_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: password
+            - name: SIM_DB_DSN
+              value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
             - name: TORGHUT_TIGERBEETLE_ENABLED
               value: "true"
             - name: TORGHUT_TIGERBEETLE_REQUIRED

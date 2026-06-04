@@ -1682,6 +1682,14 @@ def _target_identity(
         "paper_probation_authorization_scope": _safe_text(
             target.get("paper_probation_authorization_scope")
         ),
+        "source_collection_authorized": _truthy_plan_value(
+            target.get("source_collection_authorized")
+        ),
+        "source_collection_authorization_scope": _safe_text(
+            target.get("source_collection_authorization_scope")
+        ),
+        "handoff": _safe_text(target.get("handoff")),
+        "selected_by": _safe_text(target.get("selected_by")),
         "proof_mode": _safe_text(target.get("proof_mode")) or "probation",
         "evidence_collection_ok": bool(
             target.get("evidence_collection_ok")

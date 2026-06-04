@@ -11686,6 +11686,71 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertTrue(readback["evidence_grade_runtime_buckets_present"])
         self.assertFalse(target_audit["readiness"]["promotion_authority"]["allowed"])
 
+    def test_paper_route_observed_source_collection_target_uses_source_dsn(
+        self,
+    ) -> None:
+        target = paper_route_evidence._target_identity(
+            {
+                "hypothesis_id": "H-SOURCE-DSN",
+                "candidate_id": "candidate-source-dsn",
+                "observed_stage": "paper",
+                "strategy_family": "intraday_tsmom_consistent",
+                "strategy_name": "intraday-tsmom-profit-v3",
+                "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                "account_label": "TORGHUT_SIM",
+                "source_account_label": "TORGHUT_SOURCE",
+                "source_dsn_env": "TORGHUT_SOURCE_TEST_DSN",
+                "target_dsn_env": "SIM_DB_DSN",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "source_collection_authorized": True,
+                "source_collection_authorization_scope": (
+                    "source_window_evidence_collection_only"
+                ),
+                "handoff": "next_paper_route_runtime_window_import",
+                "selected_by": "paper_route_evidence_audit",
+            },
+            probe={},
+        )
+
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertEqual(
+            target["source_collection_authorization_scope"],
+            "source_window_evidence_collection_only",
+        )
+        self.assertEqual(target["handoff"], "next_paper_route_runtime_window_import")
+        self.assertEqual(target["selected_by"], "paper_route_evidence_audit")
+        self.assertTrue(
+            paper_route_evidence._target_is_runtime_ledger_source_collection(target)
+        )
+        disabled_target = paper_route_evidence._target_identity(
+            {
+                "source_dsn_env": "TORGHUT_SOURCE_TEST_DSN",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "source_collection_authorized": "false",
+            },
+            probe={},
+        )
+        self.assertFalse(disabled_target["source_collection_authorized"])
+        self.assertFalse(
+            paper_route_evidence._target_is_runtime_ledger_source_collection(
+                disabled_target
+            )
+        )
+        with (
+            patch.dict(
+                "os.environ",
+                {"TORGHUT_SOURCE_TEST_DSN": "sqlite+pysqlite:///:memory:"},
+                clear=False,
+            ),
+            Session(self.engine) as session,
+        ):
+            with paper_route_evidence._target_source_audit_session(
+                session, target=target
+            ) as (_, source_scope):
+                self.assertTrue(source_scope["source_session_expected"])
+                self.assertTrue(source_scope["source_session_used"])
+                self.assertEqual(source_scope["source_account_label"], "TORGHUT_SOURCE")
+
     def test_source_audit_sqlalchemy_dsn_uses_installed_psycopg_driver(
         self,
     ) -> None:
