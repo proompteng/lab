@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -1359,6 +1359,241 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertIn(
             "source_submitted_orders_missing",
             activity["source_lifecycle_blockers"],
+        )
+
+    def test_source_activity_reuses_exact_lineage_readback_without_broad_rescan(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc)
+        window_end = window_start + timedelta(hours=1)
+        event_at = window_start + timedelta(minutes=5)
+        strategy_name = "paper-route-exact-lineage-readback"
+        trade_decision_selects = 0
+
+        def _count_trade_decision_selects(
+            _conn: object,
+            _cursor: object,
+            statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: object,
+        ) -> None:
+            nonlocal trade_decision_selects
+            normalized = " ".join(statement.lower().split())
+            if (
+                normalized.startswith("select")
+                and " from trade_decisions" in normalized
+            ):
+                trade_decision_selects += 1
+
+        event.listen(
+            self.engine,
+            "before_cursor_execute",
+            _count_trade_decision_selects,
+        )
+        self.addCleanup(
+            event.remove,
+            self.engine,
+            "before_cursor_execute",
+            _count_trade_decision_selects,
+        )
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="exact lineage source activity fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "params": {
+                        "paper_route_probe": {
+                            "source_candidate_ids": ["candidate-exact-lineage"],
+                            "source_hypothesis_ids": ["H-EXACT-LINEAGE"],
+                        }
+                    },
+                },
+                rationale="exact source lineage readback",
+                status="executed",
+                created_at=event_at,
+                executed_at=event_at + timedelta(minutes=1),
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="exact-lineage-order",
+                client_order_id="exact-lineage-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at + timedelta(minutes=2),
+                updated_at=event_at + timedelta(minutes=2),
+                last_update_at=event_at + timedelta(minutes=2),
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    side="buy",
+                    arrival_price=Decimal("99"),
+                    avg_fill_price=Decimal("100"),
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("1"),
+                    slippage_bps=Decimal("1"),
+                    shortfall_notional=Decimal("0.01"),
+                    realized_shortfall_bps=Decimal("1"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=event_at + timedelta(minutes=3),
+                    created_at=event_at + timedelta(minutes=3),
+                    updated_at=event_at + timedelta(minutes=3),
+                )
+            )
+            session.commit()
+
+            activity = _strategy_source_activity(
+                session,
+                strategy_name=strategy_name,
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL"],
+                window_start=window_start,
+                window_end=window_end,
+                candidate_id="candidate-exact-lineage",
+                hypothesis_id="H-EXACT-LINEAGE",
+                require_source_lineage=True,
+            )
+
+        self.assertEqual(trade_decision_selects, 1)
+        self.assertEqual(activity["raw_decision_count"], 1)
+        self.assertEqual(activity["lineage_matched_decision_count"], 1)
+        self.assertEqual(activity["decision_count"], 1)
+        self.assertEqual(activity["execution_count"], 1)
+        self.assertEqual(activity["tca_sample_count"], 1)
+        self.assertFalse(activity["missing"])
+        observation = activity["source_lineage_observation"]
+        self.assertEqual(observation["observed_decision_count"], 1)
+        self.assertEqual(observation["exact_match_decision_count"], 1)
+        self.assertEqual(observation["blockers"], [])
+
+    def test_evidence_audit_reuses_duplicate_target_window_audits(self) -> None:
+        window_start = datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc)
+        window_end = window_start + timedelta(hours=1)
+        generated_at = window_end + timedelta(minutes=30)
+        target = {
+            "hypothesis_id": "H-CACHED-AUDIT",
+            "candidate_id": "candidate-cached-audit",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_pairs",
+            "strategy_name": "paper-route-cached-audit",
+            "strategy_lookup_names": ["paper-route-cached-audit"],
+            "account_label": "TORGHUT_SIM",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "paper_probation_authorized": True,
+            "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+        }
+        target_plan = {
+            "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+            "source": "test_duplicate_target_scope",
+            "purpose": "latest_closed_session_paper_route_runtime_window_import",
+            "target_count": 1,
+            "targets": [target],
+            "session_readiness": {
+                "import_ready": True,
+                "import_blockers": [],
+            },
+        }
+        audit = {
+            "target": target,
+            "source_activity": {
+                "missing": False,
+                "missing_reasons": [],
+                "query_limits": {"truncated_sources": []},
+            },
+            "runtime_ledger": {
+                "bucket_count": 0,
+                "evidence_grade_bucket_count": 0,
+            },
+            "rejected_signal_activity": {"event_count": 0},
+            "promotion_decisions": {"decision_count": 0},
+            "readiness": {"blockers": []},
+            "evidence_readback": {"state": "source_activity_present"},
+            "evidence_window_contract": {"state": "clean_window"},
+            "account_contamination": {"blockers": []},
+            "account_state": {"blockers": []},
+        }
+
+        with (
+            Session(self.engine) as session,
+            patch(
+                "app.trading.paper_route_evidence._next_paper_route_runtime_window_targets",
+                return_value=target_plan,
+            ),
+            patch(
+                "app.trading.paper_route_evidence._target_audit_fail_closed",
+                return_value=audit,
+            ) as audit_mock,
+        ):
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "1",
+                        "targets": [target],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        self.assertEqual(audit_mock.call_count, 1)
+        self.assertEqual(payload["summary"]["target_count"], 1)
+        self.assertEqual(
+            payload["summary"]["target_with_source_activity_count"],
+            1,
         )
 
     def test_evidence_readback_diagnostics_distinguish_source_lifecycle_and_blockers(

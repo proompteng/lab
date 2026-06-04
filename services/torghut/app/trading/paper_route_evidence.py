@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, contains_eager
 
 from ..config import settings
 from ..models import (
@@ -4224,6 +4224,7 @@ def _strategy_source_activity(
     decision_stmt = (
         select(TradeDecision)
         .join(Strategy, TradeDecision.strategy_id == Strategy.id)
+        .options(contains_eager(TradeDecision.strategy))
         .where(Strategy.name.in_(strategy_filters))
         .where(TradeDecision.created_at >= window_start)
         .where(TradeDecision.created_at <= window_end)
@@ -4286,9 +4287,10 @@ def _strategy_source_activity(
         "hypothesis_ids": [],
         "blockers": [],
     }
+    unfiltered_decision_rows = list(decision_rows)
     lineage_blockers = (
         _source_lineage_blockers(
-            decision_rows,
+            unfiltered_decision_rows,
             candidate_id=candidate_id,
             hypothesis_id=hypothesis_id,
         )
@@ -4296,9 +4298,15 @@ def _strategy_source_activity(
         else []
     )
     if require_source_lineage:
+        source_lineage_observation = _source_lineage_observation(
+            unfiltered_decision_rows,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            strategy_filters=strategy_filters,
+        )
         decision_rows = [
             row
-            for row in decision_rows
+            for row in unfiltered_decision_rows
             if _source_decision_lineage_matches(
                 row,
                 candidate_id=candidate_id,
@@ -4501,11 +4509,15 @@ def _strategy_source_activity(
             )
     else:
         tca_truncated = False
-    if require_source_lineage and (
-        candidate_id is not None or hypothesis_id is not None
+    if (
+        require_source_lineage
+        and (candidate_id is not None or hypothesis_id is not None)
+        and not decision_rows
     ):
         lineage_stmt = (
             select(TradeDecision)
+            .outerjoin(Strategy, TradeDecision.strategy_id == Strategy.id)
+            .options(contains_eager(TradeDecision.strategy))
             .where(TradeDecision.created_at >= window_start)
             .where(TradeDecision.created_at <= window_end)
         )
@@ -7775,6 +7787,45 @@ def _target_audit_fail_closed(
         )
 
 
+def _target_audit_cache_key(
+    raw_target: Mapping[str, Any],
+    *,
+    probe: Mapping[str, object],
+    generated_at: datetime,
+    lookback_hours: int,
+) -> tuple[object, ...]:
+    target = _target_identity(raw_target, probe=probe)
+    window_start, window_end = _target_window(
+        target,
+        generated_at=generated_at,
+        lookback_hours=lookback_hours,
+    )
+    return (
+        _safe_text(target.get("hypothesis_id")),
+        _safe_text(target.get("candidate_id")),
+        _safe_text(target.get("observed_stage")),
+        _safe_text(target.get("strategy_name")),
+        tuple(_strategy_lookup_names_for_target(target)),
+        _safe_text(target.get("strategy_family")),
+        _safe_text(target.get("account_label")),
+        _safe_text(target.get("source_account_label")),
+        tuple(_target_probe_symbols(target, probe)),
+        _safe_text(target.get("source_kind")),
+        _safe_text(target.get("source_dsn_env")),
+        _safe_text(target.get("target_dsn_env")),
+        _isoformat(window_start),
+        _isoformat(window_end),
+    )
+
+
+def _target_audit_has_query_unavailable(audit: Mapping[str, object]) -> bool:
+    return (
+        bool(audit.get("db_load_error"))
+        or bool(_as_mapping(audit.get("source_activity")).get("query_unavailable"))
+        or bool(_as_mapping(audit.get("runtime_ledger")).get("db_load_error"))
+    )
+
+
 def _runtime_window_import_audit(
     *,
     next_targets: Mapping[str, object],
@@ -9885,13 +9936,37 @@ def build_paper_route_evidence_audit(
             live_submission_gate.get("paper_route_target_plan_error")
         ),
     )
-    target_audits = [
-        _target_audit_fail_closed(
-            session,
-            raw_target=target,
+    target_audit_cache: dict[tuple[object, ...], dict[str, object]] = {}
+
+    def cached_target_audit(
+        raw_target: Mapping[str, Any],
+        *,
+        error_source: str,
+    ) -> dict[str, object]:
+        cache_key = _target_audit_cache_key(
+            raw_target,
             probe=probe,
             generated_at=resolved_generated_at,
             lookback_hours=effective_lookback_hours,
+        )
+        cached = target_audit_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        audit = _target_audit_fail_closed(
+            session,
+            raw_target=raw_target,
+            probe=probe,
+            generated_at=resolved_generated_at,
+            lookback_hours=effective_lookback_hours,
+            error_source=error_source,
+        )
+        if not _target_audit_has_query_unavailable(audit):
+            target_audit_cache[cache_key] = audit
+        return audit
+
+    target_audits = [
+        cached_target_audit(
+            target,
             error_source="paper_route_source_target_audit",
         )
         for target in targets
@@ -9920,12 +9995,8 @@ def build_paper_route_evidence_audit(
         target_account_audit_available=target_account_audit_available,
     )
     next_target_audits = [
-        _target_audit_fail_closed(
-            session,
-            raw_target=target,
-            probe=probe,
-            generated_at=resolved_generated_at,
-            lookback_hours=effective_lookback_hours,
+        cached_target_audit(
+            target,
             error_source="paper_route_next_target_audit",
         )
         for target in _as_mapping_items(next_targets.get("targets"))
@@ -9950,12 +10021,8 @@ def build_paper_route_evidence_audit(
     )
     if latest_closed_runtime_window_import_plan is latest_closed_targets:
         latest_closed_target_audits = [
-            _target_audit_fail_closed(
-                session,
-                raw_target=target,
-                probe=probe,
-                generated_at=resolved_generated_at,
-                lookback_hours=effective_lookback_hours,
+            cached_target_audit(
+                target,
                 error_source="paper_route_runtime_window_import_target_audit",
             )
             for target in _as_mapping_items(latest_closed_targets.get("targets"))
@@ -9996,12 +10063,8 @@ def build_paper_route_evidence_audit(
             )
             runtime_window_import_plan = next_clean_after_discard_targets
             runtime_window_import_target_audits = [
-                _target_audit_fail_closed(
-                    session,
-                    raw_target=target,
-                    probe=probe,
-                    generated_at=resolved_generated_at,
-                    lookback_hours=effective_lookback_hours,
+                cached_target_audit(
+                    target,
                     error_source="paper_route_runtime_window_import_target_audit",
                 )
                 for target in _as_mapping_items(
@@ -10021,12 +10084,8 @@ def build_paper_route_evidence_audit(
         source_targets = observed_strategy_source_targets
         runtime_window_import_plan = observed_strategy_source_targets
         runtime_window_import_target_audits = [
-            _target_audit_fail_closed(
-                session,
-                raw_target=target,
-                probe=probe,
-                generated_at=resolved_generated_at,
-                lookback_hours=effective_lookback_hours,
+            cached_target_audit(
+                target,
                 error_source="paper_route_observed_strategy_source_target_audit",
             )
             for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
