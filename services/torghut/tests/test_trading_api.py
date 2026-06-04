@@ -46,6 +46,7 @@ from app.main import (
     _merge_external_paper_route_target_plan,
     _readiness_dependency_cache_key,
     _readiness_dependency_checks,
+    _retryable_tca_recompute_error,
     _route_continuity_packet_for_proof_floor,
     _route_claim_symbols,
     app,
@@ -7347,6 +7348,103 @@ class TestTradingApi(TestCase):
         self.assertFalse(payload["order_submission_enabled"])
         self.assertEqual(refresh.call_count, 2)
         sleep.assert_called_once()
+
+    def test_retryable_tca_recompute_error_classifies_db_retries(self) -> None:
+        class _SerializationFailure:
+            pgcode = "40001"
+
+        self.assertFalse(
+            _retryable_tca_recompute_error(ValueError("deadlock detected"))
+        )
+        self.assertTrue(
+            _retryable_tca_recompute_error(
+                OperationalError(
+                    "UPDATE execution_tca_metrics",
+                    {},
+                    _SerializationFailure(),
+                )
+            )
+        )
+        self.assertTrue(
+            _retryable_tca_recompute_error(
+                OperationalError(
+                    "deadlock detected",
+                    {},
+                    Exception("database busy"),
+                )
+            )
+        )
+        self.assertTrue(
+            _retryable_tca_recompute_error(
+                OperationalError(
+                    "serialization failure",
+                    {},
+                    Exception("database busy"),
+                )
+            )
+        )
+
+    def test_zero_notional_repair_endpoint_fails_closed_on_route_tca_error(
+        self,
+    ) -> None:
+        class _PermissionDenied:
+            def __str__(self) -> str:
+                return "permission denied"
+
+        status_payload = {
+            "active_revision": "torghut-00320",
+            "freshness_carry_ledger": _freshness_carry_ledger_for_test("tca"),
+            "profit_freshness_frontier": {
+                "frontier_id": "profit-freshness-frontier:test",
+                "capital_posture": {
+                    "capital_state": "zero_notional",
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "capital_behavior_changed": False,
+                },
+                "selected_zero_notional_repairs": [
+                    {
+                        "lot_id": "profit-freshness-repair-lot:tca",
+                        "candidate_id": "candidate-b",
+                        "hypothesis_id": "H-AMZN",
+                        "blocked_dimension": "tca_fill_quality",
+                        "zero_notional_action": "recompute_route_tca_and_fill_quality",
+                        "before_refs": ["execution_tca:AMZN"],
+                        "paper_notional_limit": "0",
+                        "live_notional_limit": "0",
+                        "state": "selected_zero_notional_repair",
+                    }
+                ],
+            },
+        }
+
+        with (
+            patch("app.main.trading_status", return_value=status_payload),
+            patch(
+                "app.main.refresh_execution_tca_metrics",
+                side_effect=OperationalError(
+                    "UPDATE execution_tca_metrics",
+                    {},
+                    _PermissionDenied(),
+                ),
+            ) as refresh,
+        ):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair"
+                "?action=recompute_route_tca_and_fill_quality&execute=true"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["execution_state"], "runner_failed")
+        self.assertEqual(payload["command_exit_code"], 1)
+        self.assertEqual(payload["after_refs"], [])
+        self.assertEqual(
+            payload["blocked_reasons"],
+            ["route_tca_recompute_failed:OperationalError"],
+        )
+        self.assertEqual(payload["runner_result"]["retry_attempts"], 0)
+        self.assertEqual(refresh.call_count, 1)
 
     def test_zero_notional_repair_endpoint_executes_drift_replay(self) -> None:
         status_payload = {
