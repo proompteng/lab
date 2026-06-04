@@ -2726,6 +2726,15 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertFalse(item["bounded_sim_handoff"]["promotion_allowed"])
         self.assertFalse(item["bounded_sim_handoff"]["final_promotion_allowed"])
         self.assertEqual(item["stage"], "paper_evidence_collection_only")
+        self.assertEqual(item["target_net_pnl_per_day"], "500")
+        self.assertEqual(item["target_shortfall"], "93.42")
+        self.assertEqual(item["target_progress_ratio"], "0.8132")
+        self.assertEqual(
+            item["paper_probation_repair_plan"]["status"],
+            "ready_for_bounded_paper_evidence_collection",
+        )
+        self.assertFalse(item["paper_probation_repair_plan"]["promotion_allowed"])
+        self.assertFalse(item["paper_probation_repair_plan"]["final_promotion_allowed"])
         self.assertEqual(item["recommended_notional_scale"], "0.158333")
         self.assertIn(
             "apply_capital_repair_sizing_before_paper_orders",
@@ -2861,6 +2870,27 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
         self.assertFalse(shortlist[0]["promotion_allowed"])
         self.assertFalse(shortlist[0]["evidence_collection_ok"])
+        repair_plan = shortlist[0]["paper_probation_repair_plan"]
+        self.assertEqual(
+            repair_plan["status"],
+            "repair_required_before_paper_evidence_collection",
+        )
+        self.assertEqual(repair_plan["target_shortfall"], "425")
+        self.assertEqual(repair_plan["target_progress_ratio"], "0.15")
+        self.assertIn(
+            "produce_authoritative_exact_replay_ledger",
+            repair_plan["repair_actions"],
+        )
+        self.assertIn(
+            "materialize_source_lineage_receipt",
+            repair_plan["repair_actions"],
+        )
+        self.assertIn(
+            "keep_final_promotion_gates_fail_closed",
+            repair_plan["repair_actions"],
+        )
+        self.assertFalse(repair_plan["promotion_allowed"])
+        self.assertFalse(repair_plan["final_promotion_allowed"])
         self.assertIn(
             "insufficient_days",
             {
@@ -3164,6 +3194,22 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             "promotion_allowed": False,
             "final_promotion_allowed": False,
         }
+        blocked_handoff = {
+            "candidate_id": "candidate-needs-repair",
+            "paper_probation_allowed": False,
+            "target_shortfall": "175",
+            "target_progress_ratio": "0.65",
+            "paper_probation_repair_plan": {
+                "status": "repair_required_before_paper_evidence_collection",
+                "repairable_for_evidence_collection": True,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "repair_actions": [
+                    "produce_authoritative_exact_replay_ledger",
+                    "keep_final_promotion_gates_fail_closed",
+                ],
+            },
+        }
         states = frontier._build_frontier_workflow_states(
             [
                 {
@@ -3197,7 +3243,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "hard_vetoes": ["full_replay_candidate_budget_exhausted"],
                 },
             ],
-            paper_probation_shortlist=[paper_handoff],
+            paper_probation_shortlist=[paper_handoff, blocked_handoff],
         )
 
         self.assertEqual(
@@ -3212,7 +3258,18 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             [item["candidate_id"] for item in states["exact_replay_qualified"]],
             ["candidate-exact"],
         )
-        self.assertEqual(states["paper_probation_shortlisted"], [paper_handoff])
+        self.assertEqual(
+            states["paper_probation_shortlisted"], [paper_handoff, blocked_handoff]
+        )
+        self.assertEqual(
+            [item["candidate_id"] for item in states["paper_probation_repair_queue"]],
+            ["candidate-needs-repair"],
+        )
+        self.assertFalse(
+            states["paper_probation_repair_queue"][0]["repair_plan"][
+                "promotion_allowed"
+            ]
+        )
         self.assertEqual(states["authority_proof"]["status"], "absent")
         self.assertFalse(states["authority_proof"]["promotion_allowed"])
         self.assertFalse(states["authority_proof"]["final_promotion_allowed"])

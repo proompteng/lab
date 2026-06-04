@@ -4999,11 +4999,97 @@ def _bounded_sim_handoff_metadata(
     }
 
 
+def _paper_probation_repair_actions(
+    *,
+    blockers: Sequence[str],
+    hard_vetoes: Sequence[str],
+) -> list[str]:
+    actions = list(_paper_probation_required_actions(hard_vetoes))
+    blocker_set = {str(blocker) for blocker in blockers}
+    if blocker_set & {
+        "missing_exact_replay_ledger_artifact",
+        "missing_exact_replay_ledger_row_count",
+        "missing_exact_replay_ledger_fill_count",
+        "failed_exact_replay_parity",
+    }:
+        actions.append("produce_authoritative_exact_replay_ledger")
+    if "missing_source_lineage" in blocker_set:
+        actions.append("materialize_source_lineage_receipt")
+    if any(blocker.startswith("missing_replay_tape_") for blocker in blocker_set):
+        actions.append("refresh_replay_tape_metadata")
+    if blocker_set & {
+        "missing_post_cost_pnl_basis",
+        "missing_cost_basis",
+        "missing_post_cost_expectancy_bps",
+        "non_positive_post_cost_expectancy_bps",
+    }:
+        actions.append("rematerialize_post_cost_runtime_ledger")
+    if "open_replay_positions" in blocker_set:
+        actions.append("close_or_exclude_open_replay_position_windows")
+    if "proof_only_full_window_replay_not_probation_authority" in blocker_set:
+        actions.append("rerun_exact_replay_with_authoritative_runtime_events")
+    actions.append("keep_final_promotion_gates_fail_closed")
+    return list(dict.fromkeys(actions))
+
+
+def _paper_probation_target_progress(
+    *,
+    net_pnl_per_day: Decimal,
+    target_net_pnl_per_day: Decimal,
+) -> Decimal:
+    if target_net_pnl_per_day <= 0:
+        return Decimal("0")
+    return (net_pnl_per_day / target_net_pnl_per_day).quantize(Decimal("0.0001"))
+
+
+def _paper_probation_repair_plan(
+    *,
+    item: Mapping[str, Any],
+    blockers: Sequence[str],
+    hard_vetoes: Sequence[str],
+    handoff_diagnostics: Sequence[Mapping[str, Any]],
+    net_pnl_per_day: Decimal,
+    target_net_pnl_per_day: Decimal,
+) -> dict[str, Any]:
+    repair_actions = _paper_probation_repair_actions(
+        blockers=blockers,
+        hard_vetoes=hard_vetoes,
+    )
+    target_shortfall = max(target_net_pnl_per_day - net_pnl_per_day, Decimal("0"))
+    repair_required = bool(blockers)
+    return {
+        "schema_version": "torghut.paper-probation-repair-plan.v1",
+        "status": "repair_required_before_paper_evidence_collection"
+        if repair_required
+        else "ready_for_bounded_paper_evidence_collection",
+        "candidate_id": str(item.get("candidate_id") or ""),
+        "target_net_pnl_per_day": _decimal_payload(target_net_pnl_per_day),
+        "observed_net_pnl_per_day": _decimal_payload(net_pnl_per_day),
+        "target_shortfall": _decimal_payload(target_shortfall),
+        "target_progress_ratio": _decimal_payload(
+            _paper_probation_target_progress(
+                net_pnl_per_day=net_pnl_per_day,
+                target_net_pnl_per_day=target_net_pnl_per_day,
+            )
+        ),
+        "repair_required": repair_required,
+        "repairable_for_evidence_collection": net_pnl_per_day > 0,
+        "repair_actions": repair_actions,
+        "repair_blockers": list(dict.fromkeys(str(blocker) for blocker in blockers)),
+        "diagnostics": [dict(diagnostic) for diagnostic in handoff_diagnostics],
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "authorization_scope": "evidence_collection_repair_only",
+    }
+
+
 def _build_paper_probation_shortlist(
     ranked_items: Sequence[Mapping[str, Any]],
     *,
     top_n: int,
     objective_veto_policy: ObjectiveVetoPolicy,
+    target_net_pnl_per_day: Decimal = Decimal("500"),
 ) -> list[dict[str, Any]]:
     visible_items = [
         item
@@ -5019,7 +5105,7 @@ def _build_paper_probation_shortlist(
     ]
 
     shortlist_candidates: list[
-        tuple[bool, bool, Decimal, Decimal, str, dict[str, Any]]
+        tuple[bool, bool, Decimal, Decimal, Decimal, str, dict[str, Any]]
     ] = []
     for item in visible_items:
         hard_vetoes = [
@@ -5093,6 +5179,25 @@ def _build_paper_probation_shortlist(
             exact_replay_parity_ok=exact_replay_parity_ok,
             diagnostics=handoff_diagnostics,
         )
+        net_pnl_per_day = _candidate_metric_decimal(
+            item,
+            scorecard_key="net_pnl_per_day",
+            full_window_key="net_per_day",
+        )
+        net_pnl = _candidate_metric_decimal(
+            item,
+            scorecard_key="net_pnl",
+            full_window_key="net_pnl",
+        )
+        target_shortfall = max(target_net_pnl_per_day - net_pnl_per_day, Decimal("0"))
+        repair_plan = _paper_probation_repair_plan(
+            item=item,
+            blockers=blockers,
+            hard_vetoes=hard_vetoes,
+            handoff_diagnostics=handoff_diagnostics,
+            net_pnl_per_day=net_pnl_per_day,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+        )
         entry = {
             "candidate_id": str(item.get("candidate_id") or ""),
             "strategy_name": str(item.get("strategy_name") or ""),
@@ -5106,6 +5211,7 @@ def _build_paper_probation_shortlist(
             "probation_blockers": blockers,
             "handoff_diagnostics": handoff_diagnostics,
             "bounded_sim_handoff": bounded_sim_handoff,
+            "paper_probation_repair_plan": repair_plan,
             "required_actions_before_or_during_probation": (
                 _paper_probation_required_actions(hard_vetoes)
             ),
@@ -5117,20 +5223,16 @@ def _build_paper_probation_shortlist(
             "exact_replay_ledger_artifact_refs": artifact_refs,
             "exact_replay_ledger_artifact_row_count": (exact_replay_ledger_row_count),
             "exact_replay_ledger_artifact_fill_count": (exact_replay_ledger_fill_count),
-            "net_pnl_per_day": str(
-                _candidate_metric_value(
-                    item,
-                    scorecard_key="net_pnl_per_day",
-                    full_window_key="net_per_day",
+            "target_net_pnl_per_day": _decimal_payload(target_net_pnl_per_day),
+            "target_shortfall": _decimal_payload(target_shortfall),
+            "target_progress_ratio": _decimal_payload(
+                _paper_probation_target_progress(
+                    net_pnl_per_day=net_pnl_per_day,
+                    target_net_pnl_per_day=target_net_pnl_per_day,
                 )
             ),
-            "net_pnl": str(
-                _candidate_metric_value(
-                    item,
-                    scorecard_key="net_pnl",
-                    full_window_key="net_pnl",
-                )
-            ),
+            "net_pnl_per_day": str(net_pnl_per_day),
+            "net_pnl": str(net_pnl),
             "active_day_ratio": str(
                 _candidate_metric_value(
                     item,
@@ -5179,12 +5281,11 @@ def _build_paper_probation_shortlist(
             "replay_artifact_refs": artifact_refs,
             "hard_vetoes": hard_vetoes,
         }
-        net_pnl_per_day = _safe_decimal(entry["net_pnl_per_day"])
-        net_pnl = _safe_decimal(entry["net_pnl"])
         shortlist_candidates.append(
             (
                 paper_probation_allowed,
                 bool(bounded_sim_handoff["evidence_collection_ok"]),
+                target_shortfall,
                 net_pnl_per_day,
                 net_pnl,
                 entry["candidate_id"],
@@ -5196,12 +5297,13 @@ def _build_paper_probation_shortlist(
         key=lambda candidate: (
             0 if candidate[0] else 1,
             0 if candidate[1] else 1,
-            -candidate[2],
+            candidate[2],
             -candidate[3],
-            candidate[4],
+            -candidate[4],
+            candidate[5],
         )
     )
-    return [candidate[5] for candidate in shortlist_candidates[: max(1, int(top_n))]]
+    return [candidate[6] for candidate in shortlist_candidates[: max(1, int(top_n))]]
 
 
 def _frontier_state_item(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -5281,6 +5383,21 @@ def _build_frontier_workflow_states(
         "paper_probation_shortlisted": [
             dict(item) for item in paper_probation_shortlist
         ],
+        "paper_probation_repair_queue": [
+            {
+                "candidate_id": str(item.get("candidate_id") or ""),
+                "target_shortfall": str(item.get("target_shortfall") or "0"),
+                "target_progress_ratio": str(item.get("target_progress_ratio") or "0"),
+                "repair_plan": dict(_mapping(item.get("paper_probation_repair_plan"))),
+            }
+            for item in paper_probation_shortlist
+            if not bool(item.get("paper_probation_allowed"))
+            and bool(
+                _mapping(item.get("paper_probation_repair_plan")).get(
+                    "repairable_for_evidence_collection"
+                )
+            )
+        ],
         "authority_proof": {
             "status": "absent",
             "promotion_allowed": False,
@@ -5324,6 +5441,7 @@ def _build_frontier_payload(
         ranked_items,
         top_n=max(3, int(top_n)),
         objective_veto_policy=objective_veto_policy,
+        target_net_pnl_per_day=consistency_policy.target_net_per_day,
     )
     return {
         "schema_version": _SWEEP_SCHEMA_VERSION,
@@ -5383,7 +5501,7 @@ def _build_frontier_payload(
                 "surface close positive candidates for controlled paper evidence "
                 "collection without authorizing final promotion"
             ),
-            "ranking_basis": "positive_full_window_net_pnl_per_day_desc",
+            "ranking_basis": "paper_readiness_then_target_shortfall_then_net_pnl",
             "items": paper_probation_shortlist_items,
         },
         "workflow_states": _build_frontier_workflow_states(
