@@ -202,10 +202,27 @@ def _sequence(value: object) -> Sequence[object]:
 
 def _text_list(value: object) -> list[str]:
     items: list[str] = []
-    for item in _sequence(value):
-        text = _text(item)
-        if text and text not in items:
-            items.append(text)
+    if isinstance(value, Mapping):
+        return items
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for item in cast(Sequence[object], value):
+            if isinstance(item, Mapping):
+                continue
+            if isinstance(item, Sequence) and not isinstance(
+                item,
+                (str, bytes, bytearray),
+            ):
+                for text in _text_list(item):
+                    if text not in items:
+                        items.append(text)
+                continue
+            text = _text(item)
+            if text and text not in items:
+                items.append(text)
+        return items
+    text = _text(value)
+    if text:
+        items.append(text)
     return items
 
 

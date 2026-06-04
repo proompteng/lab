@@ -878,6 +878,55 @@ class TestRuntimeLedgerProofPacket(TestCase):
         ):
             self.assertIn(source_ref, lineage["source_refs"])
 
+    def test_packet_lineage_ignores_nested_empty_readback_collections(self) -> None:
+        runtime_import = _runtime_import()
+        first_import = runtime_import["imports"][0]
+        assert isinstance(first_import, dict)
+        summary = first_import["summary"]
+        assert isinstance(summary, dict)
+        target = summary["runtime_materialization_target"]
+        assert isinstance(target, dict)
+        readback = target["readback"]
+        assert isinstance(readback, dict)
+        target["runtime_ledger_bucket_ids"] = [
+            "runtime-ledger-bucket-1",
+            [],
+        ]
+        target["evidence_grade_runtime_ledger_bucket_ids"] = [
+            "runtime-ledger-bucket-1",
+            [],
+        ]
+        readback["source_row_ids"] = [[]]
+        readback["runtime_ledger_source_row_ids"] = [["source-window-nested"]]
+        readback["trade_decision_ids"] = "decision-scalar"
+        readback["source_refs"] = [
+            "postgres:trade_decisions",
+            [],
+            {},
+        ]
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(ledger_refs=[]),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        lineage = result["lineage"]
+        self.assertNotIn("[]", lineage["source_row_ids"])
+        self.assertNotIn("[]", lineage["runtime_ledger_bucket_ids"])
+        self.assertIn("source-window-nested", lineage["source_row_ids"])
+        self.assertIn("decision-scalar", lineage["source_row_ids"])
+        self.assertEqual(
+            lineage["runtime_ledger_bucket_ids"],
+            ["runtime-ledger-bucket-1"],
+        )
+
     def test_hpairs_source_proof_census_blockers_are_non_authority_packet_blockers(
         self,
     ) -> None:
