@@ -11,14 +11,14 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from math import exp, isfinite
+from math import exp, isfinite, log1p
 from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v1"
+QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v2"
 QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION = (
-    "torghut.queue-survival-fill-stress-contract.v1"
+    "torghut.queue-survival-fill-stress-contract.v2"
 )
 QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL = "queue_survival_fill_stress_preview_only_exact_replay_route_tca_order_lifecycle_runtime_ledger_required"
 QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
@@ -42,6 +42,20 @@ QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
         "title": "Latency-Aware Order Routing Under Queue Position Uncertainty",
         "date": "2026-05-07",
         "mechanism": "latency_aware_queue_position_reroute_threshold_context",
+    },
+    {
+        "source_id": "arxiv-2501.08822",
+        "url": "https://arxiv.org/abs/2501.08822",
+        "title": "Deep Learning Meets Queue-Reactive: A Framework for Realistic Limit Order Book Simulation",
+        "date": "2025-01-15",
+        "mechanism": "multidimensional_deep_queue_reactive_event_mix_order_size_replay_parity",
+    },
+    {
+        "source_id": "arxiv-2511.15262",
+        "url": "https://arxiv.org/abs/2511.15262",
+        "title": "Reinforcement Learning in Queue-Reactive Models: Application to Optimal Execution",
+        "date": "2025-11-19",
+        "mechanism": "queue_reactive_counterfactual_execution_policy_depth_state_stress",
     },
 )
 
@@ -76,6 +90,8 @@ _CANCEL_TOKENS = frozenset(("cancel", "canceled", "cancelled", "delete", "remove
 _REJECT_TOKENS = frozenset(
     ("reject", "rejected", "post_only_reject", "post-only-reject")
 )
+_ADD_TOKENS = frozenset(("add", "new", "insert", "accepted", "open", "quote"))
+_QUEUE_REACTIVE_EVENT_KINDS = ("add", "trade", "cancel_or_reject", "other")
 
 
 @dataclass(frozen=True)
@@ -90,6 +106,9 @@ class QueueSurvivalFillStressSummary:
     visible_depth_notional_shortfall_share: float
     execution_turnover_ratio: float
     cancellation_or_reject_share: float
+    queue_reactive_event_mix_l1: float
+    order_size_distribution_wasserstein_proxy: float
+    queue_reactive_replay_parity_penalty_bps: float
     estimated_limit_fill_probability: float
     nonfill_opportunity_cost_bps: float
     adverse_selection_after_touch_bps: float
@@ -122,6 +141,15 @@ class QueueSurvivalFillStressSummary:
             "cancellation_or_reject_share": _stable_float(
                 self.cancellation_or_reject_share
             ),
+            "queue_reactive_event_mix_l1": _stable_float(
+                self.queue_reactive_event_mix_l1
+            ),
+            "order_size_distribution_wasserstein_proxy": _stable_float(
+                self.order_size_distribution_wasserstein_proxy
+            ),
+            "queue_reactive_replay_parity_penalty_bps": _stable_float(
+                self.queue_reactive_replay_parity_penalty_bps
+            ),
             "estimated_limit_fill_probability": _stable_float(
                 self.estimated_limit_fill_probability
             ),
@@ -147,6 +175,15 @@ class QueueSurvivalFillStressSummary:
                 "execution_turnover_ratio": _stable_float(
                     self.execution_turnover_ratio
                 ),
+                "queue_reactive_event_mix_l1": _stable_float(
+                    self.queue_reactive_event_mix_l1
+                ),
+                "order_size_distribution_wasserstein_proxy": _stable_float(
+                    self.order_size_distribution_wasserstein_proxy
+                ),
+                "queue_reactive_replay_parity_penalty_bps": _stable_float(
+                    self.queue_reactive_replay_parity_penalty_bps
+                ),
                 "nonfill_opportunity_cost_bps": _stable_float(
                     self.nonfill_opportunity_cost_bps
                 ),
@@ -160,6 +197,8 @@ class QueueSurvivalFillStressSummary:
             "queue_position_survival_preview": True,
             "execution_delay_depth_preview": True,
             "limit_fill_probability_preview": True,
+            "queue_reactive_replay_parity_preview": True,
+            "order_size_distribution_preview": True,
             "research_ranking_only": True,
             "prefilter_only": True,
             "promotion_proof": False,
@@ -187,6 +226,9 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "estimated_limit_fill_probability",
             "visible_depth_notional_shortfall_share",
             "execution_turnover_ratio",
+            "queue_reactive_event_mix_l1",
+            "order_size_distribution_wasserstein_proxy",
+            "queue_reactive_replay_parity_penalty_bps",
             "nonfill_opportunity_cost_bps",
             "adverse_selection_after_touch_bps",
         ],
@@ -202,8 +244,11 @@ def queue_survival_fill_stress_contract() -> dict[str, Any]:
             "requires_exact_replay": True,
             "requires_route_tca": True,
             "requires_order_lifecycle_fill_evidence": True,
+            "requires_queue_reactive_replay_parity": True,
             "requires_runtime_ledger": True,
             "rejects_queue_position_free_fill_assumptions": True,
+            "rejects_queue_reactive_replay_parity_as_pnl_proof": True,
+            "rejects_order_size_distribution_proxy_as_fill_authority": True,
         },
     }
 
@@ -251,6 +296,7 @@ def extract_queue_survival_fill_stress(
         for row in ordered
     )
     event_labels = tuple(_event_label(row.payload) for row in ordered)
+    event_kinds = tuple(_queue_reactive_event_kind(label) for label in event_labels)
     fill_sizes = tuple(
         _nonnegative_float(_first_payload_value(row.payload, _FILL_FIELDS))
         for row in ordered
@@ -270,6 +316,8 @@ def extract_queue_survival_fill_stress(
         warnings.append("missing_price_path_for_nonfill_cost")
     if notional <= 0.0:
         warnings.append("missing_candidate_notional_for_queue_stress")
+    if not any(event_labels):
+        warnings.append("missing_queue_reactive_event_labels")
 
     observed_fill_count = sum(
         1
@@ -309,6 +357,25 @@ def extract_queue_survival_fill_stress(
     cancellation_or_reject_share = observed_cancel_or_reject_count / max(
         1, len(ordered)
     )
+    queue_reactive_event_mix_l1 = _queue_reactive_event_mix_l1(
+        event_kinds=event_kinds,
+        median_queue_ahead_ratio=median_queue_ahead_ratio,
+        execution_turnover_ratio=execution_turnover_ratio,
+        visible_depth_notional_shortfall_share=visible_depth_notional_shortfall_share,
+    )
+    order_size_distribution_wasserstein_proxy = (
+        _order_size_distribution_wasserstein_proxy(
+            volumes=volumes,
+            fill_sizes=fill_sizes,
+            executable_depths=executable_depths,
+        )
+    )
+    if order_size_distribution_wasserstein_proxy == 0.0:
+        warnings.append("missing_order_size_distribution_for_queue_reactive_parity")
+    queue_reactive_replay_parity_penalty_bps = (
+        queue_reactive_event_mix_l1 * 4.0
+        + order_size_distribution_wasserstein_proxy * 2.0
+    )
     estimated_limit_fill_probability = _estimated_fill_probability(
         median_queue_ahead_ratio=median_queue_ahead_ratio,
         execution_turnover_ratio=execution_turnover_ratio,
@@ -337,6 +404,7 @@ def extract_queue_survival_fill_stress(
     missing_penalty_bps = 6.0 * len(warnings)
     replay_rank_penalty_bps = (
         queue_delay_penalty_bps
+        + queue_reactive_replay_parity_penalty_bps
         + nonfill_opportunity_cost_bps
         + adverse_selection_after_touch_bps
         + missing_penalty_bps
@@ -352,6 +420,9 @@ def extract_queue_survival_fill_stress(
         visible_depth_notional_shortfall_share=visible_depth_notional_shortfall_share,
         execution_turnover_ratio=execution_turnover_ratio,
         cancellation_or_reject_share=cancellation_or_reject_share,
+        queue_reactive_event_mix_l1=queue_reactive_event_mix_l1,
+        order_size_distribution_wasserstein_proxy=order_size_distribution_wasserstein_proxy,
+        queue_reactive_replay_parity_penalty_bps=queue_reactive_replay_parity_penalty_bps,
         estimated_limit_fill_probability=estimated_limit_fill_probability,
         nonfill_opportunity_cost_bps=nonfill_opportunity_cost_bps,
         adverse_selection_after_touch_bps=adverse_selection_after_touch_bps,
@@ -402,6 +473,72 @@ def _estimated_fill_probability(
     return min(0.98, max(0.02, probability))
 
 
+def _queue_reactive_event_mix_l1(
+    *,
+    event_kinds: Sequence[str],
+    median_queue_ahead_ratio: float,
+    execution_turnover_ratio: float,
+    visible_depth_notional_shortfall_share: float,
+) -> float:
+    if not event_kinds:
+        return 0.0
+    observed = {
+        kind: sum(1 for item in event_kinds if item == kind) / len(event_kinds)
+        for kind in _QUEUE_REACTIVE_EVENT_KINDS
+    }
+    target_trade = min(
+        0.45,
+        max(
+            0.08,
+            0.18
+            + min(4.0, execution_turnover_ratio) * 0.07
+            - median_queue_ahead_ratio * 0.08,
+        ),
+    )
+    target_cancel_or_reject = min(
+        0.60,
+        max(
+            0.10,
+            0.20
+            + median_queue_ahead_ratio * 0.25
+            + visible_depth_notional_shortfall_share * 0.10,
+        ),
+    )
+    target_other = 0.08
+    target_add = max(0.05, 1.0 - target_trade - target_cancel_or_reject - target_other)
+    normalizer = target_add + target_trade + target_cancel_or_reject + target_other
+    target = {
+        "add": target_add / normalizer,
+        "trade": target_trade / normalizer,
+        "cancel_or_reject": target_cancel_or_reject / normalizer,
+        "other": target_other / normalizer,
+    }
+    return min(
+        2.0,
+        sum(abs(observed.get(kind, 0.0) - target[kind]) for kind in target),
+    )
+
+
+def _order_size_distribution_wasserstein_proxy(
+    *,
+    volumes: Sequence[float],
+    fill_sizes: Sequence[float],
+    executable_depths: Sequence[float],
+) -> float:
+    ratios = tuple(
+        min(25.0, max(volume, fill_size) / depth)
+        for volume, fill_size, depth in zip(volumes, fill_sizes, executable_depths)
+        if depth > 0.0 and max(volume, fill_size) > 0.0
+    )
+    if not ratios:
+        return 0.0
+    median_ratio = _median(ratios)
+    p90_ratio = _quantile(ratios, 0.90)
+    median_distance = abs(_log1p(median_ratio) - _log1p(0.05))
+    tail_distance = abs(_log1p(p90_ratio) - _log1p(0.25))
+    return min(2.0, median_distance * 0.55 + tail_distance * 0.45)
+
+
 def _nonfill_opportunity_cost_bps(
     prices: Sequence[float], *, direction: float, fill_probability: float
 ) -> float:
@@ -437,6 +574,16 @@ def _event_label(payload: Mapping[str, Any]) -> str:
 
 def _label_has_token(label: str, tokens: frozenset[str]) -> bool:
     return any(token in label for token in tokens)
+
+
+def _queue_reactive_event_kind(label: str) -> str:
+    if _label_has_token(label, _FILL_TOKENS):
+        return "trade"
+    if _label_has_token(label, _CANCEL_TOKENS | _REJECT_TOKENS):
+        return "cancel_or_reject"
+    if _label_has_token(label, _ADD_TOKENS):
+        return "add"
+    return "other"
 
 
 def _first_payload_value(
@@ -481,6 +628,19 @@ def _median(values: Sequence[float]) -> float:
     if len(clean) % 2:
         return clean[midpoint]
     return (clean[midpoint - 1] + clean[midpoint]) / 2.0
+
+
+def _quantile(values: Sequence[float], quantile: float) -> float:
+    clean = sorted(value for value in values if isfinite(value))
+    if not clean:
+        return 0.0
+    clamped = min(1.0, max(0.0, quantile))
+    index = round((len(clean) - 1) * clamped)
+    return clean[index]
+
+
+def _log1p(value: float) -> float:
+    return 0.0 if value <= -1.0 else log1p(value)
 
 
 def _stable_float(value: float) -> str:

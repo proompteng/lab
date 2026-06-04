@@ -153,10 +153,120 @@ class TestQueueSurvivalFillStress(TestCase):
         )
         self.assertTrue(stressed_payload["queue_position_survival_preview"])
         self.assertTrue(stressed_payload["execution_delay_depth_preview"])
+        self.assertTrue(stressed_payload["queue_reactive_replay_parity_preview"])
         self.assertFalse(stressed_payload["proof_authority"])
         self.assertFalse(stressed_payload["promotion_authority"])
         self.assertFalse(stressed_payload["final_authority_ok"])
         self.assertIn("ranking_features", stressed_payload)
+        self.assertIn(
+            "queue_reactive_event_mix_l1", stressed_payload["ranking_features"]
+        )
+
+    def test_queue_reactive_event_mix_and_order_size_parity_penalize_bad_replay(
+        self,
+    ) -> None:
+        plausible_replay = extract_queue_survival_fill_stress(
+            (
+                self._row(
+                    offset=1,
+                    price="100.00",
+                    queue_ratio="0.45",
+                    bid_size="1000",
+                    volume="45",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=2,
+                    price="100.01",
+                    queue_ratio="0.50",
+                    bid_size="950",
+                    volume="80",
+                    event_type="trade",
+                    fill_qty="80",
+                    status="filled",
+                ),
+                self._row(
+                    offset=3,
+                    price="100.00",
+                    queue_ratio="0.55",
+                    bid_size="900",
+                    volume="60",
+                    event_type="cancel",
+                    status="cancelled",
+                ),
+                self._row(
+                    offset=4,
+                    price="100.02",
+                    queue_ratio="0.48",
+                    bid_size="980",
+                    volume="55",
+                    event_type="add",
+                ),
+                self._row(
+                    offset=5,
+                    price="100.01",
+                    queue_ratio="0.52",
+                    bid_size="920",
+                    volume="70",
+                    event_type="replace",
+                ),
+            ),
+            direction=1,
+            max_notional=10_000,
+        ).to_payload()
+        bad_replay = extract_queue_survival_fill_stress(
+            (
+                self._row(
+                    offset=1,
+                    price="100.00",
+                    queue_ratio="0.45",
+                    bid_size="100",
+                    volume="5000",
+                    event_type="heartbeat",
+                ),
+                self._row(
+                    offset=2,
+                    price="100.04",
+                    queue_ratio="0.50",
+                    bid_size="100",
+                    volume="6000",
+                    event_type="heartbeat",
+                ),
+                self._row(
+                    offset=3,
+                    price="100.08",
+                    queue_ratio="0.55",
+                    bid_size="100",
+                    volume="5500",
+                    event_type="heartbeat",
+                ),
+                self._row(
+                    offset=4,
+                    price="100.12",
+                    queue_ratio="0.52",
+                    bid_size="100",
+                    volume="6500",
+                    event_type="heartbeat",
+                ),
+            ),
+            direction=1,
+            max_notional=10_000,
+        ).to_payload()
+
+        self.assertGreater(
+            float(bad_replay["queue_reactive_event_mix_l1"]),
+            float(plausible_replay["queue_reactive_event_mix_l1"]),
+        )
+        self.assertGreater(
+            float(bad_replay["order_size_distribution_wasserstein_proxy"]),
+            float(plausible_replay["order_size_distribution_wasserstein_proxy"]),
+        )
+        self.assertGreater(
+            float(bad_replay["queue_reactive_replay_parity_penalty_bps"]),
+            float(plausible_replay["queue_reactive_replay_parity_penalty_bps"]),
+        )
+        self.assertFalse(bad_replay["promotion_allowed"])
+        self.assertFalse(bad_replay["final_authority_ok"])
 
     def test_contract_embeds_recent_sources_and_requires_authoritative_proof(
         self,
@@ -178,6 +288,8 @@ class TestQueueSurvivalFillStress(TestCase):
             build_queue_survival_fill_stress_schema_hash(),
         )
         self.assertIn("arxiv-2512.05734", source_ids)
+        self.assertIn("arxiv-2501.08822", source_ids)
+        self.assertIn("arxiv-2511.15262", source_ids)
         self.assertIn("ssrn-6440898", source_ids)
         self.assertIn("ssrn-6730443", source_ids)
         self.assertTrue(contract["proof_neutrality"]["requires_exact_replay"])
@@ -185,6 +297,14 @@ class TestQueueSurvivalFillStress(TestCase):
         self.assertTrue(
             contract["proof_neutrality"]["requires_order_lifecycle_fill_evidence"]
         )
+        self.assertTrue(
+            contract["proof_neutrality"]["requires_queue_reactive_replay_parity"]
+        )
         self.assertTrue(contract["proof_neutrality"]["requires_runtime_ledger"])
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_queue_reactive_replay_parity_as_pnl_proof"
+            ]
+        )
         self.assertFalse(contract["proof_neutrality"]["promotion_proof"])
         self.assertFalse(payload["promotion_allowed"])
