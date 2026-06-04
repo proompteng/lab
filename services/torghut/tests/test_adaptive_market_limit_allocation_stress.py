@@ -24,7 +24,25 @@ class TestAdaptiveMarketLimitAllocationStress(TestCase):
         imbalance: str,
         fill_qty: str = "100",
         order_qty: str = "100",
+        remaining_inventory_qty: str | None = None,
+        parent_order_qty: str | None = None,
+        execution_progress: str | None = None,
     ) -> SignalEnvelope:
+        payload = {
+            "price": Decimal(price),
+            "order_type": order_type,
+            "fill_status": fill_status,
+            "fill_qty": Decimal(fill_qty),
+            "order_qty": Decimal(order_qty),
+            "spread_bps": Decimal(spread_bps),
+            "order_book_imbalance": Decimal(imbalance),
+        }
+        if remaining_inventory_qty is not None:
+            payload["remaining_inventory_qty"] = Decimal(remaining_inventory_qty)
+        if parent_order_qty is not None:
+            payload["parent_order_qty"] = Decimal(parent_order_qty)
+        if execution_progress is not None:
+            payload["execution_progress"] = Decimal(execution_progress)
         return SignalEnvelope(
             event_ts=datetime(2026, 1, 26, 14, 30, tzinfo=timezone.utc)
             + timedelta(seconds=offset),
@@ -32,15 +50,7 @@ class TestAdaptiveMarketLimitAllocationStress(TestCase):
             timeframe="1S",
             seq=offset,
             source="fixture",
-            payload={
-                "price": Decimal(price),
-                "order_type": order_type,
-                "fill_status": fill_status,
-                "fill_qty": Decimal(fill_qty),
-                "order_qty": Decimal(order_qty),
-                "spread_bps": Decimal(spread_bps),
-                "order_book_imbalance": Decimal(imbalance),
-            },
+            payload=payload,
             ingest_ts=datetime(2026, 1, 26, 14, 30, 1, tzinfo=timezone.utc),
         )
 
@@ -156,3 +166,88 @@ class TestAdaptiveMarketLimitAllocationStress(TestCase):
         self.assertFalse(contract["proof_neutrality"]["promotion_proof"])
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["final_authority_ok"])
+
+    def test_terminal_inventory_gap_downranks_late_withheld_execution(self) -> None:
+        delayed_inventory = [
+            self._row(
+                offset=1,
+                price="100",
+                order_type="limit",
+                fill_status="unfilled",
+                spread_bps="3",
+                imbalance="0.15",
+                fill_qty="0",
+                order_qty="100",
+                remaining_inventory_qty="80",
+                parent_order_qty="100",
+                execution_progress="0.25",
+            ),
+            self._row(
+                offset=2,
+                price="100.05",
+                order_type="hold",
+                fill_status="unfilled",
+                spread_bps="3",
+                imbalance="0.10",
+                fill_qty="0",
+                order_qty="100",
+                remaining_inventory_qty="80",
+                parent_order_qty="100",
+                execution_progress="0.95",
+            ),
+        ]
+        completed_inventory = [
+            self._row(
+                offset=1,
+                price="100",
+                order_type="limit",
+                fill_status="filled",
+                spread_bps="3",
+                imbalance="0.15",
+                remaining_inventory_qty="0",
+                parent_order_qty="100",
+                execution_progress="0.95",
+            ),
+            self._row(
+                offset=2,
+                price="100.01",
+                order_type="limit",
+                fill_status="filled",
+                spread_bps="3",
+                imbalance="0.12",
+                remaining_inventory_qty="0",
+                parent_order_qty="100",
+                execution_progress="1",
+            ),
+        ]
+
+        delayed_payload = extract_adaptive_market_limit_allocation_stress(
+            delayed_inventory
+        ).to_payload()
+        completed_payload = extract_adaptive_market_limit_allocation_stress(
+            completed_inventory
+        ).to_payload()
+        contract = adaptive_market_limit_allocation_stress_contract()
+
+        self.assertGreater(delayed_payload["explicit_withhold_order_share"], 0)
+        self.assertGreater(delayed_payload["terminal_inventory_gap_share"], 0)
+        self.assertGreater(delayed_payload["terminal_inventory_urgency_score"], 0)
+        self.assertGreater(delayed_payload["terminal_inventory_penalty_bps"], 0)
+        self.assertGreater(
+            delayed_payload["replay_rank_penalty_bps"],
+            completed_payload["replay_rank_penalty_bps"],
+        )
+        self.assertIn(
+            "arxiv-2605.24242",
+            {source["source_id"] for source in delayed_payload["source_papers"]},
+        )
+        self.assertTrue(delayed_payload["terminal_inventory_risk_preview"])
+        self.assertTrue(
+            contract["proof_neutrality"]["requires_terminal_inventory_reconciliation"]
+        )
+        self.assertTrue(
+            contract["proof_neutrality"][
+                "rejects_withheld_inventory_proxy_as_position_authority"
+            ]
+        )
+        self.assertFalse(delayed_payload["proof_authority"])

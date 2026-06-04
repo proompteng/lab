@@ -105,8 +105,8 @@ from app.trading.discovery.stochastic_liquidity_resilience_stress import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v19"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v20"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v20"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v21"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -684,7 +684,7 @@ class FastReplayPreviewResult:
                 "stochastic_liquidity_resilience_execution_stress": "deterministic stochastic market-depth regime switching, LOB shape imbalance, depth-recovery resilience, execution-boundary pressure, and shortfall-by-liquidity-regime stress from arXiv:2506.11813 and SSRN:3798235; modeled resilience is not fill, PnL, or promotion authority; preview ranking only",
                 "microstructure_regime_tokenization_stress": "deterministic latent-regime early-warning, scale-invariant trade-flow token coverage, raw event precision, and stylized-fact replay stress from arXiv:2604.20949, arXiv:2602.23784, and arXiv:2508.02247; latent triggers and tokenized trade-flow are not PnL authority; preview ranking only",
                 "cost_aware_forecast_filter_stress": "deterministic walk-forward forecast-magnitude, transaction-cost threshold, turnover churn, multi-scale trend coverage, and dynamic-variable-selection stress from arXiv:2606.00060 and arXiv:2512.12727; cost-filtered forecasts are not PnL authority; preview ranking only",
-                "adaptive_market_limit_allocation_stress": "deterministic observed market/limit allocation, fill-uncertainty, tactical-imbalance, and trade-level cost logging stress from arXiv:2507.06345 and arXiv:2603.29086; allocation models are not fill or PnL authority; preview ranking only",
+                "adaptive_market_limit_allocation_stress": "deterministic observed market/limit allocation, fill-uncertainty, tactical-imbalance, terminal-inventory risk, and trade-level cost logging stress from arXiv:2507.06345, arXiv:2605.24242, and arXiv:2603.29086; allocation and inventory-risk models are not fill, position, or PnL authority; preview ranking only",
                 "metaorder_adverse_selection_stress": "deterministic Hawkes-style event clustering, same-direction metaorder footprint, adverse-selection drift, and liquidity-replenishment gap stress from arXiv:2510.27334 and DOI:10.1007/s10203-026-00570-z; metaorder footprints and Hawkes intensity are not fill or PnL authority; preview ranking only",
                 "bootstrap_robust_optimization_stress": "deterministic stationary-block bootstrap percentile utility, parameter-instability, and adaptive-search selection-bias stress from arXiv:2510.12725 and arXiv:2604.15531; model utility is not PnL authority; preview ranking only",
                 "adaptive_signal_falsification_stress": "deterministic research-only adaptive-signal falsification artifact wiring from arXiv:2604.15531 and arXiv:2605.05580; explicit null references, leakage probes, exact replay, route TCA, and runtime ledger remain required; no synthetic fills or PnL authority",
