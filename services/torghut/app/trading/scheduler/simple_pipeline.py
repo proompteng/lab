@@ -5036,39 +5036,46 @@ class SimpleTradingPipeline(TradingPipeline):
             and preparation.decision.qty != expected_target_qty
         ):
             adjusted_audit = dict(target_notional_sizing)
-            blockers = list(cast(list[Any], adjusted_audit.get("blockers") or []))
-            blockers.append("bounded_paper_route_target_qty_changed_by_precheck")
-            adjusted_audit["blockers"] = list(
-                dict.fromkeys(str(item) for item in blockers)
+            adjusted_audit.setdefault(
+                "target_notional_resolved_qty",
+                adjusted_audit.get("resolved_qty"),
+            )
+            adjusted_audit.setdefault(
+                "target_notional_resolved_notional",
+                adjusted_audit.get("resolved_notional"),
+            )
+            adjusted_audit["precheck_quantity_adjusted"] = True
+            adjusted_audit["precheck_adjustment_reason"] = (
+                "risk_precheck_capped_quantity"
             )
             adjusted_audit["precheck_resolved_qty"] = str(preparation.decision.qty)
             adjusted_audit["precheck_expected_target_qty"] = str(expected_target_qty)
-            rejected_decision = self._apply_bounded_collection_target_sizing_audit(
-                preparation.decision,
-                audit=adjusted_audit,
-                qty=preparation.decision.qty,
-                action=(
-                    "sell"
-                    if str(preparation.decision.action).strip().lower() == "sell"
-                    else "buy"
-                ),
+            reference_price = _optional_decimal(adjusted_audit.get("reference_price"))
+            if reference_price is not None:
+                adjusted_audit["precheck_resolved_notional"] = str(
+                    preparation.decision.qty * reference_price
+                )
+                adjusted_audit["precheck_expected_target_notional"] = str(
+                    expected_target_qty * reference_price
+                )
+                adjusted_audit["resolved_notional"] = str(
+                    preparation.decision.qty * reference_price
+                )
+            adjusted_audit["resolved_qty"] = str(preparation.decision.qty)
+            simple_lane_precheck = _mapping_value(
+                preparation.decision.params.get("simple_lane")
             )
-            self.executor.update_decision_params(
-                session,
-                decision_row,
-                rejected_decision.params,
-            )
-            self.executor.sync_decision_state(session, decision_row, rejected_decision)
-            self._record_decision_rejection(
-                session=session,
-                decision=rejected_decision,
-                decision_row=decision_row,
-                reasons=[
-                    "bounded_paper_route_target_notional_sizing_changed_by_precheck"
-                ],
-                log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
-            )
-            return None
+            if simple_lane_precheck is not None:
+                for key in (
+                    "capped_by_order",
+                    "capped_by_symbol",
+                    "capped_by_buying_power",
+                ):
+                    if key in simple_lane_precheck:
+                        adjusted_audit[f"precheck_{key}"] = bool(
+                            simple_lane_precheck.get(key)
+                        )
+            target_notional_sizing = adjusted_audit
         prepared_for_alignment = preparation.decision
         if target_notional_sizing is not None:
             prepared_action: Literal["buy", "sell"] = (

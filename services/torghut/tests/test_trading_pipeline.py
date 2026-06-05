@@ -4091,7 +4091,7 @@ class TestTradingPipeline(TestCase):
         )
         self.assertEqual(row.status, "planned")
 
-    def test_bounded_collection_target_source_rejects_precheck_qty_clamp(
+    def test_bounded_collection_target_source_submits_precheck_qty_clamp(
         self,
     ) -> None:
         from app import config
@@ -4206,18 +4206,22 @@ class TestTradingPipeline(TestCase):
             params = cast(dict[str, Any], row_json["params"])
             sizing = cast(dict[str, Any], params["paper_route_target_notional_sizing"])
 
-        self.assertIsNone(prepared)
-        self.assertEqual(row.status, "rejected")
+        self.assertIsNotNone(prepared)
+        assert prepared is not None
+        prepared_decision, _snapshot = prepared
+        self.assertEqual(prepared_decision.qty, Decimal("4"))
+        self.assertEqual(row.status, "planned")
         self.assertEqual(
-            row_json["reject_reason_atomic"],
-            ["bounded_paper_route_target_notional_sizing_changed_by_precheck"],
+            Decimal(str(sizing["target_notional_resolved_qty"])), Decimal("150")
         )
-        self.assertEqual(sizing["resolved_qty"], "150")
+        self.assertEqual(Decimal(str(sizing["resolved_qty"])), Decimal("4"))
+        self.assertTrue(sizing["precheck_quantity_adjusted"])
+        self.assertEqual(
+            sizing["precheck_adjustment_reason"], "risk_precheck_capped_quantity"
+        )
         self.assertEqual(sizing["precheck_resolved_qty"], "4")
-        self.assertIn(
-            "bounded_paper_route_target_qty_changed_by_precheck",
-            sizing["blockers"],
-        )
+        self.assertEqual(sizing["precheck_expected_target_qty"], "150")
+        self.assertTrue(sizing["precheck_capped_by_order"])
 
     def test_bounded_collection_target_source_rejects_missing_target_sizing(
         self,
