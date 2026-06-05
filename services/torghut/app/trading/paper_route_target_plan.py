@@ -705,6 +705,14 @@ def _paper_route_source_materialization_blockers(
     )
     if mode != BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE:
         blockers.append("paper_route_source_decision_mode_missing")
+    expected_decision_strategy_id = _safe_text(
+        identity.get("strategy_id")
+    ) or _safe_text(identity.get("runtime_strategy_name"))
+    observed_decision_strategy_id = _safe_text(payload_mapping.get("strategy_id"))
+    if expected_decision_strategy_id and (
+        observed_decision_strategy_id != expected_decision_strategy_id
+    ):
+        blockers.append("paper_route_source_decision_strategy_id_missing")
     if not bool(payload_mapping.get("final_promotion_allowed") is False) or not bool(
         params.get("final_promotion_allowed") is False
     ):
@@ -740,6 +748,9 @@ def _paper_route_decision_payload(
     generated_at: datetime,
 ) -> dict[str, Any]:
     source_decision_mode = BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+    decision_strategy_id = _safe_text(identity.get("strategy_id")) or _safe_text(
+        identity.get("runtime_strategy_name")
+    )
     source_decision_metadata: dict[str, Any] = {
         "mode": "paper_route_target_plan_source_decision",
         "source": PAPER_ROUTE_MATERIALIZATION_SOURCE,
@@ -837,6 +848,7 @@ def _paper_route_decision_payload(
         "observed_stage": "paper",
         "hypothesis_id": identity.get("hypothesis_id"),
         "candidate_id": identity.get("candidate_id"),
+        "strategy_id": decision_strategy_id,
         "runtime_strategy_name": identity.get("runtime_strategy_name"),
         "strategy_name": identity.get("strategy_name"),
         "account_label": identity.get("account_label"),

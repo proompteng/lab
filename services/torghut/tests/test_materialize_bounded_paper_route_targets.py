@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import Base, Strategy, TradeDecision
+from app.trading.models import StrategyDecision
 from app.trading.paper_route_target_plan import (
     materialize_bounded_paper_route_target_plan,
 )
@@ -28,6 +29,7 @@ def _hpairs_target(**overrides: object) -> dict[str, Any]:
     target: dict[str, Any] = {
         "hypothesis_id": "H-PAIRS-01",
         "candidate_id": "c88421d619759b2cfaa6f4d0",
+        "strategy_id": "microbar_cross_sectional_pairs_v1@research",
         "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
         "strategy_name": "microbar-cross-sectional-pairs-v1",
         "account_label": "TORGHUT_SIM",
@@ -204,6 +206,26 @@ def _count_decisions(dsn: str) -> int:
         engine.dispose()
 
 
+def _decision_payloads(dsn: str) -> list[dict[str, Any]]:
+    engine = create_engine(dsn, future=True)
+    try:
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            rows = (
+                session.execute(
+                    select(TradeDecision).order_by(
+                        TradeDecision.created_at.asc(),
+                        TradeDecision.symbol.asc(),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [dict(row.decision_json) for row in rows]
+    finally:
+        engine.dispose()
+
+
 def _run_cli(
     argv: list[str], capsys: pytest.CaptureFixture[str]
 ) -> tuple[int, dict[str, Any]]:
@@ -334,6 +356,59 @@ def test_commit_writes_only_for_torghut_sim_with_explicit_confirmations(
     assert payload["route_submission_count"] == 2
     assert payload["blockers"] == []
     assert _count_decisions(sqlite_dsn) == 2
+
+
+def test_materializer_repairs_existing_payloads_missing_executable_strategy_id(
+    in_memory_session: Session,
+) -> None:
+    plan = _plan(_hpairs_target())
+    first = materialize_bounded_paper_route_target_plan(
+        in_memory_session,
+        plan,
+        generated_at=datetime(2026, 6, 1, 13, 35, tzinfo=timezone.utc),
+        bounded_notional_limit=Decimal("25"),
+    )
+    in_memory_session.commit()
+    assert first["materialized_decision_count"] == 2
+
+    rows = (
+        in_memory_session.execute(
+            select(TradeDecision).order_by(TradeDecision.symbol.asc())
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        broken_payload = dict(row.decision_json)
+        broken_payload.pop("strategy_id", None)
+        row.decision_json = broken_payload
+    in_memory_session.commit()
+
+    repaired = materialize_bounded_paper_route_target_plan(
+        in_memory_session,
+        plan,
+        generated_at=datetime(2026, 6, 1, 13, 40, tzinfo=timezone.utc),
+        bounded_notional_limit=Decimal("25"),
+    )
+    in_memory_session.commit()
+
+    assert repaired["existing_decision_count"] == 2
+    assert repaired["repaired_decision_count"] == 2
+    assert repaired["blockers"] == []
+    repaired_rows = (
+        in_memory_session.execute(
+            select(TradeDecision).order_by(TradeDecision.symbol.asc())
+        )
+        .scalars()
+        .all()
+    )
+    decisions = [
+        StrategyDecision.model_validate(row.decision_json) for row in repaired_rows
+    ]
+    assert {decision.symbol: decision.strategy_id for decision in decisions} == {
+        "AAPL": "microbar_cross_sectional_pairs_v1@research",
+        "AMZN": "microbar_cross_sectional_pairs_v1@research",
+    }
 
 
 def test_commit_rejects_missing_account_and_dsn_confirmation(
@@ -536,6 +611,16 @@ def test_cli_preserves_existing_paper_route_target_plan_materialization_semantic
     assert payload["materialization"]["promotion_allowed"] is False
     assert payload["materialization"]["final_promotion_allowed"] is False
     assert payload["materialization"]["live_capital_routing_enabled"] is False
+    decisions = [
+        StrategyDecision.model_validate(item) for item in _decision_payloads(sqlite_dsn)
+    ]
+    assert {decision.symbol: decision.action for decision in decisions} == {
+        "AAPL": "buy",
+        "AMZN": "sell",
+    }
+    assert {decision.strategy_id for decision in decisions} == {
+        "microbar_cross_sectional_pairs_v1@research"
+    }
 
 
 def test_paper_route_target_plan_json_and_scalar_helpers_preserve_report_encoding_edges() -> (
