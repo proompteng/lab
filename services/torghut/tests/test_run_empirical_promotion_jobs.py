@@ -2884,6 +2884,266 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertFalse(metadata["promotion_allowed"])
         self.assertFalse(metadata["final_promotion_authorized"])
 
+    def test_runtime_window_import_repairs_source_windows_before_source_collection_import(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps(
+                {
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        window_start = datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 13, 17, 30, tzinfo=timezone.utc)
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="c88421d619759b2cfaa6f4d0",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            target_dsn_env="SIM_DB_DSN",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            account_label="TORGHUT_SIM",
+            source_account_label="TORGHUT_PAPER",
+            dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            source_manifest_ref=str(hypothesis_path),
+            source_kind="runtime_ledger_source_collection_candidate",
+            delay_adjusted_depth_stress_report_ref="",
+            window_start=window_start.isoformat(),
+            window_end=window_end.isoformat(),
+            target_metadata={
+                "source_collection_next_action": (
+                    "materialize_runtime_ledger_source_window_refs"
+                ),
+            },
+        )
+        args = SimpleNamespace(
+            runtime_window_target_plan_settlement_seconds=0,
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_import_audit_only=False,
+        )
+
+        repair_completed = SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "status": "ok",
+                    "apply": True,
+                    "source_window_only": True,
+                    "selected": 2,
+                    "source_windows_created": 1,
+                    "source_windows_reused": 1,
+                    "events_linked": 2,
+                }
+            )
+        )
+        import_completed = SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "inserted_windows": 1,
+                    "promotion_decision": "blocked",
+                    "source_window_ids": ["window-1", "window-2"],
+                }
+            )
+        )
+
+        with patch.object(
+            renewal.subprocess,
+            "run",
+            side_effect=[repair_completed, import_completed],
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import_target(
+                args=args,
+                target=target,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                window_start=window_start,
+                window_end=window_end,
+                now=datetime(2026, 5, 13, 18, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(run_mock.call_count, 2)
+        repair_command = run_mock.call_args_list[0].args[0]
+        import_command = run_mock.call_args_list[1].args[0]
+        self.assertIn("scripts/repair_order_feed_source_windows.py", repair_command)
+        self.assertIn("--apply", repair_command)
+        self.assertIn("--source-window-only", repair_command)
+        self.assertIn("--window-start", repair_command)
+        self.assertEqual(
+            repair_command[repair_command.index("--window-start") + 1],
+            "2026-05-13T17:00:00Z",
+        )
+        self.assertEqual(
+            repair_command[repair_command.index("--window-end") + 1],
+            "2026-05-13T17:30:00Z",
+        )
+        self.assertEqual(
+            repair_command[repair_command.index("--account-label") + 1],
+            "TORGHUT_PAPER",
+        )
+        self.assertEqual(
+            repair_command[repair_command.index("--canonical-account-label") + 1],
+            "TORGHUT_SIM",
+        )
+        self.assertIn("scripts/import_hypothesis_runtime_windows.py", import_command)
+        self.assertEqual(
+            import_command[import_command.index("--source-account-label") + 1],
+            "TORGHUT_PAPER",
+        )
+        self.assertEqual(payload["source_window_repair"]["events_linked"], 2)
+        self.assertTrue(payload["source_window_repair"]["source_window_only"])
+        self.assertEqual(payload["summary"]["source_window_repair"]["events_linked"], 2)
+
+    def test_runtime_window_import_audit_only_dry_runs_source_window_repair(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps(
+                {
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        window_start = datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 13, 17, 30, tzinfo=timezone.utc)
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="c88421d619759b2cfaa6f4d0",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            target_dsn_env="SIM_DB_DSN",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            account_label="TORGHUT_SIM",
+            source_account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            source_manifest_ref=str(hypothesis_path),
+            source_kind="runtime_ledger_source_collection_candidate",
+            delay_adjusted_depth_stress_report_ref="",
+            window_start=window_start.isoformat(),
+            window_end=window_end.isoformat(),
+            target_metadata={
+                "source_collection_next_action": (
+                    "materialize_runtime_ledger_source_window_refs"
+                ),
+            },
+        )
+        args = SimpleNamespace(
+            runtime_window_target_plan_settlement_seconds=0,
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_import_audit_only=True,
+        )
+
+        repair_completed = SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "status": "ok",
+                    "apply": False,
+                    "source_window_only": True,
+                    "selected": 2,
+                    "source_windows_created": 1,
+                    "source_windows_reused": 1,
+                    "events_linked": 2,
+                }
+            )
+        )
+        import_completed = SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "schema_version": "torghut.runtime-window-import-source-audit.v1",
+                    "audit_only": True,
+                    "would_persist": False,
+                    "promotion_allowed": True,
+                }
+            )
+        )
+
+        with patch.object(
+            renewal.subprocess,
+            "run",
+            side_effect=[repair_completed, import_completed],
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import_target(
+                args=args,
+                target=target,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                window_start=window_start,
+                window_end=window_end,
+                now=datetime(2026, 5, 13, 18, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(run_mock.call_count, 2)
+        repair_command = run_mock.call_args_list[0].args[0]
+        import_command = run_mock.call_args_list[1].args[0]
+        self.assertIn("--source-window-only", repair_command)
+        self.assertNotIn("--apply", repair_command)
+        self.assertIn("--audit-only", import_command)
+        self.assertEqual(payload["status"], "audit_only")
+        self.assertEqual(payload["proof_status"], "blocked")
+        self.assertFalse(payload["source_window_repair"]["apply"])
+        self.assertTrue(payload["source_window_repair"]["source_window_only"])
+        blocker_codes = [item["blocker"] for item in payload["proof_blockers"]]
+        self.assertIn("runtime_window_import_audit_only_no_persistence", blocker_codes)
+
+    def test_runtime_window_source_window_repair_rejects_non_mapping_payload(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 13, 17, 30, tzinfo=timezone.utc)
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="c88421d619759b2cfaa6f4d0",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            target_dsn_env="SIM_DB_DSN",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            account_label="TORGHUT_SIM",
+            source_account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+            source_kind="runtime_ledger_source_collection_candidate",
+            delay_adjusted_depth_stress_report_ref="",
+            window_start=window_start.isoformat(),
+            window_end=window_end.isoformat(),
+            target_metadata={
+                "source_collection_next_action": (
+                    "materialize_runtime_ledger_source_window_refs"
+                ),
+            },
+        )
+
+        with patch.object(
+            renewal.subprocess,
+            "run",
+            return_value=SimpleNamespace(stdout="[]"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "runtime_window_source_window_repair_payload_not_mapping",
+            ):
+                renewal._run_runtime_window_source_window_repair(
+                    target=target,
+                    window_start=window_start,
+                    window_end=window_end,
+                    audit_only=False,
+                )
+
     def test_runtime_window_target_metadata_defaults_source_collection_blockers(
         self,
     ) -> None:

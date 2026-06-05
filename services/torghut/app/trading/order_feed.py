@@ -2298,6 +2298,8 @@ def backfill_order_feed_source_windows(
     session: Session,
     *,
     account_label: str | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
     limit: int = 1000,
 ) -> dict[str, int]:
     """Attach source-window rows to persisted order events that already have offsets.
@@ -2325,6 +2327,16 @@ def backfill_order_feed_source_windows(
     )
     if account_label:
         stmt = stmt.where(ExecutionOrderEvent.alpaca_account_label == account_label)
+    if window_start is not None:
+        stmt = stmt.where(
+            func.coalesce(ExecutionOrderEvent.event_ts, ExecutionOrderEvent.created_at)
+            >= _ensure_aware_utc(window_start)
+        )
+    if window_end is not None:
+        stmt = stmt.where(
+            func.coalesce(ExecutionOrderEvent.event_ts, ExecutionOrderEvent.created_at)
+            < _ensure_aware_utc(window_end)
+        )
 
     events = session.execute(stmt).scalars().all()
     counters = {

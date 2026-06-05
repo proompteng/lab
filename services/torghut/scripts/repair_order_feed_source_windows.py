@@ -28,6 +28,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--dsn-env", default="DB_DSN")
     parser.add_argument("--account-label", default=None)
     parser.add_argument("--canonical-account-label", default=None)
+    parser.add_argument("--window-start", default=None)
+    parser.add_argument("--window-end", default=None)
+    parser.add_argument(
+        "--source-window-only",
+        action="store_true",
+        help="Only attach source-window rows to existing order-feed events.",
+    )
     parser.add_argument("--batch-size", type=int, default=1000)
     parser.add_argument("--max-batches", type=int, default=1)
     parser.add_argument(
@@ -47,6 +54,18 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _parse_optional_dt(value: object) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _payload(
     *,
     args: argparse.Namespace,
@@ -54,6 +73,8 @@ def _payload(
     batches: list[dict[str, int]],
     execution_event_backfill_enabled: bool,
     execution_event_backfill_skip_reason: str | None,
+    window_start: datetime | None,
+    window_end: datetime | None,
 ) -> dict[str, Any]:
     totals = {
         "selected": sum(batch["selected"] for batch in batches),
@@ -148,6 +169,9 @@ def _payload(
         "dsn_env": args.dsn_env,
         "account_label": args.account_label,
         "canonical_account_label": args.canonical_account_label,
+        "window_start": window_start.isoformat() if window_start is not None else None,
+        "window_end": window_end.isoformat() if window_end is not None else None,
+        "source_window_only": bool(args.source_window_only),
         "backfill_execution_events": bool(args.backfill_execution_events),
         "execution_event_backfill_enabled": execution_event_backfill_enabled,
         "execution_event_backfill_skip_reason": execution_event_backfill_skip_reason,
@@ -189,9 +213,43 @@ def _empty_execution_event_backfill_batch() -> dict[str, int]:
     }
 
 
+def _empty_execution_link_batch() -> dict[str, int]:
+    return {
+        "selected": 0,
+        "executions_matched": 0,
+        "executions_linked": 0,
+        "decisions_matched": 0,
+        "events_linked": 0,
+        "decision_events_linked": 0,
+        "events_without_execution": 0,
+        "events_without_decision": 0,
+        "account_alias_events_linked": 0,
+    }
+
+
+def _empty_execution_state_batch() -> dict[str, int]:
+    return {
+        "selected": 0,
+        "latest_event_found": 0,
+        "executions_updated": 0,
+        "out_of_order_events_skipped": 0,
+    }
+
+
+def _empty_fill_delta_batch() -> dict[str, int]:
+    return {
+        "selected": 0,
+        "delta_events_repaired": 0,
+        "non_increasing_events_marked": 0,
+        "missing_identity_events_marked": 0,
+    }
+
+
 def _execution_event_backfill_config(
     args: argparse.Namespace,
 ) -> tuple[bool, str | None]:
+    if bool(args.source_window_only) and bool(args.backfill_execution_events):
+        return False, "source_window_only"
     if not bool(args.backfill_execution_events):
         return False, None
 
@@ -228,27 +286,45 @@ def main() -> int:
         execution_event_backfill_enabled,
         execution_event_backfill_skip_reason,
     ) = _execution_event_backfill_config(args)
+    window_start = _parse_optional_dt(args.window_start)
+    window_end = _parse_optional_dt(args.window_end)
+    if (
+        window_start is not None
+        and window_end is not None
+        and window_end <= window_start
+    ):
+        raise SystemExit("window_end_must_be_after_window_start")
     batches: list[dict[str, int]] = []
     with session_factory() as session:
         for _ in range(max_batches):
             source_window_batch = backfill_order_feed_source_windows(
                 session,
                 account_label=args.account_label,
+                window_start=window_start,
+                window_end=window_end,
                 limit=batch_size,
             )
-            execution_link_batch = repair_order_feed_execution_links(
-                session,
-                account_label=args.account_label,
-                canonical_account_label=args.canonical_account_label,
-                limit=batch_size,
+            execution_link_batch = (
+                _empty_execution_link_batch()
+                if args.source_window_only
+                else repair_order_feed_execution_links(
+                    session,
+                    account_label=args.account_label,
+                    canonical_account_label=args.canonical_account_label,
+                    limit=batch_size,
+                )
             )
             execution_state_account_label = (
                 args.canonical_account_label or args.account_label
             )
-            execution_state_batch = repair_order_feed_execution_states(
-                session,
-                account_label=execution_state_account_label,
-                limit=batch_size,
+            execution_state_batch = (
+                _empty_execution_state_batch()
+                if args.source_window_only
+                else repair_order_feed_execution_states(
+                    session,
+                    account_label=execution_state_account_label,
+                    limit=batch_size,
+                )
             )
             execution_event_backfill_batch = (
                 backfill_order_feed_events_from_executions(
@@ -256,13 +332,17 @@ def main() -> int:
                     account_label=args.account_label,
                     limit=batch_size,
                 )
-                if execution_event_backfill_enabled
+                if execution_event_backfill_enabled and not args.source_window_only
                 else _empty_execution_event_backfill_batch()
             )
-            fill_delta_batch = repair_order_feed_fill_deltas(
-                session,
-                account_label=args.account_label,
-                limit=batch_size,
+            fill_delta_batch = (
+                _empty_fill_delta_batch()
+                if args.source_window_only
+                else repair_order_feed_fill_deltas(
+                    session,
+                    account_label=args.account_label,
+                    limit=batch_size,
+                )
             )
             batch = {
                 **source_window_batch,
@@ -353,6 +433,8 @@ def main() -> int:
         batches=batches,
         execution_event_backfill_enabled=execution_event_backfill_enabled,
         execution_event_backfill_skip_reason=execution_event_backfill_skip_reason,
+        window_start=window_start,
+        window_end=window_end,
     )
     print(
         json.dumps(payload, separators=(",", ":"))

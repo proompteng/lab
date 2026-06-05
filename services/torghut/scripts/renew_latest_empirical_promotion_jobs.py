@@ -2680,6 +2680,61 @@ def _runtime_window_import_health_gate_args(
     return dependency_quorum_decision, continuity_ok, drift_ok
 
 
+def _runtime_window_import_needs_source_window_repair(
+    target: RuntimeWindowImportTarget,
+) -> bool:
+    target_metadata = _as_dict(target.target_metadata)
+    return (
+        target.source_kind == "runtime_ledger_source_collection_candidate"
+        and _as_text(target_metadata.get("source_collection_next_action"))
+        == "materialize_runtime_ledger_source_window_refs"
+    )
+
+
+def _run_runtime_window_source_window_repair(
+    *,
+    target: RuntimeWindowImportTarget,
+    window_start: datetime,
+    window_end: datetime,
+    audit_only: bool,
+) -> dict[str, Any] | None:
+    if not _runtime_window_import_needs_source_window_repair(target):
+        return None
+    source_account_label = target.source_account_label or target.account_label
+    command = [
+        sys.executable,
+        "scripts/repair_order_feed_source_windows.py",
+        "--dsn-env",
+        target.source_dsn_env,
+        "--account-label",
+        source_account_label,
+        "--window-start",
+        _utc_iso(window_start),
+        "--window-end",
+        _utc_iso(window_end),
+        "--batch-size",
+        "5000",
+        "--max-batches",
+        "2",
+        "--source-window-only",
+        "--json",
+    ]
+    if (
+        target.source_account_label
+        and target.source_account_label != target.account_label
+    ):
+        command.extend(["--canonical-account-label", target.account_label])
+    if not audit_only:
+        command.append("--apply")
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("runtime_window_source_window_repair_payload_not_mapping")
+    payload = dict(payload)
+    payload["command"] = " ".join(command[:2] + ["..."])
+    return payload
+
+
 def _run_runtime_window_import_target(
     *,
     args: argparse.Namespace,
@@ -2794,6 +2849,13 @@ def _run_runtime_window_import_target(
             runtime_manifest=runtime_manifest,
         )
     )
+    audit_only = bool(getattr(args, "runtime_window_import_audit_only", False))
+    source_window_repair = _run_runtime_window_source_window_repair(
+        target=target,
+        window_start=window_start,
+        window_end=window_end,
+        audit_only=audit_only,
+    )
     command = [
         sys.executable,
         "scripts/import_hypothesis_runtime_windows.py",
@@ -2839,7 +2901,6 @@ def _run_runtime_window_import_target(
     ]
     if target.target_dsn_env:
         command.extend(["--target-dsn-env", target.target_dsn_env])
-    audit_only = bool(getattr(args, "runtime_window_import_audit_only", False))
     if audit_only:
         command.append("--audit-only")
     for artifact_ref in target.artifact_refs:
@@ -2867,6 +2928,8 @@ def _run_runtime_window_import_target(
     if not isinstance(payload, Mapping):
         raise RuntimeError("runtime_window_import_payload_not_mapping")
     payload = dict(payload)
+    if source_window_repair is not None:
+        payload["source_window_repair"] = source_window_repair
     runtime_observation = _as_dict(payload.get("runtime_observation"))
     source_activity_diagnostics = _as_dict(payload.get("source_activity_diagnostics"))
     if not source_activity_diagnostics and runtime_observation:
@@ -2920,6 +2983,7 @@ def _run_runtime_window_import_target(
         "source_kind": target.source_kind,
         "artifact_refs": [str(manifest_path), *target.artifact_refs],
         "target_metadata": dict(target.target_metadata or {}),
+        "source_window_repair": source_window_repair,
         "source_activity_diagnostics": source_activity_diagnostics,
         "source_activity_diagnostic_blockers": source_activity_diagnostic_blockers,
         "proof_status": "blocked" if proof_blockers else "ok",
