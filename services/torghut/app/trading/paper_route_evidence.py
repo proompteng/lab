@@ -9522,13 +9522,42 @@ def _runtime_window_import_plan_metadata(plan: Mapping[str, Any]) -> dict[str, o
     for key in (
         "session_window",
         "session_readiness",
+        "collection_session_readiness",
         "runtime_window_import_handoff",
         "runtime_window_import_health_gate",
         "source_decision_readiness",
+        "target_account_audit_readiness",
+        "account_pre_session_readiness",
+        "clean_window_baseline_readiness",
+        "account_contamination_readiness",
     ):
         value = _as_mapping(plan.get(key))
         if value:
             metadata[key] = dict(value)
+    return metadata
+
+
+def _source_collection_runtime_import_metadata(
+    plan: Mapping[str, Any],
+) -> dict[str, object]:
+    metadata = _runtime_window_import_plan_metadata(plan)
+    handoff = dict(_as_mapping(metadata.get("runtime_window_import_handoff")))
+    if handoff:
+        handoff.update(
+            {
+                "evidence_collection_ok": True,
+                "source_collection_authorized": True,
+                "source_collection_only": True,
+                "canary_collection_authorized": False,
+                "bounded_live_paper_collection_authorized": False,
+                "capital_promotion_allowed": False,
+                "promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "final_promotion_allowed": False,
+                "promotion_gate": "runtime_ledger_source_collection_only",
+            }
+        )
+        metadata["runtime_window_import_handoff"] = handoff
     return metadata
 
 
@@ -9620,6 +9649,7 @@ def _observed_strategy_source_collection_import_plan(
                 targets.append(target)
     if not targets:
         return {}
+    metadata = _source_collection_runtime_import_metadata(selected_plan or {})
     return {
         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
         "source": "paper_route_observed_strategy_source_collection",
@@ -9635,7 +9665,7 @@ def _observed_strategy_source_collection_import_plan(
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
         "target_count": len(targets),
-        **_runtime_window_import_plan_metadata(selected_plan or {}),
+        **metadata,
         "paper_probation_target_count": 0,
         "source_collection_target_count": len(targets),
         "skipped_target_count": len(skipped_targets),
@@ -9997,6 +10027,20 @@ def build_paper_route_target_plan_payload(
             "runtime_window_import_audit_mode": runtime_window_import_audit_mode,
             "runtime_window_import_audit_blockers": _unique_text_items(
                 runtime_window_import_audit.get("blockers")
+            ),
+            "runtime_window_import_source_collection_only": _safe_text(
+                runtime_window_import_plan.get("source")
+            )
+            == "paper_route_observed_strategy_source_collection",
+            "runtime_window_import_account_contamination_state": _safe_text(
+                _as_mapping(
+                    runtime_window_import_plan.get("account_contamination_readiness")
+                ).get("state")
+            ),
+            "runtime_window_import_account_contamination_blockers": _unique_text_items(
+                _as_mapping(
+                    runtime_window_import_plan.get("account_contamination_readiness")
+                ).get("blockers")
             ),
             "skipped_target_count": _safe_int(next_targets.get("skipped_target_count")),
             "promotion_authority": {
@@ -10396,6 +10440,20 @@ def build_paper_route_evidence_audit(
             ),
             "runtime_window_import_plan_source": _safe_text(
                 runtime_window_import_plan.get("source")
+            ),
+            "runtime_window_import_source_collection_only": _safe_text(
+                runtime_window_import_plan.get("source")
+            )
+            == "paper_route_observed_strategy_source_collection",
+            "runtime_window_import_account_contamination_state": _safe_text(
+                _as_mapping(
+                    runtime_window_import_plan.get("account_contamination_readiness")
+                ).get("state")
+            ),
+            "runtime_window_import_account_contamination_blockers": _unique_text_items(
+                _as_mapping(
+                    runtime_window_import_plan.get("account_contamination_readiness")
+                ).get("blockers")
             ),
             "summary_target_count": len(summary_target_audits),
             "summary_target_audit_source": summary_target_audit_source,
