@@ -42,6 +42,7 @@ from app.trading.submission_council import (
     _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
     _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
     _QUANT_HEALTH_CACHE,
+    _bounded_source_collection_probe_window,
     _certificate_evidence_authority_score,
     _certificate_evidence_selection_key,
     _coerce_aware_datetime,
@@ -2422,6 +2423,68 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
+
+    def test_bounded_source_collection_target_defaults_current_session_window(
+        self,
+    ) -> None:
+        plan = _runtime_ledger_paper_probation_import_plan(
+            [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "account": "TORGHUT_SIM",
+                    "source_collection_candidate": True,
+                    "source_collection_authorized": True,
+                    "source_collection_profit_target_candidate": True,
+                    "bounded_evidence_collection_authorized": True,
+                    "bounded_evidence_collection_max_notional": "75000",
+                    "source_collection_reason_codes": [
+                        "runtime_ledger_source_window_missing",
+                    ],
+                    "reason_codes": [
+                        "runtime_ledger_source_window_missing",
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["skipped_target_count"], 0)
+        self.assertEqual(plan["source_collection_target_count"], 1)
+        self.assertEqual(plan["source_collection_profit_target_count"], 1)
+        target = plan["targets"][0]
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertTrue(target["runtime_ledger_source_collection_window_defaulted"])
+        self.assertEqual(
+            target["runtime_ledger_source_collection_window_source"],
+            "current_regular_session_bounded_source_collection_default",
+        )
+        self.assertEqual(
+            target["paper_route_probe_window_start"], target["window_start"]
+        )
+        self.assertEqual(target["paper_route_probe_window_end"], target["window_end"])
+
+        window_start = datetime.fromisoformat(cast(str, target["window_start"]))
+        window_end = datetime.fromisoformat(cast(str, target["window_end"]))
+        self.assertEqual(window_end - window_start, timedelta(hours=6, minutes=30))
+
+    def test_source_collection_probe_window_does_not_default_without_bounded_authority(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _bounded_source_collection_probe_window({}), (None, None, False)
+        )
+        self.assertEqual(
+            _bounded_source_collection_probe_window(
+                {
+                    "source_collection_candidate": True,
+                }
+            ),
+            (None, None, False),
+        )
 
     def test_runtime_ledger_source_collection_allows_unclosed_or_losing_activity(
         self,
