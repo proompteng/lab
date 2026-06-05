@@ -2042,6 +2042,68 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target_account_audit_available=target_account_audit_available,
         )
 
+    def _build_basic_paper_route_evidence(
+        self,
+        session: Session,
+        *,
+        generated_at: datetime,
+        include_runtime_window_import_audit: bool | None = True,
+    ) -> dict[str, object]:
+        return build_paper_route_evidence_audit(
+            session,
+            live_submission_gate={
+                "allowed": False,
+                "reason": "paper_route_probe_only",
+                "blocked_reasons": [],
+                "promotion_eligible_total": 0,
+                "dependency_quorum_decision": "allow",
+                "continuity_ok": True,
+                "continuity_reason": "signal_continuity_nominal",
+                "drift_ok": True,
+                "drift_reason": "drift_live_promotion_eligible",
+                "runtime_ledger_paper_probation_import_plan": {
+                    "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-pre-session",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                            "account_label": "TORGHUT_REPLAY",
+                            "source_kind": "durable_runtime_ledger_bucket",
+                            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+                            "dataset_snapshot_ref": "dataset://paper-route",
+                            "paper_probation_authorized": True,
+                            "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                            "promotion_allowed": False,
+                            "final_promotion_authorized": False,
+                            "max_notional": "0",
+                        }
+                    ],
+                },
+            },
+            route_reacquisition_book={
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "summary": {
+                    "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                    "paper_route_probe_active_symbols": [],
+                },
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": False,
+                    "next_session_max_notional": "25",
+                    "eligible_symbol_count": 2,
+                    "eligible_symbols": ["AAPL", "AMZN"],
+                    "blocking_reasons": ["market_session_closed"],
+                },
+            },
+            generated_at=generated_at,
+            include_runtime_window_import_audit=include_runtime_window_import_audit,
+        )
+
     def test_target_plan_can_defer_full_runtime_window_audit(self) -> None:
         generated_at = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
         with Session(self.engine) as session:
@@ -2142,6 +2204,57 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "source_executions_missing",
                 "source_tca_missing",
             ],
+        )
+
+    def test_paper_route_evidence_auto_defers_full_audit_until_import_ready(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            with patch(
+                "app.trading.paper_route_evidence._target_audit",
+                side_effect=AssertionError("full evidence audit should defer"),
+            ):
+                payload = self._build_basic_paper_route_evidence(
+                    session,
+                    generated_at=generated_at,
+                    include_runtime_window_import_audit=None,
+                )
+
+        self.assertEqual(
+            payload["runtime_window_import_audit_mode"],
+            "deferred_until_import_ready",
+        )
+        self.assertEqual(
+            payload["summary"]["runtime_window_import_audit_mode"],
+            "deferred_until_import_ready",
+        )
+        self.assertEqual(
+            payload["runtime_window_import_audit"]["state"],
+            "waiting_for_session_open",
+        )
+        self.assertIn(
+            "runtime_window_import_audit_deferred_until_import_ready",
+            payload["targets"][0]["source_activity"]["missing_reasons"],
+        )
+
+    def test_paper_route_evidence_auto_runs_full_audit_when_import_ready(self) -> None:
+        generated_at = datetime(2026, 5, 26, 22, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = self._build_basic_paper_route_evidence(
+                session,
+                generated_at=generated_at,
+                include_runtime_window_import_audit=None,
+            )
+
+        self.assertEqual(payload["runtime_window_import_audit_mode"], "full")
+        self.assertEqual(
+            payload["summary"]["runtime_window_import_audit_mode"],
+            "full",
+        )
+        self.assertNotIn(
+            "runtime_window_import_audit_deferred_until_import_ready",
+            payload["runtime_window_import_audit"]["blockers"],
         )
 
     def test_evidence_audit_records_target_db_timeout_as_fail_closed_blocker(

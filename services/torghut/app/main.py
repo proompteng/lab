@@ -6202,6 +6202,13 @@ def trading_paper_route_evidence(
         le=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
         description="Maximum number of paper-route targets to audit.",
     ),
+    full_audit: bool = Query(
+        False,
+        description=(
+            "Force full source/runtime-ledger audits before the runtime window "
+            "is import-ready."
+        ),
+    ),
 ) -> JSONResponse:
     """Return target-by-target paper-route evidence collection status."""
 
@@ -6273,6 +6280,7 @@ def trading_paper_route_evidence(
             route_reacquisition_book=route_reacquisition_book,
             lookback_hours=lookback_hours,
             target_limit=target_limit,
+            include_runtime_window_import_audit=True if full_audit else None,
             target_account_audit_available=_paper_route_target_account_audit_available(
                 cast(Mapping[str, Any], live_submission_gate)
             ),
