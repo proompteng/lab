@@ -10787,11 +10787,15 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
 
         plan = payload["next_paper_route_runtime_window_targets"]
-        self.assertEqual(plan["target_count"], 2)
-        self.assertEqual(plan["skipped_target_count"], 0)
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["skipped_target_count"], 1)
         first_target = plan["targets"][0]
-        second_target = plan["targets"][1]
-        self.assertEqual(second_target["candidate_id"], "candidate-overlap-pair")
+        skipped_target = plan["skipped_targets"][0]
+        self.assertEqual(skipped_target["candidate_id"], "candidate-overlap-pair")
+        self.assertEqual(
+            skipped_target["reason"],
+            "paper_route_account_window_reserved_for_isolated_source_collection",
+        )
         self.assertEqual(
             first_target["paper_route_account_contamination_state"]["reason"],
             "unlinked_and_foreign_account_order_events_present",
@@ -10800,9 +10804,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             contamination_readiness["state"], "contaminated_window_discarded"
         )
-        self.assertEqual(contamination_readiness["target_count"], 2)
-        self.assertEqual(contamination_readiness["contaminated_target_count"], 2)
-        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 15)
+        self.assertEqual(contamination_readiness["target_count"], 1)
+        self.assertEqual(contamination_readiness["contaminated_target_count"], 1)
+        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 10)
         self.assertEqual(contamination_readiness["foreign_linked_order_event_count"], 1)
         sample_refs = contamination_readiness["sample_order_event_refs"]
         self.assertEqual(len(sample_refs), 10)
@@ -11507,7 +11511,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
         self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
 
-    def test_next_paper_route_runtime_window_allows_distinct_account_window_targets(
+    def test_next_paper_route_runtime_window_reserves_account_window_for_one_target(
         self,
     ) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
@@ -11604,24 +11608,162 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
 
         next_targets = payload["next_paper_route_runtime_window_targets"]
-        self.assertEqual(next_targets["target_count"], 2)
-        self.assertEqual(next_targets["skipped_target_count"], 0)
+        self.assertEqual(next_targets["target_count"], 1)
+        self.assertEqual(next_targets["skipped_target_count"], 1)
         self.assertEqual(
             next_targets["targets"][0]["candidate_id"], "candidate-paper-alpha"
         )
         self.assertEqual(
-            next_targets["targets"][1]["candidate_id"], "candidate-paper-beta"
+            next_targets["skipped_targets"][0]["candidate_id"], "candidate-paper-beta"
         )
         self.assertEqual(next_targets["targets"][0]["account_label"], "TORGHUT_SIM")
-        self.assertEqual(next_targets["targets"][1]["account_label"], "TORGHUT_SIM")
-        self.assertNotIn(
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["reason"],
+            "paper_route_account_window_reserved_for_isolated_source_collection",
+        )
+        self.assertIn(
             "paper_route_account_window_already_assigned",
-            [str(skipped.get("reason")) for skipped in next_targets["skipped_targets"]],
+            next_targets["skipped_targets"][0]["missing_or_blocking_fields"],
+        )
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["duplicate_of_candidate_id"],
+            "candidate-paper-alpha",
         )
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
-        self.assertEqual(import_audit["counts"]["selected_target_count"], 2)
-        self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 2)
+        self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
+        self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
+
+    def test_next_paper_route_runtime_window_prefers_profit_source_target_for_account_window(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add_all(
+                [
+                    Strategy(
+                        name="intraday-tsmom-profit-v3",
+                        description="raw first paper route target",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["NVDA"],
+                        created_at=window_start,
+                        updated_at=window_start,
+                    ),
+                    Strategy(
+                        name="microbar-cross-sectional-pairs-v1",
+                        description="profit source collection target",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL", "AMZN"],
+                        created_at=window_start,
+                        updated_at=window_start,
+                    ),
+                ]
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "2",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-TSMOM-LIQ-01",
+                                "candidate_id": "candidate-tsmom",
+                                "observed_stage": "paper",
+                                "strategy_family": "intraday_tsmom_consistent",
+                                "strategy_name": "intraday-tsmom-profit-v3",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-tsmom-liq-01.json",
+                                "paper_route_probe_symbols": ["NVDA"],
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                            },
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-hpairs-profit",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_collection_authorized": True,
+                                "source_collection_reason_codes": [
+                                    "profit_target_source_materialization"
+                                ],
+                                "source_collection_profit_target_candidate": True,
+                                "source_collection_next_action": (
+                                    "materialize_runtime_ledger_source_window_refs"
+                                ),
+                                "source_collection_profit_target_net_pnl_after_costs": "567.44720578",
+                                "source_collection_filled_notional": "127090.02495200",
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_route_probe_symbol_actions": {
+                                    "AAPL": "buy",
+                                    "AMZN": "sell",
+                                },
+                                "paper_route_probe_symbol_quantities": {
+                                    "AAPL": "1",
+                                    "AMZN": "1",
+                                },
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": False,
+                            },
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN", "NVDA"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN", "NVDA"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        next_targets = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(next_targets["target_count"], 1)
+        self.assertEqual(
+            next_targets["targets"][0]["candidate_id"], "candidate-hpairs-profit"
+        )
+        self.assertEqual(next_targets["targets"][0]["source_plan_index"], 1)
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["candidate_id"], "candidate-tsmom"
+        )
+        self.assertEqual(next_targets["skipped_targets"][0]["source_plan_index"], 0)
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["reason"],
+            "paper_route_account_window_reserved_for_isolated_source_collection",
+        )
 
     def test_runtime_import_audit_counts_selected_targets_not_raw_plan_noise(
         self,

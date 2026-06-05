@@ -242,17 +242,20 @@ def _target_bounded_materialization_authorized(target: Mapping[str, Any]) -> boo
 
 
 def _target_materialization_score(target: Mapping[str, Any]) -> tuple[int, int, int]:
-    bounded_authorized = int(_target_bounded_materialization_authorized(target))
+    materializable_shape = int(
+        bool(_target_symbol_actions(target))
+        and _target_notional(target) > 0
+        and _target_quantity(target) > 0
+    )
+    bounded_authorized = int(
+        _target_bounded_materialization_authorized(target) and materializable_shape
+    )
     return (
+        materializable_shape,
         bounded_authorized,
         int(
             _safe_text(target.get("hypothesis_id"))
             == PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID
-        ),
-        int(
-            bool(_target_symbol_actions(target))
-            and _target_notional(target) > 0
-            and _target_quantity(target) > 0
         ),
     )
 
@@ -263,13 +266,13 @@ def _plan_materialization_score(plan: Mapping[str, Any]) -> tuple[int, int, int,
     materializable_shape = 0
     targets = paper_route_target_plan_targets(plan)
     for target in targets:
-        target_authorized, target_hpairs, target_shape = _target_materialization_score(
+        target_shape, target_authorized, target_hpairs = _target_materialization_score(
             target
         )
         bounded_authorized += target_authorized
         hpairs += target_hpairs
         materializable_shape += target_shape
-    return (bounded_authorized, hpairs, materializable_shape, len(targets))
+    return (materializable_shape, bounded_authorized, hpairs, -len(targets))
 
 
 def _candidate_materialization_plans(
@@ -323,7 +326,7 @@ def _materialization_plan_from_payload(
 ) -> tuple[dict[str, Any], str | None]:
     best_plan: dict[str, Any] = {}
     best_source: str | None = None
-    best_score = (0, 0, 0, 0)
+    best_score = (-1, -1, -1, -1_000_000)
     for source, plan in _candidate_materialization_plans(payload):
         if not paper_route_target_plan_targets(plan):
             continue
