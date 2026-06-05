@@ -160,20 +160,45 @@ def _target_plan_selected_identity_match(
     )
 
 
+def _source_collection_marker(value: object) -> bool:
+    text = str(value or "").strip().lower()
+    return "source_collection" in text or "source-window" in text
+
+
+def _target_plan_is_source_collection_only(plan: Mapping[str, Any]) -> bool:
+    if _source_collection_marker(plan.get("purpose")) or _source_collection_marker(
+        plan.get("source")
+    ):
+        return True
+    targets = paper_route_target_plan_targets(plan)
+    if not targets:
+        return False
+    return all(
+        _source_collection_marker(target.get("source_kind"))
+        or _source_collection_marker(target.get("handoff"))
+        or _source_collection_marker(target.get("selected_by"))
+        or _source_collection_marker(
+            target.get("source_collection_authorization_scope")
+        )
+        for target in targets
+    )
+
+
 def _target_plan_selection_score(
     plan: Mapping[str, Any],
     *,
     source_rank: int,
     selected_identity_keys: set[tuple[str, str]],
-) -> tuple[int, int, int, int, int, int]:
+) -> tuple[int, int, int, int, int, int, int]:
     targets = paper_route_target_plan_targets(plan)
     if not targets:
-        return (-1, 0, 0, 0, 0, -source_rank)
+        return (-1, 0, 0, 0, 0, 0, -source_rank)
     probe_symbol_count = sum(
         len(_target_probe_symbol_values(target)) for target in targets
     )
     ready_count = sum(1 for target in targets if _target_source_decision_ready(target))
     return (
+        0 if _target_plan_is_source_collection_only(plan) else 1,
         1
         if _target_plan_selected_identity_match(
             plan,
