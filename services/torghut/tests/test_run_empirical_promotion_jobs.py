@@ -2908,6 +2908,35 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 ),
                 "bounded_evidence_collection_max_notional": "63180",
                 "paper_route_probe_effective_max_notional": "63180",
+                "source_window_start": "2026-05-13T17:00:00+00:00",
+                "source_window_end": "2026-05-13T17:30:00+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 2,
+                    "executions": 2,
+                    "execution_order_events": 2,
+                    "order_feed_source_windows": 2,
+                },
+                "source_window_ids": ["window-1", "window-2"],
+                "trade_decision_ids": ["decision-1", "decision-2"],
+                "execution_ids": ["execution-1", "execution-2"],
+                "execution_tca_metric_ids": ["tca-1", "tca-2"],
+                "execution_order_event_ids": ["event-1", "event-2"],
+                "source_offsets": [
+                    {
+                        "topic": "torghut.trade-updates.v1",
+                        "partition": 1,
+                        "offset": 7091,
+                    }
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                 "source_decision_mode": "route_acquisition_probe",
                 "profit_proof_eligible": False,
             }
@@ -2942,6 +2971,28 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(
             metadata["source_collection_post_cost_expectancy_bps"],
             "44.64923238",
+        )
+        self.assertEqual(metadata["source_window_start"], "2026-05-13T17:00:00+00:00")
+        self.assertEqual(metadata["source_window_ids"], ["window-1", "window-2"])
+        self.assertEqual(
+            metadata["source_refs"],
+            [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+        )
+        self.assertEqual(metadata["trade_decision_ids"], ["decision-1", "decision-2"])
+        self.assertEqual(metadata["execution_ids"], ["execution-1", "execution-2"])
+        self.assertEqual(metadata["execution_tca_metric_ids"], ["tca-1", "tca-2"])
+        self.assertEqual(metadata["execution_order_event_ids"], ["event-1", "event-2"])
+        self.assertEqual(metadata["source_materialization"], "execution_order_events")
+        self.assertEqual(
+            metadata["authority_class"], "runtime_order_feed_execution_source"
+        )
+        self.assertEqual(
+            metadata["authority_reason"], "event_sourced_runtime_ledger_profit_proof"
         )
         self.assertEqual(
             metadata["source_collection_next_action"],

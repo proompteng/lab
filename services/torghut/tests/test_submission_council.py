@@ -1513,6 +1513,35 @@ class TestSubmissionCouncil(TestCase):
                 "postgres:order_feed_source_windows",
             ],
         )
+        self.assertEqual(
+            candidates[0]["source_window_ids"],
+            ["pairs-source-window-buy", "pairs-source-window-sell"],
+        )
+        self.assertEqual(
+            candidates[0]["trade_decision_ids"],
+            ["pairs-decision-buy", "pairs-decision-sell"],
+        )
+        self.assertEqual(
+            candidates[0]["execution_ids"],
+            ["pairs-execution-buy", "pairs-execution-sell"],
+        )
+        self.assertEqual(
+            candidates[0]["execution_order_event_ids"],
+            ["pairs-event-new-buy", "pairs-event-fill-buy"],
+        )
+        self.assertEqual(
+            candidates[0]["source_offsets"], pairs_source_payload["source_offsets"]
+        )
+        self.assertEqual(
+            candidates[0]["source_materialization"], "execution_order_events"
+        )
+        self.assertEqual(
+            candidates[0]["authority_class"], "runtime_order_feed_execution_source"
+        )
+        self.assertEqual(
+            candidates[0]["authority_reason"],
+            "event_sourced_runtime_ledger_profit_proof",
+        )
         paper_candidates = gate["runtime_ledger_paper_probation_candidates"]
         self.assertEqual(gate["paper_probation_eligible_total"], 2)
         self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 2)
@@ -1608,6 +1637,32 @@ class TestSubmissionCouncil(TestCase):
         self.assertIn("runtime_ledger_stage_not_live", target["candidate_blockers"])
         self.assertIn(
             "live_runtime_ledger_required", target["final_promotion_blockers"]
+        )
+        self.assertEqual(
+            target["source_window_ids"],
+            ["pairs-source-window-buy", "pairs-source-window-sell"],
+        )
+        self.assertEqual(
+            target["trade_decision_ids"],
+            ["pairs-decision-buy", "pairs-decision-sell"],
+        )
+        self.assertEqual(
+            target["execution_ids"],
+            ["pairs-execution-buy", "pairs-execution-sell"],
+        )
+        self.assertEqual(
+            target["execution_order_event_ids"],
+            ["pairs-event-new-buy", "pairs-event-fill-buy"],
+        )
+        self.assertEqual(
+            target["source_offsets"], pairs_source_payload["source_offsets"]
+        )
+        self.assertEqual(target["source_materialization"], "execution_order_events")
+        self.assertEqual(
+            target["authority_class"], "runtime_order_feed_execution_source"
+        )
+        self.assertEqual(
+            target["authority_reason"], "event_sourced_runtime_ledger_profit_proof"
         )
         self.assertNotIn("runtime_ledger_artifact_refs", target)
         self.assertNotIn("runtime_ledger_artifact_row_count", target)
@@ -2134,6 +2189,26 @@ class TestSubmissionCouncil(TestCase):
                     "net_strategy_pnl_after_costs": "567.44720578",
                     "post_cost_expectancy_bps": "44.64923238",
                     "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                    "source_window_ids": ["window-1", "window-2"],
+                    "trade_decision_ids": ["decision-1", "decision-2"],
+                    "execution_ids": ["execution-1", "execution-2"],
+                    "execution_tca_metric_ids": ["tca-1", "tca-2"],
+                    "execution_order_event_ids": ["event-1", "event-2"],
+                    "source_offsets": [
+                        {
+                            "topic": "torghut.trade-updates.v1",
+                            "partition": 1,
+                            "offset": 7091,
+                        },
+                        {
+                            "topic": "torghut.trade-updates.v1",
+                            "partition": 1,
+                            "offset": 7092,
+                        },
+                    ],
+                    "source_materialization": "execution_order_events",
+                    "authority_class": "runtime_order_feed_execution_source",
+                    "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                     "reason_codes": [
                         "runtime_ledger_source_window_missing",
                         "runtime_ledger_source_refs_missing",
@@ -2174,6 +2249,33 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             target["source_collection_next_action"],
             "materialize_runtime_ledger_source_window_refs",
+        )
+        self.assertEqual(target["source_window_ids"], ["window-1", "window-2"])
+        self.assertEqual(target["trade_decision_ids"], ["decision-1", "decision-2"])
+        self.assertEqual(target["execution_ids"], ["execution-1", "execution-2"])
+        self.assertEqual(target["execution_tca_metric_ids"], ["tca-1", "tca-2"])
+        self.assertEqual(target["execution_order_event_ids"], ["event-1", "event-2"])
+        self.assertEqual(target["source_materialization"], "execution_order_events")
+        self.assertEqual(
+            target["authority_class"], "runtime_order_feed_execution_source"
+        )
+        self.assertEqual(
+            target["authority_reason"], "event_sourced_runtime_ledger_profit_proof"
+        )
+        self.assertEqual(
+            target["source_offsets"],
+            [
+                {
+                    "topic": "torghut.trade-updates.v1",
+                    "partition": 1,
+                    "offset": 7091,
+                },
+                {
+                    "topic": "torghut.trade-updates.v1",
+                    "partition": 1,
+                    "offset": 7092,
+                },
+            ],
         )
         self.assertEqual(target["probation_target_shortfall"], "0")
         self.assertEqual(

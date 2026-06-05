@@ -329,14 +329,28 @@ def build_readback_report(
     route = _paper_route_status(target, paper_route_evidence, status)
     if route["active"] is not True:
         blockers.append("hpairs_paper_route_inactive_or_ambiguous")
-    source_status = _source_ref_status(proof_packet, source_census, runtime_summary)
+    source_status = _source_ref_status(
+        proof_packet,
+        source_census,
+        runtime_summary,
+        target_plan,
+        paper_route_evidence,
+        status,
+        identity=identity,
+    )
     if (
         source_status["source_refs_present"] is not True
         or source_status["source_windows_present"] is not True
     ):
         blockers.append("hpairs_source_refs_or_windows_missing")
     lifecycle_economics = _lifecycle_economics_status(
-        proof_packet, source_census, runtime_summary
+        proof_packet,
+        source_census,
+        runtime_summary,
+        target_plan,
+        paper_route_evidence,
+        status,
+        identity=identity,
     )
     if (
         lifecycle_economics["lifecycle_complete"] is not True
@@ -415,6 +429,9 @@ def build_readback_report(
         "target_plan": target,
         "paper_route": route,
         "source_proof": source_status,
+        "source_collection_readback": _source_collection_readback(
+            target_plan, paper_route_evidence, status, identity=identity
+        ),
         "lifecycle_economics": lifecycle_economics,
         "proof_authority": proof_authority,
         "numeric_readback": numeric.to_payload(),
@@ -691,6 +708,11 @@ def _source_ref_status(
     proof_packet: Mapping[str, Any],
     source_census: Mapping[str, Any],
     runtime_summary: Mapping[str, Any],
+    target_plan: Mapping[str, Any],
+    paper_route_evidence: Mapping[str, Any],
+    status: Mapping[str, Any],
+    *,
+    identity: Identity,
 ) -> dict[str, Any]:
     payloads = _non_empty_payloads(
         proof_packet,
@@ -698,6 +720,9 @@ def _source_ref_status(
         runtime_summary,
         _mapping(
             _mapping(proof_packet.get("evidence")).get("hpairs_source_proof_census")
+        ),
+        *_source_observation_payloads(
+            (target_plan, paper_route_evidence, status), identity=identity
         ),
     )
     source_refs_present = any(
@@ -706,21 +731,30 @@ def _source_ref_status(
     source_windows_present = any(
         _has_positive_key(payload, SOURCE_WINDOW_KEYS) for payload in payloads
     )
+    if not source_refs_present:
+        source_refs_present = any(
+            _source_row_count(payload, "executions") > 0 for payload in payloads
+        )
+    if not source_windows_present:
+        source_windows_present = any(
+            _source_row_count(payload, "order_feed_source_windows") > 0
+            for payload in payloads
+        )
     blockers = _reported_blockers(*payloads)
-    if any(
-        any(word in blocker for word in SOURCE_MISSING_WORDS) for blocker in blockers
-    ):
-        source_refs_present = False
+    source_blockers = _source_missing_blockers(blockers)
     return {
         "source_refs_present": source_refs_present,
         "source_windows_present": source_windows_present,
-        "source_ref_count": _first_int_at_keys(
-            payloads, ("source_ref_count", "source_refs_count")
+        "source_ref_count": _first_positive_key_count(payloads, SOURCE_REF_KEYS)
+        or _first_int_at_keys(payloads, ("source_ref_count", "source_refs_count"))
+        or _first_positive_source_row_count(
+            payloads, ("executions", "trade_decisions")
         ),
-        "source_window_count": _first_int_at_keys(
-            payloads, ("source_window_count", "source_windows_count")
-        ),
+        "source_window_count": _first_positive_key_count(payloads, SOURCE_WINDOW_KEYS)
+        or _first_int_at_keys(payloads, ("source_window_count", "source_windows_count"))
+        or _first_positive_source_row_count(payloads, ("order_feed_source_windows",)),
         "blockers": blockers,
+        "reported_source_blockers": source_blockers,
     }
 
 
@@ -728,6 +762,11 @@ def _lifecycle_economics_status(
     proof_packet: Mapping[str, Any],
     source_census: Mapping[str, Any],
     runtime_summary: Mapping[str, Any],
+    target_plan: Mapping[str, Any],
+    paper_route_evidence: Mapping[str, Any],
+    status: Mapping[str, Any],
+    *,
+    identity: Identity,
 ) -> dict[str, Any]:
     payloads = _non_empty_payloads(
         proof_packet,
@@ -736,9 +775,20 @@ def _lifecycle_economics_status(
         _mapping(
             _mapping(proof_packet.get("evidence")).get("hpairs_source_proof_census")
         ),
+        *_source_observation_payloads(
+            (target_plan, paper_route_evidence, status), identity=identity
+        ),
     )
     lifecycle = _first_bool_at_keys(payloads, LIFECYCLE_KEYS)
     economics = _first_bool_at_keys(payloads, ECONOMICS_KEYS)
+    if lifecycle is None and any(
+        _has_order_lifecycle_rows(payload) for payload in payloads
+    ):
+        lifecycle = True
+    if economics is None and any(
+        _has_execution_economics_rows(payload) for payload in payloads
+    ):
+        economics = True
     blockers = _reported_blockers(*payloads)
     if any(
         any(word in blocker for word in LIFECYCLE_ECONOMICS_WORDS)
@@ -1012,6 +1062,218 @@ def _candidate_mappings(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return candidates
 
 
+def _source_collection_readback(
+    target_plan: Mapping[str, Any],
+    paper_route_evidence: Mapping[str, Any],
+    status: Mapping[str, Any],
+    *,
+    identity: Identity,
+) -> dict[str, Any]:
+    observations = _source_observation_payloads(
+        (target_plan, paper_route_evidence, status), identity=identity
+    )
+    selected = _best_source_observation(observations)
+    profit_target = _best_profit_target_source_observation(observations)
+    source_refs_present = bool(selected) and (
+        _has_positive_key(selected, SOURCE_REF_KEYS)
+        or _source_row_count(selected, "executions") > 0
+        or _source_row_count(selected, "trade_decisions") > 0
+    )
+    source_windows_present = bool(selected) and (
+        _has_positive_key(selected, SOURCE_WINDOW_KEYS)
+        or _source_row_count(selected, "order_feed_source_windows") > 0
+    )
+    return {
+        "present": bool(observations),
+        "matched_observation_count": len(observations),
+        "source_refs_present": source_refs_present,
+        "source_windows_present": source_windows_present,
+        "lifecycle_observed": _has_order_lifecycle_rows(selected),
+        "economics_observed": _has_execution_economics_rows(selected),
+        "selected_observation": _compact_source_observation(selected),
+        "profit_target_present": bool(profit_target),
+        "profit_target_source_refs_present": bool(profit_target)
+        and _source_ref_observation_count(profit_target) > 0,
+        "profit_target_source_windows_present": bool(profit_target)
+        and _source_window_observation_count(profit_target) > 0,
+        "profit_target_observation": _compact_source_observation(profit_target),
+    }
+
+
+def _source_observation_payloads(
+    payloads: Iterable[Mapping[str, Any]], *, identity: Identity
+) -> tuple[Mapping[str, Any], ...]:
+    observations: list[Mapping[str, Any]] = []
+    seen: set[int] = set()
+    for payload in payloads:
+        for candidate in _candidate_mappings(payload):
+            if not _matches_source_identity(candidate, identity):
+                continue
+            if not _looks_like_source_observation(candidate):
+                continue
+            for item in (candidate, _mapping(candidate.get("runtime_ledger_bucket"))):
+                if not item:
+                    continue
+                marker = id(item)
+                if marker not in seen:
+                    observations.append(item)
+                    seen.add(marker)
+    return tuple(observations)
+
+
+def _best_source_observation(
+    observations: Sequence[Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    if not observations:
+        return {}
+
+    def rank(
+        item: Mapping[str, Any],
+    ) -> tuple[int, int, int, int, int, int, Decimal, int]:
+        net = _decimal(
+            item.get("source_collection_net_strategy_pnl_after_costs")
+            or item.get("net_strategy_pnl_after_costs")
+        )
+        source_ref_count = _source_ref_observation_count(item)
+        source_window_count = _source_window_observation_count(item)
+        lifecycle_count = 1 if _has_order_lifecycle_rows(item) else 0
+        economics_count = 1 if _has_execution_economics_rows(item) else 0
+        return (
+            1 if source_ref_count > 0 else 0,
+            1 if source_window_count > 0 else 0,
+            lifecycle_count,
+            economics_count,
+            source_ref_count + source_window_count,
+            1
+            if _bool_or_none(item.get("source_collection_profit_target_candidate"))
+            else 0,
+            net if net is not None else Decimal("-Infinity"),
+            _source_row_count(item, "executions")
+            + _source_row_count(item, "execution_order_events")
+            + _source_row_count(item, "order_feed_source_windows"),
+        )
+
+    return max(observations, key=rank)
+
+
+def _best_profit_target_source_observation(
+    observations: Sequence[Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    profit_targets = [
+        item
+        for item in observations
+        if _looks_like_profit_target_source_observation(item)
+    ]
+    if not profit_targets:
+        return {}
+    return max(profit_targets, key=_profit_target_source_observation_rank)
+
+
+def _looks_like_profit_target_source_observation(mapping: Mapping[str, Any]) -> bool:
+    if _bool_or_none(mapping.get("source_collection_profit_target_candidate")) is True:
+        return True
+    next_action = _text(mapping.get("source_collection_next_action"))
+    if next_action == "materialize_runtime_ledger_source_window_refs":
+        return True
+    net = _decimal(mapping.get("source_collection_net_strategy_pnl_after_costs"))
+    return (
+        net is not None
+        and net >= Decimal("500")
+        and _decimal(mapping.get("source_collection_filled_notional")) is not None
+    )
+
+
+def _profit_target_source_observation_rank(
+    item: Mapping[str, Any],
+) -> tuple[int, int, int, Decimal, int]:
+    net = _decimal(item.get("source_collection_net_strategy_pnl_after_costs"))
+    return (
+        1 if _source_ref_observation_count(item) > 0 else 0,
+        1 if _source_window_observation_count(item) > 0 else 0,
+        1
+        if _bool_or_none(item.get("source_collection_profit_target_candidate"))
+        else 0,
+        net if net is not None else Decimal("-Infinity"),
+        _source_ref_observation_count(item) + _source_window_observation_count(item),
+    )
+
+
+def _matches_source_identity(mapping: Mapping[str, Any], identity: Identity) -> bool:
+    hypothesis = _text(mapping.get("hypothesis_id"))
+    candidate = _text(mapping.get("candidate_id"))
+    account = _text(mapping.get("account_label")) or _text(
+        mapping.get("alpaca_account_label")
+    )
+    if candidate and candidate == identity.candidate_id:
+        return (not hypothesis or hypothesis == identity.hypothesis_id) and (
+            not account or account == identity.account_label
+        )
+    return _matches_identity(mapping, identity)
+
+
+def _looks_like_source_observation(mapping: Mapping[str, Any]) -> bool:
+    if any(key in mapping for key in SOURCE_REF_KEYS + SOURCE_WINDOW_KEYS):
+        return True
+    if _mapping(mapping.get("source_row_counts")):
+        return True
+    if _mapping(mapping.get("runtime_ledger_bucket")):
+        return True
+    return any(
+        key in mapping
+        for key in (
+            "source_collection_net_strategy_pnl_after_costs",
+            "net_strategy_pnl_after_costs",
+            "source_collection_filled_notional",
+            "closed_trade_count",
+            "open_position_count",
+        )
+    )
+
+
+def _compact_source_observation(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if not payload:
+        return {}
+    keys = (
+        "hypothesis_id",
+        "candidate_id",
+        "strategy_name",
+        "runtime_strategy_name",
+        "account_label",
+        "source_kind",
+        "source_collection_profit_target_candidate",
+        "source_collection_net_strategy_pnl_after_costs",
+        "source_collection_filled_notional",
+        "source_collection_post_cost_expectancy_bps",
+        "net_strategy_pnl_after_costs",
+        "filled_notional",
+        "closed_trade_count",
+        "open_position_count",
+        "target_notional",
+        "max_notional",
+        "window_start",
+        "window_end",
+        "bucket_started_at",
+        "bucket_ended_at",
+        "source_window_start",
+        "source_window_end",
+        "source_collection_next_action",
+    )
+    compact = {key: payload[key] for key in keys if key in payload}
+    if "source_refs" in payload:
+        compact["source_ref_count"] = len(_text_list(payload.get("source_refs")))
+    if "source_window_ids" in payload:
+        compact["source_window_count"] = len(
+            _text_list(payload.get("source_window_ids"))
+        )
+    source_rows = _mapping(payload.get("source_row_counts"))
+    if source_rows:
+        compact["source_row_counts"] = dict(source_rows)
+    blockers = _reported_blockers(payload)
+    if blockers:
+        compact["blockers"] = blockers
+    return compact
+
+
 def _looks_like_candidate(mapping: Mapping[str, Any]) -> bool:
     return any(
         key in mapping
@@ -1064,6 +1326,74 @@ def _truthy_route_flag(payload: Mapping[str, Any]) -> bool | None:
     return any(values)
 
 
+def _source_row_count(payload: Mapping[str, Any], key: str) -> int:
+    value = _mapping(payload.get("source_row_counts")).get(key)
+    parsed = _int_or_none(value)
+    return parsed if parsed is not None else 0
+
+
+def _first_positive_source_row_count(
+    payloads: Sequence[Mapping[str, Any]], keys: Sequence[str]
+) -> int | None:
+    for payload in payloads:
+        total = sum(_source_row_count(payload, key) for key in keys)
+        if total > 0:
+            return total
+    return None
+
+
+def _first_positive_key_count(
+    payloads: Sequence[Mapping[str, Any]], keys: Sequence[str]
+) -> int | None:
+    for payload in payloads:
+        for key, value in _walk_items(payload):
+            if key not in keys:
+                continue
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                if len(value) > 0:
+                    return len(value)
+                continue
+            parsed = _int_or_none(value)
+            if parsed is not None and parsed > 0:
+                return parsed
+    return None
+
+
+def _source_ref_observation_count(payload: Mapping[str, Any]) -> int:
+    return (
+        _first_positive_key_count((payload,), SOURCE_REF_KEYS)
+        or _source_row_count(payload, "executions")
+        or _source_row_count(payload, "trade_decisions")
+        or 0
+    )
+
+
+def _source_window_observation_count(payload: Mapping[str, Any]) -> int:
+    return (
+        _first_positive_key_count((payload,), SOURCE_WINDOW_KEYS)
+        or _source_row_count(payload, "order_feed_source_windows")
+        or 0
+    )
+
+
+def _has_order_lifecycle_rows(payload: Mapping[str, Any]) -> bool:
+    if not payload:
+        return False
+    return (
+        _source_row_count(payload, "execution_order_events") > 0
+        and _source_row_count(payload, "trade_decisions") > 0
+        and _source_row_count(payload, "executions") > 0
+    )
+
+
+def _has_execution_economics_rows(payload: Mapping[str, Any]) -> bool:
+    if not payload:
+        return False
+    if _source_row_count(payload, "execution_tca_metrics") > 0:
+        return True
+    return _decimal(payload.get("cost_amount")) is not None
+
+
 def _has_positive_key(payload: Mapping[str, Any], keys: Sequence[str]) -> bool:
     for key, value in _walk_items(payload):
         if key in keys:
@@ -1112,11 +1442,22 @@ def _reported_blockers(*payloads: Mapping[str, Any]) -> list[str]:
                 "blockers",
                 "authority_blockers",
                 "blocking_reasons",
+                "candidate_blockers",
+                "final_promotion_blockers",
                 "proof_blockers",
                 "failed_checks",
+                "runtime_ledger_target_metadata_blockers",
             }:
                 blockers.extend(_text_list(value))
     return _stable_texts(blockers)
+
+
+def _source_missing_blockers(blockers: Sequence[str]) -> list[str]:
+    return [
+        blocker
+        for blocker in blockers
+        if any(word in blocker for word in SOURCE_MISSING_WORDS)
+    ]
 
 
 def _first_text_at_keys(payload: Mapping[str, Any], keys: Sequence[str]) -> str | None:
