@@ -6417,6 +6417,114 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(target["final_promotion_allowed"])
         self.assertTrue(target["stripped_source_promotion_authority"])
 
+    def test_source_collection_import_plan_defaults_authorized_blank_window_target(
+        self,
+    ) -> None:
+        live_gate = {
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+            "runtime_ledger_paper_probation_import_plan": {
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "candidate-hpairs",
+                        "observed_stage": "paper",
+                        "strategy_family": "microbar_pairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_SIM",
+                        "source_account_label": "TORGHUT_SIM",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "account_stage_runtime_identity": {
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            )
+                        },
+                        "window_start": "",
+                        "window_end": "",
+                        "paper_route_probe_window_start": None,
+                        "paper_route_probe_window_end": None,
+                        "source_collection_authorized": True,
+                    }
+                ],
+            },
+        }
+
+        plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan=live_gate["runtime_ledger_paper_probation_import_plan"],
+            live_submission_gate=live_gate,
+            target_limit=5,
+            generated_at=datetime(2026, 6, 5, 16, 45, tzinfo=timezone.utc),
+        )
+
+        target = plan["targets"][0]
+        self.assertEqual(target["window_start"], "2026-06-05T13:30:00+00:00")
+        self.assertEqual(target["window_end"], "2026-06-05T20:00:00+00:00")
+        self.assertEqual(
+            target["paper_route_probe_window_start"],
+            "2026-06-05T13:30:00+00:00",
+        )
+        self.assertEqual(
+            target["paper_route_probe_window_end"],
+            "2026-06-05T20:00:00+00:00",
+        )
+        self.assertTrue(target["runtime_ledger_source_collection_window_defaulted"])
+        self.assertEqual(
+            target["runtime_ledger_source_collection_window_default_source"],
+            "current_regular_session_source_collection_import_default",
+        )
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+
+    def test_source_collection_import_plan_does_not_default_unauthorized_target(
+        self,
+    ) -> None:
+        live_gate = {
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+            "runtime_ledger_paper_probation_import_plan": {
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "candidate-hpairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "window_start": "",
+                        "window_end": "",
+                    }
+                ],
+            },
+        }
+
+        plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan=live_gate["runtime_ledger_paper_probation_import_plan"],
+            live_submission_gate=live_gate,
+            target_limit=5,
+            generated_at=datetime(2026, 6, 5, 16, 45, tzinfo=timezone.utc),
+        )
+
+        target = plan["targets"][0]
+        self.assertEqual(target["window_start"], "")
+        self.assertEqual(target["window_end"], "")
+        self.assertEqual(target["paper_route_probe_window_start"], "")
+        self.assertEqual(target["paper_route_probe_window_end"], "")
+        self.assertNotIn("runtime_ledger_source_collection_window_defaulted", target)
+
+    def test_source_collection_import_window_does_not_default_non_source_target(
+        self,
+    ) -> None:
+        window_start, window_end, defaulted = (
+            paper_route_evidence._runtime_ledger_source_collection_import_window(
+                {
+                    "window_start": "",
+                    "window_end": "",
+                },
+                generated_at=datetime(2026, 6, 5, 16, 45, tzinfo=timezone.utc),
+            )
+        )
+
+        self.assertEqual(window_start, "")
+        self.assertEqual(window_end, "")
+        self.assertFalse(defaulted)
+
     def test_source_collection_import_plan_preserves_bounded_authorized_notional(
         self,
     ) -> None:
