@@ -1324,6 +1324,15 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--wait-flat-seconds 120", args)
         self.assertIn("--poll-seconds 10", args)
         self.assertIn("--persist-snapshot", args)
+        self.assertIn("target_plan_readback_args=()", args)
+        self.assertIn("--target-plan-readback-url", args)
+        self.assertIn(
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            args,
+        )
+        self.assertIn("--target-plan-readback-timeout-seconds 10", args)
+        self.assertIn("--require-target-plan-readback-clean", args)
+        self.assertIn('"${target_plan_readback_args[@]}"', args)
         self.assertIn("--persist-lineage", args)
         self.assertIn("--apply", args)
         self.assertIn("--json", args)
