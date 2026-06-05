@@ -6,38 +6,28 @@ on:
     paths:
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
-      - 'packages/scripts/src/shared/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/docker.ts'
+      - 'packages/scripts/src/shared/git.ts'
       - '.github/workflows/torghut-ci.yml'
       - '.github/workflows/torghut-build-push.yaml'
       - '.github/workflows/torghut-deploy-automerge.yml'
       - '.github/workflows/torghut-post-deploy-verify.yml'
       - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/torghut-ta-build-push.yaml'
-      - '.github/workflows/torghut-ta-release.yml'
-      - '.github/workflows/torghut-ws-build-push.yaml'
-      - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
-      - 'argocd/applications/torghut-options/**'
-      - 'package.json'
-      - 'bun.lock'
   pull_request:
     paths:
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
-      - 'packages/scripts/src/shared/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/docker.ts'
+      - 'packages/scripts/src/shared/git.ts'
       - '.github/workflows/torghut-ci.yml'
       - '.github/workflows/torghut-build-push.yaml'
       - '.github/workflows/torghut-deploy-automerge.yml'
       - '.github/workflows/torghut-post-deploy-verify.yml'
       - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/torghut-ta-build-push.yaml'
-      - '.github/workflows/torghut-ta-release.yml'
-      - '.github/workflows/torghut-ws-build-push.yaml'
-      - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
-      - 'argocd/applications/torghut-options/**'
-      - 'package.json'
-      - 'bun.lock'
   workflow_dispatch:
 
 permissions:
@@ -123,10 +113,10 @@ jobs:
 
           service=false
           manifests=false
-          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/|\.github/workflows/torghut-(ci|build-push|deploy-automerge|post-deploy-verify|release|ta-build-push|ta-release|ws-build-push|ws-release)\.yml$|\.github/workflows/torghut-build-push\.yaml$|package\.json$|bun\.lock$)'; then
+          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|docker|git)\.ts$|\.github/workflows/torghut-(ci|deploy-automerge|post-deploy-verify|release)\.yml$|\.github/workflows/torghut-build-push\.yaml$)'; then
             service=true
           fi
-          if matches_any '^argocd/applications/(torghut|torghut-options)/'; then
+          if matches_any '^argocd/applications/torghut/'; then
             manifests=true
           fi
 

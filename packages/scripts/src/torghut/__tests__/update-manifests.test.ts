@@ -217,6 +217,44 @@ spec:
   }
 }
 
+type UpdateOptions = Parameters<typeof __private.updateTorghutManifests>[0]
+
+const updateOptionsForFixture = (
+  fixture: ReturnType<typeof createFixture>,
+  overrides: Partial<UpdateOptions> = {},
+): UpdateOptions => ({
+  imageName: 'registry.ide-newton.ts.net/lab/torghut',
+  digest: 'sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+  version: 'v0.600.0',
+  commit: '1234567890abcdef1234567890abcdef12345678',
+  rolloutTimestamp: '2026-02-21T04:00:00Z',
+  manifestPath: relative(repoRoot, fixture.serviceManifestPath),
+  simulationManifestPath: relative(repoRoot, fixture.simulationServiceManifestPath),
+  migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
+  historicalSimulationWorkflowManifestPath: relative(repoRoot, fixture.historicalWorkflowManifestPath),
+  empiricalPromotionWorkflowManifestPath: relative(repoRoot, fixture.empiricalWorkflowManifestPath),
+  whitepaperAutoresearchWorkflowManifestPath: relative(repoRoot, fixture.whitepaperAutoresearchWorkflowManifestPath),
+  analysisRuntimeReadyManifestPath: relative(repoRoot, fixture.analysisRuntimeReadyManifestPath),
+  analysisActivityManifestPath: relative(repoRoot, fixture.analysisActivityManifestPath),
+  analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
+  analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
+  empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
+  empiricalPromotionRenewalManifestPath: relative(repoRoot, fixture.empiricalPromotionRenewalManifestPath),
+  executionTcaRefreshManifestPath: relative(repoRoot, fixture.executionTcaRefreshManifestPath),
+  orderFeedSourceWindowRepairManifestPath: relative(repoRoot, fixture.orderFeedSourceWindowRepairManifestPath),
+  paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
+  boundedPaperRouteTargetMaterializationManifestPath: relative(
+    repoRoot,
+    fixture.boundedPaperRouteTargetMaterializationManifestPath,
+  ),
+  whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
+  tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
+  tigerBeetleJournalOrderEventsManifestPath: relative(repoRoot, fixture.tigerBeetleJournalOrderEventsManifestPath),
+  optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
+  optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
+  ...overrides,
+})
+
 describe('update-manifests', () => {
   it('keeps workflow template postgres password injection logic in repo', () => {
     const historicalWorkflowManifest = readFileSync(
@@ -259,40 +297,7 @@ describe('update-manifests', () => {
 
   it('updates service and migration image digest, rollout timestamp, and metadata env values', () => {
     const fixture = createFixture()
-    const result = __private.updateTorghutManifests({
-      imageName: 'registry.ide-newton.ts.net/lab/torghut',
-      digest: 'sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
-      version: 'v0.600.0',
-      commit: '1234567890abcdef1234567890abcdef12345678',
-      rolloutTimestamp: '2026-02-21T04:00:00Z',
-      manifestPath: relative(repoRoot, fixture.serviceManifestPath),
-      simulationManifestPath: relative(repoRoot, fixture.simulationServiceManifestPath),
-      migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
-      historicalSimulationWorkflowManifestPath: relative(repoRoot, fixture.historicalWorkflowManifestPath),
-      empiricalPromotionWorkflowManifestPath: relative(repoRoot, fixture.empiricalWorkflowManifestPath),
-      whitepaperAutoresearchWorkflowManifestPath: relative(
-        repoRoot,
-        fixture.whitepaperAutoresearchWorkflowManifestPath,
-      ),
-      analysisRuntimeReadyManifestPath: relative(repoRoot, fixture.analysisRuntimeReadyManifestPath),
-      analysisActivityManifestPath: relative(repoRoot, fixture.analysisActivityManifestPath),
-      analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
-      analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
-      empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
-      empiricalPromotionRenewalManifestPath: relative(repoRoot, fixture.empiricalPromotionRenewalManifestPath),
-      executionTcaRefreshManifestPath: relative(repoRoot, fixture.executionTcaRefreshManifestPath),
-      orderFeedSourceWindowRepairManifestPath: relative(repoRoot, fixture.orderFeedSourceWindowRepairManifestPath),
-      paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
-      boundedPaperRouteTargetMaterializationManifestPath: relative(
-        repoRoot,
-        fixture.boundedPaperRouteTargetMaterializationManifestPath,
-      ),
-      whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
-      tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
-      tigerBeetleJournalOrderEventsManifestPath: relative(repoRoot, fixture.tigerBeetleJournalOrderEventsManifestPath),
-      optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
-      optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
-    })
+    const result = __private.updateTorghutManifests(updateOptionsForFixture(fixture))
 
     const serviceManifest = readFileSync(fixture.serviceManifestPath, 'utf8')
     const simulationServiceManifest = readFileSync(fixture.simulationServiceManifestPath, 'utf8')
@@ -380,15 +385,37 @@ describe('update-manifests', () => {
     ).toBe(2)
     for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
-        'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+        'image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111',
       )
-      expect(manifest).toContain('value: v0.600.0')
-      expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+      expect(manifest).toContain('value: old-version')
+      expect(manifest).toContain('value: old-commit')
     }
     expect(result.changed).toBe(true)
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
+    expect(result.changedPaths.length).toBe(19)
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
+  it('updates options manifests only when explicitly included', () => {
+    const fixture = createFixture()
+    const result = __private.updateTorghutManifests(
+      updateOptionsForFixture(fixture, {
+        includeOptionsManifests: true,
+      }),
+    )
+    const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
+    const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
+
+    for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
+      expect(manifest).toContain(
+        'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+      )
+      expect(manifest).toContain('value: v0.600.0')
+      expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+    }
     expect(result.changedPaths.length).toBe(21)
 
     rmSync(fixture.dir, { recursive: true, force: true })
@@ -396,40 +423,12 @@ describe('update-manifests', () => {
 
   it('returns changed=false when manifests already match requested state', () => {
     const fixture = createFixture()
-    const options = {
-      imageName: 'registry.ide-newton.ts.net/lab/torghut',
+    const options = updateOptionsForFixture(fixture, {
       digest: 'sha256:ef4a4f754c30705019667f7aa6c89ca95b8ca4f2f1539ca0f8ce62d56a4be63c',
       version: 'v0.601.0',
       commit: 'abcdefabcdefabcdefabcdefabcdefabcdefabcd',
       rolloutTimestamp: '2026-02-21T05:00:00Z',
-      manifestPath: relative(repoRoot, fixture.serviceManifestPath),
-      simulationManifestPath: relative(repoRoot, fixture.simulationServiceManifestPath),
-      migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
-      historicalSimulationWorkflowManifestPath: relative(repoRoot, fixture.historicalWorkflowManifestPath),
-      empiricalPromotionWorkflowManifestPath: relative(repoRoot, fixture.empiricalWorkflowManifestPath),
-      whitepaperAutoresearchWorkflowManifestPath: relative(
-        repoRoot,
-        fixture.whitepaperAutoresearchWorkflowManifestPath,
-      ),
-      analysisRuntimeReadyManifestPath: relative(repoRoot, fixture.analysisRuntimeReadyManifestPath),
-      analysisActivityManifestPath: relative(repoRoot, fixture.analysisActivityManifestPath),
-      analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
-      analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
-      empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
-      empiricalPromotionRenewalManifestPath: relative(repoRoot, fixture.empiricalPromotionRenewalManifestPath),
-      executionTcaRefreshManifestPath: relative(repoRoot, fixture.executionTcaRefreshManifestPath),
-      orderFeedSourceWindowRepairManifestPath: relative(repoRoot, fixture.orderFeedSourceWindowRepairManifestPath),
-      paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
-      boundedPaperRouteTargetMaterializationManifestPath: relative(
-        repoRoot,
-        fixture.boundedPaperRouteTargetMaterializationManifestPath,
-      ),
-      whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
-      tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
-      tigerBeetleJournalOrderEventsManifestPath: relative(repoRoot, fixture.tigerBeetleJournalOrderEventsManifestPath),
-      optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
-      optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
-    }
+    })
 
     __private.updateTorghutManifests(options)
     const second = __private.updateTorghutManifests(options)

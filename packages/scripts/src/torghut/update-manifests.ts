@@ -67,6 +67,7 @@ type UpdateManifestsOptions = {
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   tigerBeetleJournalOrderEventsManifestPath?: string
+  includeOptionsManifests?: boolean
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -98,6 +99,7 @@ type CliOptions = {
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   tigerBeetleJournalOrderEventsManifestPath?: string
+  includeOptionsManifests?: boolean
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -377,22 +379,26 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.tigerBeetleJournalOrderEventsManifestPath ?? defaultTigerBeetleJournalOrderEventsManifestPath,
     'torghut-tigerbeetle-journal-order-events image reference',
   )
-  const optionsCatalog = updateVersionedDeploymentManifest(
-    options,
-    options.optionsCatalogManifestPath ?? defaultOptionsCatalogManifestPath,
-    'torghut-options-catalog',
-    'TORGHUT_OPTIONS_VERSION',
-    'TORGHUT_OPTIONS_COMMIT',
-    'torghut-options-catalog image reference',
-  )
-  const optionsEnricher = updateVersionedDeploymentManifest(
-    options,
-    options.optionsEnricherManifestPath ?? defaultOptionsEnricherManifestPath,
-    'torghut-options-enricher',
-    'TORGHUT_OPTIONS_VERSION',
-    'TORGHUT_OPTIONS_COMMIT',
-    'torghut-options-enricher image reference',
-  )
+  const optionalResults = options.includeOptionsManifests
+    ? [
+        updateVersionedDeploymentManifest(
+          options,
+          options.optionsCatalogManifestPath ?? defaultOptionsCatalogManifestPath,
+          'torghut-options-catalog',
+          'TORGHUT_OPTIONS_VERSION',
+          'TORGHUT_OPTIONS_COMMIT',
+          'torghut-options-catalog image reference',
+        ),
+        updateVersionedDeploymentManifest(
+          options,
+          options.optionsEnricherManifestPath ?? defaultOptionsEnricherManifestPath,
+          'torghut-options-enricher',
+          'TORGHUT_OPTIONS_VERSION',
+          'TORGHUT_OPTIONS_COMMIT',
+          'torghut-options-enricher image reference',
+        ),
+      ]
+    : []
   const changedPaths = [
     service,
     simulationService,
@@ -413,8 +419,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     whitepaperSemanticBackfill,
     tigerBeetleSmoke,
     tigerBeetleJournalOrderEvents,
-    optionsCatalog,
-    optionsEnricher,
+    ...optionalResults,
   ]
     .filter((entry) => entry.changed)
     .map((entry) => entry.manifestPath)
@@ -460,9 +465,15 @@ Options:
   --whitepaper-semantic-backfill-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
   --tigerbeetle-journal-order-events-manifest-path <path>
+  --include-options-manifests
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
       process.exit(0)
+    }
+
+    if (arg === '--include-options-manifests') {
+      options.includeOptionsManifests = true
+      continue
     }
 
     if (!arg.startsWith('--')) {
@@ -557,6 +568,9 @@ Options:
       case '--tigerbeetle-journal-order-events-manifest-path':
         options.tigerBeetleJournalOrderEventsManifestPath = value
         break
+      case '--include-options-manifests':
+        options.includeOptionsManifests = true
+        break
       case '--options-catalog-manifest-path':
         options.optionsCatalogManifestPath = value
         break
@@ -570,6 +584,8 @@ Options:
 
   return options
 }
+
+const parseBooleanEnv = (value: string | undefined): boolean => value === '1' || value?.toLowerCase() === 'true'
 
 const main = (cliOptions?: CliOptions) => {
   const parsed = cliOptions ?? parseArgs(process.argv.slice(2))
@@ -630,6 +646,8 @@ const main = (cliOptions?: CliOptions) => {
     tigerBeetleJournalOrderEventsManifestPath:
       parsed.tigerBeetleJournalOrderEventsManifestPath ??
       process.env.TORGHUT_TIGERBEETLE_JOURNAL_ORDER_EVENTS_MANIFEST_PATH,
+    includeOptionsManifests:
+      parsed.includeOptionsManifests ?? parseBooleanEnv(process.env.TORGHUT_INCLUDE_OPTIONS_MANIFESTS),
     optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
     optionsEnricherManifestPath:
       parsed.optionsEnricherManifestPath ?? process.env.TORGHUT_OPTIONS_ENRICHER_MANIFEST_PATH,

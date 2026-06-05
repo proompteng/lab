@@ -12,9 +12,9 @@ on:
       - 'packages/scripts/src/torghut/**'
       - '!packages/scripts/src/torghut/__tests__/**'
       - '!packages/scripts/src/torghut/**/*.test.ts'
-      - 'packages/scripts/src/shared/**'
-      - 'package.json'
-      - 'bun.lock'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/docker.ts'
+      - 'packages/scripts/src/shared/git.ts'
       - '.github/workflows/torghut-build-push.yaml'
   workflow_dispatch:
 

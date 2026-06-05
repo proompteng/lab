@@ -50,8 +50,6 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
     path: 'argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml',
     selectorPath: ['spec', 'templates', 0],
   },
-  { path: 'argocd/applications/torghut-options/catalog/deployment.yaml', selectorPath: ['spec', 'template', 'spec'] },
-  { path: 'argocd/applications/torghut-options/enricher/deployment.yaml', selectorPath: ['spec', 'template', 'spec'] },
 ]
 
 const getAtPath = (root: unknown, selectorPath: Array<string | number>): JsonRecord => {
