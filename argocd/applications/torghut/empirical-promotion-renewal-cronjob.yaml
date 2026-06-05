@@ -47,6 +47,7 @@ spec:
                     --account-label TORGHUT_SIM \
                     --batch-size 1000 \
                     --max-batches 2 \
+                    --backfill-execution-events \
                     --apply \
                     --json
                   /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
