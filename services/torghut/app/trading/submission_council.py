@@ -66,6 +66,7 @@ from .runtime_strategy_resolution import (
     explicit_runtime_strategy_name_or_family_harness,
     strategy_names_from_strategy_id,
 )
+from .session_context import regular_session_close_utc_for, regular_session_open_utc_for
 from .tca import build_tca_gate_inputs
 
 
@@ -2129,6 +2130,36 @@ def _runtime_ledger_source_collection_source_dsn_env(
     )
 
 
+def _bounded_source_collection_probe_window(
+    candidate: Mapping[str, object],
+) -> tuple[str | None, str | None, bool]:
+    window_start = _safe_text(
+        candidate.get("bucket_started_at")
+        or candidate.get("window_start")
+        or candidate.get("source_window_start")
+        or candidate.get("paper_route_probe_window_start")
+    )
+    window_end = _safe_text(
+        candidate.get("bucket_ended_at")
+        or candidate.get("window_end")
+        or candidate.get("source_window_end")
+        or candidate.get("paper_route_probe_window_end")
+    )
+    if window_start is not None and window_end is not None:
+        return window_start, window_end, False
+    if not bool(candidate.get("source_collection_candidate")):
+        return window_start, window_end, False
+    if not bool(candidate.get("bounded_evidence_collection_authorized")):
+        return window_start, window_end, False
+
+    now = datetime.now(timezone.utc)
+    return (
+        regular_session_open_utc_for(now).isoformat(),
+        regular_session_close_utc_for(now).isoformat(),
+        True,
+    )
+
+
 def _runtime_ledger_paper_probation_import_plan(
     candidates: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
@@ -2150,8 +2181,9 @@ def _runtime_ledger_paper_probation_import_plan(
             derived_strategy_name_from_strategy_id(strategy_id),
         )
         account_label = _safe_text(candidate.get("account")) or "TORGHUT_SIM"
-        window_start = _safe_text(candidate.get("bucket_started_at"))
-        window_end = _safe_text(candidate.get("bucket_ended_at"))
+        window_start, window_end, defaulted_source_collection_window = (
+            _bounded_source_collection_probe_window(candidate)
+        )
         source_manifest_ref = _safe_text(candidate.get("source_manifest_ref")) or (
             _hypothesis_manifest_ref(hypothesis_id)
         )
@@ -2358,6 +2390,8 @@ def _runtime_ledger_paper_probation_import_plan(
         if source_collection:
             target.update(
                 {
+                    "paper_route_probe_window_start": window_start or "",
+                    "paper_route_probe_window_end": window_end or "",
                     "source_collection_priority": (
                         _safe_text(candidate.get("source_collection_priority"))
                         or "source_window_evidence_collection"
@@ -2423,6 +2457,15 @@ def _runtime_ledger_paper_probation_import_plan(
                     "final_promotion_requires_live_paper_runtime_proof": True,
                 }
             )
+            if defaulted_source_collection_window:
+                target.update(
+                    {
+                        "runtime_ledger_source_collection_window_defaulted": True,
+                        "runtime_ledger_source_collection_window_source": (
+                            "current_regular_session_bounded_source_collection_default"
+                        ),
+                    }
+                )
         if bucket_ref:
             target["runtime_ledger_bucket_ref"] = bucket_ref
         targets.append(target)
