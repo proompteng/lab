@@ -6288,8 +6288,26 @@ def trading_paper_route_evidence(
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
+def _paper_route_target_plan_audit_mode_value(mode: str) -> bool | None:
+    normalized = mode.strip().lower()
+    if normalized == "deferred":
+        return False
+    if normalized == "full":
+        return True
+    return None
+
+
 @app.get("/trading/paper-route-target-plan")
-def trading_paper_route_target_plan() -> JSONResponse:
+def trading_paper_route_target_plan(
+    runtime_window_import_audit: str = Query(
+        "auto",
+        pattern="^(auto|deferred|full)$",
+        description=(
+            "Runtime-window import audit mode. Use deferred for low-latency "
+            "clean-window readback; auto runs full proof audit only when import-ready."
+        ),
+    ),
+) -> JSONResponse:
     """Return the lightweight next-window paper-route target plan."""
 
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
@@ -6391,7 +6409,9 @@ def trading_paper_route_target_plan() -> JSONResponse:
             route_reacquisition_book=route_reacquisition_book,
             # Keep this provider endpoint bounded; proof-grade runtime import
             # audits run only after the runtime window is import-ready.
-            include_runtime_window_import_audit=None,
+            include_runtime_window_import_audit=_paper_route_target_plan_audit_mode_value(
+                runtime_window_import_audit,
+            ),
             target_account_audit_available=_paper_route_target_account_audit_available(
                 cast(Mapping[str, Any], live_submission_gate)
             ),

@@ -1327,7 +1327,8 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("target_plan_readback_args=()", args)
         self.assertIn("--target-plan-readback-url", args)
         self.assertIn(
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/"
+            "paper-route-target-plan?runtime_window_import_audit=deferred",
             args,
         )
         self.assertIn("--target-plan-readback-timeout-seconds 10", args)

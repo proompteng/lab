@@ -47,7 +47,7 @@ spec:
                   if /opt/venv/bin/python scripts/flatten_paper_account_positions.py --help \
                     | grep -q -- '--target-plan-readback-url'; then
                     target_plan_readback_args=(
-                      --target-plan-readback-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan
+                      --target-plan-readback-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan?runtime_window_import_audit=deferred
                       --target-plan-readback-timeout-seconds 10
                       --require-target-plan-readback-clean
                     )
