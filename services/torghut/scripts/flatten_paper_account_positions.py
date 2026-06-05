@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -45,6 +47,9 @@ FLATTEN_CLOSE_DECISION_SCHEMA_VERSION = (
 LINEAGE_LINKED_STATUS = "linked_source_lineage"
 LINEAGE_UNLINKED_STATUS = "unlinked_no_source_lineage"
 LINEAGE_PERSIST_FAILED_STATUS = "lineage_persist_failed"
+TARGET_PLAN_READBACK_SCHEMA_VERSION = (
+    "torghut.paper-account-flatten-target-plan-readback.v1"
+)
 
 
 class PaperFlattenClient(Protocol):
@@ -155,6 +160,29 @@ def _parse_args() -> argparse.Namespace:
         help="Persist a fresh PositionSnapshot after the flatten attempt for runtime-window readiness gates.",
     )
     parser.add_argument(
+        "--target-plan-readback-url",
+        default="",
+        help=(
+            "Optional /trading/paper-route-target-plan URL to read after snapshot "
+            "persistence so the job output proves whether the clean-window baseline "
+            "gate sees the snapshot."
+        ),
+    )
+    parser.add_argument(
+        "--target-plan-readback-timeout-seconds",
+        type=float,
+        default=10.0,
+        help="HTTP timeout for --target-plan-readback-url.",
+    )
+    parser.add_argument(
+        "--require-target-plan-readback-clean",
+        action="store_true",
+        help=(
+            "Return non-zero when target-plan readback is requested but the matching "
+            "paper-route clean-window baseline is not clean and source-auditable."
+        ),
+    )
+    parser.add_argument(
         "--persist-lineage",
         action="store_true",
         help=(
@@ -184,6 +212,228 @@ def _sqlalchemy_dsn(dsn: str) -> str:
     if text.startswith("postgresql://"):
         return text.replace("postgresql://", "postgresql+psycopg://", 1)
     return text
+
+
+def _as_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _as_sequence(value: object) -> Sequence[object]:
+    if isinstance(value, str | bytes):
+        return []
+    return value if isinstance(value, Sequence) else []
+
+
+def _safe_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _readback_blockers(value: object) -> list[str]:
+    blockers: list[str] = []
+    for item in _as_sequence(value):
+        text = _safe_text(item)
+        if text and text not in blockers:
+            blockers.append(text)
+    return blockers
+
+
+def _target_plan_readback_plans(
+    payload: Mapping[str, Any],
+) -> list[tuple[str, Mapping[str, Any]]]:
+    plans: list[tuple[str, Mapping[str, Any]]] = [("top_level", payload)]
+    for key in (
+        "next_paper_route_runtime_window_targets",
+        "runtime_window_import_plan",
+        "next_clean_paper_route_runtime_window_targets_after_discard",
+    ):
+        plan = _as_mapping(payload.get(key))
+        if plan:
+            plans.append((key, plan))
+    return plans
+
+
+def _target_plan_readback_targets(
+    payload: Mapping[str, Any],
+) -> tuple[str, Mapping[str, Any], list[Mapping[str, Any]]]:
+    fallback_plan_name = "top_level"
+    fallback_plan = payload
+    for plan_name, plan in _target_plan_readback_plans(payload):
+        targets = [
+            item
+            for item in (_as_mapping(raw) for raw in _as_sequence(plan.get("targets")))
+            if item
+        ]
+        if targets:
+            return plan_name, plan, targets
+        fallback_plan_name = plan_name
+        fallback_plan = plan
+    return fallback_plan_name, fallback_plan, []
+
+
+def _target_plan_target_account_label(target: Mapping[str, Any]) -> str:
+    for key in (
+        "account_label",
+        "source_account_label",
+        "paper_route_account_label",
+        "runtime_account_label",
+    ):
+        text = _safe_text(target.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _target_plan_target_matches_account(
+    target: Mapping[str, Any],
+    account_label: str,
+) -> bool:
+    normalized_account = account_label.strip().upper()
+    if not normalized_account:
+        return True
+    return _target_plan_target_account_label(target).upper() == normalized_account
+
+
+def _target_plan_baseline_readback(
+    target: Mapping[str, Any],
+) -> dict[str, object]:
+    baseline = _as_mapping(target.get("paper_route_clean_window_baseline_state"))
+    blockers = _readback_blockers(
+        target.get("paper_route_clean_window_baseline_blockers")
+    )
+    if not blockers:
+        blockers = _readback_blockers(baseline.get("blockers"))
+    state = _safe_text(baseline.get("state")) or _safe_text(
+        target.get("paper_route_clean_window_state")
+    )
+    return {
+        "candidate_id": _safe_text(target.get("candidate_id")),
+        "account_label": _target_plan_target_account_label(target),
+        "window_start": _safe_text(target.get("window_start")),
+        "window_end": _safe_text(target.get("window_end")),
+        "state": state or "unknown",
+        "snapshot_id": _safe_text(baseline.get("snapshot_id")),
+        "snapshot_as_of": _safe_text(baseline.get("snapshot_as_of")),
+        "source_auditable": bool(baseline.get("source_auditable")),
+        "blockers": blockers,
+    }
+
+
+def read_target_plan_clean_window_readback(
+    *,
+    url: str,
+    account_label: str,
+    snapshot_id: str | None,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    normalized_url = url.strip()
+    base_payload: dict[str, object] = {
+        "schema_version": TARGET_PLAN_READBACK_SCHEMA_VERSION,
+        "url": normalized_url,
+        "account_label": account_label,
+        "position_snapshot_id": snapshot_id,
+        "state": "not_requested",
+        "http_status": None,
+        "plan_source": None,
+        "target_count": 0,
+        "matching_target_count": 0,
+        "clean_matching_target_count": 0,
+        "persisted_snapshot_seen": False,
+        "clean_window_baseline_readiness": {},
+        "targets": [],
+        "blockers": [],
+    }
+    if not normalized_url:
+        return base_payload
+
+    try:
+        request = urllib.request.Request(
+            normalized_url,
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(
+            request,
+            timeout=max(0.1, float(timeout_seconds or 0.1)),
+        ) as response:
+            http_status = int(getattr(response, "status", 200))
+            body = response.read()
+    except urllib.error.HTTPError as exc:
+        return {
+            **base_payload,
+            "state": "blocked",
+            "http_status": int(exc.code),
+            "error": str(exc.reason or exc),
+            "blockers": ["paper_route_target_plan_readback_http_error"],
+        }
+    except (OSError, TimeoutError, ValueError, urllib.error.URLError) as exc:
+        return {
+            **base_payload,
+            "state": "blocked",
+            "error": str(exc),
+            "blockers": ["paper_route_target_plan_readback_failed"],
+        }
+
+    try:
+        decoded = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {
+            **base_payload,
+            "state": "blocked",
+            "http_status": http_status,
+            "error": str(exc),
+            "blockers": ["paper_route_target_plan_readback_json_invalid"],
+        }
+    if not isinstance(decoded, Mapping):
+        return {
+            **base_payload,
+            "state": "blocked",
+            "http_status": http_status,
+            "blockers": ["paper_route_target_plan_readback_payload_invalid"],
+        }
+
+    plan_source, plan, targets = _target_plan_readback_targets(decoded)
+    matching_targets = [
+        target
+        for target in targets
+        if _target_plan_target_matches_account(target, account_label)
+    ]
+    readback_targets = [
+        _target_plan_baseline_readback(target) for target in matching_targets
+    ]
+    clean_targets = [
+        target
+        for target in readback_targets
+        if target.get("state") == "clean" and not target.get("blockers")
+    ]
+    persisted_snapshot_seen = bool(
+        snapshot_id
+        and any(target.get("snapshot_id") == snapshot_id for target in readback_targets)
+    )
+    summary = _as_mapping(plan.get("clean_window_baseline_readiness"))
+    blockers = _readback_blockers(summary.get("blockers"))
+    for target in readback_targets:
+        for blocker in _readback_blockers(target.get("blockers")):
+            if blocker not in blockers:
+                blockers.append(blocker)
+    if not matching_targets:
+        blockers.append("paper_route_target_plan_readback_target_missing")
+    if matching_targets and len(clean_targets) != len(matching_targets):
+        blockers.append("paper_route_target_plan_clean_window_baseline_not_clean")
+    if snapshot_id and matching_targets and not persisted_snapshot_seen:
+        blockers.append("paper_route_target_plan_readback_snapshot_id_mismatch")
+    blockers = sorted(dict.fromkeys(blockers))
+    return {
+        **base_payload,
+        "state": "clean" if matching_targets and not blockers else "blocked",
+        "http_status": http_status,
+        "plan_source": plan_source,
+        "target_count": len(targets),
+        "matching_target_count": len(matching_targets),
+        "clean_matching_target_count": len(clean_targets),
+        "persisted_snapshot_seen": persisted_snapshot_seen,
+        "clean_window_baseline_readiness": dict(summary),
+        "targets": readback_targets,
+        "blockers": blockers,
+    }
 
 
 def _session_factory_from_env(
@@ -1014,6 +1264,25 @@ def main() -> int:
                 payload["position_snapshot_skipped"] = (
                     "paper_account_label_or_mode_guard_failed"
                 )
+        if args.target_plan_readback_url or args.require_target_plan_readback_clean:
+            readback = read_target_plan_clean_window_readback(
+                url=str(args.target_plan_readback_url or ""),
+                account_label=str(args.account_label or ""),
+                snapshot_id=(
+                    str(payload["position_snapshot_id"])
+                    if payload.get("position_snapshot_id")
+                    else None
+                ),
+                timeout_seconds=max(
+                    0.1,
+                    float(args.target_plan_readback_timeout_seconds or 0.1),
+                ),
+            )
+            payload["target_plan_readback"] = readback
+            payload["target_plan_readback_required_clean"] = bool(
+                args.require_target_plan_readback_clean
+            )
+            payload["target_plan_readback_clean"] = readback.get("state") == "clean"
     finally:
         if session_engine is not None:
             session_engine.dispose()
@@ -1024,7 +1293,13 @@ def main() -> int:
             f"status={payload['status']} positions={payload['position_count']} "
             f"submitted={payload['submitted_order_count']} blockers={','.join(payload['blockers'])}"
         )
-    return 0 if payload["status"] in TERMINAL_CLEAN_STATUSES else 2
+    if payload["status"] not in TERMINAL_CLEAN_STATUSES:
+        return 2
+    if bool(payload.get("target_plan_readback_required_clean")) and not bool(
+        payload.get("target_plan_readback_clean")
+    ):
+        return 3
+    return 0
 
 
 if __name__ == "__main__":
