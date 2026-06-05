@@ -681,11 +681,21 @@ def _source_decision_target_notional_sizing_summary(
     rows: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
     source_row_count = len(rows)
+    paper_route_probe_exit_identifiers = _paper_route_probe_exit_identifiers(rows)
+    sizing_required_rows = [
+        row
+        for row in rows
+        if not _source_row_is_paper_route_probe_exit_or_linked(
+            row,
+            paper_route_probe_exit_identifiers=paper_route_probe_exit_identifiers,
+        )
+    ]
+    sizing_required_row_count = len(sizing_required_rows)
     audits: list[dict[str, object]] = []
     authoritative_count = 0
     non_authoritative_source_counts: dict[str, int] = {}
     blocker_counts: dict[str, int] = {}
-    for row in rows:
+    for row in sizing_required_rows:
         audit = _source_decision_target_notional_sizing_audit(row)
         if audit is None:
             continue
@@ -706,10 +716,10 @@ def _source_decision_target_notional_sizing_summary(
         or mode_counts.get("bounded_paper_route_collection", 0) > 0
         or any(
             _first_text(row, "paper_route_probe_target_notional", "target_notional")
-            for row in rows
+            for row in sizing_required_rows
         )
     )
-    missing_count = max(source_row_count - len(audits), 0)
+    missing_count = max(sizing_required_row_count - len(audits), 0)
     blockers: list[str] = []
     if requires_target_notional_sizing and missing_count:
         blockers.append("paper_route_target_notional_sizing_missing")
@@ -718,6 +728,10 @@ def _source_decision_target_notional_sizing_summary(
     blockers.extend(blocker_counts)
     return {
         "source_row_count": source_row_count,
+        "target_notional_sizing_required_source_row_count": (sizing_required_row_count),
+        "excluded_paper_route_probe_exit_row_count": (
+            source_row_count - sizing_required_row_count
+        ),
         "audit_count": len(audits),
         "authoritative_target_notional_sizing_count": authoritative_count,
         "missing_target_notional_sizing_count": (

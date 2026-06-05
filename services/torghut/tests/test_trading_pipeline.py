@@ -4346,6 +4346,142 @@ class TestTradingPipeline(TestCase):
             ["bounded_paper_route_target_notional_cap_missing"],
         )
 
+    def test_bounded_collection_target_source_rejects_entry_after_exit_window(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 5, 19, 52, tzinfo=timezone.utc)
+        exit_due_at = datetime(2026, 6, 5, 19, 45, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_allow_shorts = True
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("100000"),
+        )
+        target_metadata = {
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "hypothesis_id": "H-PAIRS-01",
+            "account_label": "TORGHUT_SIM",
+            "observed_stage": "paper",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_symbol_actions": {
+                "AAPL": "buy",
+                "AMZN": "sell",
+            },
+            "paper_route_probe_symbol_quantities": {
+                "AAPL": "1",
+                "AMZN": "1",
+            },
+            "paper_route_probe_next_session_max_notional": "75000",
+            "bounded_evidence_collection_authorized": True,
+            "bounded_live_paper_collection_authorized": True,
+            "evidence_collection_ok": True,
+            "source_decision_readiness": {"ready": True, "blockers": []},
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "exit_due_at": exit_due_at.isoformat(),
+        }
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="bounded paper-route target source after exit",
+            params={
+                "paper_route_target_plan": target_metadata,
+                "source_decision_mode": (
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                ),
+                "profit_proof_eligible": True,
+            },
+        )
+        price_fetcher = FakePriceFetcher(
+            Decimal("250"),
+            spread=Decimal("0.02"),
+            bid=Decimal("250"),
+            ask=Decimal("250.02"),
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=price_fetcher,
+        )
+
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            row = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "TORGHUT_SIM",
+            )
+
+            prepared = pipeline._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=row,
+                strategy=strategy,
+                account={
+                    "equity": "200000",
+                    "cash": "200000",
+                    "buying_power": "200000",
+                },
+                positions=[],
+            )
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], row_json["params"])
+            exit_window = cast(
+                dict[str, Any],
+                params["bounded_paper_route_target_exit_window"],
+            )
+            target_plan = cast(dict[str, Any], params["paper_route_target_plan"])
+
+        self.assertIsNone(prepared)
+        self.assertEqual(row.status, "rejected")
+        self.assertEqual(
+            row_json["reject_reason_atomic"],
+            ["bounded_paper_route_target_exit_window_elapsed"],
+        )
+        self.assertEqual(price_fetcher.snapshot_requests, 0)
+        self.assertEqual(
+            exit_window["reason"], "bounded_paper_route_target_exit_window_elapsed"
+        )
+        self.assertEqual(exit_window["event_ts"], now.isoformat())
+        self.assertEqual(exit_window["exit_due_at"], exit_due_at.isoformat())
+        self.assertEqual(
+            target_plan["bounded_paper_route_target_exit_window"], exit_window
+        )
+
     def test_bounded_collection_target_sizing_helper_fail_closed_branches(
         self,
     ) -> None:
