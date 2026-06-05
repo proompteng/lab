@@ -1449,6 +1449,85 @@ class TestOrderFeed(TestCase):
         )
         self.assertEqual(event.source_window_id, source_window_id)
 
+    def test_backfill_source_windows_filters_by_event_window(self) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            before_event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-before-window",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=111,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 9, 59, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                raw_event={"event": "fill"},
+                execution_id=execution.id,
+                trade_decision_id=execution.trade_decision_id,
+            )
+            in_window_event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-inside-window",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=112,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 5, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                raw_event={"event": "fill"},
+                execution_id=execution.id,
+                trade_decision_id=execution.trade_decision_id,
+            )
+            after_event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-after-window",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=113,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 30, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                raw_event={"event": "fill"},
+                execution_id=execution.id,
+                trade_decision_id=execution.trade_decision_id,
+            )
+            session.add_all([before_event, in_window_event, after_event])
+            session.commit()
+
+            result = backfill_order_feed_source_windows(
+                session,
+                account_label="paper",
+                window_start=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_end=datetime(2026, 2, 1, 10, 30, tzinfo=timezone.utc),
+                limit=10,
+            )
+            session.commit()
+            session.refresh(before_event)
+            session.refresh(in_window_event)
+            session.refresh(after_event)
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 1,
+                "source_windows_created": 1,
+                "source_windows_reused": 0,
+                "events_linked": 1,
+            },
+        )
+        self.assertIsNone(before_event.source_window_id)
+        self.assertIsNotNone(in_window_event.source_window_id)
+        self.assertIsNone(after_event.source_window_id)
+
     def test_linking_one_event_keeps_source_window_unlinked_counts_aggregate(
         self,
     ) -> None:
