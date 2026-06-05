@@ -636,6 +636,49 @@ def _decision_execution_policy_hash(
     )
 
 
+def _observed_broker_order_policy_hash(*, execution: Execution) -> str | None:
+    raw_order = _mapping_from_any(execution.raw_order)
+    if not raw_order:
+        return None
+
+    side = _text_from_payload(raw_order, "side")
+    order_type = _text_from_payload(raw_order, "order_type", "type")
+    time_in_force = _text_from_payload(raw_order, "time_in_force")
+    broker_order_id = (
+        _text_from_payload(raw_order, "id")
+        or str(execution.alpaca_order_id or "").strip()
+    )
+    submitted_qty = _text_from_payload(raw_order, "qty")
+    notional = _text_from_payload(raw_order, "notional")
+    if not side or not order_type or not time_in_force or not broker_order_id:
+        return None
+    if not submitted_qty and notional is None:
+        return None
+
+    policy_payload = {
+        "source": "observed_broker_order_execution_policy",
+        "broker": "alpaca",
+        "alpaca_account_label": execution.alpaca_account_label,
+        "alpaca_order_id": broker_order_id,
+        "client_order_id": _text_from_payload(raw_order, "client_order_id")
+        or execution.client_order_id,
+        "symbol": _text_from_payload(raw_order, "symbol") or execution.symbol,
+        "side": side,
+        "order_type": order_type,
+        "time_in_force": time_in_force,
+        "submitted_qty": submitted_qty,
+        "notional": notional,
+        "limit_price": _text_from_payload(raw_order, "limit_price"),
+        "stop_price": _text_from_payload(raw_order, "stop_price"),
+        "extended_hours": raw_order.get("extended_hours"),
+        "order_class": _text_from_payload(raw_order, "order_class"),
+        "position_intent": _text_from_payload(raw_order, "position_intent"),
+    }
+    return _stable_payload_digest(
+        {key: value for key, value in policy_payload.items() if value is not None}
+    )
+
+
 def _execution_policy_hash_candidates(
     *,
     source_payloads: Collection[Mapping[str, object]],
@@ -682,12 +725,17 @@ def _execution_policy_hash_candidates(
         decision_payload=decision_payload,
         execution=execution,
     )
-    if decision_policy_hash is None:
+    if decision_policy_hash is not None:
+        source_fields["execution_policy_hash"] = (
+            "trade_decisions.decision_json+executions.order_fields"
+        )
+        return {decision_policy_hash}
+
+    observed_order_policy_hash = _observed_broker_order_policy_hash(execution=execution)
+    if observed_order_policy_hash is None:
         return set()
-    source_fields["execution_policy_hash"] = (
-        "trade_decisions.decision_json+executions.order_fields"
-    )
-    return {decision_policy_hash}
+    source_fields["execution_policy_hash"] = "executions.raw_order_observed_policy"
+    return {observed_order_policy_hash}
 
 
 def _existing_lineage_source_field(

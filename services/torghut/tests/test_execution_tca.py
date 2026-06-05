@@ -564,6 +564,64 @@ class TestExecutionTcaCostLineage(TestCase):
             "execution_policy_advisor_payload",
         )
 
+    def test_upsert_uses_observed_broker_order_policy_when_decision_missing(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            execution = self._insert_execution(
+                session,
+                None,
+                order_id="orphan-broker-order",
+                side="sell",
+                raw_order={
+                    "id": "orphan-broker-order",
+                    "asset_class": "us_equity",
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "type": "limit",
+                    "time_in_force": "day",
+                    "qty": "10",
+                    "limit_price": "99.50",
+                    "commission": "0.02",
+                    "cost_model": {"source": "broker_reported_commission"},
+                },
+            )
+
+            upsert_execution_tca_metric(session, execution)
+            session.flush()
+            lineage = self._lineage(execution)
+
+        self.assertEqual(lineage["status"], "source_backed")
+        self.assertNotIn("execution_policy_hash_missing", lineage["blockers"])
+        self.assertIsInstance(lineage["execution_policy_hash"], str)
+        self.assertEqual(
+            lineage["source_fields"]["execution_policy_hash"],
+            "executions.raw_order_observed_policy",
+        )
+
+    def test_upsert_keeps_orphan_execution_without_broker_policy_blocked(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            execution = self._insert_execution(
+                session,
+                None,
+                order_id="orphan-missing-policy-order",
+                raw_order={
+                    "id": "orphan-missing-policy-order",
+                    "commission": "0.02",
+                    "cost_model": {"source": "broker_reported_commission"},
+                },
+            )
+
+            upsert_execution_tca_metric(session, execution)
+            session.flush()
+            lineage = self._lineage(execution)
+
+        self.assertEqual(lineage["status"], "blocked")
+        self.assertIn("execution_policy_hash_missing", lineage["blockers"])
+        self.assertIsNone(lineage["execution_policy_hash"])
+
     def test_upsert_blocks_ambiguous_policy_and_cost_model_hashes(self) -> None:
         with self.session_local() as session:
             strategy = self._insert_strategy(session)
@@ -686,7 +744,7 @@ class TestExecutionTcaCostLineage(TestCase):
     def _insert_execution(
         self,
         session: Session,
-        decision: TradeDecision,
+        decision: TradeDecision | None,
         *,
         order_id: str,
         raw_order: dict[str, object],
@@ -694,7 +752,7 @@ class TestExecutionTcaCostLineage(TestCase):
         execution_audit_json: dict[str, object] | None = None,
     ) -> Execution:
         execution = Execution(
-            trade_decision_id=decision.id,
+            trade_decision_id=decision.id if decision is not None else None,
             alpaca_order_id=order_id,
             client_order_id=f"client-{order_id}",
             symbol="AAPL",
