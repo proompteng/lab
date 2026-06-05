@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
 from unittest.mock import patch
+from uuid import uuid4
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -70,6 +71,7 @@ from app.trading.tigerbeetle_reconcile import (
     _payload_int,
     _payload_string_list,
     _runtime_ledger_payload_account_ids,
+    _stable_ref_archives_event_transfer,
     _stable_ref_matches,
     _runtime_ledger_amount_micros,
     _usd_to_micros,
@@ -535,6 +537,265 @@ class TestTigerBeetleReconcile(TestCase):
         self.assertTrue(payload["ok"], payload)
         self.assertNotIn(BLOCKER_POSTGRES_REF_MISMATCH, payload["blockers"])
         self.assertEqual(payload["mismatched_ref_count"], 0)
+
+    def test_reconciliation_accepts_stable_order_event_ref_after_decision_backfill(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            event = ExecutionOrderEvent(
+                event_fingerprint="standalone-fill-before-decision-linkage",
+                source_topic="torghut.trade-updates.v2",
+                source_partition=0,
+                source_offset=66072,
+                alpaca_account_label="PA3SX7FYNUTF",
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                client_order_id="tgpf-20260604200525-aapl-1eb44d6252",
+                event_type="partial_fill",
+                status="partially_filled",
+                qty=Decimal("120.1614"),
+                filled_qty=Decimal("0.1614"),
+                filled_qty_delta=Decimal("0.1614"),
+                avg_fill_price=Decimal("311.01"),
+                filled_notional_delta=Decimal("50.197014"),
+                fill_quantity_basis="cumulative_to_delta",
+                raw_event={
+                    "event": "partial_fill",
+                    "_torghut_linkage": {
+                        "blockers": ["account_mismatch_execution_identity"],
+                    },
+                },
+            )
+            session.add(event)
+            session.flush()
+            plan = build_order_event_transfer_plan(
+                session, event, settings_obj=_settings()
+            )
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            transfer = plan.transfer_spec
+            payload_json = {
+                "debit_account_id": str(transfer.debit_account_id),
+                "credit_account_id": str(transfer.credit_account_id),
+                "pending_mode": plan.pending_mode,
+                "source": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+            }
+            stable_payload = tigerbeetle_stable_ref_payload(
+                cluster_id=2001,
+                account_specs=plan.account_specs,
+                transfer_spec=transfer,
+                source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                source_id=str(event.id),
+                payload_json=payload_json,
+                event_fingerprint=event.event_fingerprint,
+            )
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(transfer.transfer_id),
+                    transfer_kind=transfer.transfer_kind,
+                    ledger=transfer.ledger,
+                    code=transfer.code,
+                    amount=Decimal(transfer.amount),
+                    status="created",
+                    execution_order_event_id=event.id,
+                    source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    source_id=str(event.id),
+                    event_fingerprint=event.event_fingerprint,
+                    payload_json={**payload_json, **stable_payload},
+                )
+            )
+            event.trade_decision_id = uuid4()
+            session.flush()
+            current_plan = build_order_event_transfer_plan(
+                session, event, settings_obj=_settings()
+            )
+            self.assertIsNotNone(current_plan)
+            assert current_plan is not None
+            self.assertNotEqual(
+                transfer.credit_account_id,
+                current_plan.transfer_spec.credit_account_id,
+            )
+
+            client = FakeTigerBeetleClient()
+            client.transfers[transfer.transfer_id] = transfer
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertNotIn(BLOCKER_POSTGRES_REF_MISMATCH, payload["blockers"])
+        self.assertEqual(payload["mismatched_transfer_count"], 0)
+
+    def test_stable_order_event_archive_requires_stable_payload(self) -> None:
+        with Session(self.engine) as session:
+            event = ExecutionOrderEvent(
+                event_fingerprint="missing-stable-ref-payload",
+                source_topic="torghut.trade-updates.v2",
+                source_partition=0,
+                source_offset=66073,
+                alpaca_account_label="paper",
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.flush()
+            ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="1001",
+                transfer_kind="fill_post",
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_FILL_POST,
+                amount=Decimal("190250000"),
+                status="created",
+                execution_order_event_id=event.id,
+                source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                source_id=str(event.id),
+                event_fingerprint=event.event_fingerprint,
+                payload_json={"source": SOURCE_TYPE_EXECUTION_ORDER_EVENT},
+            )
+
+            self.assertFalse(_stable_ref_archives_event_transfer(ref, event))
+
+    def test_stable_order_event_archive_rejects_malformed_stable_payload(self) -> None:
+        with Session(self.engine) as session:
+            event = ExecutionOrderEvent(
+                event_fingerprint="malformed-stable-ref-payload",
+                source_topic="torghut.trade-updates.v2",
+                source_partition=0,
+                source_offset=66074,
+                alpaca_account_label="paper",
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.flush()
+            plan = build_order_event_transfer_plan(
+                session, event, settings_obj=_settings()
+            )
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            transfer = plan.transfer_spec
+            payload_json = {
+                "debit_account_id": str(transfer.debit_account_id),
+                "credit_account_id": str(transfer.credit_account_id),
+                "pending_mode": plan.pending_mode,
+                "source": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+            }
+            stable_payload = tigerbeetle_stable_ref_payload(
+                cluster_id=2001,
+                account_specs=plan.account_specs,
+                transfer_spec=transfer,
+                source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                source_id=str(event.id),
+                payload_json=payload_json,
+                event_fingerprint=event.event_fingerprint,
+            )
+            stable_ref = stable_payload["stable_ref"]
+            assert isinstance(stable_ref, dict)
+            stable_ref["stable_ref_id"] = "bad-stable-ref-id"
+            ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id=str(transfer.transfer_id),
+                transfer_kind=transfer.transfer_kind,
+                ledger=transfer.ledger,
+                code=transfer.code,
+                amount=Decimal(transfer.amount),
+                status="created",
+                execution_order_event_id=event.id,
+                source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                source_id=str(event.id),
+                event_fingerprint=event.event_fingerprint,
+                payload_json={**payload_json, **stable_payload},
+            )
+
+            self.assertFalse(_stable_ref_archives_event_transfer(ref, event))
+
+    def test_reconciliation_blocks_order_event_ref_when_core_transfer_changes(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            event = ExecutionOrderEvent(
+                event_fingerprint="core-transfer-amount-drift",
+                source_topic="torghut.trade-updates.v2",
+                source_partition=0,
+                source_offset=66075,
+                alpaca_account_label="paper",
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.flush()
+            plan = build_order_event_transfer_plan(
+                session, event, settings_obj=_settings()
+            )
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            transfer = plan.transfer_spec
+            drifted_amount = transfer.amount + 1
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(transfer.transfer_id),
+                    transfer_kind=transfer.transfer_kind,
+                    ledger=transfer.ledger,
+                    code=transfer.code,
+                    amount=Decimal(drifted_amount),
+                    status="created",
+                    execution_order_event_id=event.id,
+                    source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    source_id=str(event.id),
+                    event_fingerprint=event.event_fingerprint,
+                    payload_json={
+                        "debit_account_id": str(transfer.debit_account_id),
+                        "credit_account_id": str(transfer.credit_account_id),
+                        "pending_mode": plan.pending_mode,
+                        "source": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    },
+                )
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[transfer.transfer_id] = TigerBeetleTransferSpec(
+                transfer_id=transfer.transfer_id,
+                transfer_kind=transfer.transfer_kind,
+                debit_account_id=transfer.debit_account_id,
+                credit_account_id=transfer.credit_account_id,
+                amount=drifted_amount,
+                ledger=transfer.ledger,
+                code=transfer.code,
+            )
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+        self.assertFalse(payload["ok"], payload)
+        self.assertIn(BLOCKER_POSTGRES_REF_MISMATCH, payload["blockers"])
+        self.assertEqual(payload["mismatched_transfer_count"], 1)
 
     def test_runtime_payload_account_ids_normalize_sequence_scalar_and_missing_values(
         self,

@@ -204,6 +204,36 @@ def _stable_ref_matches(row: TigerBeetleTransferRef) -> bool:
     )
 
 
+def _stable_ref_archives_event_transfer(
+    ref: TigerBeetleTransferRef,
+    event: ExecutionOrderEvent,
+) -> bool:
+    stable_ref = _stable_ref_payload(ref)
+    if not stable_ref:
+        return False
+    if not _stable_ref_matches(ref):
+        return False
+    component_mapping = cast(Mapping[str, object], stable_ref.get("components"))
+    source_id = str(ref.source_id or "").strip()
+    event_source_id = str(event.id)
+    event_signature = str(event.event_fingerprint or "")
+    return (
+        stable_ref.get("schema_version") == "torghut.tigerbeetle-stable-ref.v1"
+        and str(component_mapping.get("source_type") or "")
+        == SOURCE_TYPE_EXECUTION_ORDER_EVENT
+        and str(component_mapping.get("source_id") or "") == event_source_id
+        and source_id == event_source_id
+        and str(component_mapping.get("transfer_kind") or "") == ref.transfer_kind
+        and str(component_mapping.get("source_signature") or "") == event_signature
+        and str(stable_ref.get("transfer_id") or "") == str(ref.transfer_id)
+        and str(stable_ref.get("ledger") or "") == str(ref.ledger)
+        and str(stable_ref.get("code") or "") == str(ref.code)
+        and str(stable_ref.get("amount") or "") == str(int(ref.amount))
+        and stable_ref.get("promotion_authority") is False
+        and stable_ref.get("overrides_runtime_ledger_authority") is False
+    )
+
+
 def _ref_matches_expected_event(
     session: Session,
     ref: TigerBeetleTransferRef,
@@ -230,19 +260,23 @@ def _ref_matches_expected_event(
     if plan is None:
         return False
     expected = plan.transfer_spec
-    return (
+    core_matches = (
         _u128_text(ref.transfer_id) == u128_decimal(expected.transfer_id)
         and ref.transfer_kind == plan.transfer_kind
         and ref.amount == Decimal(expected.amount)
         and ref.ledger == expected.ledger
         and ref.code == expected.code
-        and _account_payload_matches(ref, "debit_account_id", expected.debit_account_id)
-        and _account_payload_matches(
-            ref,
-            "credit_account_id",
-            expected.credit_account_id,
-        )
     )
+    if not core_matches:
+        return False
+    accounts_match = _account_payload_matches(
+        ref, "debit_account_id", expected.debit_account_id
+    ) and _account_payload_matches(
+        ref,
+        "credit_account_id",
+        expected.credit_account_id,
+    )
+    return accounts_match or _stable_ref_archives_event_transfer(ref, event)
 
 
 def _ref_sample(
@@ -990,11 +1024,7 @@ def _latest_run_payload(
         else cast(Mapping[str, object], {})
     )
     ref_count_field_names = sorted(
-        {
-            key
-            for key in REF_COUNT_FIELD_NAMES
-            if key in payload or key in ref_counts
-        }
+        {key for key in REF_COUNT_FIELD_NAMES if key in payload or key in ref_counts}
     )
     account_ref_count = _payload_int(payload, "account_ref_count") or _payload_int(
         ref_counts,
@@ -1881,7 +1911,9 @@ def reconcile_tigerbeetle_transfers(
                 mismatched_transfer_count=mismatched_transfer_count,
                 source_missing_count=source_missing_count,
                 account_ref_count=_payload_int(compact_ref_counts, "account_ref_count"),
-                transfer_ref_count=_payload_int(compact_ref_counts, "transfer_ref_count"),
+                transfer_ref_count=_payload_int(
+                    compact_ref_counts, "transfer_ref_count"
+                ),
                 runtime_ledger_ref_count=_payload_int(
                     compact_ref_counts,
                     "runtime_ledger_ref_count",
