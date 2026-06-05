@@ -23,6 +23,7 @@ from app.trading.scheduler.simple_pipeline import (
     _target_active_in_window,
     _target_probe_symbol_notional_budget,
     _target_probe_symbol_quantities,
+    _target_probe_window,
     _target_runtime_account_matches,
     _target_symbols,
 )
@@ -623,6 +624,120 @@ def test_target_source_decisions_size_default_quantities_from_target_notional(
             assert (
                 decision.params["simple_lane"]["paper_route_target_notional_sizing"]
                 == sizing
+            )
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_allow_shorts = allow_shorts_before
+
+
+def test_source_collection_target_defaults_current_session_probe_contract(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    allow_shorts_before = settings.trading_allow_shorts
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_allow_shorts = True
+        now = datetime(2026, 6, 5, 14, 45, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            source_kind="runtime_ledger_source_collection_candidate",
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_name="69cf50e3-4815-47c2-b802-1efbaac09ecb",
+            runtime_strategy_name="69cf50e3-4815-47c2-b802-1efbaac09ecb",
+            strategy_lookup_names=[
+                "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                "microbar-cross-sectional-pairs-v1",
+            ],
+            source_collection_authorized=True,
+            source_collection_authorization_scope=(
+                "source_window_evidence_collection_only"
+            ),
+            target_notional="75000",
+            paper_route_probe_next_session_max_notional="75000",
+            bounded_evidence_collection_max_notional="75000",
+        )
+        target.pop("paper_route_probe_symbols")
+        target.pop("source_decision_readiness")
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline.price_fetcher = SimpleNamespace(
+            fetch_market_snapshot=lambda signal: MarketSnapshot(
+                symbol=signal.symbol,
+                as_of=signal.event_ts,
+                price=Decimal("100"),
+                spread=Decimal("0"),
+                source="fixture",
+                bid=Decimal("100"),
+                ask=Decimal("100"),
+            )
+        )
+        pipeline._is_market_session_open = lambda _now: True
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        normalized = pipeline._paper_route_target_with_local_probe_contract(
+            target,
+            strategies=[strategy],
+        )
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            _target_symbols(normalized),
+            None,
+            [normalized],
+        )
+
+        assert normalized["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+        assert normalized["paper_route_probe_window_defaulted"] is True
+        assert normalized["paper_route_probe_window_source"] == (
+            "current_regular_session_source_collection_default"
+        )
+        assert _target_probe_window(normalized) == (
+            datetime(2026, 6, 5, 13, 30, tzinfo=timezone.utc),
+            datetime(2026, 6, 5, 20, 0, tzinfo=timezone.utc),
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[strategy],
+            allowed_symbols={"AAPL", "AMZN"},
+            positions=[],
+            session=None,
+        )
+
+        assert {decision.symbol: decision.qty for decision in decisions} == {
+            "AAPL": Decimal("375.0000"),
+            "AMZN": Decimal("375.0000"),
+        }
+        actions = {
+            decision.symbol: decision.params["simple_lane"][
+                "paper_route_probe_leg_action"
+            ]
+            for decision in decisions
+        }
+        assert actions == {"AAPL": "buy", "AMZN": "sell"}
+        for decision in decisions:
+            metadata = decision.params["paper_route_target_plan_source_decision"]
+            assert metadata["source_collection_authorized"] is True
+            assert metadata["profit_proof_eligible"] is True
+            assert metadata["paper_route_probe_window_start"] == (
+                "2026-06-05T13:30:00+00:00"
+            )
+            assert metadata["paper_route_probe_window_end"] == (
+                "2026-06-05T20:00:00+00:00"
+            )
+            assert decision.params["source_decision_mode"] == (
+                "bounded_paper_route_collection"
             )
     finally:
         settings.trading_mode = trading_mode_before
