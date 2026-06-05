@@ -35,6 +35,7 @@ DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE = (
 DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCES = (
     DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
     "runtime_ledger_paper_probation_import_plan",
+    "latest_closed_paper_route_runtime_window_targets",
     "next_paper_route_runtime_window_targets",
     "next_clean_paper_route_runtime_window_targets_after_discard",
 )
@@ -290,6 +291,10 @@ def _candidate_materialization_plans(
         (
             "runtime_ledger_paper_probation_import_plan",
             _to_str_map(payload.get("runtime_ledger_paper_probation_import_plan")),
+        ),
+        (
+            "latest_closed_paper_route_runtime_window_targets",
+            _to_str_map(payload.get("latest_closed_paper_route_runtime_window_targets")),
         ),
         (
             "next_paper_route_runtime_window_targets",
