@@ -21,6 +21,31 @@ _READY_STATES = {"clean", "current", "good", "pass", "present", "quality_good"}
 _ALLOW_DECISIONS = {"allow", "approved", "current", "pass"}
 _ROUTEABLE_STATES = {"routeable", "probing"}
 _BLOCKING_PROOF_STATES = {"degraded", "fail", "missing", "stale"}
+_PAPER_PROBATION_SHORTLIST_LIMIT = 3
+_PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS = (
+    "real_runtime_trade_decisions",
+    "broker_order_submissions_and_status_events",
+    "broker_fill_events",
+    "post_cost_costs_tca_and_execution_shortfall",
+    "source_backed_runtime_ledger_lineage",
+    "closed_flat_position_proof",
+    "broker_runtime_ledger_reconciliation",
+)
+_PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH = (
+    "preserve_final_promotion_gates_fail_closed",
+    "run_bounded_live_paper_probe_with_configured_paper_account_only",
+    "materialize_source_backed_runtime_ledger_lineage_for_decisions_orders_fills_costs",
+    "collect_market_impact_tail_risk_and_fill_survival_evidence",
+    "verify_closed_flat_positions_and_broker_runtime_ledger_reconciliation",
+    "reevaluate_post_cost_runtime_profitability_before_any_final_promotion",
+)
+_PAPER_PROBATION_SOURCE_MARKERS = (
+    "closing_auction_market_making_arxiv_2601_17247_2026",
+    "regime_weighted_conformal_var_arxiv_2602_03903_2026",
+    "limit_order_fill_survival_arxiv_2512_05734_2025",
+    "realistic_market_impact_arxiv_2603_29086_2026",
+    "trade_flow_microstructure_foundation_model_arxiv_2602_23784_2026",
+)
 
 
 def _text(value: object, default: str = "") -> str:
@@ -504,6 +529,140 @@ def _packet(
     }
 
 
+def _paper_probation_blockers(packet: Mapping[str, object]) -> list[str]:
+    blockers: list[str] = []
+    decision = _text(packet.get("decision")).lower()
+    adjusted_edge = _float(packet.get("quality_adjusted_edge")) or 0.0
+    non_promoting = _strings(packet.get("non_promoting_receipts"))
+
+    if decision == "hold":
+        blockers.append("quality_frontier_packet_hold")
+    if adjusted_edge <= 0:
+        blockers.append("quality_adjusted_edge_non_positive")
+    if non_promoting:
+        blockers.append("required_receipts_missing_or_non_promoting")
+        blockers.extend(non_promoting)
+    if _text(packet.get("max_notional"), "0") != "0":
+        blockers.append("paper_probation_requires_zero_live_notional")
+    return list(dict.fromkeys(blockers))
+
+
+def _paper_probation_repair_actions(blockers: Sequence[str]) -> list[str]:
+    actions = [
+        "collect_runtime_ledger_paper_evidence",
+        "validate_target_notional_scale_capacity_before_paper_orders",
+        "collect_market_impact_and_execution_cost_evidence",
+        "collect_tail_risk_and_fill_survival_evidence",
+        "collect_queue_position_survival_fill_curve_evidence",
+    ]
+    if blockers:
+        actions.append("repair_non_promoting_quality_receipts_before_paper_orders")
+    actions.append("keep_final_promotion_gates_fail_closed")
+    return list(dict.fromkeys(actions))
+
+
+def _paper_probation_item(packet: Mapping[str, object]) -> dict[str, object] | None:
+    ranking = _mapping(packet.get("target_notional_ranking"))
+    if _text(ranking.get("status")) != "feasible":
+        return None
+
+    required_notional = _float(ranking.get("required_daily_notional"))
+    if required_notional is None or required_notional <= 0:
+        return None
+
+    capacity_notional = _float(ranking.get("capacity_daily_notional"))
+    blockers = _paper_probation_blockers(packet)
+    allowed = not blockers
+    repair_actions = _paper_probation_repair_actions(blockers)
+    capacity_ratio = (
+        round(capacity_notional / required_notional, 6)
+        if capacity_notional is not None and required_notional > 0
+        else None
+    )
+    repair_plan = {
+        "schema_version": "torghut.quality-frontier-paper-probation-repair-plan.v1",
+        "status": "ready_for_bounded_paper_evidence_collection"
+        if allowed
+        else "repair_required_before_paper_evidence_collection",
+        "packet_id": packet.get("packet_id"),
+        "hypothesis_ref": packet.get("hypothesis_ref"),
+        "target_notional_ranking": dict(ranking),
+        "recommended_daily_notional": ranking.get("required_daily_notional"),
+        "recommended_notional_authority": (
+            "planning_only_requires_bounded_paper_validation"
+        ),
+        "live_paper_evidence_requirements": list(
+            _PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+        ),
+        "safe_evidence_collection_path": list(
+            _PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH
+        ),
+        "repair_actions": repair_actions,
+        "repair_blockers": blockers,
+        "source_markers": list(_PAPER_PROBATION_SOURCE_MARKERS),
+        "live_capital_authorized": False,
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "authorization_scope": "evidence_collection_repair_only",
+    }
+    return {
+        "schema_version": "torghut.quality-frontier-paper-probation.v1",
+        "stage": "paper_evidence_collection_only",
+        "packet_id": packet.get("packet_id"),
+        "symbol": packet.get("symbol"),
+        "repair_class": packet.get("repair_class"),
+        "hypothesis_ref": packet.get("hypothesis_ref"),
+        "quality_adjusted_edge": packet.get("quality_adjusted_edge"),
+        "decision": packet.get("decision"),
+        "target_notional_ranking": dict(ranking),
+        "recommended_daily_notional": ranking.get("required_daily_notional"),
+        "capacity_to_required_notional_ratio": capacity_ratio,
+        "paper_probation_allowed": allowed,
+        "evidence_collection_ok": allowed,
+        "probation_blockers": blockers,
+        "live_paper_evidence_requirements": list(
+            _PAPER_PROBATION_LIVE_PAPER_EVIDENCE_REQUIREMENTS
+        ),
+        "safe_evidence_collection_path": list(
+            _PAPER_PROBATION_SAFE_EVIDENCE_COLLECTION_PATH
+        ),
+        "source_markers": list(_PAPER_PROBATION_SOURCE_MARKERS),
+        "paper_probation_repair_plan": repair_plan,
+        "max_live_notional": "0",
+        "live_capital_authorized": False,
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+    }
+
+
+def _paper_probation_shortlist(
+    packets: Sequence[Mapping[str, object]],
+    *,
+    limit: int = _PAPER_PROBATION_SHORTLIST_LIMIT,
+) -> list[dict[str, object]]:
+    items = [
+        item
+        for packet in packets
+        if (item := _paper_probation_item(packet)) is not None
+    ]
+    items.sort(
+        key=lambda item: (
+            0 if bool(item.get("paper_probation_allowed")) else 1,
+            -(_float(item.get("quality_adjusted_edge")) or 0.0),
+            _float(
+                _mapping(item.get("target_notional_ranking")).get(
+                    "required_daily_notional"
+                )
+            )
+            or 0.0,
+            _text(item.get("packet_id")),
+        )
+    )
+    return items[: max(0, limit)]
+
+
 def _escrow(
     hypothesis_ref: str,
     quality: Mapping[str, object],
@@ -714,6 +873,12 @@ def build_quality_adjusted_profit_frontier(
             "packet_ids": [_text(packet.get("packet_id")) for packet in packets],
         },
     )
+    paper_probation_shortlist = _paper_probation_shortlist(packets)
+    paper_probation_allowed_count = sum(
+        1
+        for item in paper_probation_shortlist
+        if bool(item.get("paper_probation_allowed"))
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "frontier_id": frontier_id,
@@ -723,11 +888,15 @@ def build_quality_adjusted_profit_frontier(
         "live_notional_limit": "configured_by_risk" if capital_ready else "0",
         "jangar_evidence_quality_ref": quality,
         "packets": packets,
+        "paper_probation_shortlist": paper_probation_shortlist,
         "hypothesis_escrows": escrows,
         "blocked_capital_surfaces": blockers,
         "summary": {
             "packet_count": len(packets),
             "paper_candidate_count": 1 if capital_ready else 0,
+            "paper_probation_shortlist_count": len(paper_probation_shortlist),
+            "paper_probation_allowed_count": paper_probation_allowed_count,
+            "paper_probation_authority": "evidence_collection_only",
             "capital_ready": capital_ready,
             "target_notional_feasible_packet_count": sum(
                 1

@@ -212,6 +212,111 @@ def test_target_implied_notional_ranking_computes_5bps_and_8bps() -> None:
     assert frontier["summary"]["target_notional_feasible_packet_count"] == 2
 
 
+def test_feasible_target_notional_packets_get_bounded_paper_probation_handoff() -> None:
+    frontier = _frontier(
+        hypothesis_payload={
+            "items": [
+                {
+                    "hypothesis_id": "H-CLOSE",
+                    "observed_post_cost_expectancy_bps": "10",
+                    "capacity_daily_notional": "750000",
+                    "drawdown_budget": "1000",
+                    "allocated_sleeve_equity": "100000",
+                }
+            ]
+        },
+        route_reacquisition_board={
+            "rows": [
+                {
+                    "symbol": "NVDA",
+                    "state": "routeable",
+                    "hypothesis_ids": ["H-CLOSE"],
+                    "expected_cost_class": "low",
+                }
+            ]
+        },
+    )
+
+    shortlist = cast(list[Mapping[str, Any]], frontier["paper_probation_shortlist"])
+    item = shortlist[0]
+    repair_plan = cast(Mapping[str, Any], item["paper_probation_repair_plan"])
+
+    assert item["stage"] == "paper_evidence_collection_only"
+    assert item["paper_probation_allowed"] is True
+    assert item["evidence_collection_ok"] is True
+    assert item["recommended_daily_notional"] == "500000"
+    assert item["max_live_notional"] == "0"
+    assert item["live_capital_authorized"] is False
+    assert item["promotion_allowed"] is False
+    assert item["final_promotion_allowed"] is False
+    assert repair_plan["status"] == "ready_for_bounded_paper_evidence_collection"
+    assert repair_plan["promotion_allowed"] is False
+    assert repair_plan["final_promotion_allowed"] is False
+    assert (
+        "source_backed_runtime_ledger_lineage"
+        in item["live_paper_evidence_requirements"]
+    )
+    assert "keep_final_promotion_gates_fail_closed" in repair_plan["repair_actions"]
+    assert (
+        "closing_auction_market_making_arxiv_2601_17247_2026" in item["source_markers"]
+    )
+    assert (
+        "limit_order_fill_survival_arxiv_2512_05734_2025"
+        in repair_plan["source_markers"]
+    )
+    assert frontier["summary"]["paper_probation_shortlist_count"] == 1
+    assert frontier["summary"]["paper_probation_allowed_count"] == 1
+    assert (
+        frontier["summary"]["paper_probation_authority"] == "evidence_collection_only"
+    )
+
+
+def test_non_promoting_receipts_keep_paper_probation_repair_only() -> None:
+    frontier = _frontier(
+        quant_evidence={
+            "latest_metrics_count": 4284,
+            "degraded_latest_metrics_count": 4163,
+            "stage_count": 3,
+        },
+        hypothesis_payload={
+            "items": [
+                {
+                    "hypothesis_id": "H-REPAIR",
+                    "observed_post_cost_expectancy_bps": "10",
+                    "capacity_daily_notional": "750000",
+                    "drawdown_budget": "1000",
+                    "allocated_sleeve_equity": "100000",
+                }
+            ]
+        },
+        route_reacquisition_board={
+            "rows": [
+                {
+                    "symbol": "MSFT",
+                    "state": "routeable",
+                    "hypothesis_ids": ["H-REPAIR"],
+                    "expected_cost_class": "low",
+                }
+            ]
+        },
+    )
+
+    shortlist = cast(list[Mapping[str, Any]], frontier["paper_probation_shortlist"])
+    item = shortlist[0]
+    repair_plan = cast(Mapping[str, Any], item["paper_probation_repair_plan"])
+
+    assert item["paper_probation_allowed"] is False
+    assert item["promotion_allowed"] is False
+    assert item["final_promotion_allowed"] is False
+    assert "quant_latest_metrics_degraded" in item["probation_blockers"]
+    assert repair_plan["status"] == "repair_required_before_paper_evidence_collection"
+    assert (
+        "repair_non_promoting_quality_receipts_before_paper_orders"
+        in repair_plan["repair_actions"]
+    )
+    assert frontier["summary"]["paper_probation_allowed_count"] == 0
+
+
 def test_non_positive_expectancy_blocks_target_notional_ranking() -> None:
     frontier = _frontier(
         hypothesis_payload={
@@ -243,3 +348,5 @@ def test_non_positive_expectancy_blocks_target_notional_ranking() -> None:
         "observed_post_cost_expectancy_bps_non_positive"
         in packet["target_notional_ranking"]["blocking_reasons"]
     )
+    assert frontier["paper_probation_shortlist"] == []
+    assert frontier["summary"]["paper_probation_allowed_count"] == 0
