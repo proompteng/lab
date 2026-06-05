@@ -1201,13 +1201,33 @@ class TestLiveConfigManifestContract(TestCase):
             value_from.get("secretKeyRef"),
             {"name": "torghut-db-app", "key": "uri"},
         )
+        self.assertEqual(
+            env["SIM_DB_DSN"].get("value"),
+            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
+            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
+        )
+        for name, key in {
+            "TORGHUT_SIM_DB_HOST": "host",
+            "TORGHUT_SIM_DB_PORT": "port",
+            "TORGHUT_SIM_DB_USER": "username",
+            "TORGHUT_SIM_DB_PASSWORD": "password",
+        }.items():
+            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
+            self.assertEqual(
+                value_from.get("secretKeyRef"),
+                {"name": "torghut-db-app", "key": key},
+            )
 
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/refresh_execution_tca_metrics.py", args)
+        self.assertIn("--dsn-env DB_DSN", args)
+        self.assertIn("--dsn-env SIM_DB_DSN", args)
+        self.assertIn("--account-label TORGHUT_SIM", args)
         self.assertIn("--older-than-seconds 900", args)
         self.assertIn("--batch-size 1000", args)
         self.assertIn("--max-batches 5", args)
         self.assertIn("--apply", args)
+        self.assertEqual(args.count("scripts/refresh_execution_tca_metrics.py"), 2)
 
     def test_paper_account_flatten_cronjob_can_clean_dirty_paper_proof_account(
         self,
