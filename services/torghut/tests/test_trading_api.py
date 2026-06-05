@@ -9384,7 +9384,7 @@ class TestTradingApi(TestCase):
                 ),
             ):
                 response = self.client.get(
-                    "/trading/paper-route-evidence?lookback_hours=24&target_limit=1"
+                    "/trading/paper-route-evidence?lookback_hours=24&target_limit=1&full_audit=true"
                 )
             self.assertEqual(response.status_code, 200)
             payload = response.json()
@@ -9393,6 +9393,7 @@ class TestTradingApi(TestCase):
             )
             self.assertEqual(payload["window"]["lookback_hours"], 24)
             self.assertEqual(payload["window"]["target_limit"], 1)
+            self.assertEqual(payload["runtime_window_import_audit_mode"], "full")
             self.assertEqual(payload["summary"]["target_count"], 1)
             self.assertEqual(payload["summary"]["target_with_runtime_ledger_count"], 1)
             self.assertEqual(payload["summary"]["target_with_source_activity_count"], 0)
@@ -10994,13 +10995,28 @@ class TestTradingApi(TestCase):
                         "schema_version": "torghut.paper-route-evidence.v1",
                         "summary": {"target_count": 1},
                     },
-                ),
+                ) as evidence_builder,
             ):
                 response = self.client.get("/trading/paper-route-evidence")
 
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(active_sessions, 0)
-            self.assertEqual(response.json()["summary"]["target_count"], 1)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(active_sessions, 0)
+                self.assertEqual(response.json()["summary"]["target_count"], 1)
+                self.assertIsNone(
+                    evidence_builder.call_args.kwargs[
+                        "include_runtime_window_import_audit"
+                    ]
+                )
+
+                response = self.client.get(
+                    "/trading/paper-route-evidence?full_audit=true"
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(
+                    evidence_builder.call_args.kwargs[
+                        "include_runtime_window_import_audit"
+                    ]
+                )
         finally:
             settings.trading_paper_route_target_plan_url = original_target_plan_url
             if original_scheduler is None:
