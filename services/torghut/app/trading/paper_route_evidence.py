@@ -817,6 +817,27 @@ def _rollback_paper_route_audit_session(session: Session) -> None:
         logger.warning("Failed to roll back paper-route evidence session")
 
 
+def _paper_route_audit_db_unavailable_blockers(error_source: str) -> list[str]:
+    return _unique_text_items(
+        [
+            PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER,
+            _paper_route_audit_error_source_blocker(error_source),
+        ]
+    )
+
+
+def _rollback_after_paper_route_audit_error(
+    session: Session,
+    *,
+    source: str,
+    exc: SQLAlchemyError,
+) -> None:
+    logger.warning(
+        "Paper route audit query unavailable source=%s error=%s", source, exc
+    )
+    _rollback_paper_route_audit_session(session)
+
+
 def _execution_activity_timestamp() -> Any:
     return func.coalesce(
         Execution.order_feed_last_event_ts,
@@ -5344,12 +5365,47 @@ def _account_contamination_audit(
     )
     if symbol_filters:
         stmt = stmt.where(ExecutionOrderEvent.symbol.in_(symbol_filters))
-    _maybe_set_paper_route_audit_statement_timeout(session)
-    rows = list(
-        session.execute(
-            stmt.order_by(order_event_activity_ts.desc()).limit(500)
-        ).scalars()
-    )
+    error_source = "paper_route_account_contamination"
+    try:
+        _maybe_set_paper_route_audit_statement_timeout(session)
+        rows = list(
+            session.execute(
+                stmt.order_by(order_event_activity_ts.desc()).limit(500)
+            ).scalars()
+        )
+    except SQLAlchemyError as exc:
+        _rollback_after_paper_route_audit_error(session, source=error_source, exc=exc)
+        return {
+            "schema_version": "torghut.paper-route-account-contamination-audit.v1",
+            "scope": "target_window_account_symbol_order_events",
+            "state": "target_account_audit_unavailable",
+            "account_label": account_label,
+            "symbols": symbol_filters,
+            "window_start": _isoformat(window_start),
+            "window_end": _isoformat(window_end),
+            "contaminated": None,
+            "order_event_count": 0,
+            "unlinked_order_event_count": 0,
+            "foreign_linked_order_event_count": 0,
+            "target_linked_order_event_count": 0,
+            "client_order_id_count": 0,
+            "sample_client_order_ids": [],
+            "symbol_counts": {},
+            "event_type_counts": {},
+            "status_counts": {},
+            "foreign_strategy_counts": {},
+            "last_event_at": None,
+            "reason": "account_contamination_db_unavailable",
+            "blockers": _paper_route_audit_db_unavailable_blockers(error_source),
+            "sample_order_event_refs": [],
+            "source_audit_blockers": [
+                PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER
+            ],
+            "db_load_error": _paper_route_audit_error_payload(
+                error_source=error_source,
+                error=exc,
+            ),
+        }
     target_linked_rows: list[ExecutionOrderEvent] = []
     foreign_linked_rows: list[ExecutionOrderEvent] = []
     unlinked_rows: list[ExecutionOrderEvent] = []
@@ -5539,31 +5595,48 @@ def _account_window_start_snapshot_audit(
     if not required:
         return base_payload
 
-    _maybe_set_paper_route_audit_statement_timeout(session)
-    before_snapshot = session.execute(
-        select(PositionSnapshot)
-        .where(PositionSnapshot.alpaca_account_label == account_label)
-        .where(PositionSnapshot.as_of <= window_start)
-        .order_by(PositionSnapshot.as_of.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    after_snapshot = None
-    if before_snapshot is None:
+    error_source = "paper_route_account_window_start_snapshot"
+    try:
         _maybe_set_paper_route_audit_statement_timeout(session)
-        after_snapshot = session.execute(
+        before_snapshot = session.execute(
             select(PositionSnapshot)
             .where(PositionSnapshot.alpaca_account_label == account_label)
-            .where(PositionSnapshot.as_of > window_start)
-            .where(
-                PositionSnapshot.as_of
-                <= window_start
-                + timedelta(
-                    seconds=PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
-                )
-            )
-            .order_by(PositionSnapshot.as_of.asc())
+            .where(PositionSnapshot.as_of <= window_start)
+            .order_by(PositionSnapshot.as_of.desc())
             .limit(1)
         ).scalar_one_or_none()
+        after_snapshot = None
+        if before_snapshot is None:
+            _maybe_set_paper_route_audit_statement_timeout(session)
+            after_snapshot = session.execute(
+                select(PositionSnapshot)
+                .where(PositionSnapshot.alpaca_account_label == account_label)
+                .where(PositionSnapshot.as_of > window_start)
+                .where(
+                    PositionSnapshot.as_of
+                    <= window_start
+                    + timedelta(
+                        seconds=PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
+                    )
+                )
+                .order_by(PositionSnapshot.as_of.asc())
+                .limit(1)
+            ).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        _rollback_after_paper_route_audit_error(session, source=error_source, exc=exc)
+        return {
+            **base_payload,
+            "state": "blocked",
+            "flat": False,
+            "blockers": _paper_route_audit_db_unavailable_blockers(error_source),
+            "source_audit_blockers": [
+                PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER
+            ],
+            "db_load_error": _paper_route_audit_error_payload(
+                error_source=error_source,
+                error=exc,
+            ),
+        }
 
     snapshot = before_snapshot or after_snapshot
     if snapshot is None:
@@ -5675,14 +5748,31 @@ def _account_pre_session_snapshot_audit(
         }
 
     snapshot_cutoff = min(generated_at, window_start)
-    _maybe_set_paper_route_audit_statement_timeout(session)
-    snapshot = session.execute(
-        select(PositionSnapshot)
-        .where(PositionSnapshot.alpaca_account_label == account_label)
-        .where(PositionSnapshot.as_of <= snapshot_cutoff)
-        .order_by(PositionSnapshot.as_of.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    error_source = "paper_route_account_pre_session_snapshot"
+    try:
+        _maybe_set_paper_route_audit_statement_timeout(session)
+        snapshot = session.execute(
+            select(PositionSnapshot)
+            .where(PositionSnapshot.alpaca_account_label == account_label)
+            .where(PositionSnapshot.as_of <= snapshot_cutoff)
+            .order_by(PositionSnapshot.as_of.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        _rollback_after_paper_route_audit_error(session, source=error_source, exc=exc)
+        return {
+            **base_payload,
+            "state": "blocked",
+            "flat": False,
+            "blockers": _paper_route_audit_db_unavailable_blockers(error_source),
+            "source_audit_blockers": [
+                PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER
+            ],
+            "db_load_error": _paper_route_audit_error_payload(
+                error_source=error_source,
+                error=exc,
+            ),
+        }
     if snapshot is None:
         return {
             **base_payload,
@@ -5916,14 +6006,33 @@ def _account_window_close_snapshot_audit(
             "zero_open_position_evidence": True,
         }
 
-    snapshot = session.execute(
-        select(PositionSnapshot)
-        .where(PositionSnapshot.alpaca_account_label == account_label)
-        .where(PositionSnapshot.as_of >= window_end)
-        .where(PositionSnapshot.as_of <= generated_at)
-        .order_by(PositionSnapshot.as_of.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    error_source = "paper_route_account_window_close_snapshot"
+    try:
+        _maybe_set_paper_route_audit_statement_timeout(session)
+        snapshot = session.execute(
+            select(PositionSnapshot)
+            .where(PositionSnapshot.alpaca_account_label == account_label)
+            .where(PositionSnapshot.as_of >= window_end)
+            .where(PositionSnapshot.as_of <= generated_at)
+            .order_by(PositionSnapshot.as_of.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        _rollback_after_paper_route_audit_error(session, source=error_source, exc=exc)
+        return {
+            **base_payload,
+            "state": "blocked",
+            "flat": False,
+            "zero_open_position_evidence": False,
+            "blockers": _paper_route_audit_db_unavailable_blockers(error_source),
+            "source_audit_blockers": [
+                PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER
+            ],
+            "db_load_error": _paper_route_audit_error_payload(
+                error_source=error_source,
+                error=exc,
+            ),
+        }
     if snapshot is None:
         return {
             **base_payload,

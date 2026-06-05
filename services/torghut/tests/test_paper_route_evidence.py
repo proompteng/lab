@@ -33,8 +33,10 @@ from app.trading.paper_route_evidence import (
     PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
     PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
+    _account_contamination_audit,
     _account_contamination_reason,
     _account_pre_session_snapshot_audit,
+    _account_window_close_snapshot_audit,
     _account_window_start_snapshot_audit,
     _balanced_pair_probe_symbol_actions,
     _hpairs_round_trip_identity_blockers,
@@ -2458,6 +2460,157 @@ class TestPaperRouteEvidenceAudit(TestCase):
         blockers = set(audit["readiness"]["blockers"])
         self.assertIn("paper_route_evidence_db_unavailable", blockers)
         self.assertIn("paper_route_source_target_audit_db_unavailable", blockers)
+
+    def test_account_contamination_query_timeout_fails_closed(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            with patch.object(
+                session, "execute", side_effect=SQLAlchemyError("statement timeout")
+            ):
+                audit = _account_contamination_audit(
+                    session,
+                    account_label="TORGHUT_SIM",
+                    symbols=["AAPL", "AMZN"],
+                    window_start=window_start,
+                    window_end=window_end,
+                    strategy_lookup_names=["paper-route-candidate-v1"],
+                    candidate_id="candidate-timeout",
+                    hypothesis_id="H-TIMEOUT",
+                    require_source_lineage=True,
+                )
+
+        self.assertEqual(audit["state"], "target_account_audit_unavailable")
+        self.assertIsNone(audit["contaminated"])
+        self.assertEqual(audit["reason"], "account_contamination_db_unavailable")
+        self.assertEqual(audit["order_event_count"], 0)
+        self.assertIn("paper_route_evidence_db_unavailable", audit["blockers"])
+        self.assertIn(
+            "paper_route_account_contamination_db_unavailable", audit["blockers"]
+        )
+        self.assertEqual(
+            audit["db_load_error"]["source"], "paper_route_account_contamination"
+        )
+        self.assertEqual(
+            audit["db_load_error"]["blocker"],
+            "paper_route_account_contamination_db_unavailable",
+        )
+
+    def test_account_window_start_snapshot_query_timeout_fails_closed(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            with patch.object(
+                session, "execute", side_effect=SQLAlchemyError("statement timeout")
+            ):
+                audit = _account_window_start_snapshot_audit(
+                    session,
+                    account_label="TORGHUT_SIM",
+                    symbols=["AAPL"],
+                    window_start=window_start,
+                    generated_at=window_start,
+                )
+
+        self.assertEqual(audit["state"], "blocked")
+        self.assertFalse(audit["flat"])
+        self.assertIn("paper_route_evidence_db_unavailable", audit["blockers"])
+        self.assertIn(
+            "paper_route_account_window_start_snapshot_db_unavailable",
+            audit["blockers"],
+        )
+        self.assertEqual(
+            audit["db_load_error"]["source"],
+            "paper_route_account_window_start_snapshot",
+        )
+
+    def test_account_window_start_fallback_snapshot_timeout_fails_closed(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            first_read = SimpleNamespace(scalar_one_or_none=lambda: None)
+            with patch.object(
+                session,
+                "execute",
+                side_effect=[first_read, SQLAlchemyError("statement timeout")],
+            ):
+                audit = _account_window_start_snapshot_audit(
+                    session,
+                    account_label="TORGHUT_SIM",
+                    symbols=["AAPL"],
+                    window_start=window_start,
+                    generated_at=window_start,
+                )
+
+        self.assertEqual(audit["state"], "blocked")
+        self.assertFalse(audit["flat"])
+        self.assertIn(
+            "paper_route_account_window_start_snapshot_db_unavailable",
+            audit["blockers"],
+        )
+        self.assertEqual(
+            audit["db_load_error"]["source"],
+            "paper_route_account_window_start_snapshot",
+        )
+
+    def test_account_pre_session_snapshot_query_timeout_fails_closed(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        generated_at = window_start - timedelta(minutes=5)
+
+        with Session(self.engine) as session:
+            with patch.object(
+                session, "execute", side_effect=SQLAlchemyError("statement timeout")
+            ):
+                audit = _account_pre_session_snapshot_audit(
+                    session,
+                    account_label="TORGHUT_SIM",
+                    symbols=["AAPL"],
+                    generated_at=generated_at,
+                    window_start=window_start,
+                    window_end=window_end,
+                )
+
+        self.assertEqual(audit["state"], "blocked")
+        self.assertFalse(audit["flat"])
+        self.assertIn("paper_route_evidence_db_unavailable", audit["blockers"])
+        self.assertIn(
+            "paper_route_account_pre_session_snapshot_db_unavailable",
+            audit["blockers"],
+        )
+        self.assertEqual(
+            audit["db_load_error"]["source"],
+            "paper_route_account_pre_session_snapshot",
+        )
+
+    def test_account_window_close_snapshot_query_timeout_fails_closed(self) -> None:
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        generated_at = window_end + timedelta(minutes=30)
+
+        with Session(self.engine) as session:
+            with patch.object(
+                session, "execute", side_effect=SQLAlchemyError("statement timeout")
+            ):
+                audit = _account_window_close_snapshot_audit(
+                    session,
+                    account_label="TORGHUT_SIM",
+                    symbols=["AAPL"],
+                    window_end=window_end,
+                    generated_at=generated_at,
+                )
+
+        self.assertEqual(audit["state"], "blocked")
+        self.assertFalse(audit["flat"])
+        self.assertFalse(audit["zero_open_position_evidence"])
+        self.assertIn("paper_route_evidence_db_unavailable", audit["blockers"])
+        self.assertIn(
+            "paper_route_account_window_close_snapshot_db_unavailable",
+            audit["blockers"],
+        )
+        self.assertEqual(
+            audit["db_load_error"]["source"],
+            "paper_route_account_window_close_snapshot",
+        )
 
     def test_normalized_open_positions_handles_flat_short_and_implicit_market_value(
         self,
