@@ -1539,9 +1539,12 @@ class TestLiveConfigManifestContract(TestCase):
             "--confirm-selected-plan-source "
             "live_submission_gate.runtime_ledger_paper_probation_import_plan,"
             "runtime_ledger_paper_probation_import_plan,"
-            "latest_closed_paper_route_runtime_window_targets,"
             "next_paper_route_runtime_window_targets,"
             "next_clean_paper_route_runtime_window_targets_after_discard",
+            args,
+        )
+        self.assertNotIn(
+            "latest_closed_paper_route_runtime_window_targets",
             args,
         )
         self.assertIn("--confirm-target-count-min 1", args)
