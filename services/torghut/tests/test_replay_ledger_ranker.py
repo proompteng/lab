@@ -654,6 +654,48 @@ def test_lob_reality_gap_summary_fails_closed_without_signal_rows() -> None:
     )
 
 
+def test_microstructure_stress_summary_fails_closed_without_signal_rows() -> None:
+    summary = ranker._microstructure_stress_summary(
+        [{"symbol": "NVDA", "executed_at": "bad-date"}]
+    )
+
+    assert summary["source_papers"] == []
+    assert summary["stress_components"] == {
+        "adaptive_market_limit_allocation": {},
+        "order_book_observability": {},
+        "cluster_lob": {},
+    }
+    assert summary["adaptive_market_limit_penalty_bps"] == Decimal("0")
+    assert summary["order_book_observability_penalty_bps"] == Decimal("0")
+    assert summary["cluster_lob_warning_penalty_bps"] == Decimal("0")
+    assert summary["microstructure_warning_penalty_bps"] == Decimal("1.5")
+    assert summary["effective_replay_rank_penalty_bps"] == Decimal("1.5")
+    assert summary["microstructure_stress_blockers"] == (
+        "microstructure_stress_missing_microstructure_signal_rows",
+    )
+    assert summary["promotion_authority"] is False
+    assert summary["proof_authority"] is False
+
+
+def test_microstructure_helpers_cover_nested_penalties_and_source_dedupe() -> None:
+    assert ranker._stress_penalty_bps(
+        {"ranking_features": {"replay_rank_penalty_bps": "-7"}}
+    ) == Decimal("0")
+    assert ranker._stress_penalty_bps(
+        {"ranking_features": {"replay_rank_penalty_bps": "12.5"}}
+    ) == Decimal("12.5")
+
+    papers = ranker._dedupe_source_papers(
+        (
+            "not-a-paper-list",
+            [{"source_id": ""}, "not-a-paper", {"source_id": "paper-a"}],
+            [{"source_id": "paper-a"}, {"source_id": "paper-b"}],
+        )
+    )
+
+    assert [paper["source_id"] for paper in papers] == ["paper-a", "paper-b"]
+
+
 def test_lob_signal_rows_use_fallback_timestamps_and_ingest_fields() -> None:
     signals = ranker._lob_signal_rows(
         [
