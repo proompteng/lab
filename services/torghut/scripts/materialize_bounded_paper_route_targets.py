@@ -328,11 +328,15 @@ def _candidate_materialization_plans(
 
 def _materialization_plan_from_payload(
     payload: Mapping[str, Any],
+    *,
+    selected_plan_sources: set[str] | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     best_plan: dict[str, Any] = {}
     best_source: str | None = None
     best_score = (-1, -1, -1, -1_000_000)
     for source, plan in _candidate_materialization_plans(payload):
+        if selected_plan_sources and source not in selected_plan_sources:
+            continue
         if not paper_route_target_plan_targets(plan):
             continue
         score = _plan_materialization_score(plan)
@@ -421,6 +425,9 @@ def _fetch_plan_url_payload(
 def _load_plan(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
     plan_file = cast(Path | None, args.plan_json)
     plan_url = _safe_text(args.plan_url)
+    selected_plan_sources = _confirmed_selected_plan_sources(
+        getattr(args, "confirm_selected_plan_source", None)
+    )
     if plan_file is None and plan_url is None:
         raise ValueError("paper_route_target_plan_source_required")
     if plan_file is not None and plan_url is not None:
@@ -428,7 +435,10 @@ def _load_plan(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]
 
     if plan_file is not None:
         payload = _load_json_file(plan_file)
-        plan, selected_plan = _materialization_plan_from_payload(payload)
+        plan, selected_plan = _materialization_plan_from_payload(
+            payload,
+            selected_plan_sources=selected_plan_sources,
+        )
         if not plan:
             plan = payload
         return (
@@ -449,7 +459,10 @@ def _load_plan(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]
     load_error = _safe_text(payload.get("load_error"))
     if load_error:
         raise ValueError(load_error)
-    plan, selected_plan = _materialization_plan_from_payload(payload)
+    plan, selected_plan = _materialization_plan_from_payload(
+        payload,
+        selected_plan_sources=selected_plan_sources,
+    )
     if not plan:
         raise ValueError("paper_route_target_plan_missing")
     return (

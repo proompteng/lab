@@ -1427,6 +1427,75 @@ def test_dynamic_plan_selection_prefers_latest_closed_plan_before_next_window() 
     )
 
 
+def test_commit_dynamic_source_allowlist_selects_active_next_window_over_closed_latest(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "latest_closed_paper_route_runtime_window_targets": _plan(
+            _hpairs_target(
+                source_plan_ref="paper-route-plan:latest-closed",
+                window_start="2026-05-31T13:30:00+00:00",
+                window_end="2026-05-31T20:00:00+00:00",
+            )
+        ),
+        "next_paper_route_runtime_window_targets": _plan(
+            _hpairs_target(
+                target_notional="75000",
+                source_plan_ref="paper-route-plan:next-window",
+                window_start="2026-06-01T13:30:00+00:00",
+                window_end="2026-06-01T20:00:00+00:00",
+            )
+        ),
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "75000",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--skip-unless-active-target-window",
+            "--now-utc",
+            "2026-06-01T14:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            "next_paper_route_runtime_window_targets",
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "75000",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["plan_source"]["selected_plan"] == (
+        "next_paper_route_runtime_window_targets"
+    )
+    assert report["target_plan_refs"] == ["paper-route-plan:next-window"]
+    assert report["target_window_check"]["active"] is True
+    assert report["skipped"] is False
+    assert report["materialized"] is True
+    assert report["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 2
+
+
 def test_commit_dynamic_next_window_plan_blocks_when_confirmed_target_is_absent(
     monkeypatch: pytest.MonkeyPatch,
     sqlite_dsn: str,
