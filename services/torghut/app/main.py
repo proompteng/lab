@@ -6427,10 +6427,17 @@ def _paper_route_target_account_audit_available(
     )
 
 
-def _paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> list[str]:
+def _paper_route_probe_symbol_values_from_mapping(
+    target: Mapping[str, Any],
+) -> list[str]:
     symbols: list[str] = []
-    for target in _paper_route_target_plan_targets(plan):
-        raw_symbols = target.get("paper_route_probe_symbols")
+    for field in (
+        "paper_route_probe_symbols",
+        "paper_route_probe_raw_target_symbols",
+        "symbols",
+        "target_symbols",
+    ):
+        raw_symbols = target.get(field)
         if isinstance(raw_symbols, str):
             values: Sequence[object] = raw_symbols.split(",")
         elif isinstance(raw_symbols, Sequence) and not isinstance(
@@ -6444,6 +6451,45 @@ def _paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> list[str]
             symbol = str(item).strip().upper()
             if symbol and symbol not in symbols:
                 symbols.append(symbol)
+    for field in (
+        "paper_route_probe_symbol_actions",
+        "symbol_actions",
+        "target_symbol_actions",
+    ):
+        raw_actions = target.get(field)
+        if not isinstance(raw_actions, Mapping):
+            continue
+        for item in cast(Mapping[object, object], raw_actions):
+            symbol = str(item).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return symbols
+
+
+def _paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> list[str]:
+    symbols: list[str] = []
+    for target in _paper_route_target_plan_targets(plan):
+        for symbol in _paper_route_probe_symbol_values_from_mapping(target):
+            if symbol not in symbols:
+                symbols.append(symbol)
+        for field in (
+            "paper_route_clean_window_baseline_state",
+            "clean_window_baseline_state",
+        ):
+            state = target.get(field)
+            if not isinstance(state, Mapping):
+                continue
+            typed_state = cast(Mapping[str, Any], state)
+            for symbol in _paper_route_probe_symbol_values_from_mapping(typed_state):
+                if symbol not in symbols:
+                    symbols.append(symbol)
+            source_audit = typed_state.get("source_audit")
+            if isinstance(source_audit, Mapping):
+                for symbol in _paper_route_probe_symbol_values_from_mapping(
+                    cast(Mapping[str, Any], source_audit)
+                ):
+                    if symbol not in symbols:
+                        symbols.append(symbol)
     return symbols
 
 

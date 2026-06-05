@@ -767,6 +767,19 @@ def test_target_symbols_accept_action_and_execution_source_fields() -> None:
     ) == {"AAPL", "AMZN"}
 
 
+def test_target_symbols_accept_clean_window_baseline_symbol_evidence() -> None:
+    assert _target_symbols(
+        {
+            "paper_route_clean_window_baseline_state": {
+                "symbols": [" aapl "],
+                "source_audit": {
+                    "symbols": ["AMZN"],
+                },
+            },
+        }
+    ) == {"AAPL", "AMZN"}
+
+
 def _routeability_decision(
     *,
     symbol: str = "AAPL",
