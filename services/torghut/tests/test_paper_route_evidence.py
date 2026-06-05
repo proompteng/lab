@@ -7919,6 +7919,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(diagnostics["counts"]["hpairs_symbol_count"], 2)
         self.assertEqual(diagnostics["counts"]["hpairs_decision_count"], 0)
         self.assertIn("market_session_closed", diagnostics["blockers"])
+        self.assertNotIn("source_decisions_missing", diagnostics["blockers"])
+        self.assertNotIn("runtime_ledger_bucket_missing", diagnostics["blockers"])
         self.assertNotIn("c88421d619759b2cfaa6f4d0", diagnostics["blockers"])
         self.assertNotIn("H-PAIRS-01", diagnostics["blockers"])
         self.assertNotIn("AAPL", diagnostics["blockers"])
@@ -7931,10 +7933,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(stage_diagnostics["source_executions_present"])
         self.assertFalse(stage_diagnostics["source_tca_present"])
         self.assertFalse(stage_diagnostics["runtime_ledger_buckets_present"])
-        self.assertIn("source_decisions_missing", stage_diagnostics["blockers"])
+        self.assertNotIn("source_decisions_missing", stage_diagnostics["blockers"])
         self.assertNotIn("source_executions_missing", stage_diagnostics["blockers"])
         self.assertNotIn("source_tca_missing", stage_diagnostics["blockers"])
-        self.assertIn("runtime_ledger_bucket_missing", stage_diagnostics["blockers"])
+        self.assertNotIn("runtime_ledger_bucket_missing", stage_diagnostics["blockers"])
 
     def test_hpairs_zero_activity_reason_flags_distinguish_source_stages(
         self,
@@ -7955,6 +7957,49 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(no_decisions["source_executions_missing"])
         self.assertFalse(no_decisions["source_tca_missing"])
         self.assertTrue(no_decisions["runtime_ledger_bucket_missing"])
+
+        generic_import_due_state = _hpairs_zero_activity_reason_flags(
+            blockers=["source_decisions_missing", "runtime_ledger_bucket_missing"],
+            probe={"configured_enabled": True},
+            runtime_window_import_audit={"state": "import_due_flatten_handoff_missing"},
+            hpairs_target_count=1,
+            hpairs_symbol_count=2,
+            hpairs_source_decision_ready_count=1,
+            hpairs_decision_count=0,
+            hpairs_submitted_order_count=0,
+            hpairs_tca_sample_count=0,
+            hpairs_runtime_bucket_count=0,
+        )
+        self.assertTrue(generic_import_due_state["source_decisions_missing"])
+        self.assertTrue(generic_import_due_state["runtime_ledger_bucket_missing"])
+
+        deferred_settlement_window = _hpairs_zero_activity_reason_flags(
+            blockers=[
+                "paper_route_session_settlement_pending",
+                "source_decisions_missing",
+                "runtime_ledger_bucket_missing",
+            ],
+            probe={"configured_enabled": True},
+            runtime_window_import_audit={
+                "session_state": "window_closed_settlement_pending",
+                "state": "window_closed_settlement_pending",
+                "import_ready": False,
+            },
+            hpairs_target_count=1,
+            hpairs_symbol_count=2,
+            hpairs_source_decision_ready_count=1,
+            hpairs_decision_count=0,
+            hpairs_submitted_order_count=0,
+            hpairs_tca_sample_count=0,
+            hpairs_runtime_bucket_count=0,
+        )
+        self.assertTrue(deferred_settlement_window["no_market_window"])
+        self.assertFalse(deferred_settlement_window["source_decisions_missing"])
+        self.assertFalse(deferred_settlement_window["runtime_ledger_bucket_missing"])
+        self.assertEqual(
+            _hpairs_zero_activity_state(deferred_settlement_window),
+            "no_market_window",
+        )
 
         decisions_without_execution = _hpairs_zero_activity_reason_flags(
             blockers=[],
