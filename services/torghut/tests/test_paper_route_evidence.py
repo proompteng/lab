@@ -9840,6 +9840,27 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(runtime_plan["target_count"], 1)
         self.assertTrue(runtime_plan["session_readiness"]["import_ready"])
         self.assertTrue(runtime_plan["runtime_window_import_handoff"]["import_ready"])
+        self.assertTrue(
+            runtime_plan["runtime_window_import_handoff"][
+                "source_collection_authorized"
+            ]
+        )
+        self.assertTrue(
+            runtime_plan["runtime_window_import_handoff"]["source_collection_only"]
+        )
+        self.assertFalse(
+            runtime_plan["runtime_window_import_handoff"][
+                "canary_collection_authorized"
+            ]
+        )
+        self.assertEqual(
+            runtime_plan["account_contamination_readiness"]["state"],
+            "contaminated_window_discarded",
+        )
+        self.assertIn(
+            "paper_route_account_contamination_detected",
+            runtime_plan["account_contamination_readiness"]["blockers"],
+        )
         self.assertEqual(
             runtime_plan["runtime_window_import_health_gate"]["blocked_target_count"],
             0,
@@ -10076,9 +10097,30 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertTrue(runtime_plan["session_readiness"]["import_ready"])
         self.assertTrue(runtime_plan["runtime_window_import_handoff"]["import_ready"])
+        self.assertTrue(
+            runtime_plan["runtime_window_import_handoff"][
+                "source_collection_authorized"
+            ]
+        )
+        self.assertTrue(
+            runtime_plan["runtime_window_import_handoff"]["source_collection_only"]
+        )
+        self.assertFalse(
+            runtime_plan["runtime_window_import_handoff"][
+                "canary_collection_authorized"
+            ]
+        )
         self.assertEqual(
             runtime_plan["runtime_window_import_health_gate"]["blocked_target_count"],
             0,
+        )
+        self.assertEqual(
+            runtime_plan["account_contamination_readiness"]["state"],
+            "contaminated_window_discarded",
+        )
+        self.assertIn(
+            "foreign_order_events_present",
+            runtime_plan["account_contamination_readiness"]["blockers"],
         )
         self.assertEqual(runtime_plan["targets"][0]["candidate_id"], "candidate-tsmom")
         self.assertEqual(
@@ -10126,6 +10168,15 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "paper_route_observed_strategy_source_collection",
         )
         summary = payload["summary"]
+        self.assertTrue(summary["runtime_window_import_source_collection_only"])
+        self.assertEqual(
+            summary["runtime_window_import_account_contamination_state"],
+            "contaminated_window_discarded",
+        )
+        self.assertIn(
+            "foreign_order_events_present",
+            summary["runtime_window_import_account_contamination_blockers"],
+        )
         self.assertEqual(
             summary["summary_target_audit_source"],
             "runtime_window_import_target_audits",
