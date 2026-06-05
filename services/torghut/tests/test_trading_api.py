@@ -11510,12 +11510,14 @@ class TestTradingApi(TestCase):
             }
         )
 
-        self.assertEqual(plan["targets"][0]["candidate_id"], "ca4e6e3c7d639e3363dc5860")
+        self.assertEqual(plan["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
         self.assertEqual(
             plan["targets"][0]["selected_by"],
-            "paper_route_observed_strategy_source_collection",
+            "paper_route_evidence_audit",
         )
-        self.assertNotIn("paper_route_probe_symbols", plan["targets"][0])
+        self.assertEqual(
+            plan["targets"][0]["paper_route_probe_symbols"], ["AAPL", "AMZN"]
+        )
 
     def test_paper_route_target_plan_payload_prefers_next_window_over_closed_import(
         self,

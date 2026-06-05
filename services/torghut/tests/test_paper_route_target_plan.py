@@ -188,7 +188,7 @@ def test_target_plan_selection_score_rejects_empty_plans() -> None:
         {},
         source_rank=3,
         selected_identity_keys=set(),
-    ) == (-1, 0, 0, 0, 0, -3)
+    ) == (-1, 0, 0, 0, 0, 0, -3)
 
 
 def test_target_plan_payload_prefers_nested_plan_with_probe_symbols() -> None:
@@ -223,6 +223,57 @@ def test_target_plan_payload_prefers_nested_plan_with_probe_symbols() -> None:
 
     assert plan["source"] == "paper_route_evidence_audit"
     assert plan["targets"][0]["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+    assert paper_route_target_plan_probe_symbols(plan) == {"AAPL", "AMZN"}
+
+
+def test_target_plan_payload_prefers_nested_probe_plan_over_source_collection() -> None:
+    payload = {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "source": "paper_route_target_plan_endpoint",
+        "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+        "target_count": 1,
+        "targets": [
+            {
+                "hypothesis_id": "H-TSMOM-LIQ-01",
+                "candidate_id": "ca4e6e3c7d639e3363dc5860",
+                "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                "source_kind": "runtime_ledger_source_collection_candidate",
+                "selected_by": "paper_route_observed_strategy_source_collection",
+                "handoff": "runtime_ledger_source_collection_import",
+                "source_collection_authorization_scope": (
+                    "source_window_evidence_collection_only"
+                ),
+            }
+        ],
+        "next_paper_route_runtime_window_targets": {
+            "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+            "source": "paper_route_evidence_audit",
+            "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+            "target_count": 1,
+            "targets": [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "source_kind": "paper_route_probe_runtime_observed",
+                    "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                    "paper_route_probe_symbol_actions": {
+                        "AAPL": "buy",
+                        "AMZN": "sell",
+                    },
+                    "source_decision_readiness": {"ready": True, "blockers": []},
+                }
+            ],
+        },
+    }
+
+    plan = paper_route_target_plan_from_payload(payload)
+
+    assert plan["source"] == "paper_route_evidence_audit"
+    assert (
+        plan["purpose"] == "next_session_paper_route_runtime_window_evidence_collection"
+    )
+    assert plan["targets"][0]["hypothesis_id"] == "H-PAIRS-01"
     assert paper_route_target_plan_probe_symbols(plan) == {"AAPL", "AMZN"}
 
 
