@@ -2510,6 +2510,57 @@ class TestSubmissionCouncil(TestCase):
         )
         self.assertEqual(target["paper_route_probe_window_end"], target["window_end"])
 
+    def test_source_collection_import_target_defaults_existing_blank_window_target(
+        self,
+    ) -> None:
+        plan = _runtime_ledger_paper_probation_import_plan(
+            [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "account": "TORGHUT_SIM",
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                    "account_stage_runtime_identity": {
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                    },
+                    "source_collection_authorized": True,
+                    "window_start": "",
+                    "window_end": "",
+                    "paper_route_probe_window_start": "",
+                    "paper_route_probe_window_end": "",
+                    "bounded_evidence_collection_authorized": False,
+                    "source_collection_reason_codes": [
+                        "runtime_ledger_source_window_missing",
+                    ],
+                    "reason_codes": [
+                        "runtime_ledger_source_window_missing",
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(
+            target["source_kind"], "runtime_ledger_source_collection_candidate"
+        )
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertTrue(target["runtime_ledger_source_collection_window_defaulted"])
+        self.assertEqual(
+            target["runtime_ledger_source_collection_window_source"],
+            "current_regular_session_bounded_source_collection_default",
+        )
+        self.assertNotEqual(target["window_start"], "")
+        self.assertNotEqual(target["window_end"], "")
+        self.assertEqual(
+            target["paper_route_probe_window_start"], target["window_start"]
+        )
+        self.assertEqual(target["paper_route_probe_window_end"], target["window_end"])
+
     def test_source_collection_probe_window_does_not_default_without_source_authority(
         self,
     ) -> None:
@@ -2524,15 +2575,39 @@ class TestSubmissionCouncil(TestCase):
             ),
             (None, None, False),
         )
+        self.assertEqual(
+            _bounded_source_collection_probe_window(
+                {
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                    "window_start": "",
+                    "window_end": "",
+                }
+            ),
+            (None, None, False),
+        )
+        self.assertEqual(
+            _bounded_source_collection_probe_window(
+                {
+                    "account_stage_runtime_identity": {
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                    },
+                    "window_start": "",
+                    "window_end": "",
+                }
+            ),
+            (None, None, False),
+        )
 
     def test_source_collection_probe_window_defaults_with_source_authority_only(
         self,
     ) -> None:
         window_start, window_end, defaulted = _bounded_source_collection_probe_window(
             {
-                "source_collection_candidate": True,
+                "source_kind": "runtime_ledger_source_collection_candidate",
                 "source_collection_authorized": True,
                 "bounded_evidence_collection_authorized": False,
+                "window_start": "",
+                "window_end": "",
             }
         )
 
