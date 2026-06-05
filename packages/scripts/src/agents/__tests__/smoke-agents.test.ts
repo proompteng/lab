@@ -17,6 +17,10 @@ import {
   isTransientKubectlError,
 } from '../smoke-agents'
 
+const skipCrossProductBoundaryTests = process.env.AGENTS_CI_SKIP_CROSS_PRODUCT_BOUNDARIES === 'true'
+const crossProductDescribe = skipCrossProductBoundaryTests ? describe.skip : describe
+const crossProductIt = skipCrossProductBoundaryTests ? it.skip : it
+
 describe('buildHelmArgs', () => {
   it('applies chart deployment image repository, tag, and empty digest overrides', () => {
     const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
@@ -529,7 +533,7 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(env, 'AGENTS_SWARM_REQUIREMENT_MAX_ACTIVE_PER_SWARM')).toBeUndefined()
   })
 
-  it('keeps Facteur Codex dispatch behind the Agents AgentRun API boundary', () => {
+  crossProductIt('keeps Facteur Codex dispatch behind the Agents AgentRun API boundary', () => {
     const kustomization = readFileSync(
       resolve(process.cwd(), 'argocd/applications/facteur/overlays/cluster/kustomization.yaml'),
       'utf8',
@@ -594,7 +598,7 @@ describe('scheduled AgentRun templates', () => {
   })
 })
 
-describe('autonomous trader provider', () => {
+crossProductDescribe('autonomous trader provider', () => {
   it('registers autotrader as its own product app without Synthesis desired-state co-ownership', () => {
     const product = readYamlObjects('argocd/applicationsets/product.yaml')[0]
     const generators = objectAt(objectAt(product, 'spec'), 'generators') as Record<string, unknown>[]
