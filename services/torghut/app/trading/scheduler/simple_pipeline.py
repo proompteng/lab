@@ -4213,6 +4213,86 @@ class SimpleTradingPipeline(TradingPipeline):
         return target
 
     @staticmethod
+    def _bounded_collection_exit_window_elapsed(
+        *,
+        decision: StrategyDecision,
+        metadata: Mapping[str, Any],
+    ) -> tuple[datetime, datetime] | None:
+        exit_due_at = _parse_target_datetime(metadata.get("exit_due_at"))
+        if exit_due_at is None:
+            return None
+        event_ts = decision.event_ts
+        if event_ts.tzinfo is None:
+            event_ts = event_ts.replace(tzinfo=timezone.utc)
+        event_ts = event_ts.astimezone(timezone.utc)
+        if event_ts < exit_due_at:
+            return None
+        return event_ts, exit_due_at
+
+    @staticmethod
+    def _apply_bounded_collection_exit_window_audit(
+        decision: StrategyDecision,
+        *,
+        event_ts: datetime,
+        exit_due_at: datetime,
+    ) -> StrategyDecision:
+        reason = "bounded_paper_route_target_exit_window_elapsed"
+        audit = {
+            "schema_version": "torghut.bounded-paper-route-exit-window.v1",
+            "state": "rejected",
+            "reason": reason,
+            "symbol": decision.symbol.strip().upper(),
+            "action": decision.action,
+            "event_ts": event_ts.isoformat(),
+            "exit_due_at": exit_due_at.isoformat(),
+            "source_decision_mode": (
+                BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+            ),
+        }
+        params = dict(decision.params)
+        params["bounded_paper_route_target_exit_window"] = audit
+        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
+        simple_lane["bounded_paper_route_target_exit_window"] = audit
+        params["simple_lane"] = simple_lane
+
+        for key in (
+            "paper_route_target_plan_source_decision",
+            "paper_route_target_plan",
+            "paper_route_probe",
+        ):
+            metadata = _mapping_value(params.get(key))
+            if metadata is None:
+                continue
+            updated_metadata = dict(metadata)
+            updated_metadata["bounded_paper_route_target_exit_window"] = audit
+            params[key] = updated_metadata
+
+        return decision.model_copy(update={"params": params})
+
+    def _bounded_collection_exit_window_guarded_decision(
+        self,
+        decision: StrategyDecision,
+    ) -> tuple[StrategyDecision, str | None]:
+        if self._paper_route_probe_exit_metadata(decision) is not None:
+            return decision, None
+        metadata = _bounded_paper_route_collection_entry_metadata(decision.params)
+        if metadata is None:
+            return decision, None
+        elapsed = self._bounded_collection_exit_window_elapsed(
+            decision=decision,
+            metadata=metadata,
+        )
+        if elapsed is None:
+            return decision, None
+        event_ts, exit_due_at = elapsed
+        updated = self._apply_bounded_collection_exit_window_audit(
+            decision,
+            event_ts=event_ts,
+            exit_due_at=exit_due_at,
+        )
+        return updated, "bounded_paper_route_target_exit_window_elapsed"
+
+    @staticmethod
     def _apply_bounded_collection_target_sizing_audit(
         decision: StrategyDecision,
         *,
@@ -4290,6 +4370,12 @@ class SimpleTradingPipeline(TradingPipeline):
                 qty=decision.qty,
             )
             return updated, "bounded_paper_route_target_notional_sizing_missing"
+
+        exit_guarded_decision, exit_window_reason = (
+            self._bounded_collection_exit_window_guarded_decision(decision)
+        )
+        if exit_window_reason is not None:
+            return exit_guarded_decision, exit_window_reason
 
         target = self._bounded_collection_target_sizing_payload(
             decision=decision,
@@ -4958,6 +5044,20 @@ class SimpleTradingPipeline(TradingPipeline):
         account: dict[str, str],
         positions: list[dict[str, Any]],
     ) -> tuple[StrategyDecision, Optional[MarketSnapshot]] | None:
+        decision, bounded_exit_window_reject_reason = (
+            self._bounded_collection_exit_window_guarded_decision(decision)
+        )
+        if bounded_exit_window_reject_reason is not None:
+            self.executor.update_decision_params(session, decision_row, decision.params)
+            self.executor.sync_decision_state(session, decision_row, decision)
+            self._record_decision_rejection(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reasons=[bounded_exit_window_reject_reason],
+                log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+            )
+            return None
         decision, snapshot = self._ensure_decision_price(
             decision, signal_price=decision.params.get("price")
         )

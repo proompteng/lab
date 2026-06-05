@@ -1423,6 +1423,55 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
         )
 
+    def test_target_notional_sizing_summary_excludes_paper_route_exits(
+        self,
+    ) -> None:
+        summary = _source_decision_target_notional_sizing_summary(
+            [
+                {
+                    "trade_decision_id": "entry-decision",
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "paper_route_probe_target_notional": "150",
+                    "decision_json": {
+                        "params": {
+                            "source_decision_mode": ("bounded_paper_route_collection"),
+                            "paper_route_target_notional_sizing": {
+                                "sizing_source": "target_notional",
+                                "blockers": [],
+                            },
+                        }
+                    },
+                },
+                {
+                    "trade_decision_id": "exit-decision",
+                    "source_decision_mode": "route_acquisition_probe",
+                    "decision_json": {
+                        "params": {
+                            "source_decision_mode": "route_acquisition_probe",
+                            "paper_route_probe_exit": {
+                                "mode": "paper_route_exit",
+                                "source": "filled_paper_route_probe_executions",
+                            },
+                        }
+                    },
+                },
+                {
+                    "trade_decision_id": "exit-decision",
+                    "execution_id": "exit-execution",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+            ]
+        )
+
+        self.assertTrue(summary["requires_target_notional_sizing"])
+        self.assertEqual(summary["source_row_count"], 3)
+        self.assertEqual(summary["target_notional_sizing_required_source_row_count"], 1)
+        self.assertEqual(summary["excluded_paper_route_probe_exit_row_count"], 2)
+        self.assertEqual(summary["audit_count"], 1)
+        self.assertEqual(summary["authoritative_target_notional_sizing_count"], 1)
+        self.assertEqual(summary["missing_target_notional_sizing_count"], 0)
+        self.assertEqual(summary["blockers"], [])
+
     def test_runtime_rows_fail_closed_on_non_authoritative_target_notional_sizing(
         self,
     ) -> None:
