@@ -1175,9 +1175,67 @@ class TestFlattenPaperAccountPositions(TestCase):
         self.assertEqual(readback["matching_target_count"], 1)
         self.assertEqual(readback["clean_matching_target_count"], 1)
         self.assertTrue(readback["persisted_snapshot_seen"])
+        self.assertFalse(readback["persisted_snapshot_after_target_window"])
+        self.assertEqual(readback["blockers"], [])
+
+    def test_target_plan_readback_accepts_post_window_flat_snapshot(self) -> None:
+        target_plan = {
+            "schema_version": "torghut.paper-route-target-plan.v1",
+            "next_paper_route_runtime_window_targets": {
+                "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                "clean_window_baseline_readiness": {
+                    "state": "clean",
+                    "blockers": [],
+                },
+                "targets": [
+                    {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "account_label": "TORGHUT_SIM",
+                        "window_start": "2026-06-05T13:30:00+00:00",
+                        "window_end": "2026-06-05T20:00:00+00:00",
+                        "paper_route_clean_window_baseline_state": {
+                            "state": "clean",
+                            "snapshot_id": "pre-session-snapshot",
+                            "snapshot_as_of": "2026-06-05T13:29:54+00:00",
+                            "source_auditable": True,
+                            "blockers": [],
+                        },
+                        "paper_route_clean_window_baseline_blockers": [],
+                    }
+                ],
+            },
+        }
+
+        with patch.object(
+            flatten_script.urllib.request,
+            "urlopen",
+            return_value=FakeHttpResponse(target_plan),
+        ):
+            readback = flatten_script.read_target_plan_clean_window_readback(
+                url="http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+                account_label="TORGHUT_SIM",
+                snapshot_id="post-close-snapshot",
+                snapshot_as_of="2026-06-05T20:09:35+00:00",
+                timeout_seconds=2,
+            )
+
+        self.assertEqual(readback["state"], "clean")
+        self.assertEqual(readback["matching_target_count"], 1)
+        self.assertEqual(readback["clean_matching_target_count"], 1)
+        self.assertFalse(readback["persisted_snapshot_seen"])
+        self.assertTrue(readback["persisted_snapshot_after_target_window"])
         self.assertEqual(readback["blockers"], [])
 
     def test_target_plan_readback_fail_closed_edge_cases(self) -> None:
+        self.assertIsNone(flatten_script._readback_datetime("not-a-timestamp"))
+        self.assertEqual(
+            flatten_script._readback_datetime("2026-06-05T20:00:00"),
+            datetime(2026, 6, 5, 20, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            flatten_script._readback_datetime("2026-06-05T20:00:00Z"),
+            datetime(2026, 6, 5, 20, 0, tzinfo=timezone.utc),
+        )
         self.assertEqual(flatten_script._as_sequence("not-a-list"), [])
         self.assertEqual(
             flatten_script._target_plan_readback_targets({"targets": []}),
@@ -1307,6 +1365,40 @@ class TestFlattenPaperAccountPositions(TestCase):
             )
         self.assertEqual(
             readback["blockers"], ["paper_route_target_plan_readback_target_missing"]
+        )
+
+        with patch.object(
+            flatten_script.urllib.request,
+            "urlopen",
+            return_value=FakeHttpResponse(
+                {
+                    "targets": [
+                        {
+                            "candidate_id": "candidate-1",
+                            "account_label": "TORGHUT_SIM",
+                            "window_start": "2026-06-05T13:30:00+00:00",
+                            "window_end": "2026-06-05T20:00:00+00:00",
+                            "paper_route_clean_window_baseline_state": {
+                                "state": "clean",
+                                "snapshot_id": "other-snapshot",
+                                "source_auditable": True,
+                                "blockers": [],
+                            },
+                        }
+                    ]
+                }
+            ),
+        ):
+            readback = flatten_script.read_target_plan_clean_window_readback(
+                url="http://torghut-sim",
+                account_label="TORGHUT_SIM",
+                snapshot_id="snapshot-1",
+                snapshot_as_of="2026-06-05T13:16:00+00:00",
+                timeout_seconds=1,
+            )
+        self.assertIn(
+            "paper_route_target_plan_readback_snapshot_id_mismatch",
+            readback["blockers"],
         )
 
     def test_required_target_plan_readback_blocks_when_baseline_still_pending(
