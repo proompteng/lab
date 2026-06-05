@@ -297,6 +297,27 @@ def test_target_plan_payload_keeps_top_level_plan_when_it_has_probe_symbols() ->
     assert paper_route_target_plan_probe_symbols(plan) == {"AAPL", "AMZN"}
 
 
+def test_target_plan_probe_symbols_accept_clean_window_baseline_state() -> None:
+    plan = {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "target_count": 1,
+        "targets": [
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "paper_route_clean_window_baseline_state": {
+                    "symbols": [" aapl "],
+                    "source_audit": {
+                        "symbols": ["AMZN"],
+                    },
+                },
+            }
+        ],
+    }
+
+    assert paper_route_target_plan_probe_symbols(plan) == {"AAPL", "AMZN"}
+
+
 def test_fresh_hpairs_target_materializes_bounded_collection_source_decisions(
     db_session: Session,
 ) -> None:

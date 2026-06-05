@@ -57,7 +57,7 @@ def paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, A
     return mapping_items(plan.get("targets"))
 
 
-def _target_probe_symbol_values(target: Mapping[str, Any]) -> set[str]:
+def _probe_symbol_values_from_mapping(payload: Mapping[str, Any]) -> set[str]:
     symbols: set[str] = set()
     for field in (
         "paper_route_probe_symbols",
@@ -65,7 +65,7 @@ def _target_probe_symbol_values(target: Mapping[str, Any]) -> set[str]:
         "symbols",
         "target_symbols",
     ):
-        raw_symbols = target.get(field)
+        raw_symbols = payload.get(field)
         if isinstance(raw_symbols, str):
             values: Sequence[object] = raw_symbols.split(",")
         elif isinstance(raw_symbols, Sequence) and not isinstance(
@@ -84,13 +84,29 @@ def _target_probe_symbol_values(target: Mapping[str, Any]) -> set[str]:
         "symbol_actions",
         "target_symbol_actions",
     ):
-        raw_actions = target.get(field)
+        raw_actions = payload.get(field)
         if not isinstance(raw_actions, Mapping):
             continue
         for raw_symbol in cast(Mapping[object, object], raw_actions):
             symbol = str(raw_symbol).strip().upper()
             if symbol:
                 symbols.add(symbol)
+    return symbols
+
+
+def _target_probe_symbol_values(target: Mapping[str, Any]) -> set[str]:
+    symbols = _probe_symbol_values_from_mapping(target)
+    for field in (
+        "paper_route_clean_window_baseline_state",
+        "clean_window_baseline_state",
+    ):
+        state = _to_str_map(target.get(field))
+        if not state:
+            continue
+        symbols.update(_probe_symbol_values_from_mapping(state))
+        source_audit = _to_str_map(state.get("source_audit"))
+        if source_audit:
+            symbols.update(_probe_symbol_values_from_mapping(source_audit))
     return symbols
 
 

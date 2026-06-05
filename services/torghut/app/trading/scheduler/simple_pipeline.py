@@ -220,7 +220,7 @@ def _safe_text(value: object) -> str | None:
     return text or None
 
 
-def _target_symbols(target: Mapping[str, Any]) -> set[str]:
+def _symbols_from_mapping(target: Mapping[str, Any]) -> set[str]:
     symbols: set[str] = set()
     for field in (
         "paper_route_probe_symbols",
@@ -252,6 +252,24 @@ def _target_symbols(target: Mapping[str, Any]) -> set[str]:
         for raw_symbol in cast(Mapping[object, object], raw_actions):
             if symbol := str(raw_symbol).strip().upper():
                 symbols.add(symbol)
+
+    return symbols
+
+
+def _target_symbols(target: Mapping[str, Any]) -> set[str]:
+    symbols = _symbols_from_mapping(target)
+    for field in (
+        "paper_route_clean_window_baseline_state",
+        "clean_window_baseline_state",
+    ):
+        state = target.get(field)
+        if not isinstance(state, Mapping):
+            continue
+        typed_state = cast(Mapping[str, Any], state)
+        symbols.update(_symbols_from_mapping(typed_state))
+        source_audit = typed_state.get("source_audit")
+        if isinstance(source_audit, Mapping):
+            symbols.update(_symbols_from_mapping(cast(Mapping[str, Any], source_audit)))
 
     execution_source_key = target.get("paper_route_execution_source_key")
     if isinstance(execution_source_key, Mapping):

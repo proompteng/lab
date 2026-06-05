@@ -11648,6 +11648,28 @@ class TestTradingApi(TestCase):
             {},
         )
 
+    def test_status_probe_symbols_accept_clean_window_baseline_state(self) -> None:
+        plan = {
+            "schema_version": "torghut.paper-route-target-plan.v1",
+            "target_count": 1,
+            "targets": [
+                {
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "paper_route_clean_window_baseline_state": {
+                        "symbols": [" aapl "],
+                        "source_audit": {
+                            "symbols": ["AMZN"],
+                        },
+                    },
+                }
+            ],
+        }
+
+        self.assertEqual(
+            main_module._paper_route_target_plan_probe_symbols(plan),
+            ["AAPL", "AMZN"],
+        )
+
     def test_fetch_paper_route_target_plan_url_rejects_invalid_url(self) -> None:
         self.assertEqual(
             _fetch_paper_route_target_plan_url(
