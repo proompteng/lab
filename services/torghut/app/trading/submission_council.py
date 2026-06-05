@@ -2149,7 +2149,7 @@ def _bounded_source_collection_probe_window(
         return window_start, window_end, False
     if not bool(candidate.get("source_collection_candidate")):
         return window_start, window_end, False
-    if not bool(candidate.get("bounded_evidence_collection_authorized")):
+    if not bool(candidate.get("source_collection_authorized")):
         return window_start, window_end, False
 
     now = datetime.now(timezone.utc)
