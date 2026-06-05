@@ -4871,6 +4871,27 @@ class TestSubmissionCouncil(TestCase):
                 for statement in statements
             )
         )
+        portfolio_statements = [
+            statement
+            for statement in statements
+            if "FROM autoresearch_portfolio_candidates" in statement
+        ]
+        self.assertTrue(portfolio_statements)
+        self.assertTrue(
+            any(
+                "autoresearch_portfolio_candidates.status" in statement
+                for statement in portfolio_statements
+            )
+        )
+        self.assertFalse(
+            any("payload_json" in statement for statement in portfolio_statements)
+        )
+        self.assertFalse(
+            any(
+                "optimizer_report_json" in statement
+                for statement in portfolio_statements
+            )
+        )
 
     def test_load_profit_promotion_counts_fail_closed_when_portfolio_scan_truncated(
         self,

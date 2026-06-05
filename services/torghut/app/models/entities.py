@@ -138,6 +138,7 @@ class TradeDecision(Base, CreatedAtMixin):
             "symbol",
             "created_at",
         ),
+        Index("ix_trade_decisions_created_id", "created_at", "id"),
         Index(
             "uq_trade_decisions_account_decision_hash",
             "alpaca_account_label",
@@ -1561,6 +1562,12 @@ class RejectedSignalOutcomeEvent(Base, TimestampMixin):
             "event_ts",
         ),
         Index(
+            "ix_rejected_signal_events_account_event_created",
+            "account_label",
+            "event_ts",
+            "created_at",
+        ),
+        Index(
             "ix_rejected_signal_outcome_events_reason",
             "reject_reason",
         ),
@@ -1806,6 +1813,16 @@ class StrategyRuntimeLedgerBucket(Base, TimestampMixin):
             "ix_strategy_runtime_ledger_buckets_account_stage_ended",
             "account_label",
             "observed_stage",
+            "bucket_ended_at",
+            "created_at",
+        ),
+        Index(
+            "ix_runtime_ledger_bucket_audit_lookup",
+            "hypothesis_id",
+            "candidate_id",
+            "observed_stage",
+            "account_label",
+            "strategy_family",
             "bucket_ended_at",
             "created_at",
         ),
