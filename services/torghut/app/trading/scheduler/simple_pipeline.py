@@ -860,6 +860,18 @@ def _target_probe_window(target: Mapping[str, Any]) -> tuple[datetime, datetime]
     return window_start, window_end
 
 
+def _target_missing_explicit_probe_window(target: Mapping[str, Any]) -> bool:
+    return all(
+        _safe_text(target.get(key)) is None
+        for key in (
+            "paper_route_probe_window_start",
+            "paper_route_probe_window_end",
+            "window_start",
+            "window_end",
+        )
+    )
+
+
 def _target_probe_action(target: Mapping[str, Any]) -> Literal["buy", "sell"]:
     for key in (
         "paper_route_probe_action",
@@ -5893,6 +5905,22 @@ class SimpleTradingPipeline(TradingPipeline):
             normalized["paper_route_probe_symbols"] = sorted(raw_symbols)
         elif raw_symbols and "paper_route_probe_symbols" not in normalized:
             normalized["paper_route_probe_symbols"] = sorted(raw_symbols)
+
+        if (
+            _target_has_bounded_source_collection_authorization(normalized)
+            and _target_probe_window(normalized) is None
+            and _target_missing_explicit_probe_window(normalized)
+        ):
+            now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+            window_start = regular_session_open_utc_for(now)
+            window_end = window_start + timedelta(minutes=_REGULAR_SESSION_MINUTES)
+            normalized["paper_route_probe_window_start"] = window_start.isoformat()
+            normalized["paper_route_probe_window_end"] = window_end.isoformat()
+            normalized.setdefault("paper_route_probe_window_defaulted", True)
+            normalized.setdefault(
+                "paper_route_probe_window_source",
+                "current_regular_session_source_collection_default",
+            )
 
         if not isinstance(normalized.get("source_decision_readiness"), Mapping):
             normalized["source_decision_readiness"] = (
