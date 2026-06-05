@@ -209,6 +209,12 @@ RUNTIME_LEDGER_SOURCE_COLLECTION_PENDING_BLOCKER = (
 RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND = (
     "runtime_ledger_source_collection_candidate"
 )
+SIM_BACKED_PAPER_ROUTE_SOURCE_KINDS = frozenset(
+    {
+        "paper_route_probe_runtime_observed",
+        RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND,
+    }
+)
 RUNTIME_LEDGER_SOURCE_COLLECTION_HANDOFF = "runtime_ledger_source_collection_import"
 RUNTIME_LEDGER_SOURCE_COLLECTION_SELECTED_BY = "runtime_ledger_source_collection"
 PRIORITIZED_SOURCE_COLLECTION_PLAN_SOURCE = "paper_route_prioritized_source_collection"
@@ -1986,6 +1992,15 @@ def _target_identity(
         strategy_names_from_strategy_id(strategy_id),
         derived_strategy_name_from_strategy_id(strategy_id),
     )
+    account_label = _safe_text(target.get("account_label"))
+    source_kind = _safe_text(target.get("source_kind"))
+    source_dsn_env = _safe_text(target.get("source_dsn_env"))
+    source_account_label = _normalized_sim_backed_source_account_label(
+        account_label=account_label,
+        source_account_label=_safe_text(target.get("source_account_label")),
+        source_dsn_env=source_dsn_env,
+        source_kind=source_kind,
+    )
     return {
         "hypothesis_id": _safe_text(target.get("hypothesis_id")),
         "candidate_id": _safe_text(target.get("candidate_id")),
@@ -1995,10 +2010,10 @@ def _target_identity(
         "strategy_id": strategy_id,
         "runtime_strategy_name": runtime_strategy_name,
         "strategy_lookup_names": strategy_lookup_names,
-        "account_label": _safe_text(target.get("account_label")),
-        "source_account_label": _safe_text(target.get("source_account_label")),
-        "source_kind": _safe_text(target.get("source_kind")),
-        "source_dsn_env": _safe_text(target.get("source_dsn_env")),
+        "account_label": account_label,
+        "source_account_label": source_account_label,
+        "source_kind": source_kind,
+        "source_dsn_env": source_dsn_env,
         "target_dsn_env": _safe_text(target.get("target_dsn_env")),
         "source_manifest_ref": _safe_text(target.get("source_manifest_ref")),
         "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")),
@@ -2015,11 +2030,11 @@ def _target_identity(
             target.get("runtime_ledger_bucket_ref")
         ),
         "account_stage_runtime_identity": {
-            "account_label": _safe_text(target.get("account_label")),
-            "source_account_label": _safe_text(target.get("source_account_label")),
+            "account_label": account_label,
+            "source_account_label": source_account_label,
             "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
             "runtime_strategy_name": runtime_strategy_name,
-            "source_kind": _safe_text(target.get("source_kind")),
+            "source_kind": source_kind,
         },
         "paper_probation_authorized": bool(target.get("paper_probation_authorized")),
         "paper_probation_authorization_scope": _safe_text(
@@ -2810,7 +2825,15 @@ def _next_paper_route_runtime_window_targets(
                 }
             )
             continue
-        source_account_label = _safe_text(target.get("account_label"))
+        source_account_label = _normalized_sim_backed_source_account_label(
+            account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            source_account_label=(
+                _safe_text(target.get("source_account_label"))
+                or _safe_text(target.get("account_label"))
+            ),
+            source_dsn_env="SIM_DB_DSN",
+            source_kind="paper_route_probe_runtime_observed",
+        )
         health_gate = _runtime_window_import_health_gate(
             target=target,
             live_submission_gate=live_submission_gate,
@@ -9885,6 +9908,24 @@ def _source_collection_target_has_bounded_bucket_materialization_seed(
     )
 
 
+def _normalized_sim_backed_source_account_label(
+    *,
+    account_label: str | None,
+    source_account_label: str | None,
+    source_dsn_env: str | None,
+    source_kind: str | None,
+) -> str | None:
+    resolved = source_account_label or account_label
+    if (
+        account_label == PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL
+        and resolved == "TORGHUT_REPLAY"
+        and source_dsn_env == "SIM_DB_DSN"
+        and (source_kind or "").strip() in SIM_BACKED_PAPER_ROUTE_SOURCE_KINDS
+    ):
+        return account_label
+    return resolved
+
+
 def _source_collection_import_target_allowed(target: Mapping[str, Any]) -> bool:
     """Reject replay buckets that have no source lineage to materialize."""
 
@@ -10008,12 +10049,17 @@ def _sanitized_runtime_ledger_source_collection_target(
     account_label = (
         _safe_text(target.get("account_label")) or PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL
     )
-    source_account_label = (
-        _safe_text(target.get("source_account_label")) or account_label
-    )
     source_kind = (
         _safe_text(target.get("source_kind"))
         or RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
+    )
+    source_dsn_env = _safe_text(target.get("source_dsn_env")) or "SIM_DB_DSN"
+    target_dsn_env = _safe_text(target.get("target_dsn_env")) or "SIM_DB_DSN"
+    source_account_label = _normalized_sim_backed_source_account_label(
+        account_label=account_label,
+        source_account_label=_safe_text(target.get("source_account_label")),
+        source_dsn_env=source_dsn_env,
+        source_kind=source_kind,
     )
     bounded_evidence_collection_requested = _truthy_plan_value(
         target.get("bounded_evidence_collection_authorized")
@@ -10058,8 +10104,8 @@ def _sanitized_runtime_ledger_source_collection_target(
             "runtime_strategy_name": runtime_strategy_name,
             "source_kind": source_kind,
         },
-        "source_dsn_env": _safe_text(target.get("source_dsn_env")) or "SIM_DB_DSN",
-        "target_dsn_env": _safe_text(target.get("target_dsn_env")) or "SIM_DB_DSN",
+        "source_dsn_env": source_dsn_env,
+        "target_dsn_env": target_dsn_env,
         "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")) or "",
         "source_manifest_ref": _safe_text(target.get("source_manifest_ref")) or "",
         "source_kind": source_kind,

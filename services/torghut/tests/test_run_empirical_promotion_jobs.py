@@ -4899,10 +4899,10 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("--source-account-label", command)
         self.assertEqual(
             command[command.index("--source-account-label") + 1],
-            "TORGHUT_REPLAY",
+            "TORGHUT_SIM",
         )
         self.assertEqual(payload["account_label"], "TORGHUT_SIM")
-        self.assertEqual(payload["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(payload["source_account_label"], "TORGHUT_SIM")
 
     def test_runtime_window_import_rejects_non_mapping_import_payload(
         self,
