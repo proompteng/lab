@@ -57,6 +57,14 @@ spec:
                     --backfill-execution-events \
                     --apply \
                     --json
+                  /opt/venv/bin/python scripts/refresh_execution_tca_metrics.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
+                    --older-than-seconds 0 \
+                    --batch-size 1000 \
+                    --max-batches 5 \
+                    --apply \
+                    --json
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
