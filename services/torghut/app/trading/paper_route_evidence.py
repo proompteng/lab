@@ -1478,6 +1478,40 @@ def _target_allows_strategy_universe_probe_fallback(
     )
 
 
+def _runtime_window_isolated_account_priority(
+    target: Mapping[str, Any],
+    source_index: int,
+) -> tuple[int, int, int, int, Decimal, Decimal, int]:
+    reason_codes = set(_unique_text_items(target.get("source_collection_reason_codes")))
+    next_action = _safe_text(target.get("source_collection_next_action"))
+    profit_target = (
+        _truthy_plan_value(target.get("source_collection_profit_target_candidate"))
+        or "profit_target_source_materialization" in reason_codes
+    )
+    materialization_target = (
+        next_action == RUNTIME_LEDGER_SOURCE_COLLECTION_SAFE_EVIDENCE_COLLECTION_PATH[0]
+    )
+    source_authorized = _truthy_plan_value(
+        target.get("source_collection_authorized")
+    ) or _truthy_plan_value(target.get("bounded_evidence_collection_authorized"))
+    net_pnl = max(
+        _safe_decimal(
+            target.get("source_collection_profit_target_net_pnl_after_costs")
+        ),
+        _safe_decimal(target.get("source_collection_net_strategy_pnl_after_costs")),
+    )
+    filled_notional = _safe_decimal(target.get("source_collection_filled_notional"))
+    return (
+        0 if profit_target else 1,
+        0 if materialization_target else 1,
+        0 if source_authorized else 1,
+        0 if _target_is_hpairs(target) else 1,
+        -net_pnl,
+        -filled_notional,
+        source_index,
+    )
+
+
 def _strategy_lookup_names_for_target(target: Mapping[str, Any]) -> list[str]:
     strategy_name = _safe_text(target.get("strategy_name"))
     strategy_id = _safe_text(target.get("strategy_id"))
@@ -2163,10 +2197,12 @@ def _next_paper_route_runtime_window_targets(
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
     planned_execution_source_keys: dict[tuple[object, ...], dict[str, object]] = {}
-    planned_account_window_keys: dict[
-        tuple[str, str, str, str, str, str], dict[str, object]
-    ] = {}
-    for target in targets:
+    planned_account_window_keys: dict[tuple[str, str, str], dict[str, object]] = {}
+    prioritized_targets = sorted(
+        enumerate(targets),
+        key=lambda item: _runtime_window_isolated_account_priority(item[1], item[0]),
+    )
+    for source_index, target in prioritized_targets:
         hypothesis_id = _safe_text(target.get("hypothesis_id"))
         candidate_id = _safe_text(target.get("candidate_id"))
         strategy_family = _safe_text(target.get("strategy_family"))
@@ -2306,6 +2342,7 @@ def _next_paper_route_runtime_window_targets(
                     "hypothesis_id": hypothesis_id,
                     "candidate_id": candidate_id,
                     "reason": "next_paper_route_runtime_window_target_not_ready",
+                    "source_plan_index": source_index,
                     "missing_or_blocking_fields": reasons,
                 }
             )
@@ -2391,6 +2428,7 @@ def _next_paper_route_runtime_window_targets(
                     "hypothesis_id": hypothesis_id,
                     "candidate_id": candidate_id,
                     "reason": "paper_route_account_pre_session_not_clean",
+                    "source_plan_index": source_index,
                     "missing_or_blocking_fields": account_pre_session_blockers,
                     "paper_route_account_pre_session_state": (
                         account_pre_session_state
@@ -2418,6 +2456,7 @@ def _next_paper_route_runtime_window_targets(
                     "hypothesis_id": hypothesis_id,
                     "candidate_id": candidate_id,
                     "reason": "duplicate_next_paper_route_runtime_window_target",
+                    "source_plan_index": source_index,
                     "missing_or_blocking_fields": [
                         "duplicate_next_paper_route_runtime_window_target"
                     ],
@@ -2447,6 +2486,7 @@ def _next_paper_route_runtime_window_targets(
                     "reason": (
                         "duplicate_next_paper_route_runtime_window_execution_source"
                     ),
+                    "source_plan_index": source_index,
                     "duplicate_of_hypothesis_id": existing_execution_source.get(
                         "hypothesis_id"
                     ),
@@ -2465,9 +2505,6 @@ def _next_paper_route_runtime_window_targets(
             PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             account_window_start,
             account_window_end,
-            hypothesis_id or "",
-            candidate_id or "",
-            canonical_strategy_name or "",
         )
         existing_account_window = planned_account_window_keys.get(account_window_key)
         if existing_account_window is not None:
@@ -2475,18 +2512,28 @@ def _next_paper_route_runtime_window_targets(
                 {
                     "hypothesis_id": hypothesis_id,
                     "candidate_id": candidate_id,
-                    "reason": "paper_route_account_window_already_assigned",
+                    "reason": (
+                        "paper_route_account_window_reserved_for_isolated_source_collection"
+                    ),
+                    "source_plan_index": source_index,
                     "duplicate_of_hypothesis_id": existing_account_window.get(
                         "hypothesis_id"
                     ),
                     "duplicate_of_candidate_id": existing_account_window.get(
                         "candidate_id"
                     ),
+                    "duplicate_of_strategy_name": existing_account_window.get(
+                        "strategy_name"
+                    ),
+                    "duplicate_of_runtime_strategy_name": existing_account_window.get(
+                        "runtime_strategy_name"
+                    ),
                     "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
                     "window_start": account_window_start,
                     "window_end": account_window_end,
                     "missing_or_blocking_fields": [
-                        "paper_route_account_window_already_assigned"
+                        "paper_route_account_window_reserved_for_isolated_source_collection",
+                        "paper_route_account_window_already_assigned",
                     ],
                 }
             )
@@ -2580,6 +2627,7 @@ def _next_paper_route_runtime_window_targets(
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
+            "source_plan_index": source_index,
             "observed_stage": "paper",
             "strategy_family": strategy_family,
             "strategy_name": canonical_strategy_name,

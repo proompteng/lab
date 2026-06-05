@@ -1385,6 +1385,25 @@ def test_commit_dynamic_next_window_plan_filters_to_confirmed_hpairs_target(
     assert _count_decisions(sqlite_dsn) == 2
 
 
+def test_dynamic_plan_selection_prefers_sanitized_isolated_hpairs_plan() -> None:
+    payload = {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(
+                _tsmom_target(),
+                _hpairs_target(),
+            )
+        },
+        "next_paper_route_runtime_window_targets": _plan(_hpairs_target()),
+    }
+
+    plan, selected_plan = cli._materialization_plan_from_payload(payload)
+
+    assert selected_plan == "next_paper_route_runtime_window_targets"
+    assert [
+        target["candidate_id"] for target in cli.paper_route_target_plan_targets(plan)
+    ] == ["c88421d619759b2cfaa6f4d0"]
+
+
 def test_commit_dynamic_next_window_plan_blocks_when_confirmed_target_is_absent(
     monkeypatch: pytest.MonkeyPatch,
     sqlite_dsn: str,
