@@ -69,18 +69,18 @@ spec:
                 - |
                   set -euo pipefail
                   cd /app
-                  echo "stage=refresh_execution_tca_metrics dsn_env=DB_DSN started_at=$(date -Iseconds)"
+                  echo "stage=refresh_execution_tca_metrics dsn_env=SIM_DB_DSN account=TORGHUT_SIM started_at=$(date -Iseconds)"
                   /opt/venv/bin/python scripts/refresh_execution_tca_metrics.py \
-                    --dsn-env DB_DSN \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
                     --older-than-seconds 900 \
                     --batch-size 1000 \
                     --max-batches 5 \
                     --apply \
                     --json
-                  echo "stage=refresh_execution_tca_metrics dsn_env=SIM_DB_DSN account=TORGHUT_SIM started_at=$(date -Iseconds)"
+                  echo "stage=refresh_execution_tca_metrics dsn_env=DB_DSN started_at=$(date -Iseconds)"
                   /opt/venv/bin/python scripts/refresh_execution_tca_metrics.py \
-                    --dsn-env SIM_DB_DSN \
-                    --account-label TORGHUT_SIM \
+                    --dsn-env DB_DSN \
                     --older-than-seconds 900 \
                     --batch-size 1000 \
                     --max-batches 5 \

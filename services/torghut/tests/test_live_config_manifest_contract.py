@@ -1223,6 +1223,8 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--dsn-env DB_DSN", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
+        self.assertLess(args.index("dsn_env=SIM_DB_DSN"), args.index("dsn_env=DB_DSN"))
+        self.assertLess(args.index("--dsn-env SIM_DB_DSN"), args.index("--dsn-env DB_DSN"))
         self.assertIn("--older-than-seconds 900", args)
         self.assertIn("--batch-size 1000", args)
         self.assertIn("--max-batches 5", args)
