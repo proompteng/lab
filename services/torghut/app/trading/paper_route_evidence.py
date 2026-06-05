@@ -76,6 +76,9 @@ NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION = (
 PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION = (
     "torghut.paper-route-runtime-window-import-audit.v1"
 )
+PAPER_ROUTE_PROFITABILITY_PROOF_LIFECYCLE_SCHEMA_VERSION = (
+    "torghut.paper-route-profitability-proof-lifecycle.v1"
+)
 RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION = (
     "torghut.runtime-ledger-proof-packet-handoff.v1"
 )
@@ -8925,6 +8928,390 @@ def _runtime_ledger_proof_packet_handoff(
     }
 
 
+def _profitability_proof_lifecycle_stage(
+    *,
+    name: str,
+    status: str,
+    evidence: Mapping[str, object] | None = None,
+    blockers: Sequence[object] | None = None,
+    next_action: str | None = None,
+) -> dict[str, object]:
+    return {
+        "name": name,
+        "status": status,
+        "complete": status == "complete",
+        "blockers": _unique_text_items(blockers or []),
+        "next_action": next_action,
+        "evidence": dict(evidence or {}),
+    }
+
+
+def _readiness_stage_status(
+    *,
+    target_count: int,
+    state: str,
+    blockers: Sequence[object],
+    pending_states: set[str],
+    complete_states: set[str],
+) -> str:
+    if target_count <= 0:
+        return "blocked"
+    if state in complete_states and not _unique_text_items(blockers):
+        return "complete"
+    if state in pending_states:
+        return "pending"
+    if _unique_text_items(blockers):
+        return "blocked"
+    return "pending"
+
+
+def _profitability_proof_lifecycle(
+    *,
+    live_submission_gate: Mapping[str, Any],
+    next_targets: Mapping[str, Any],
+    source_targets: Mapping[str, Any],
+    runtime_window_import_plan: Mapping[str, Any],
+    runtime_window_import_audit: Mapping[str, object],
+    next_target_audits: Sequence[Mapping[str, object]],
+    runtime_window_import_target_audits: Sequence[Mapping[str, object]],
+    summary_blockers: Sequence[object],
+) -> dict[str, object]:
+    """Return the canonical live-paper to runtime-ledger proof lifecycle.
+
+    This is an operator/readback contract only. It does not grant submission,
+    promotion, or capital authority; those remain owned by the existing gates.
+    """
+
+    live_gate_blockers = _unique_text_items(live_submission_gate.get("blocked_reasons"))
+    source_target_count = max(
+        _safe_int(source_targets.get("target_count")),
+        len(_as_mapping_items(source_targets.get("targets"))),
+    )
+    source_profit_target_count = _safe_int(
+        source_targets.get("source_collection_profit_target_count")
+    )
+    next_target_count = max(
+        _safe_int(next_targets.get("target_count")),
+        len(_as_mapping_items(next_targets.get("targets"))),
+    )
+    import_target_count = max(
+        _safe_int(runtime_window_import_plan.get("target_count")),
+        len(_as_mapping_items(runtime_window_import_plan.get("targets"))),
+    )
+    next_counts = _runtime_window_target_counts(next_target_audits)
+    import_counts = _runtime_window_target_counts(runtime_window_import_target_audits)
+    session_readiness = _as_mapping(next_targets.get("session_readiness"))
+    collection_readiness = _as_mapping(next_targets.get("collection_session_readiness"))
+    account_pre_session = _as_mapping(next_targets.get("account_pre_session_readiness"))
+    clean_window_baseline = _as_mapping(
+        next_targets.get("clean_window_baseline_readiness")
+    )
+    account_contamination = _as_mapping(
+        runtime_window_import_plan.get("account_contamination_readiness")
+    ) or _as_mapping(next_targets.get("account_contamination_readiness"))
+    source_decision_readiness = _as_mapping(
+        next_targets.get("source_decision_readiness")
+    )
+    runtime_import_state = (
+        _safe_text(runtime_window_import_audit.get("state")) or "unknown"
+    )
+    runtime_import_next_action = (
+        _safe_text(runtime_window_import_audit.get("next_action"))
+        or "inspect_runtime_window_import_audit"
+    )
+    source_collection_next_actions = _unique_text_items(
+        [
+            action
+            for plan in (runtime_window_import_plan, source_targets)
+            for target in _as_mapping_items(plan.get("targets"))
+            if (action := _safe_text(target.get("source_collection_next_action")))
+        ]
+    )
+    recommended_next_action = (
+        source_collection_next_actions[0]
+        if source_collection_next_actions
+        else runtime_import_next_action
+    )
+    session_state = _safe_text(session_readiness.get("state")) or "unknown"
+    collection_blockers = _unique_text_items(collection_readiness.get("blockers"))
+    account_pre_session_state = (
+        _safe_text(account_pre_session.get("state")) or "unknown"
+    )
+    clean_window_state = _safe_text(clean_window_baseline.get("state")) or "unknown"
+    account_contamination_state = (
+        _safe_text(account_contamination.get("state")) or "unknown"
+    )
+    source_decision_blockers = _unique_text_items(
+        source_decision_readiness.get("blockers")
+    )
+    runtime_import_blockers = _unique_text_items(
+        runtime_window_import_audit.get("blockers")
+    )
+    authority_blockers = sorted(
+        dict.fromkeys(
+            [
+                *live_gate_blockers,
+                *runtime_import_blockers,
+                *_unique_text_items(summary_blockers),
+            ]
+        )
+    )
+    target_status = (
+        "complete" if max(source_target_count, next_target_count) > 0 else "blocked"
+    )
+    source_decision_status = (
+        "complete"
+        if _safe_int(source_decision_readiness.get("ready_target_count")) > 0
+        and not source_decision_blockers
+        else "blocked"
+        if source_decision_blockers
+        else "pending"
+    )
+    collection_status = (
+        "active"
+        if session_state == "collecting_session_evidence" and not collection_blockers
+        else "pending"
+        if session_state
+        in {
+            "waiting_for_session_open",
+            "window_closed_settlement_pending",
+        }
+        else "blocked"
+        if collection_blockers
+        else "pending"
+    )
+    source_activity_seen = (
+        import_counts["source_activity"] > 0
+        or import_counts["rejected_signal_activity"] > 0
+        or next_counts["source_activity"] > 0
+        or next_counts["rejected_signal_activity"] > 0
+    )
+    source_activity_status = (
+        "complete"
+        if source_activity_seen
+        else "pending"
+        if session_state
+        in {
+            "waiting_for_session_open",
+            "collecting_session_evidence",
+            "window_closed_settlement_pending",
+        }
+        else "blocked"
+    )
+    runtime_import_ready = bool(runtime_window_import_audit.get("import_ready"))
+    runtime_import_status = (
+        "complete"
+        if runtime_import_state == "runtime_ledger_ready_for_gate_review"
+        or import_counts["runtime_ledger"] > 0
+        else "pending"
+        if not runtime_import_ready
+        and session_state
+        in {
+            "waiting_for_session_open",
+            "collecting_session_evidence",
+            "window_closed_settlement_pending",
+        }
+        else "blocked"
+        if runtime_import_blockers
+        else "pending"
+    )
+    runtime_ledger_status = (
+        "complete"
+        if import_target_count > 0
+        and import_counts["evidence_grade_runtime_ledger"] >= import_target_count
+        else "pending"
+        if runtime_import_status == "pending"
+        else "blocked"
+    )
+    promotion_status = "blocked"
+    lifecycle_state = runtime_import_state
+    if target_status == "blocked":
+        lifecycle_state = "target_plan_missing"
+        recommended_next_action = "repair_runtime_ledger_paper_probation_import_plan"
+    elif source_collection_next_actions:
+        lifecycle_state = "source_collection_materialization_pending"
+    elif session_state == "collecting_session_evidence":
+        lifecycle_state = "collecting_live_paper_source_evidence"
+        recommended_next_action = "collect_paper_route_activity_until_close"
+    elif session_state == "waiting_for_session_open":
+        lifecycle_state = "waiting_for_session_open"
+        recommended_next_action = "wait_for_regular_session_open"
+    elif session_state == "window_closed_settlement_pending":
+        lifecycle_state = "window_closed_settlement_pending"
+        recommended_next_action = "wait_for_settlement_before_import"
+
+    stages = [
+        _profitability_proof_lifecycle_stage(
+            name="source_profit_target_selected",
+            status=target_status,
+            blockers=[]
+            if target_status == "complete"
+            else ["paper_route_target_missing"],
+            next_action=(
+                None
+                if target_status == "complete"
+                else "repair_runtime_ledger_paper_probation_import_plan"
+            ),
+            evidence={
+                "source_target_count": source_target_count,
+                "source_profit_target_count": source_profit_target_count,
+                "next_target_count": next_target_count,
+                "selected_plan_source": _safe_text(
+                    runtime_window_import_plan.get("source")
+                ),
+            },
+        ),
+        _profitability_proof_lifecycle_stage(
+            name="clean_account_window",
+            status=_readiness_stage_status(
+                target_count=next_target_count,
+                state=clean_window_state,
+                blockers=_unique_text_items(clean_window_baseline.get("blockers")),
+                pending_states={
+                    "unknown",
+                    "no_targets",
+                    "clean_window_required",
+                    "pending_until_pre_session",
+                },
+                complete_states={"clean"},
+            ),
+            blockers=_unique_text_items(clean_window_baseline.get("blockers")),
+            next_action="capture_clean_window_account_baseline",
+            evidence={
+                "account_pre_session_state": account_pre_session_state,
+                "clean_window_baseline_state": clean_window_state,
+                "account_contamination_state": account_contamination_state,
+                "next_required_after": _safe_text(
+                    account_pre_session.get("next_required_after")
+                ),
+            },
+        ),
+        _profitability_proof_lifecycle_stage(
+            name="bounded_live_paper_collection",
+            status=collection_status,
+            blockers=collection_blockers,
+            next_action=(
+                "collect_paper_route_activity_until_close"
+                if collection_status == "active"
+                else "wait_for_regular_session_open"
+            ),
+            evidence={
+                "session_state": session_state,
+                "session_window": _as_mapping(next_targets.get("session_window")),
+                "collection_readiness_state": _safe_text(
+                    collection_readiness.get("state")
+                ),
+            },
+        ),
+        _profitability_proof_lifecycle_stage(
+            name="source_decision_readiness",
+            status=source_decision_status,
+            blockers=source_decision_blockers,
+            next_action="repair_paper_route_source_decision_readiness",
+            evidence={
+                "target_count": _safe_int(
+                    source_decision_readiness.get("target_count")
+                ),
+                "ready_target_count": _safe_int(
+                    source_decision_readiness.get("ready_target_count")
+                ),
+                "blocked_target_count": _safe_int(
+                    source_decision_readiness.get("blocked_target_count")
+                ),
+            },
+        ),
+        _profitability_proof_lifecycle_stage(
+            name="source_activity_and_tca",
+            status=source_activity_status,
+            blockers=(
+                []
+                if source_activity_status != "blocked"
+                else ["paper_route_source_activity_missing"]
+            ),
+            next_action="inspect_paper_route_source_activity_before_import",
+            evidence={
+                "targets_with_source_activity": import_counts["source_activity"],
+                "targets_with_rejected_signal_activity": import_counts[
+                    "rejected_signal_activity"
+                ],
+                "next_targets_with_source_activity": next_counts["source_activity"],
+                "next_targets_with_rejected_signal_activity": next_counts[
+                    "rejected_signal_activity"
+                ],
+            },
+        ),
+        _profitability_proof_lifecycle_stage(
+            name="runtime_window_import",
+            status=runtime_import_status,
+            blockers=runtime_import_blockers,
+            next_action=runtime_import_next_action,
+            evidence={
+                "state": runtime_import_state,
+                "import_ready": runtime_import_ready,
+                "selected_target_count": import_target_count,
+                "source_collection_next_actions": source_collection_next_actions,
+            },
+        ),
+        _profitability_proof_lifecycle_stage(
+            name="runtime_ledger_authority",
+            status=runtime_ledger_status,
+            blockers=(
+                []
+                if runtime_ledger_status != "blocked"
+                else ["runtime_ledger_evidence_grade_bucket_missing"]
+            ),
+            next_action="run_runtime_window_import_or_repair_source_materialization",
+            evidence={
+                "targets_with_runtime_ledger": import_counts["runtime_ledger"],
+                "targets_with_evidence_grade_runtime_ledger": import_counts[
+                    "evidence_grade_runtime_ledger"
+                ],
+                "targets_with_promotion_decision": import_counts["promotion_decision"],
+            },
+        ),
+        _profitability_proof_lifecycle_stage(
+            name="promotion_profit_authority",
+            status=promotion_status,
+            blockers=authority_blockers or ["live_runtime_ledger_required"],
+            next_action="assemble_authority_proof_packet_after_runtime_import",
+            evidence={
+                "live_submission_allowed": bool(live_submission_gate.get("allowed")),
+                "live_submission_reason": _safe_text(
+                    live_submission_gate.get("reason")
+                ),
+                "promotion_eligible_total": _safe_int(
+                    live_submission_gate.get("promotion_eligible_total")
+                ),
+                "proof_threshold": ">=500_usd_daily_net_pnl_after_costs",
+            },
+        ),
+    ]
+    return {
+        "schema_version": PAPER_ROUTE_PROFITABILITY_PROOF_LIFECYCLE_SCHEMA_VERSION,
+        "source": "paper_route_evidence_audit",
+        "state": lifecycle_state,
+        "next_action": recommended_next_action,
+        "proof_complete": False,
+        "promotion_authority_allowed": False,
+        "capital_promotion_allowed": False,
+        "selected_plan_source": _safe_text(runtime_window_import_plan.get("source")),
+        "selected_target_count": import_target_count,
+        "source_profit_target_count": source_profit_target_count,
+        "blockers": authority_blockers or ["live_runtime_ledger_required"],
+        "stages": stages,
+        "requirements": [
+            "source_linked_live_paper_decisions",
+            "broker_executions_and_fills",
+            "execution_tca_cost_records",
+            "closed_or_flat_positions",
+            "evidence_grade_runtime_ledger_buckets",
+            "tigerbeetle_runtime_ledger_reconciliation_healthy",
+            "post_cost_daily_net_pnl_at_least_500_usd",
+            "durable_authority_proof_packet",
+        ],
+    }
+
+
 def _deferred_runtime_window_target_audits(
     targets: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
@@ -10537,6 +10924,16 @@ def build_paper_route_evidence_audit(
         target_audits=target_audits,
         runtime_window_import_target_audits=raw_next_target_audits,
     )
+    profitability_proof_lifecycle = _profitability_proof_lifecycle(
+        live_submission_gate=live_submission_gate,
+        next_targets=next_targets,
+        source_targets=source_targets,
+        runtime_window_import_plan=runtime_window_import_plan,
+        runtime_window_import_audit=runtime_window_import_audit,
+        next_target_audits=next_target_audits,
+        runtime_window_import_target_audits=runtime_window_import_target_audits,
+        summary_blockers=summary_blockers,
+    )
     return {
         "schema_version": PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION,
         "generated_at": _isoformat(resolved_generated_at),
@@ -10641,6 +11038,7 @@ def build_paper_route_evidence_audit(
         "runtime_window_import_target_audits": runtime_window_import_target_audits,
         "runtime_window_import_audit": runtime_window_import_audit,
         "runtime_ledger_proof_packet_handoff": proof_packet_handoff,
+        "profitability_proof_lifecycle": profitability_proof_lifecycle,
         "summary": {
             "target_count": len(targets),
             "source_runtime_window_target_count": _safe_int(
@@ -10829,6 +11227,12 @@ def build_paper_route_evidence_audit(
             "next_runtime_window_import_next_action": runtime_window_import_audit[
                 "next_action"
             ],
+            "profitability_proof_lifecycle_state": (
+                profitability_proof_lifecycle["state"]
+            ),
+            "profitability_proof_lifecycle_next_action": (
+                profitability_proof_lifecycle["next_action"]
+            ),
             "next_paper_route_targets": _next_paper_route_target_summaries(
                 _as_mapping_items(next_targets.get("targets"))
             ),
@@ -10851,6 +11255,7 @@ __all__ = [
     "MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
     "MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
     "PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION",
+    "PAPER_ROUTE_PROFITABILITY_PROOF_LIFECYCLE_SCHEMA_VERSION",
     "PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION",
     "PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION",
     "RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION",
