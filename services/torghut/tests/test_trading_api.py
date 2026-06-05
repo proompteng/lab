@@ -9694,6 +9694,105 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_trading_paper_route_target_plan_deferred_query_skips_full_import_audit(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        live_gate = {
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [
+                    {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            },
+        }
+
+        def _assert_deferred_mode(*args: object, **kwargs: object) -> dict[str, object]:
+            self.assertIs(kwargs["include_runtime_window_import_audit"], False)
+            return {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "runtime_window_import_audit_mode": "deferred_until_import_ready",
+                "targets": [
+                    {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            }
+
+        self.assertIsNone(main_module._paper_route_target_plan_audit_mode_value("auto"))
+        self.assertIs(
+            main_module._paper_route_target_plan_audit_mode_value("deferred"), False
+        )
+        self.assertIs(
+            main_module._paper_route_target_plan_audit_mode_value("full"), True
+        )
+
+        try:
+            app.state.trading_scheduler = SimpleNamespace(
+                state=SimpleNamespace(market_session_open=False)
+            )
+            with (
+                patch(
+                    "app.main._paper_route_cached_live_submission_gate",
+                    return_value=live_gate,
+                ),
+                patch(
+                    "app.main._merge_external_paper_route_target_plan",
+                    side_effect=lambda gate: dict(gate),
+                ),
+                patch(
+                    "app.main._build_simple_lane_status_payload",
+                    return_value={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_max_notional": "75000",
+                    },
+                ),
+                patch(
+                    "app.main._paper_route_probe_book_from_target_plan",
+                    return_value={},
+                ),
+                patch(
+                    "app.main.build_paper_route_target_plan_payload",
+                    side_effect=_assert_deferred_mode,
+                ),
+            ):
+                response = self.client.get(
+                    "/trading/paper-route-target-plan"
+                    "?runtime_window_import_audit=deferred"
+                )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(
+                payload["runtime_window_import_audit_mode"],
+                "deferred_until_import_ready",
+            )
+            self.assertEqual(payload["target_count"], 1)
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_live_paper_route_target_plan_uses_bounded_sim_cached_gate_fast_path(
         self,
     ) -> None:
