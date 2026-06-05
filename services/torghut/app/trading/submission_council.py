@@ -2130,6 +2130,28 @@ def _runtime_ledger_source_collection_source_dsn_env(
     )
 
 
+def _runtime_ledger_source_collection_import_candidate(
+    candidate: Mapping[str, object],
+) -> bool:
+    if bool(candidate.get("source_collection_candidate")):
+        return True
+    if bool(candidate.get("source_collection_authorized")):
+        return True
+    if (
+        _safe_text(candidate.get("source_kind"))
+        == _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
+    ):
+        return True
+    identity = candidate.get("account_stage_runtime_identity")
+    if isinstance(identity, Mapping):
+        identity_mapping = cast(Mapping[str, object], identity)
+        return (
+            _safe_text(identity_mapping.get("source_kind"))
+            == _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
+        )
+    return False
+
+
 def _bounded_source_collection_probe_window(
     candidate: Mapping[str, object],
 ) -> tuple[str | None, str | None, bool]:
@@ -2147,7 +2169,7 @@ def _bounded_source_collection_probe_window(
     )
     if window_start is not None and window_end is not None:
         return window_start, window_end, False
-    if not bool(candidate.get("source_collection_candidate")):
+    if not _runtime_ledger_source_collection_import_candidate(candidate):
         return window_start, window_end, False
     if not bool(candidate.get("source_collection_authorized")):
         return window_start, window_end, False
@@ -2212,7 +2234,9 @@ def _runtime_ledger_paper_probation_import_plan(
             )
             continue
 
-        source_collection = bool(candidate.get("source_collection_candidate"))
+        source_collection = _runtime_ledger_source_collection_import_candidate(
+            candidate
+        )
         paper_probation_blockers = (
             []
             if source_collection
