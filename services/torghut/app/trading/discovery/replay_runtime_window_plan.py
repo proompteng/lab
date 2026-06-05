@@ -327,6 +327,12 @@ def _target_replay_window_metadata(
             "execution_quality_adjusted_window_net_pnl_per_day",
             "replay_execution_quality_adjusted_window_net_pnl_per_day",
         ),
+        ("lob_reality_gap_penalty_bps", "replay_lob_reality_gap_penalty_bps"),
+        ("lob_reality_gap_penalty_amount", "replay_lob_reality_gap_penalty_amount"),
+        (
+            "replay_quality_adjusted_window_net_pnl_per_day",
+            "replay_quality_adjusted_window_net_pnl_per_day",
+        ),
     ):
         if (value := best_candidate.get(source_key)) is not None:
             metadata[target_key] = value
@@ -335,11 +341,13 @@ def _target_replay_window_metadata(
         ("cost_lineage", "replay_cost_lineage"),
         ("capacity_warning_counts", "replay_capacity_warning_counts"),
         ("execution_quality", "replay_execution_quality"),
+        ("lob_reality_gap_stress", "replay_lob_reality_gap_stress"),
     ):
         if isinstance(value := best_candidate.get(source_key), Mapping):
             metadata[target_key] = dict(cast(Mapping[str, Any], value))
     for source_key, target_key in (
         ("execution_quality_blockers", "replay_execution_quality_blockers"),
+        ("lob_reality_gap_blockers", "replay_lob_reality_gap_blockers"),
     ):
         values = _string_list(best_candidate.get(source_key))
         if values:
