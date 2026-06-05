@@ -82,6 +82,9 @@ PAPER_ROUTE_PROFITABILITY_PROOF_LIFECYCLE_SCHEMA_VERSION = (
 RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION = (
     "torghut.runtime-ledger-proof-packet-handoff.v1"
 )
+PAPER_ROUTE_EXECUTION_READINESS_CONTRACT_SCHEMA_VERSION = (
+    "torghut.paper-route-execution-readiness-contract.v1"
+)
 DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
@@ -1043,6 +1046,222 @@ def _paper_route_collection_session_blockers(
         ]
         return blockers or ["paper_route_session_window_closed"]
     return ["paper_route_session_state_unknown"]
+
+
+def _paper_route_execution_readiness_next_action(
+    *,
+    session_state: str,
+    collection_blockers: Sequence[str],
+    evidence_blockers: Sequence[str],
+    import_ready: bool,
+    import_blockers: Sequence[str],
+    source_decision_ready: bool,
+    account_pre_session_state: Mapping[str, Any],
+    collection_authorized: bool,
+) -> str:
+    blocker_set = set(collection_blockers) | set(evidence_blockers) | set(import_blockers)
+    pre_session_state = _safe_text(account_pre_session_state.get("state"))
+    if "paper_route_session_window_not_open" in blocker_set:
+        if "paper_route_clean_window_baseline_snapshot_pending" in blocker_set:
+            if pre_session_state == "not_required_until_pre_session":
+                return "wait_for_pre_session_snapshot_window"
+            return "capture_pre_session_flat_account_snapshot"
+        return "wait_for_regular_session_open"
+    if not source_decision_ready:
+        return "repair_source_decision_readiness"
+    if "paper_route_clean_window_baseline_snapshot_pending" in blocker_set:
+        return "capture_pre_session_flat_account_snapshot"
+    if collection_authorized and session_state == "collecting_session_evidence":
+        return "run_bounded_paper_route_materializer"
+    if import_ready:
+        return "run_runtime_window_import_from_target_plan"
+    if "paper_route_session_window_not_closed" in blocker_set:
+        return "wait_for_regular_session_close"
+    if "paper_route_session_settlement_pending" in blocker_set:
+        return "wait_for_settlement_before_import"
+    if evidence_blockers:
+        return "repair_bounded_collection_blockers"
+    return "inspect_paper_route_readiness"
+
+
+def _paper_route_execution_readiness_state(
+    *,
+    session_state: str,
+    source_decision_ready: bool,
+    collection_authorized: bool,
+    evidence_collection_ok: bool,
+    evidence_blockers: Sequence[str],
+    import_ready: bool,
+    import_blockers: Sequence[str],
+) -> str:
+    if import_ready and source_decision_ready and not import_blockers:
+        return "ready_for_runtime_window_import"
+    if import_ready and not import_blockers:
+        return "window_closed_import_ready"
+    if collection_authorized and evidence_collection_ok and session_state == "collecting_session_evidence":
+        return "ready_for_bounded_collection"
+    if session_state == "waiting_for_session_open":
+        return "waiting_for_session_open"
+    if session_state in {
+        "collecting_session_evidence",
+        "window_closed_settlement_pending",
+        "window_closed_import_blocked",
+    }:
+        return session_state
+    if evidence_blockers:
+        return "blocked"
+    return session_state or "unknown"
+
+
+def _paper_route_execution_readiness_contract(
+    target: Mapping[str, object],
+) -> dict[str, object]:
+    source_readiness = _as_mapping(target.get("source_decision_readiness"))
+    account_pre_session_state = _as_mapping(
+        target.get("paper_route_account_pre_session_state")
+    )
+    clean_window_baseline_state = _as_mapping(
+        target.get("paper_route_clean_window_baseline_state")
+    )
+    session_state = _safe_text(target.get("paper_route_session_readiness_state")) or "unknown"
+    collection_blockers = _unique_text_items(
+        target.get("paper_route_session_collection_blockers")
+    )
+    evidence_blockers = _unique_text_items(
+        target.get("bounded_evidence_collection_blockers")
+    )
+    import_blockers = _unique_text_items(target.get("paper_route_session_import_blockers"))
+    source_decision_ready = bool(source_readiness.get("ready"))
+    evidence_collection_ok = bool(target.get("evidence_collection_ok"))
+    collection_authorized = bool(target.get("bounded_evidence_collection_authorized"))
+    import_ready = bool(target.get("paper_route_session_import_ready"))
+    next_action = _paper_route_execution_readiness_next_action(
+        session_state=session_state,
+        collection_blockers=collection_blockers,
+        evidence_blockers=evidence_blockers,
+        import_ready=import_ready,
+        import_blockers=import_blockers,
+        source_decision_ready=source_decision_ready,
+        account_pre_session_state=account_pre_session_state,
+        collection_authorized=collection_authorized,
+    )
+    state = _paper_route_execution_readiness_state(
+        session_state=session_state,
+        source_decision_ready=source_decision_ready,
+        collection_authorized=collection_authorized,
+        evidence_collection_ok=evidence_collection_ok,
+        evidence_blockers=evidence_blockers,
+        import_ready=import_ready,
+        import_blockers=import_blockers,
+    )
+    return {
+        "schema_version": PAPER_ROUTE_EXECUTION_READINESS_CONTRACT_SCHEMA_VERSION,
+        "state": state,
+        "next_action": next_action,
+        "authority": "paper_probation_observability_only",
+        "proof_boundary": (
+            "not_profit_proof_until_source_activity_runtime_ledger_tca_and_flat_proof"
+        ),
+        "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+        "candidate_id": _safe_text(target.get("candidate_id")),
+        "account_label": _safe_text(target.get("account_label")),
+        "runtime_strategy_name": _safe_text(target.get("runtime_strategy_name")),
+        "window_start": _safe_text(target.get("window_start")),
+        "window_end": _safe_text(target.get("window_end")),
+        "symbols": _unique_text_items(target.get("paper_route_probe_symbols")),
+        "phase_gates": {
+            "source_decision": {
+                "ready": source_decision_ready,
+                "blockers": _unique_text_items(source_readiness.get("blockers")),
+                "matched_strategy": _safe_text(
+                    _as_mapping(source_readiness.get("matched_strategy")).get(
+                        "strategy_name"
+                    )
+                ),
+            },
+            "pre_session_flat_baseline": {
+                "state": _safe_text(account_pre_session_state.get("state")),
+                "required": bool(account_pre_session_state.get("required")),
+                "required_after": _safe_text(
+                    account_pre_session_state.get("required_after")
+                ),
+                "blockers": _unique_text_items(account_pre_session_state.get("blockers")),
+            },
+            "clean_window_baseline": {
+                "state": _safe_text(clean_window_baseline_state.get("state")),
+                "blockers": _unique_text_items(
+                    clean_window_baseline_state.get("blockers")
+                ),
+            },
+            "collection_window": {
+                "state": session_state,
+                "blockers": collection_blockers,
+            },
+            "bounded_collection": {
+                "authorized": collection_authorized,
+                "evidence_collection_ok": evidence_collection_ok,
+                "max_notional": _safe_text(
+                    target.get("bounded_evidence_collection_max_notional")
+                )
+                or _safe_text(target.get("paper_route_probe_effective_max_notional"))
+                or "0",
+                "blockers": evidence_blockers,
+            },
+            "runtime_window_import": {
+                "ready": import_ready,
+                "not_before": _safe_text(
+                    target.get("paper_route_runtime_window_import_not_before")
+                ),
+                "blockers": import_blockers,
+            },
+            "promotion_authority": {
+                "promotion_allowed": bool(target.get("promotion_allowed")),
+                "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
+                "blockers": _unique_text_items(target.get("final_promotion_blockers")),
+            },
+        },
+        "post_collection_required_evidence": [
+            "source_decisions",
+            "submitted_order_lifecycle",
+            "fills_or_rejected_signal_feedback",
+            "execution_tca_cost_refs",
+            "runtime_ledger_source_window_refs",
+            "runtime_ledger_materialization",
+            "zero_open_position_or_flatten_proof",
+            "post_cost_net_pnl_authority_packet",
+        ],
+    }
+
+
+def _paper_route_execution_readiness_summary(
+    targets: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    contracts = [
+        _as_mapping(target.get("paper_route_execution_readiness_contract"))
+        for target in targets
+    ]
+    states = Counter(
+        _safe_text(contract.get("state")) or "unknown" for contract in contracts
+    )
+    next_actions = Counter(
+        _safe_text(contract.get("next_action")) or "inspect_paper_route_readiness"
+        for contract in contracts
+    )
+    return {
+        "schema_version": "torghut.paper-route-execution-readiness-summary.v1",
+        "target_count": len(contracts),
+        "state_counts": dict(sorted(states.items())),
+        "next_action_counts": dict(sorted(next_actions.items())),
+        "ready_for_bounded_collection_target_count": states.get(
+            "ready_for_bounded_collection", 0
+        ),
+        "ready_for_runtime_window_import_target_count": states.get(
+            "ready_for_runtime_window_import", 0
+        ),
+        "waiting_for_session_open_target_count": states.get(
+            "waiting_for_session_open", 0
+        ),
+    }
 
 
 def _paper_route_probe_summary(
@@ -2840,6 +3059,9 @@ def _next_paper_route_runtime_window_targets(
             "promotion_gate": "runtime_ledger_live_or_live_paper_required",
             "max_notional": "0",
         }
+        planned_target["paper_route_execution_readiness_contract"] = (
+            _paper_route_execution_readiness_contract(planned_target)
+        )
         planned_keys.add(planned_key)
         planned_execution_source_keys[execution_source_key] = planned_target
         planned_account_window_keys[account_window_key] = planned_target
@@ -3134,6 +3356,9 @@ def _next_paper_route_runtime_window_targets(
             "sample_client_order_ids": account_contamination_sample_client_order_ids,
             "sample_order_event_refs": account_contamination_sample_order_event_refs,
         },
+        "execution_readiness": _paper_route_execution_readiness_summary(
+            planned_targets
+        ),
         "paper_route_probe": {
             "configured_enabled": bool(probe.get("configured_enabled")),
             "active": bool(probe.get("active")),
@@ -8682,6 +8907,9 @@ def _next_paper_route_target_summaries(
         strategy_name = _safe_text(target.get("strategy_name"))
         runtime_strategy_name = _safe_text(target.get("runtime_strategy_name"))
         source_decision_readiness = _as_mapping(target.get("source_decision_readiness"))
+        execution_readiness = _as_mapping(
+            target.get("paper_route_execution_readiness_contract")
+        )
         summaries.append(
             {
                 "hypothesis_id": _safe_text(target.get("hypothesis_id")),
@@ -8744,6 +8972,13 @@ def _next_paper_route_target_summaries(
                 "source_decision_blockers": _unique_text_items(
                     source_decision_readiness.get("blockers")
                 ),
+                "execution_readiness": {
+                    "state": _safe_text(execution_readiness.get("state")),
+                    "next_action": _safe_text(execution_readiness.get("next_action")),
+                    "proof_boundary": _safe_text(
+                        execution_readiness.get("proof_boundary")
+                    ),
+                },
             }
         )
     return summaries
@@ -10598,6 +10833,9 @@ def build_paper_route_target_plan_payload(
         "source_runtime_window_import_plan": source_targets,
         "latest_closed_paper_route_runtime_window_targets": latest_closed_targets,
         "next_paper_route_runtime_window_targets": next_targets,
+        "execution_readiness": _paper_route_execution_readiness_summary(
+            effective_targets
+        ),
         "summary": {
             "source_target_count": len(targets),
             "next_runtime_window_target_count": _safe_int(
@@ -10649,6 +10887,9 @@ def build_paper_route_target_plan_payload(
                 "reason": "paper_route_target_plan_observability_only",
                 "blockers": ["live_runtime_ledger_required"],
             },
+            "execution_readiness": _paper_route_execution_readiness_summary(
+                effective_targets
+            ),
         },
     }
 
@@ -11232,6 +11473,12 @@ def build_paper_route_evidence_audit(
             ),
             "profitability_proof_lifecycle_next_action": (
                 profitability_proof_lifecycle["next_action"]
+            ),
+            "next_runtime_window_execution_readiness": _as_mapping(
+                next_targets.get("execution_readiness")
+            ),
+            "runtime_window_import_execution_readiness": _as_mapping(
+                runtime_window_import_plan.get("execution_readiness")
             ),
             "next_paper_route_targets": _next_paper_route_target_summaries(
                 _as_mapping_items(next_targets.get("targets"))
