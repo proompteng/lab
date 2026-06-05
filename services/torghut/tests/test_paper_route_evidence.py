@@ -5442,6 +5442,212 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["paper_route_probe_scope_authority"], "strategy_universe"
         )
 
+    def test_external_source_collection_plan_scopes_probe_from_next_target(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="source collection strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_notional_per_trade=Decimal("31590"),
+                )
+            )
+            session.commit()
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": True,
+                    "reason": "non_live_mode",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "paper_route_target_plan_source": "external_target_plan_url",
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.paper-route-target-plan.v1",
+                        "target_count": 1,
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "strategy_lookup_names": [
+                                    "microbar-cross-sectional-pairs-v1"
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                                "source_collection_authorized": True,
+                                "source_collection_authorization_scope": (
+                                    "source_window_evidence_collection_only"
+                                ),
+                                "bounded_evidence_collection_authorized": True,
+                                "bounded_evidence_collection_scope": (
+                                    "paper_route_probe_next_session_only"
+                                ),
+                                "bounded_evidence_collection_max_notional": "75000",
+                                "paper_route_probe_effective_max_notional": "75000",
+                                "paper_route_probe_next_session_max_notional": "75000",
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "75000",
+                                "selected_by": "runtime_ledger_source_collection",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": "75000",
+                        "next_session_max_notional": "75000",
+                        "eligible_symbol_count": 3,
+                        "eligible_symbols": ["AAPL", "AMZN", "INTC"],
+                        "active_symbols": ["AAPL", "AMZN", "INTC"],
+                        "blocking_reasons": [],
+                    },
+                },
+                generated_at=generated_at,
+                target_account_audit_available=False,
+            )
+
+        probe = payload["paper_route_probe"]
+        self.assertEqual(probe["target_plan_source"], "external_target_plan_url")
+        self.assertTrue(probe["target_plan_scope_applied"])
+        self.assertEqual(probe["target_plan_scope_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(probe["eligible_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(probe["out_of_scope_symbols"], ["INTC"])
+        self.assertNotIn(
+            "external_target_plan_probe_symbols_missing",
+            probe["blocking_reasons"],
+        )
+        next_target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        self.assertEqual(next_target["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            next_target["paper_route_probe_scope_authority"], "strategy_universe"
+        )
+
+    def test_external_source_collection_target_plan_payload_scopes_probe(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="source collection strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_notional_per_trade=Decimal("31590"),
+                )
+            )
+            session.commit()
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate={
+                    "allowed": True,
+                    "reason": "non_live_mode",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "paper_route_target_plan_source": "external_target_plan_url",
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.paper-route-target-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "strategy_lookup_names": [
+                                    "microbar-cross-sectional-pairs-v1"
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "source_collection_authorized": True,
+                                "bounded_evidence_collection_authorized": True,
+                                "bounded_evidence_collection_scope": (
+                                    "paper_route_probe_next_session_only"
+                                ),
+                                "bounded_evidence_collection_max_notional": "75000",
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "75000",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": "75000",
+                        "next_session_max_notional": "75000",
+                        "eligible_symbols": ["AAPL", "AMZN", "INTC"],
+                        "active_symbols": ["AAPL", "AMZN", "INTC"],
+                        "blocking_reasons": [],
+                    },
+                },
+                generated_at=generated_at,
+                include_runtime_window_import_audit=False,
+                target_account_audit_available=False,
+            )
+
+        probe = payload["paper_route_probe"]
+        self.assertTrue(probe["target_plan_scope_applied"])
+        self.assertEqual(probe["target_plan_scope_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(probe["eligible_symbols"], ["AAPL", "AMZN"])
+        next_target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        self.assertEqual(next_target["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+
+    def test_probe_scope_plan_falls_back_to_primary_without_symbols(self) -> None:
+        primary = {"targets": [{"candidate_id": "source-only"}]}
+
+        self.assertIs(
+            paper_route_evidence._paper_route_probe_scope_plan(
+                primary,
+                {"targets": [{"candidate_id": "also-source-only"}]},
+            ),
+            primary,
+        )
+
     def test_live_target_plan_preserves_source_collection_targets_when_audit_unavailable(
         self,
     ) -> None:
