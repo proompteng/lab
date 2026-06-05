@@ -134,6 +134,10 @@ _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS = (
 _BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS = frozenset(
     {
         "paper_route_target_account_audit_unavailable",
+        "paper_route_account_pre_session_snapshot_missing",
+        "paper_route_account_pre_session_snapshot_stale",
+        "paper_route_account_window_start_snapshot_missing",
+        "paper_route_clean_window_baseline_snapshot_pending",
         "paper_route_account_contamination_detected",
         "unlinked_order_events_present",
     }
