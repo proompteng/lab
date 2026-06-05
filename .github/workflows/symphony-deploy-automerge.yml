@@ -7,6 +7,14 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+    paths:
+      - 'argocd/applications/symphony/kustomization.yaml'
+      - 'argocd/applications/symphony/deployment.patch.yaml'
+      - 'argocd/applications/symphony-jangar/kustomization.yaml'
+      - 'argocd/applications/symphony-jangar/deployment.patch.yaml'
+      - 'argocd/applications/symphony-torghut/kustomization.yaml'
+      - 'argocd/applications/symphony-torghut/deployment.patch.yaml'
+      - '.github/workflows/symphony-deploy-automerge.yml'
 
 jobs:
   enable:

@@ -9,6 +9,15 @@ on:
       - ready_for_review
       - labeled
       - unlabeled
+    paths:
+      - 'argocd/applications/proompteng/kustomization.yaml'
+      - 'argocd/applications/synthesis/kustomization.yaml'
+      - 'argocd/applications/bumba/kustomization.yaml'
+      - 'argocd/applications/khoshut/kustomization.yaml'
+      - 'argocd/applications/analysis/kustomization.yaml'
+      - 'argocd/applications/bilig/kustomization.yaml'
+      - 'argocd/applications/olden/kustomization.yaml'
+      - '.github/workflows/release-pr-automerge.yml'
   workflow_dispatch:
     inputs:
       pr_number:
