@@ -326,22 +326,13 @@ def _repair_execution_tca_cost_lineage(
     else:
         source_fields["explicit_cost"] = cost_source_field
 
-    execution_policy_hashes = _hash_candidates(
-        source_payloads,
-        hash_keys=_EXECUTION_POLICY_HASH_KEYS,
-        payload_keys=_EXECUTION_POLICY_PAYLOAD_KEYS,
+    execution_policy_hashes = _execution_policy_hash_candidates(
+        source_payloads=source_payloads,
+        decision=decision,
+        decision_payload=decision_payload,
+        execution=execution,
+        source_fields=source_fields,
     )
-    if len(execution_policy_hashes) == 0:
-        decision_policy_hash = _decision_execution_policy_hash(
-            decision=decision,
-            decision_payload=decision_payload,
-            execution=execution,
-        )
-        if decision_policy_hash is not None:
-            execution_policy_hashes.add(decision_policy_hash)
-            source_fields["execution_policy_hash"] = (
-                "trade_decisions.decision_json+executions.order_fields"
-            )
     if len(execution_policy_hashes) == 0:
         blockers.append("execution_policy_hash_missing")
     elif len(execution_policy_hashes) > 1:
@@ -450,7 +441,9 @@ def _lineage_source_payloads(
         payloads.append(payload)
         if depth <= 0:
             return
-        for nested in payload.values():
+        for item_key, nested in payload.items():
+            if str(item_key) == "source_fields":
+                continue
             if isinstance(nested, Mapping):
                 append_payload(cast(Mapping[object, object], nested), depth=depth - 1)
 
@@ -639,6 +632,63 @@ def _decision_execution_policy_hash(
     return _stable_payload_digest(
         {key: value for key, value in policy_payload.items() if value is not None}
     )
+
+
+def _execution_policy_hash_candidates(
+    *,
+    source_payloads: Collection[Mapping[str, object]],
+    decision: TradeDecision | None,
+    decision_payload: Mapping[str, object],
+    execution: Execution,
+    source_fields: dict[str, object],
+) -> set[str]:
+    explicit_hashes = _hash_candidates(
+        source_payloads,
+        hash_keys=_EXECUTION_POLICY_HASH_KEYS,
+        payload_keys=(),
+    )
+    if explicit_hashes:
+        if len(explicit_hashes) == 1:
+            source_fields["execution_policy_hash"] = (
+                _existing_lineage_source_field(source_payloads, "execution_policy_hash")
+                or "execution_policy_hash"
+            )
+        return explicit_hashes
+
+    payload_hashes = _hash_candidates(
+        source_payloads,
+        hash_keys=(),
+        payload_keys=_EXECUTION_POLICY_PAYLOAD_KEYS,
+    )
+    if payload_hashes:
+        if len(payload_hashes) == 1:
+            source_fields["execution_policy_hash"] = "execution_policy_payload"
+        return payload_hashes
+
+    decision_policy_hash = _decision_execution_policy_hash(
+        decision=decision,
+        decision_payload=decision_payload,
+        execution=execution,
+    )
+    if decision_policy_hash is None:
+        return set()
+    source_fields["execution_policy_hash"] = (
+        "trade_decisions.decision_json+executions.order_fields"
+    )
+    return {decision_policy_hash}
+
+
+def _existing_lineage_source_field(
+    payloads: Collection[Mapping[str, object]], key: str
+) -> object | None:
+    for payload in payloads:
+        source_fields = payload.get("source_fields")
+        if not isinstance(source_fields, Mapping):
+            continue
+        source_field = cast(Mapping[object, object], source_fields).get(key)
+        if source_field is not None:
+            return source_field
+    return None
 
 
 def _hash_candidates(
