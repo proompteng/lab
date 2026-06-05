@@ -1404,6 +1404,29 @@ def test_dynamic_plan_selection_prefers_sanitized_isolated_hpairs_plan() -> None
     ] == ["c88421d619759b2cfaa6f4d0"]
 
 
+def test_dynamic_plan_selection_prefers_latest_closed_plan_before_next_window() -> None:
+    payload = {
+        "latest_closed_paper_route_runtime_window_targets": _plan(
+            _hpairs_target(source_plan_ref="paper-route-plan:latest-closed")
+        ),
+        "next_paper_route_runtime_window_targets": _plan(
+            _hpairs_target(source_plan_ref="paper-route-plan:next-window")
+        ),
+    }
+
+    plan, selected_plan = cli._materialization_plan_from_payload(payload)
+
+    assert selected_plan == "latest_closed_paper_route_runtime_window_targets"
+    targets = cli.paper_route_target_plan_targets(plan)
+    assert [target["candidate_id"] for target in targets] == [
+        "c88421d619759b2cfaa6f4d0"
+    ]
+    assert targets[0]["source_plan_ref"] == "paper-route-plan:latest-closed"
+    assert "latest_closed_paper_route_runtime_window_targets" in (
+        cli.DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCES
+    )
+
+
 def test_commit_dynamic_next_window_plan_blocks_when_confirmed_target_is_absent(
     monkeypatch: pytest.MonkeyPatch,
     sqlite_dsn: str,

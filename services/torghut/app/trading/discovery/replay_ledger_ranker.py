@@ -10,8 +10,15 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
 
+from app.trading.discovery.adaptive_market_limit_allocation_stress import (
+    extract_adaptive_market_limit_allocation_stress,
+)
+from app.trading.discovery.cluster_lob_features import extract_cluster_lob_features
 from app.trading.discovery.lob_reality_gap_stress import (
     extract_lob_reality_gap_stress,
+)
+from app.trading.discovery.order_book_observability_stress import (
+    extract_order_book_observability_stress,
 )
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.models import SignalEnvelope
@@ -19,6 +26,9 @@ from app.trading.runtime_ledger import RuntimeLedgerBucket, build_runtime_ledger
 
 EXACT_REPLAY_LEDGER_RANKING_SCHEMA_VERSION = "torghut.exact-replay-ledger-ranking.v1"
 EXECUTION_QUALITY_SCHEMA_VERSION = "torghut.exact-replay-execution-quality.v1"
+EXACT_REPLAY_MICROSTRUCTURE_STRESS_SCHEMA_VERSION = (
+    "torghut.exact-replay-microstructure-stress.v1"
+)
 _LIVE_PROMOTION_AUTHORITIES = frozenset(
     {
         "live",
@@ -217,6 +227,10 @@ class ReplayLedgerCandidateRanking:
     lob_reality_gap_blockers: tuple[str, ...]
     lob_reality_gap_penalty_bps: Decimal
     lob_reality_gap_penalty_amount: Decimal
+    microstructure_stress: Mapping[str, object]
+    microstructure_stress_blockers: tuple[str, ...]
+    microstructure_stress_penalty_bps: Decimal
+    microstructure_stress_penalty_amount: Decimal
     replay_quality_adjusted_window_net_pnl_per_day: Decimal
 
     def to_payload(self) -> dict[str, object]:
@@ -295,6 +309,14 @@ class ReplayLedgerCandidateRanking:
             "lob_reality_gap_blockers": list(self.lob_reality_gap_blockers),
             "lob_reality_gap_penalty_bps": str(self.lob_reality_gap_penalty_bps),
             "lob_reality_gap_penalty_amount": str(self.lob_reality_gap_penalty_amount),
+            "microstructure_stress": _payload_object(self.microstructure_stress),
+            "microstructure_stress_blockers": list(self.microstructure_stress_blockers),
+            "microstructure_stress_penalty_bps": str(
+                self.microstructure_stress_penalty_bps
+            ),
+            "microstructure_stress_penalty_amount": str(
+                self.microstructure_stress_penalty_amount
+            ),
             "replay_quality_adjusted_window_net_pnl_per_day": str(
                 self.replay_quality_adjusted_window_net_pnl_per_day
             ),
@@ -403,8 +425,19 @@ def rank_replay_ledger_payload(
         total_filled_notional * lob_reality_gap_penalty_bps,
         Decimal("10000"),
     )
+    microstructure_stress = _microstructure_stress_summary(rows)
+    microstructure_stress_penalty_bps = cast(
+        Decimal, microstructure_stress["effective_replay_rank_penalty_bps"]
+    )
+    microstructure_stress_penalty_amount = _safe_divide(
+        total_filled_notional * microstructure_stress_penalty_bps,
+        Decimal("10000"),
+    )
     replay_quality_adjusted_window_net_pnl_per_day = _safe_divide(
-        total_net - execution_quality_penalty_amount - lob_reality_gap_penalty_amount,
+        total_net
+        - execution_quality_penalty_amount
+        - lob_reality_gap_penalty_amount
+        - microstructure_stress_penalty_amount,
         Decimal(window_weekday_count),
     )
     blockers = _promotion_blockers(
@@ -503,6 +536,15 @@ def rank_replay_ledger_payload(
         ),
         lob_reality_gap_penalty_bps=lob_reality_gap_penalty_bps,
         lob_reality_gap_penalty_amount=lob_reality_gap_penalty_amount,
+        microstructure_stress=microstructure_stress,
+        microstructure_stress_blockers=tuple(
+            cast(
+                tuple[str, ...],
+                microstructure_stress["microstructure_stress_blockers"],
+            )
+        ),
+        microstructure_stress_penalty_bps=microstructure_stress_penalty_bps,
+        microstructure_stress_penalty_amount=microstructure_stress_penalty_amount,
         replay_quality_adjusted_window_net_pnl_per_day=(
             replay_quality_adjusted_window_net_pnl_per_day
         ),
@@ -1001,6 +1043,131 @@ def _lob_reality_gap_stress_summary(
     }
 
 
+def _microstructure_stress_summary(
+    rows: Sequence[Mapping[str, object]],
+) -> Mapping[str, object]:
+    signal_rows = _lob_signal_rows(rows)
+    warnings: list[str] = []
+    if not signal_rows:
+        warnings.append("missing_microstructure_signal_rows")
+        adaptive_payload: dict[str, object] = {}
+        order_book_payload: dict[str, object] = {}
+        cluster_lob_payload: dict[str, object] = {}
+    else:
+        adaptive_payload = extract_adaptive_market_limit_allocation_stress(
+            signal_rows
+        ).to_payload()
+        order_book_payload = extract_order_book_observability_stress(
+            signal_rows,
+            max_notional=_max_single_fill_notional(rows),
+        ).to_payload()
+        cluster_lob_payload = extract_cluster_lob_features(signal_rows).to_payload()
+        warnings.extend(
+            f"adaptive_market_limit_{warning}"
+            for warning in _string_list(adaptive_payload.get("warnings"))
+        )
+        warnings.extend(
+            f"order_book_observability_{warning}"
+            for warning in _string_list(order_book_payload.get("warnings"))
+        )
+        warnings.extend(
+            f"cluster_lob_{warning}"
+            for warning in _string_list(cluster_lob_payload.get("warnings"))
+        )
+
+    adaptive_penalty_bps = _stress_penalty_bps(adaptive_payload)
+    order_book_penalty_bps = _stress_penalty_bps(order_book_payload)
+    cluster_warning_penalty_bps = Decimal(
+        len(_string_list(cluster_lob_payload.get("warnings")))
+    )
+    warning_penalty_bps = Decimal(len(_dedupe(warnings))) * Decimal("1.5")
+    effective_penalty_bps = min(
+        Decimal("250"),
+        (adaptive_penalty_bps * Decimal("0.5"))
+        + (order_book_penalty_bps * Decimal("0.5"))
+        + cluster_warning_penalty_bps
+        + warning_penalty_bps,
+    )
+    blockers = tuple(
+        f"microstructure_stress_{warning}" for warning in _dedupe(warnings)
+    )
+    return {
+        "schema_version": EXACT_REPLAY_MICROSTRUCTURE_STRESS_SCHEMA_VERSION,
+        "status": "preview_only_exact_replay_microstructure_stress_ranking",
+        "source_papers": _dedupe_source_papers(
+            (
+                adaptive_payload.get("source_papers"),
+                order_book_payload.get("source_papers"),
+                cluster_lob_payload.get("source_papers"),
+            )
+        ),
+        "stress_components": {
+            "adaptive_market_limit_allocation": _payload_object(adaptive_payload),
+            "order_book_observability": _payload_object(order_book_payload),
+            "cluster_lob": _payload_object(cluster_lob_payload),
+        },
+        "adaptive_market_limit_penalty_bps": adaptive_penalty_bps,
+        "order_book_observability_penalty_bps": order_book_penalty_bps,
+        "cluster_lob_warning_penalty_bps": cluster_warning_penalty_bps,
+        "microstructure_warning_penalty_bps": warning_penalty_bps,
+        "effective_replay_rank_penalty_bps": effective_penalty_bps,
+        "warnings": _dedupe(warnings),
+        "microstructure_stress_blockers": blockers,
+        "proof_neutrality": {
+            "research_ranking_only": True,
+            "prefilter_only": True,
+            "promotion_proof": False,
+            "proof_authority": False,
+            "promotion_authority": False,
+            "requires_exact_replay": True,
+            "requires_route_tca": True,
+            "requires_order_lifecycle_fill_evidence": True,
+            "requires_runtime_ledger": True,
+            "rejects_preview_stress_as_promotion_authority": True,
+        },
+        "research_ranking_only": True,
+        "prefilter_only": True,
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
+def _stress_penalty_bps(payload: Mapping[str, object]) -> Decimal:
+    for key in (
+        "replay_rank_penalty_bps",
+        "effective_replay_rank_penalty_bps",
+    ):
+        value = _decimal(payload.get(key))
+        if value is not None:
+            return max(Decimal("0"), value)
+    ranking_features = _mapping(payload.get("ranking_features"))
+    value = _decimal(ranking_features.get("replay_rank_penalty_bps"))
+    return max(Decimal("0"), value or Decimal("0"))
+
+
+def _dedupe_source_papers(
+    groups: Sequence[object],
+) -> list[Mapping[str, object]]:
+    seen: set[str] = set()
+    papers: list[Mapping[str, object]] = []
+    for group in groups:
+        if not isinstance(group, Sequence) or isinstance(group, (str, bytes)):
+            continue
+        for item in cast(Sequence[object], group):
+            if not isinstance(item, Mapping):
+                continue
+            source_id = _text(cast(Mapping[str, object], item).get("source_id"))
+            if not source_id or source_id in seen:
+                continue
+            seen.add(source_id)
+            papers.append(cast(Mapping[str, object], item))
+    return papers
+
+
 def _lob_signal_rows(
     rows: Sequence[Mapping[str, object]],
 ) -> tuple[SignalEnvelope, ...]:
@@ -1334,6 +1501,7 @@ def _ranking_sort_key(candidate: ReplayLedgerCandidateRanking) -> tuple[object, 
         -candidate.window_net_pnl_per_day,
         -candidate.total_net_pnl_after_costs,
         candidate.lob_reality_gap_penalty_bps,
+        candidate.microstructure_stress_penalty_bps,
         candidate.execution_quality_penalty_bps,
         candidate.best_day_share,
         candidate.max_drawdown,

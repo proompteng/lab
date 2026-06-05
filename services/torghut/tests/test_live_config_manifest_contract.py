@@ -652,6 +652,11 @@ class TestLiveConfigManifestContract(TestCase):
         live_env = _load_torghut_knative_env()
 
         self.assertTrue(_manifest_bool(sim_env, "TRADING_ENABLED"))
+        self.assertEqual(
+            sim_env.get("SIM_DB_DSN"),
+            sim_env.get("DB_DSN"),
+            "sim evidence endpoints must expose SIM_DB_DSN because runtime-window import reads the sim paper-route evidence URL",
+        )
         self.assertEqual(sim_env.get("TRADING_MODE"), "paper")
         self.assertEqual(sim_env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertTrue(_manifest_bool(sim_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
@@ -1224,7 +1229,9 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
         self.assertLess(args.index("dsn_env=SIM_DB_DSN"), args.index("dsn_env=DB_DSN"))
-        self.assertLess(args.index("--dsn-env SIM_DB_DSN"), args.index("--dsn-env DB_DSN"))
+        self.assertLess(
+            args.index("--dsn-env SIM_DB_DSN"), args.index("--dsn-env DB_DSN")
+        )
         self.assertIn("--older-than-seconds 900", args)
         self.assertIn("--batch-size 1000", args)
         self.assertIn("--max-batches 5", args)

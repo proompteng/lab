@@ -35,6 +35,13 @@ HAWKES_EXCITATION_KERNEL_SECONDS = 5.0
 HAWKES_EXCITATION_LOOKBACK_SECONDS = 30.0
 HPAIRS_CLUSTER_LOB_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
     {
+        "source_id": "arxiv-2504.20349",
+        "url": "https://arxiv.org/abs/2504.20349",
+        "title": "ClusterLOB: Enhancing Trading Strategies by Clustering Orders in Limit Order Books",
+        "date": "2025-04-29",
+        "mechanism": "cluster_individual_market_events_into_behavioral_lob_regimes_for_strategy_filtering",
+    },
+    {
         "source_id": "arxiv-2510.08085",
         "url": "https://arxiv.org/abs/2510.08085",
         "title": "A Deterministic Limit Order Book Simulator with Hawkes-Driven Order Flow",
@@ -157,6 +164,9 @@ class ClusterLOBFeatureSet:
             "schema_version": HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
             "feature_schema_hash": self.feature_schema_hash,
             "status": "preview_only_research_ranking",
+            "source_papers": [
+                dict(item) for item in HPAIRS_CLUSTER_LOB_PRIMARY_SOURCES
+            ],
             "row_count": self.row_count,
             "symbol_count": self.symbol_count,
             "source_fields": list(self.source_fields),
