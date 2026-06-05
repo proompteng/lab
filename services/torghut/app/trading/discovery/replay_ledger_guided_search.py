@@ -29,6 +29,65 @@ _BREADTH_PARAMETER_KEYS = (
 _MAX_BREADTH_FACTOR = Decimal("4")
 _MAX_TOP_N = 12
 _MAX_ENTRY_COUNT = 12
+_EXECUTION_QUALITY_EVIDENCE_FIELDS_BY_BLOCKER = {
+    "order_type_mix_evidence_incomplete": (
+        "selected_order_type",
+        "submitted_order_type",
+        "fill_order_type",
+    ),
+    "fill_order_type_evidence_incomplete": (
+        "submitted_order_type",
+        "fill_order_type",
+        "fill_order_id",
+    ),
+    "execution_shortfall_evidence_incomplete": (
+        "route_tca_bps",
+        "execution_shortfall_bps",
+        "arrival_shortfall_bps",
+    ),
+    "limit_fill_probability_evidence_incomplete": (
+        "limit_fill_probability",
+        "survival_fill_probability",
+        "fill_probability",
+    ),
+    "queue_position_survival_evidence_incomplete": (
+        "queue_position",
+        "queue_ahead_qty",
+        "time_to_fill_seconds",
+    ),
+    "price_improvement_evidence_incomplete": (
+        "price_improvement_bps",
+        "realized_price_improvement_bps",
+    ),
+    "nonfill_opportunity_cost_evidence_incomplete": (
+        "nonfill_opportunity_cost_bps",
+        "missed_fill_opportunity_cost_bps",
+    ),
+    "limit_fill_rate_below_execution_quality_floor": (
+        "limit_fill_probability",
+        "limit_fill_rate",
+        "order_type_ablation",
+    ),
+    "execution_shortfall_bps_above_quality_floor": (
+        "route_tca_bps",
+        "execution_shortfall_bps",
+        "order_type_ablation",
+    ),
+    "nonfill_opportunity_cost_bps_above_quality_floor": (
+        "nonfill_opportunity_cost_bps",
+        "missed_fill_opportunity_cost_bps",
+        "order_type_ablation",
+    ),
+}
+_DEFAULT_EXECUTION_QUALITY_EVIDENCE_FIELDS = (
+    "route_tca_bps",
+    "selected_order_type",
+    "fill_order_type",
+    "limit_fill_probability",
+    "queue_position",
+    "price_improvement_bps",
+    "nonfill_opportunity_cost_bps",
+)
 
 
 @dataclass(frozen=True)
@@ -57,7 +116,8 @@ def apply_replay_ledger_remediation_guidance(
         return ReplayLedgerGuidedSweep(sweep_config=payload, applied_actions=())
 
     blockers = _search_blockers(remediation_report)
-    if not blockers:
+    execution_quality_blockers = _execution_quality_blockers(remediation_report)
+    if not blockers and not execution_quality_blockers:
         return ReplayLedgerGuidedSweep(sweep_config=payload, applied_actions=())
 
     policy = _policy_from_report(remediation_report)
@@ -96,6 +156,13 @@ def apply_replay_ledger_remediation_guidance(
         )
         actions.append("window")
 
+    execution_quality_remediations = _execution_quality_remediations(
+        remediation_report,
+        execution_quality_blockers=execution_quality_blockers,
+    )
+    if execution_quality_blockers:
+        actions.append("execution_quality")
+
     if actions:
         metadata = _mapping(payload.get("metadata"))
         metadata["replay_ledger_guided_search"] = {
@@ -103,6 +170,14 @@ def apply_replay_ledger_remediation_guidance(
             "source_candidate_id": _string(remediation_report.get("candidate_id")),
             "status": _string(remediation_report.get("status")),
             "blockers": sorted(blockers),
+            "execution_quality_blockers": sorted(execution_quality_blockers),
+            "execution_quality_remediations": execution_quality_remediations,
+            "required_replay_evidence_fields": _required_execution_quality_fields(
+                execution_quality_blockers
+            ),
+            "execution_quality_authority": (
+                "research_ranking_only_final_promotion_still_requires_runtime_ledger"
+            ),
             "applied_actions": list(actions),
             "parameter_changes": parameter_changes,
             "metric_snapshot": dict(
@@ -182,6 +257,55 @@ def _search_blockers(remediation_report: Mapping[str, Any]) -> set[str]:
     blockers.discard("replay_artifact_only_not_live")
     blockers.discard("exact_replay_ledger_candidate_missing")
     return blockers
+
+
+def _execution_quality_blockers(remediation_report: Mapping[str, Any]) -> set[str]:
+    return set(_string_list(remediation_report.get("execution_quality_blockers")))
+
+
+def _execution_quality_remediations(
+    remediation_report: Mapping[str, Any],
+    *,
+    execution_quality_blockers: set[str],
+) -> list[dict[str, Any]]:
+    if not execution_quality_blockers:
+        return []
+    remediations: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in (
+        *_mapping_sequence(remediation_report.get("recommended_search_actions")),
+        *_mapping_sequence(remediation_report.get("blocker_remediations")),
+    ):
+        blocker = _string(item.get("blocker"))
+        if blocker not in execution_quality_blockers:
+            continue
+        action = _string(item.get("action"))
+        dedupe_key = (blocker, action)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        remediations.append(
+            {
+                "blocker": blocker,
+                "action": action,
+                "reason": _string(item.get("reason")),
+                "parameter_hints": list(_string_list(item.get("parameter_hints"))),
+            }
+        )
+    return remediations
+
+
+def _required_execution_quality_fields(
+    execution_quality_blockers: set[str],
+) -> list[str]:
+    fields: set[str] = set()
+    for blocker in execution_quality_blockers:
+        fields.update(
+            _EXECUTION_QUALITY_EVIDENCE_FIELDS_BY_BLOCKER.get(
+                blocker, _DEFAULT_EXECUTION_QUALITY_EVIDENCE_FIELDS
+            )
+        )
+    return sorted(fields)
 
 
 def _policy_from_report(remediation_report: Mapping[str, Any]) -> dict[str, str]:

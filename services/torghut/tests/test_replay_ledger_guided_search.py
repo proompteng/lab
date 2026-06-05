@@ -104,6 +104,101 @@ class TestReplayLedgerGuidedSearch(TestCase):
         self.assertFalse(result.applied)
         self.assertEqual(result.sweep_config, {"parameters": {"top_n": ["2"]}})
 
+    def test_execution_quality_blockers_are_carried_into_guided_metadata(
+        self,
+    ) -> None:
+        result = apply_replay_ledger_remediation_guidance(
+            sweep_config={
+                "parameters": {"top_n": ["2"]},
+                "metadata": {"existing": "kept"},
+            },
+            remediation_report={
+                "status": "blocked_pending_runtime_promotion_proof",
+                "candidate_id": "candidate-execution-quality",
+                "promotion_blockers": ["replay_artifact_only_not_live"],
+                "runtime_ledger_blockers": [],
+                "execution_quality_blockers": [
+                    "execution_shortfall_evidence_incomplete",
+                    "queue_position_survival_evidence_incomplete",
+                ],
+                "recommended_search_actions": [
+                    {
+                        "blocker": "execution_shortfall_evidence_incomplete",
+                        "action": "collect_route_tca_shortfall_evidence",
+                        "reason": "route TCA/shortfall is required before execution quality can influence collection",
+                        "parameter_hints": [
+                            "route_tca_bps",
+                            "execution_shortfall_bps",
+                        ],
+                    },
+                    {
+                        "blocker": "queue_position_survival_evidence_incomplete",
+                        "action": "collect_queue_position_survival_fill_curve_evidence",
+                        "reason": "queue-position/time-to-fill evidence is missing for limit-order candidates",
+                        "parameter_hints": [
+                            "queue_position",
+                            "queue_ahead_qty",
+                        ],
+                    },
+                ],
+                "metric_snapshot": {
+                    "execution_quality_penalty_bps": "12.5",
+                },
+            },
+        )
+
+        self.assertTrue(result.applied)
+        self.assertEqual(result.applied_actions, ("execution_quality",))
+        self.assertEqual(result.sweep_config["parameters"], {"top_n": ["2"]})
+        self.assertEqual(result.sweep_config["metadata"]["existing"], "kept")
+        metadata = result.sweep_config["metadata"]["replay_ledger_guided_search"]
+        self.assertEqual(metadata["blockers"], [])
+        self.assertEqual(
+            metadata["execution_quality_blockers"],
+            [
+                "execution_shortfall_evidence_incomplete",
+                "queue_position_survival_evidence_incomplete",
+            ],
+        )
+        self.assertEqual(
+            metadata["execution_quality_authority"],
+            "research_ranking_only_final_promotion_still_requires_runtime_ledger",
+        )
+        self.assertEqual(
+            metadata["required_replay_evidence_fields"],
+            [
+                "arrival_shortfall_bps",
+                "execution_shortfall_bps",
+                "queue_ahead_qty",
+                "queue_position",
+                "route_tca_bps",
+                "time_to_fill_seconds",
+            ],
+        )
+        self.assertEqual(
+            metadata["execution_quality_remediations"],
+            [
+                {
+                    "blocker": "execution_shortfall_evidence_incomplete",
+                    "action": "collect_route_tca_shortfall_evidence",
+                    "reason": "route TCA/shortfall is required before execution quality can influence collection",
+                    "parameter_hints": [
+                        "route_tca_bps",
+                        "execution_shortfall_bps",
+                    ],
+                },
+                {
+                    "blocker": "queue_position_survival_evidence_incomplete",
+                    "action": "collect_queue_position_survival_fill_curve_evidence",
+                    "reason": "queue-position/time-to-fill evidence is missing for limit-order candidates",
+                    "parameter_hints": [
+                        "queue_position",
+                        "queue_ahead_qty",
+                    ],
+                },
+            ],
+        )
+
     def test_window_blocker_is_recorded_without_guessing_dates(self) -> None:
         result = apply_replay_ledger_remediation_guidance(
             sweep_config={"parameters": {"entry_cooldown_seconds": ["600"]}},
