@@ -204,6 +204,10 @@ RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND = (
 )
 RUNTIME_LEDGER_SOURCE_COLLECTION_HANDOFF = "runtime_ledger_source_collection_import"
 RUNTIME_LEDGER_SOURCE_COLLECTION_SELECTED_BY = "runtime_ledger_source_collection"
+PRIORITIZED_SOURCE_COLLECTION_PLAN_SOURCE = "paper_route_prioritized_source_collection"
+OBSERVED_STRATEGY_SOURCE_COLLECTION_PLAN_SOURCE = (
+    "paper_route_observed_strategy_source_collection"
+)
 RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS = (
     "runtime_ledger_source_collection_only",
     "live_runtime_ledger_required",
@@ -8031,7 +8035,11 @@ def _runtime_window_import_audit(
         not import_ready
         and not import_blockers
         and session_state == "unknown"
-        and plan_source == "paper_route_observed_strategy_source_collection"
+        and plan_source
+        in {
+            OBSERVED_STRATEGY_SOURCE_COLLECTION_PLAN_SOURCE,
+            PRIORITIZED_SOURCE_COLLECTION_PLAN_SOURCE,
+        }
         and current_target_count > 0
         and any(
             count > 0
@@ -9351,28 +9359,82 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
     if not _live_gate_has_source_collection_pending(live_submission_gate):
         return {}
     limit = max(0, target_limit)
-    source_targets: list[dict[str, object]] = []
-    seen_target_keys: set[tuple[str, str, str, str, str]] = set()
+    candidate_targets: list[dict[str, object]] = []
 
     def append_source_target(target: Mapping[str, Any]) -> None:
-        if len(source_targets) >= limit:
-            return
         if not _target_is_runtime_ledger_source_collection(target):
             return
         if not _source_collection_import_target_allowed(target):
             return
         sanitized = _sanitized_runtime_ledger_source_collection_target(target)
+        candidate_targets.append(sanitized)
+
+    def target_key(
+        target: Mapping[str, object],
+    ) -> tuple[str, str, str, str, str]:
+        return (
+            _safe_text(target.get("hypothesis_id")) or "",
+            _safe_text(target.get("candidate_id")) or "",
+            _safe_text(target.get("runtime_strategy_name")) or "",
+            _safe_text(target.get("window_start")) or "",
+            _safe_text(target.get("window_end")) or "",
+        )
+
+    def target_rank(
+        target: Mapping[str, object],
+    ) -> tuple[int, int, int, int, Decimal, Decimal, tuple[str, str, str, str, str]]:
+        profit_target = _truthy_plan_value(
+            target.get("source_collection_profit_target_candidate")
+        )
+        priority = (
+            _safe_text(target.get("source_collection_priority"))
+            == "profit_target_source_materialization"
+        )
+        materialize_next = (
+            _safe_text(target.get("source_collection_next_action"))
+            == "materialize_runtime_ledger_source_window_refs"
+        )
+        if _source_collection_target_has_materializable_lineage(target):
+            materialization_rank = 0
+        elif _source_collection_target_has_bounded_bucket_materialization_seed(target):
+            materialization_rank = 1
+        else:
+            materialization_rank = 2
+        net_pnl = _safe_decimal(
+            target.get("source_collection_net_strategy_pnl_after_costs")
+            or target.get("net_strategy_pnl_after_costs")
+        )
+        filled_notional = _safe_decimal(
+            target.get("source_collection_filled_notional")
+            or target.get("filled_notional")
+        )
+        return (
+            0 if profit_target else 1,
+            0 if priority else 1,
+            0 if materialize_next else 1,
+            materialization_rank,
+            -net_pnl,
+            -filled_notional,
+            target_key(target),
+        )
+
+    source_targets: list[dict[str, object]] = []
+    seen_target_keys: set[tuple[str, str, str, str, str]] = set()
+
+    def append_ranked_target(target: Mapping[str, object]) -> None:
+        if len(source_targets) >= limit:
+            return
         key = (
-            _safe_text(sanitized.get("hypothesis_id")) or "",
-            _safe_text(sanitized.get("candidate_id")) or "",
-            _safe_text(sanitized.get("runtime_strategy_name")) or "",
-            _safe_text(sanitized.get("window_start")) or "",
-            _safe_text(sanitized.get("window_end")) or "",
+            _safe_text(target.get("hypothesis_id")) or "",
+            _safe_text(target.get("candidate_id")) or "",
+            _safe_text(target.get("runtime_strategy_name")) or "",
+            _safe_text(target.get("window_start")) or "",
+            _safe_text(target.get("window_end")) or "",
         )
         if key in seen_target_keys:
             return
         seen_target_keys.add(key)
-        source_targets.append(sanitized)
+        source_targets.append(dict(target))
 
     for target in _as_mapping_items(plan.get("targets")):
         append_source_target(target)
@@ -9380,6 +9442,8 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
         live_submission_gate.get("runtime_ledger_source_collection_candidates")
     ):
         append_source_target(target)
+    for target in sorted(candidate_targets, key=target_rank):
+        append_ranked_target(target)
     if not source_targets:
         return {}
     profit_target_count = sum(
@@ -9408,6 +9472,55 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
         "skipped_target_count": 0,
         "targets": source_targets,
         "skipped_targets": [],
+    }
+
+
+def _source_collection_import_plan_has_profit_target(
+    plan: Mapping[str, Any],
+) -> bool:
+    return any(
+        _truthy_plan_value(target.get("source_collection_profit_target_candidate"))
+        for target in _as_mapping_items(plan.get("targets"))
+    )
+
+
+def _merged_runtime_ledger_source_collection_import_plan(
+    *,
+    plans: Sequence[Mapping[str, Any]],
+    target_limit: int,
+    source: str = PRIORITIZED_SOURCE_COLLECTION_PLAN_SOURCE,
+) -> dict[str, object]:
+    targets: list[Mapping[str, Any]] = []
+    schema_version = ""
+    for plan in plans:
+        if not schema_version:
+            schema_version = _safe_text(plan.get("schema_version")) or ""
+        targets.extend(_as_mapping_items(plan.get("targets")))
+    if not targets:
+        return {}
+    merged = _runtime_ledger_source_collection_import_plan_for_payload(
+        plan={
+            "schema_version": schema_version,
+            "targets": targets,
+        },
+        live_submission_gate={
+            "blocked_reasons": [RUNTIME_LEDGER_SOURCE_COLLECTION_PENDING_BLOCKER],
+        },
+        target_limit=target_limit,
+    )
+    if not merged:
+        return {}
+    merged["source"] = source
+    return merged
+
+
+def _runtime_window_import_plan_is_source_collection_only(
+    plan: Mapping[str, Any],
+) -> bool:
+    source = _safe_text(plan.get("source"))
+    return source in {
+        OBSERVED_STRATEGY_SOURCE_COLLECTION_PLAN_SOURCE,
+        PRIORITIZED_SOURCE_COLLECTION_PLAN_SOURCE,
     }
 
 
@@ -9698,7 +9811,7 @@ def _observed_strategy_source_collection_import_plan(
     metadata = _source_collection_runtime_import_metadata(selected_plan or {})
     return {
         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
-        "source": "paper_route_observed_strategy_source_collection",
+        "source": OBSERVED_STRATEGY_SOURCE_COLLECTION_PLAN_SOURCE,
         "purpose": "observed_strategy_runtime_ledger_source_collection_import",
         "proof_mode": "probation",
         "evidence_collection_ok": True,
@@ -9868,8 +9981,14 @@ def build_paper_route_target_plan_payload(
             )
         )
         if _as_mapping_items(observed_strategy_source_targets.get("targets")):
-            source_targets = observed_strategy_source_targets
-            runtime_window_import_plan = observed_strategy_source_targets
+            if _source_collection_import_plan_has_profit_target(source_targets):
+                source_targets = _merged_runtime_ledger_source_collection_import_plan(
+                    plans=(source_targets, observed_strategy_source_targets),
+                    target_limit=target_limit,
+                )
+            else:
+                source_targets = observed_strategy_source_targets
+            runtime_window_import_plan = source_targets
     runtime_import_readiness = _as_mapping(
         runtime_window_import_plan.get("session_readiness")
     )
@@ -10074,10 +10193,11 @@ def build_paper_route_target_plan_payload(
             "runtime_window_import_audit_blockers": _unique_text_items(
                 runtime_window_import_audit.get("blockers")
             ),
-            "runtime_window_import_source_collection_only": _safe_text(
-                runtime_window_import_plan.get("source")
-            )
-            == "paper_route_observed_strategy_source_collection",
+            "runtime_window_import_source_collection_only": (
+                _runtime_window_import_plan_is_source_collection_only(
+                    runtime_window_import_plan
+                )
+            ),
             "runtime_window_import_account_contamination_state": _safe_text(
                 _as_mapping(
                     runtime_window_import_plan.get("account_contamination_readiness")
@@ -10290,8 +10410,14 @@ def build_paper_route_evidence_audit(
         target_limit=effective_target_limit,
     )
     if _as_mapping_items(observed_strategy_source_targets.get("targets")):
-        source_targets = observed_strategy_source_targets
-        runtime_window_import_plan = observed_strategy_source_targets
+        if _source_collection_import_plan_has_profit_target(source_targets):
+            source_targets = _merged_runtime_ledger_source_collection_import_plan(
+                plans=(source_targets, observed_strategy_source_targets),
+                target_limit=effective_target_limit,
+            )
+        else:
+            source_targets = observed_strategy_source_targets
+        runtime_window_import_plan = source_targets
         runtime_window_import_target_audits = [
             cached_target_audit(
                 target,
@@ -10487,10 +10613,11 @@ def build_paper_route_evidence_audit(
             "runtime_window_import_plan_source": _safe_text(
                 runtime_window_import_plan.get("source")
             ),
-            "runtime_window_import_source_collection_only": _safe_text(
-                runtime_window_import_plan.get("source")
-            )
-            == "paper_route_observed_strategy_source_collection",
+            "runtime_window_import_source_collection_only": (
+                _runtime_window_import_plan_is_source_collection_only(
+                    runtime_window_import_plan
+                )
+            ),
             "runtime_window_import_account_contamination_state": _safe_text(
                 _as_mapping(
                     runtime_window_import_plan.get("account_contamination_readiness")

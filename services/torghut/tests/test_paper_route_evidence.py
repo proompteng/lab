@@ -5727,6 +5727,133 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(empty_plan, {})
 
+    def test_source_collection_import_plan_prioritizes_profit_target_before_limit(
+        self,
+    ) -> None:
+        live_gate = {
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+        }
+
+        plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan={
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "generic-hpairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_collection_authorized": True,
+                    },
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "candidate_id": "generic-tsmom",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_collection_authorized": True,
+                    },
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "generic-hpairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_collection_authorized": True,
+                        "source_collection_priority": (
+                            "profit_target_source_materialization"
+                        ),
+                        "source_collection_profit_target_candidate": True,
+                        "source_collection_net_strategy_pnl_after_costs": (
+                            "567.44720578"
+                        ),
+                        "source_collection_filled_notional": "127090.02495200",
+                        "source_collection_next_action": (
+                            "materialize_runtime_ledger_source_window_refs"
+                        ),
+                        "runtime_ledger_bucket_ref": (
+                            "strategy_runtime_ledger_buckets:run-1:start:end"
+                        ),
+                        "window_start": "2026-06-04T13:30:00+00:00",
+                        "window_end": "2026-06-04T20:00:00+00:00",
+                    },
+                ],
+            },
+            live_submission_gate=live_gate,
+            target_limit=2,
+        )
+
+        self.assertEqual(plan["target_count"], 2)
+        self.assertEqual(plan["source_collection_profit_target_count"], 1)
+        self.assertEqual(plan["targets"][0]["candidate_id"], "generic-hpairs")
+        self.assertTrue(plan["targets"][0]["source_collection_profit_target_candidate"])
+        self.assertEqual(
+            plan["targets"][0]["source_collection_next_action"],
+            "materialize_runtime_ledger_source_window_refs",
+        )
+
+    def test_source_collection_import_plan_merges_profit_target_before_observed(
+        self,
+    ) -> None:
+        source_plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan={
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "profit-hpairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_collection_authorized": True,
+                        "source_collection_priority": (
+                            "profit_target_source_materialization"
+                        ),
+                        "source_collection_profit_target_candidate": True,
+                        "source_collection_net_strategy_pnl_after_costs": (
+                            "567.44720578"
+                        ),
+                        "source_collection_next_action": (
+                            "materialize_runtime_ledger_source_window_refs"
+                        ),
+                        "runtime_ledger_bucket_ref": (
+                            "strategy_runtime_ledger_buckets:run-1:start:end"
+                        ),
+                        "window_start": "2026-06-04T13:30:00+00:00",
+                        "window_end": "2026-06-04T20:00:00+00:00",
+                    }
+                ],
+            },
+            live_submission_gate={
+                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+            },
+            target_limit=1,
+        )
+        observed_plan = {
+            "targets": [
+                {
+                    "hypothesis_id": "H-TSMOM-LIQ-01",
+                    "candidate_id": "observed-tsmom",
+                    "strategy_name": "intraday-tsmom-profit-v3",
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                    "source_collection_authorized": True,
+                    "selected_by": "paper_route_observed_strategy_source_collection",
+                    "window_start": "2026-06-04T13:30:00+00:00",
+                    "window_end": "2026-06-04T20:00:00+00:00",
+                }
+            ],
+        }
+
+        merged = (
+            paper_route_evidence._merged_runtime_ledger_source_collection_import_plan(
+                plans=(source_plan, observed_plan),
+                target_limit=1,
+            )
+        )
+
+        self.assertEqual(merged["source"], "paper_route_prioritized_source_collection")
+        self.assertEqual(merged["target_count"], 1)
+        self.assertEqual(merged["targets"][0]["candidate_id"], "profit-hpairs")
+        self.assertTrue(
+            merged["targets"][0]["source_collection_profit_target_candidate"]
+        )
+
     def test_source_collection_import_plan_skips_aggregate_replay_bucket_without_lineage(
         self,
     ) -> None:
