@@ -29,6 +29,7 @@ from app.models import (
     TradeDecision,
 )
 from app.trading.paper_route_evidence import (
+    PAPER_ROUTE_EXECUTION_READINESS_CONTRACT_SCHEMA_VERSION,
     PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
     PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
@@ -90,6 +91,87 @@ class TestPaperRouteEvidenceAudit(TestCase):
             self.assertEqual(
                 paper_route_evidence._paper_route_evidence_query_timeout_ms(), 1500
             )
+
+    def test_execution_readiness_next_action_covers_manual_repair_branches(
+        self,
+    ) -> None:
+        def next_action(
+            *,
+            session_state: str = "collecting_session_evidence",
+            collection_blockers: list[str] | None = None,
+            evidence_blockers: list[str] | None = None,
+            import_ready: bool = False,
+            import_blockers: list[str] | None = None,
+            source_decision_ready: bool = True,
+            account_pre_session_state: dict[str, object] | None = None,
+            collection_authorized: bool = False,
+        ) -> str:
+            return paper_route_evidence._paper_route_execution_readiness_next_action(
+                session_state=session_state,
+                collection_blockers=collection_blockers or [],
+                evidence_blockers=evidence_blockers or [],
+                import_ready=import_ready,
+                import_blockers=import_blockers or [],
+                source_decision_ready=source_decision_ready,
+                account_pre_session_state=account_pre_session_state or {},
+                collection_authorized=collection_authorized,
+            )
+
+        self.assertEqual(
+            next_action(
+                session_state="waiting_for_session_open",
+                collection_blockers=[
+                    "paper_route_session_window_not_open",
+                    "paper_route_clean_window_baseline_snapshot_pending",
+                ],
+                account_pre_session_state={"state": "required_pending"},
+            ),
+            "capture_pre_session_flat_account_snapshot",
+        )
+        self.assertEqual(
+            next_action(
+                collection_blockers=[
+                    "paper_route_clean_window_baseline_snapshot_pending"
+                ],
+            ),
+            "capture_pre_session_flat_account_snapshot",
+        )
+        self.assertEqual(
+            next_action(
+                session_state="window_closed_settlement_pending",
+                import_blockers=["paper_route_session_settlement_pending"],
+            ),
+            "wait_for_settlement_before_import",
+        )
+        self.assertEqual(next_action(session_state="paper_route_custom_state"), "inspect_paper_route_readiness")
+
+    def test_execution_readiness_state_preserves_blocked_and_unknown_states(
+        self,
+    ) -> None:
+        self.assertEqual(
+            paper_route_evidence._paper_route_execution_readiness_state(
+                session_state="paper_route_custom_state",
+                source_decision_ready=False,
+                collection_authorized=False,
+                evidence_collection_ok=False,
+                evidence_blockers=["paper_route_source_activity_missing"],
+                import_ready=False,
+                import_blockers=[],
+            ),
+            "blocked",
+        )
+        self.assertEqual(
+            paper_route_evidence._paper_route_execution_readiness_state(
+                session_state="",
+                source_decision_ready=True,
+                collection_authorized=False,
+                evidence_collection_ok=False,
+                evidence_blockers=[],
+                import_ready=False,
+                import_blockers=[],
+            ),
+            "unknown",
+        )
 
     def test_order_event_source_offset_refs_skip_deduplicate_and_limit(self) -> None:
         rows = [
@@ -3809,6 +3891,38 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["paper_route_runtime_import_handoff"]["target_plan_endpoint"],
             "/trading/paper-route-target-plan",
         )
+        execution_readiness = target["paper_route_execution_readiness_contract"]
+        self.assertEqual(
+            execution_readiness["schema_version"],
+            PAPER_ROUTE_EXECUTION_READINESS_CONTRACT_SCHEMA_VERSION,
+        )
+        self.assertEqual(execution_readiness["state"], "waiting_for_session_open")
+        self.assertEqual(
+            execution_readiness["next_action"],
+            "wait_for_pre_session_snapshot_window",
+        )
+        self.assertEqual(
+            execution_readiness["proof_boundary"],
+            "not_profit_proof_until_source_activity_runtime_ledger_tca_and_flat_proof",
+        )
+        self.assertEqual(
+            execution_readiness["phase_gates"]["pre_session_flat_baseline"][
+                "required_after"
+            ],
+            "2026-05-26T13:15:00+00:00",
+        )
+        self.assertEqual(
+            execution_readiness["phase_gates"]["bounded_collection"]["blockers"],
+            [
+                "paper_route_session_window_not_open",
+                "source_strategy_missing",
+                "paper_route_clean_window_baseline_snapshot_pending",
+            ],
+        )
+        self.assertIn(
+            "fills_or_rejected_signal_feedback",
+            execution_readiness["post_collection_required_evidence"],
+        )
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(
             import_audit["schema_version"],
@@ -3846,6 +3960,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
             summary["next_runtime_window_import_next_action"],
             "wait_for_regular_session_open",
         )
+        self.assertEqual(
+            summary["next_runtime_window_execution_readiness"]["next_action_counts"],
+            {"wait_for_pre_session_snapshot_window": 1},
+        )
         self.assertEqual(len(summary["next_paper_route_targets"]), 1)
         summary_target = summary["next_paper_route_targets"][0]
         self.assertEqual(summary_target["candidate_id"], "candidate-paper-route")
@@ -3878,6 +3996,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(summary_target["evidence_collection_ok"])
         self.assertFalse(summary_target["canary_collection_authorized"])
         self.assertFalse(summary_target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            summary_target["execution_readiness"],
+            {
+                "state": "waiting_for_session_open",
+                "next_action": "wait_for_pre_session_snapshot_window",
+                "proof_boundary": (
+                    "not_profit_proof_until_source_activity_runtime_ledger_tca_and_flat_proof"
+                ),
+            },
+        )
         self.assertEqual(
             summary_target["bounded_evidence_collection_blockers"],
             [
@@ -6445,6 +6573,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
             settlement_target["paper_route_session_collection_blockers"],
             ["paper_route_session_settlement_pending"],
         )
+        self.assertEqual(
+            settlement_target["paper_route_execution_readiness_contract"][
+                "next_action"
+            ],
+            "repair_source_decision_readiness",
+        )
         self.assertIn(
             "paper_route_session_settlement_pending",
             settlement_target["bounded_evidence_collection_blockers"],
@@ -6470,6 +6604,14 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertTrue(import_target["paper_route_session_import_ready"])
         self.assertEqual(import_target["paper_route_session_import_blockers"], [])
+        self.assertEqual(
+            import_target["paper_route_execution_readiness_contract"]["state"],
+            "window_closed_import_ready",
+        )
+        self.assertEqual(
+            import_target["paper_route_execution_readiness_contract"]["next_action"],
+            "repair_source_decision_readiness",
+        )
         import_audit = import_payload["runtime_window_import_audit"]
         self.assertEqual(import_audit["state"], "import_due_source_activity_missing")
         self.assertEqual(
