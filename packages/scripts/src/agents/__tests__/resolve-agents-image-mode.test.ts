@@ -78,6 +78,22 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual([])
   })
 
+  it('reuses the published image for non-Agents product package changes', () => {
+    const result = classifyAgentsImageMode([
+      'apps/froussard/src/app.tsx',
+      'packages/bumba/src/index.ts',
+      'packages/design/src/index.ts',
+      'packages/discord/src/index.ts',
+      'services/bumba/src/main.ts',
+      'services/facteur/internal/server.go',
+      'services/graf/src/main/kotlin/App.kt',
+      'services/torghut/app/main.py',
+    ])
+    expect(result.mode).toBe('reuse-published-image')
+    expect(result.needsLocalAgentsImage).toBe(false)
+    expect(result.matchedPaths).toEqual([])
+  })
+
   it('builds a local image when bun.lock changes', () => {
     const result = classifyAgentsImageMode(['bun.lock'])
     expect(result.mode).toBe('build-local-image')
@@ -159,6 +175,11 @@ describe('agents-ci workflow local Agents image build', () => {
   it('keeps Agents CI detached from Jangar service and GitOps paths', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
+    expect(workflow).not.toContain('apps/froussard/src/**')
+    expect(workflow).not.toContain('argocd/applications/facteur/**')
+    expect(workflow).not.toContain('argocd/applications/froussard/**')
+    expect(workflow).not.toContain('argocd/applications/graf/**')
+    expect(workflow).not.toContain('argocd/applications/torghut/**')
     expect(workflow).not.toContain('services/jangar/**')
     expect(workflow).not.toContain('argocd/applications/jangar/**')
     expect(workflow).not.toContain('docs/jangar/application-architecture.md')
@@ -166,6 +187,17 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('packages/scripts/src/jangar/verify-deployment.ts')
     expect(workflow).not.toContain('--filter @proompteng/jangar')
     expect(workflow).not.toContain('packages/scripts/src/jangar/__tests__/release-contract.test.ts')
+    expect(workflow).not.toContain('packages/bumba/**')
+    expect(workflow).not.toContain('packages/design/**')
+    expect(workflow).not.toContain('packages/discord/**')
+    expect(workflow).not.toContain('services/bumba/**')
+    expect(workflow).not.toContain('services/facteur/')
+    expect(workflow).not.toContain('services/graf/')
+    expect(workflow).not.toContain('services/torghut/')
+    expect(workflow).not.toContain('--filter @proompteng/source')
+    expect(workflow).not.toContain('--filter @proompteng/bumba')
+    expect(workflow).not.toContain('--filter @proompteng/design')
+    expect(workflow).not.toContain('--filter @proompteng/discord')
   })
 
   it('keeps Agents image publication detached from Jangar-only source changes', () => {

@@ -8,11 +8,7 @@ const LOCAL_IMAGE_PREFIXES = [
   'packages/agent-contracts/',
   'packages/temporal-bun-sdk/',
   'packages/codex/',
-  'packages/design/',
-  'packages/bumba/',
-  'packages/discord/',
   'packages/cx-tools/',
-  'services/bumba/',
 ]
 
 const LOCAL_IMAGE_EXACT_PATHS = new Set([
