@@ -7,6 +7,10 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+    paths:
+      - 'argocd/applications/jangar/kustomization.yaml'
+      - 'argocd/applications/jangar/deployment.yaml'
+      - '.github/workflows/jangar-deploy-automerge.yml'
 
 jobs:
   enable:

@@ -9,6 +9,27 @@ on:
       - ready_for_review
       - labeled
       - unlabeled
+    paths:
+      - 'argocd/applications/torghut/knative-service.yaml'
+      - 'argocd/applications/torghut/knative-service-sim.yaml'
+      - 'argocd/applications/torghut/db-migrations-job.yaml'
+      - 'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
+      - 'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml'
+      - 'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml'
+      - 'argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml'
+      - 'argocd/applications/torghut/analysis-template-runtime-ready.yaml'
+      - 'argocd/applications/torghut/analysis-template-activity.yaml'
+      - 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
+      - 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
+      - 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
+      - 'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml'
+      - 'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml'
+      - 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
+      - 'argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml'
+      - 'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
+      - 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
+      - 'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml'
+      - '.github/workflows/torghut-deploy-automerge.yml'
 
 permissions:
   contents: write
