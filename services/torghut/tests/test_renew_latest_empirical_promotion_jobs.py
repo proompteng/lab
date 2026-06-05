@@ -289,6 +289,40 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
             ["runtime_ledger_source_window_missing"],
         )
 
+    def test_sim_backed_runtime_window_target_normalizes_replay_source_label(
+        self,
+    ) -> None:
+        args = argparse.Namespace(
+            runtime_window_target=[
+                json.dumps(
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "observed_stage": "paper",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_SIM",
+                        "source_account_label": "TORGHUT_REPLAY",
+                        "source_dsn_env": "SIM_DB_DSN",
+                        "target_dsn_env": "SIM_DB_DSN",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                        "source_manifest_ref": (
+                            "config/trading/hypotheses/h-pairs-01.json"
+                        ),
+                    }
+                )
+            ],
+            runtime_window_target_plan_required=False,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+        )
+
+        targets = renew._runtime_window_targets(args)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].source_account_label, "TORGHUT_SIM")
+
     def test_observed_strategy_source_collection_plan_target_parses_for_import(
         self,
     ) -> None:

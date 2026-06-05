@@ -192,6 +192,15 @@ RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES = frozenset(
         "import_due_source_activity_missing",
     )
 )
+PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
+PAPER_ROUTE_REPLAY_ACCOUNT_LABEL = "TORGHUT_REPLAY"
+SIM_DB_DSN_ENV = "SIM_DB_DSN"
+SIM_BACKED_PAPER_ROUTE_SOURCE_KINDS = frozenset(
+    (
+        "paper_route_probe_runtime_observed",
+        "runtime_ledger_source_collection_candidate",
+    )
+)
 OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT = 5
 HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION = (
     "torghut.hpairs-source-proof-census-status.v1"
@@ -512,6 +521,24 @@ def _runtime_window_delay_depth_remediation(
     }
 
 
+def _normalized_sim_backed_source_account_label(
+    *,
+    account_label: str,
+    source_account_label: str,
+    source_dsn_env: str,
+    source_kind: str,
+) -> str:
+    resolved = source_account_label or account_label
+    if (
+        account_label == PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL
+        and resolved == PAPER_ROUTE_REPLAY_ACCOUNT_LABEL
+        and source_dsn_env == SIM_DB_DSN_ENV
+        and source_kind.strip() in SIM_BACKED_PAPER_ROUTE_SOURCE_KINDS
+    ):
+        return account_label
+    return resolved
+
+
 @dataclass(frozen=True)
 class RuntimeWindowImportTarget:
     hypothesis_id: str
@@ -534,6 +561,18 @@ class RuntimeWindowImportTarget:
     target_metadata: Mapping[str, Any] | None = None
     source_account_label: str = ""
     target_dsn_env: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_account_label",
+            _normalized_sim_backed_source_account_label(
+                account_label=self.account_label,
+                source_account_label=self.source_account_label,
+                source_dsn_env=self.source_dsn_env,
+                source_kind=self.source_kind,
+            ),
+        )
 
 
 def _runtime_window_target_plan_import_blocked_result(

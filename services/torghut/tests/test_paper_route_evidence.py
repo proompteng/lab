@@ -1623,6 +1623,159 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(observation["exact_match_decision_count"], 1)
         self.assertEqual(observation["blockers"], [])
 
+    def test_hpairs_sim_backed_replay_source_label_reads_runtime_lineage(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 6, 5, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 5, 20, 0, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(hours=6, minutes=15)
+        candidate_id = "c88421d619759b2cfaa6f4d0"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="microbar_cross_sectional_pairs_v1",
+                universe_symbols=["AAPL", "AMZN"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "params": {
+                        "lineage": {
+                            "candidate_id": candidate_id,
+                            "hypothesis_id": "H-PAIRS-01",
+                            "source_account_label": "TORGHUT_SIM",
+                        },
+                        "source_decision_mode": "bounded_paper_route_collection",
+                        "profit_proof_eligible": True,
+                    },
+                },
+                rationale="SIM-backed H-PAIRS source lineage",
+                status="filled",
+                created_at=event_at,
+                executed_at=event_at + timedelta(seconds=5),
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="sim-backed-lineage-order",
+                client_order_id="sim-backed-lineage-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at + timedelta(seconds=10),
+                updated_at=event_at + timedelta(seconds=10),
+                last_update_at=event_at + timedelta(seconds=10),
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    side="buy",
+                    arrival_price=Decimal("99"),
+                    avg_fill_price=Decimal("100"),
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("1"),
+                    slippage_bps=Decimal("1"),
+                    shortfall_notional=Decimal("0.01"),
+                    realized_shortfall_bps=Decimal("1"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=event_at + timedelta(seconds=20),
+                    created_at=event_at + timedelta(seconds=20),
+                    updated_at=event_at + timedelta(seconds=20),
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": candidate_id,
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "strategy_lookup_names": [
+                                    "microbar-cross-sectional-pairs-v1"
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_account_label": "TORGHUT_REPLAY",
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "target_dsn_env": "SIM_DB_DSN",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 75000,
+                        "next_session_max_notional": 75000,
+                    },
+                },
+                generated_at=window_end + timedelta(hours=2),
+            )
+
+        source_activity = payload["targets"][0]["source_activity"]
+        self.assertEqual(
+            payload["targets"][0]["target"]["source_account_label"],
+            "TORGHUT_SIM",
+        )
+        self.assertEqual(source_activity["account_label"], "TORGHUT_SIM")
+        self.assertEqual(source_activity["raw_decision_count"], 1)
+        self.assertEqual(source_activity["lineage_matched_decision_count"], 1)
+        self.assertEqual(source_activity["decision_count"], 1)
+        self.assertEqual(source_activity["execution_count"], 1)
+        self.assertEqual(source_activity["tca_sample_count"], 1)
+        self.assertFalse(source_activity["missing"])
+
     def test_evidence_audit_reuses_duplicate_target_window_audits(self) -> None:
         window_start = datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc)
         window_end = window_start + timedelta(hours=1)
@@ -4107,7 +4260,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(handoff["target_dsn_env"], "SIM_DB_DSN")
         target = plan["targets"][0]
         self.assertEqual(target["account_label"], "TORGHUT_SIM")
-        self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
         self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(target["source_kind"], "paper_route_probe_runtime_observed")
@@ -5996,7 +6149,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "runtime_ledger_source_collection_import",
         )
         self.assertTrue(source_target["source_collection_authorized"])
-        self.assertEqual(source_target["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(source_target["source_account_label"], "TORGHUT_SIM")
         self.assertEqual(source_target["max_notional"], "0")
         self.assertFalse(source_target["promotion_allowed"])
         self.assertFalse(source_target["final_promotion_allowed"])
