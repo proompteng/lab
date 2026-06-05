@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from threading import Lock
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -123,6 +123,16 @@ _CERTIFICATE_EVIDENCE_WINDOW_LIMIT = _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT
 _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT = 16
 _PROMOTION_SCALAR_COUNT_LIMIT = _PROMOTION_TABLE_COUNT_SCAN_LIMIT
 _PROMOTION_PORTFOLIO_SAMPLE_LIMIT = _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT
+
+
+class _PortfolioPromotionRow(NamedTuple):
+    status: str
+    portfolio_candidate_id: str
+    source_candidate_ids_json: Any
+    target_net_pnl_per_day: Decimal
+    objective_scorecard_json: Any
+
+
 _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
     {
         "signals_present",
@@ -408,7 +418,7 @@ def _runtime_window_import_health_gate_inputs(
 
 
 def _autoresearch_portfolio_current_oracle_passed(
-    row: AutoresearchPortfolioCandidate,
+    row: AutoresearchPortfolioCandidate | _PortfolioPromotionRow,
 ) -> bool:
     scorecard = row.objective_scorecard_json
     if not isinstance(scorecard, Mapping):
@@ -3951,13 +3961,26 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
     truncated_counts: list[str] = []
     try:
         _maybe_set_runtime_ledger_status_statement_timeout(session)
-        portfolio_rows = list(
-            session.execute(
-                select(AutoresearchPortfolioCandidate)
+        portfolio_rows = [
+            _PortfolioPromotionRow(
+                status=str(row.status),
+                portfolio_candidate_id=str(row.portfolio_candidate_id),
+                source_candidate_ids_json=row.source_candidate_ids_json,
+                target_net_pnl_per_day=cast(Decimal, row.target_net_pnl_per_day),
+                objective_scorecard_json=row.objective_scorecard_json,
+            )
+            for row in session.execute(
+                select(
+                    AutoresearchPortfolioCandidate.status,
+                    AutoresearchPortfolioCandidate.portfolio_candidate_id,
+                    AutoresearchPortfolioCandidate.source_candidate_ids_json,
+                    AutoresearchPortfolioCandidate.target_net_pnl_per_day,
+                    AutoresearchPortfolioCandidate.objective_scorecard_json,
+                )
                 .order_by(AutoresearchPortfolioCandidate.created_at.desc())
                 .limit(_PROMOTION_PORTFOLIO_SAMPLE_LIMIT + 1)
-            ).scalars()
-        )
+            ).all()
+        ]
     except SQLAlchemyError as exc:
         logger.warning(
             "Failed to load profit promotion portfolio rows error=%s",
