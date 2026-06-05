@@ -318,11 +318,44 @@ def _target_plan_baseline_readback(
     }
 
 
+def _readback_datetime(value: object) -> datetime | None:
+    text = _safe_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _snapshot_after_matching_target_windows(
+    *,
+    snapshot_as_of: str | None,
+    readback_targets: Sequence[Mapping[str, object]],
+) -> bool:
+    snapshot_time = _readback_datetime(snapshot_as_of)
+    if snapshot_time is None or not readback_targets:
+        return False
+    saw_window_end = False
+    for target in readback_targets:
+        window_end = _readback_datetime(target.get("window_end"))
+        if window_end is None:
+            return False
+        saw_window_end = True
+        if snapshot_time <= window_end:
+            return False
+    return saw_window_end
+
+
 def read_target_plan_clean_window_readback(
     *,
     url: str,
     account_label: str,
     snapshot_id: str | None,
+    snapshot_as_of: str | None = None,
     timeout_seconds: float,
 ) -> dict[str, object]:
     normalized_url = url.strip()
@@ -331,6 +364,7 @@ def read_target_plan_clean_window_readback(
         "url": normalized_url,
         "account_label": account_label,
         "position_snapshot_id": snapshot_id,
+        "position_snapshot_as_of": snapshot_as_of,
         "state": "not_requested",
         "http_status": None,
         "plan_source": None,
@@ -338,6 +372,7 @@ def read_target_plan_clean_window_readback(
         "matching_target_count": 0,
         "clean_matching_target_count": 0,
         "persisted_snapshot_seen": False,
+        "persisted_snapshot_after_target_window": False,
         "clean_window_baseline_readiness": {},
         "targets": [],
         "blockers": [],
@@ -408,6 +443,10 @@ def read_target_plan_clean_window_readback(
         snapshot_id
         and any(target.get("snapshot_id") == snapshot_id for target in readback_targets)
     )
+    persisted_snapshot_after_target_window = _snapshot_after_matching_target_windows(
+        snapshot_as_of=snapshot_as_of,
+        readback_targets=readback_targets,
+    )
     summary = _as_mapping(plan.get("clean_window_baseline_readiness"))
     blockers = _readback_blockers(summary.get("blockers"))
     for target in readback_targets:
@@ -418,7 +457,12 @@ def read_target_plan_clean_window_readback(
         blockers.append("paper_route_target_plan_readback_target_missing")
     if matching_targets and len(clean_targets) != len(matching_targets):
         blockers.append("paper_route_target_plan_clean_window_baseline_not_clean")
-    if snapshot_id and matching_targets and not persisted_snapshot_seen:
+    if (
+        snapshot_id
+        and matching_targets
+        and not persisted_snapshot_seen
+        and not persisted_snapshot_after_target_window
+    ):
         blockers.append("paper_route_target_plan_readback_snapshot_id_mismatch")
     blockers = sorted(dict.fromkeys(blockers))
     return {
@@ -430,6 +474,7 @@ def read_target_plan_clean_window_readback(
         "matching_target_count": len(matching_targets),
         "clean_matching_target_count": len(clean_targets),
         "persisted_snapshot_seen": persisted_snapshot_seen,
+        "persisted_snapshot_after_target_window": persisted_snapshot_after_target_window,
         "clean_window_baseline_readiness": dict(summary),
         "targets": readback_targets,
         "blockers": blockers,
@@ -1271,6 +1316,11 @@ def main() -> int:
                 snapshot_id=(
                     str(payload["position_snapshot_id"])
                     if payload.get("position_snapshot_id")
+                    else None
+                ),
+                snapshot_as_of=(
+                    str(payload["position_snapshot_as_of"])
+                    if payload.get("position_snapshot_as_of")
                     else None
                 ),
                 timeout_seconds=max(
