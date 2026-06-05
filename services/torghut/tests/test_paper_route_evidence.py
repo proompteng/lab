@@ -7462,6 +7462,258 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 0,
             )
 
+    def test_runtime_window_import_audit_counts_post_close_tca_for_mixed_source_activity(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        strategy_name = "mixed-source-post-close-tca"
+        candidate_id = "candidate-mixed-source-post-close-tca"
+
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="mixed source post-close TCA fixture",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            for index, side in enumerate(("buy", "sell")):
+                event_at = window_start + timedelta(minutes=10 + index)
+                decision = TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    timeframe="1Sec",
+                    decision_json={
+                        "action": side,
+                        "qty": "1",
+                        "candidate_id": candidate_id,
+                        "hypothesis_id": "H-PAIRS-01",
+                    },
+                    rationale="mixed source filled decision",
+                    status="filled",
+                    created_at=event_at,
+                    executed_at=event_at,
+                )
+                session.add(decision)
+                session.flush()
+                execution = Execution(
+                    trade_decision_id=decision.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id=f"mixed-source-order-{index}",
+                    client_order_id=f"mixed-source-{side}-aapl-{index}",
+                    symbol="AAPL",
+                    side=side,
+                    order_type="limit",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    status="filled",
+                    raw_order={},
+                    created_at=event_at,
+                    updated_at=event_at,
+                    last_update_at=event_at,
+                )
+                session.add(execution)
+                session.flush()
+                session.add(
+                    ExecutionOrderEvent(
+                        event_fingerprint=f"mixed-source-fill-{index}",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=300 + index,
+                        alpaca_account_label="TORGHUT_SIM",
+                        feed_seq=300 + index,
+                        event_ts=event_at,
+                        symbol="AAPL",
+                        alpaca_order_id=f"mixed-source-order-{index}",
+                        client_order_id=f"mixed-source-{side}-aapl-{index}",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        filled_qty_delta=Decimal("1"),
+                        filled_notional_delta=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        raw_event={
+                            "event": "fill",
+                            "side": side,
+                            "order": {
+                                "id": f"mixed-source-order-{index}",
+                                "client_order_id": f"mixed-source-{side}-aapl-{index}",
+                                "symbol": "AAPL",
+                                "side": side,
+                                "status": "filled",
+                            },
+                        },
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        created_at=event_at,
+                    )
+                )
+                session.add(
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        side=side,
+                        arrival_price=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("-1") if side == "sell" else Decimal("1"),
+                        slippage_bps=Decimal("0"),
+                        shortfall_notional=Decimal("0"),
+                        realized_shortfall_bps=Decimal("0"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=window_end + timedelta(minutes=45 + index),
+                        created_at=window_end + timedelta(minutes=45 + index),
+                        updated_at=window_end + timedelta(minutes=45 + index),
+                    )
+                )
+
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    timeframe="1Sec",
+                    decision_json={
+                        "action": "buy",
+                        "qty": "1",
+                        "candidate_id": candidate_id,
+                        "hypothesis_id": "H-PAIRS-01",
+                        "reject_reason_atomic": ["broker_submit_failed"],
+                    },
+                    rationale="mixed source rejected decision",
+                    status="rejected",
+                    created_at=window_start + timedelta(minutes=12),
+                )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            self._add_flat_account_close_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_end=window_end,
+            )
+            session.commit()
+
+            target = {
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": candidate_id,
+                "observed_stage": "paper",
+                "strategy_family": "microbar_pairs",
+                "strategy_name": strategy_name,
+                "runtime_strategy_name": strategy_name,
+                "account_label": "TORGHUT_SIM",
+                "source_account_label": "TORGHUT_SIM",
+                "window_start": window_start.isoformat(),
+                "window_end": window_end.isoformat(),
+                "paper_route_probe_symbols": ["AAPL"],
+            }
+            probe = {
+                "configured_enabled": True,
+                "active": True,
+                "eligible_symbol_count": 1,
+            }
+            source_activity = paper_route_evidence._strategy_source_activity(
+                session,
+                strategy_name=strategy_name,
+                strategy_lookup_names=[strategy_name],
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL"],
+                window_start=window_start,
+                window_end=window_end,
+                candidate_id=candidate_id,
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+            )
+            account_diagnostics = (
+                paper_route_evidence._source_activity_account_diagnostics(
+                    session,
+                    target=target,
+                    probe=probe,
+                    strategy_lookup_names=[strategy_name],
+                    window_start=window_start,
+                    window_end=window_end,
+                )
+            )
+            import_audit = paper_route_evidence._runtime_window_import_audit(
+                next_targets={
+                    "target_count": 1,
+                    "source": "paper_route_evidence_audit",
+                    "session_readiness": {
+                        "state": "window_closed_import_ready",
+                        "import_ready": True,
+                        "import_blockers": [],
+                    },
+                    "targets": [target],
+                },
+                target_audits=[
+                    {
+                        "target": target,
+                        "source_activity": source_activity,
+                        "runtime_ledger": {
+                            "bucket_count": 0,
+                            "evidence_grade_bucket_count": 0,
+                        },
+                        "promotion_decisions": {"decision_count": 1},
+                    }
+                ],
+                next_target_audits=[
+                    {
+                        "target": target,
+                        "source_activity": source_activity,
+                        "account_close_state": {
+                            "zero_open_position_evidence": True,
+                            "blockers": [],
+                        },
+                        "account_contamination": {"blockers": []},
+                        "account_state": {"blockers": []},
+                        "runtime_ledger": {
+                            "bucket_count": 0,
+                            "evidence_grade_bucket_count": 0,
+                        },
+                        "promotion_decisions": {"decision_count": 1},
+                    }
+                ],
+            )
+
+        self.assertFalse(source_activity["missing"])
+        self.assertEqual(source_activity["tca_sample_count"], 2)
+        self.assertEqual(source_activity["explicit_cost_tca_count"], 2)
+        self.assertIn(
+            "source_reject_broker_submit_failed",
+            source_activity["source_decision_reject_blockers"],
+        )
+        self.assertEqual(
+            account_diagnostics["account_summaries"][0][
+                "target_strategy_tca_sample_count"
+            ],
+            2,
+        )
+        self.assertEqual(import_audit["state"], "import_due_runtime_ledger_missing")
+        self.assertNotIn(
+            "paper_route_source_activity_missing", import_audit["blockers"]
+        )
+        self.assertNotIn(
+            "source_reject_broker_submit_failed",
+            import_audit["blockers"],
+        )
+
     def test_runtime_window_import_audit_reports_observed_source_blockers_without_session_readiness(
         self,
     ) -> None:

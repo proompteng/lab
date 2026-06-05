@@ -17,9 +17,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from ..config import settings
 from ..models import (
@@ -4329,6 +4330,11 @@ def _source_activity_account_diagnostics(
                 last_activity_at=last_activity_at,
             )
 
+        tca_activity_ts = func.coalesce(
+            TradeDecision.created_at,
+            Execution.created_at,
+            ExecutionTCAMetric.computed_at,
+        )
         tca_stmt = (
             select(
                 ExecutionTCAMetric.alpaca_account_label,
@@ -4336,10 +4342,15 @@ def _source_activity_account_diagnostics(
                 func.count(ExecutionTCAMetric.id),
                 func.max(ExecutionTCAMetric.computed_at),
             )
+            .outerjoin(
+                TradeDecision,
+                ExecutionTCAMetric.trade_decision_id == TradeDecision.id,
+            )
+            .outerjoin(Execution, ExecutionTCAMetric.execution_id == Execution.id)
             .outerjoin(Strategy, ExecutionTCAMetric.strategy_id == Strategy.id)
             .where(ExecutionTCAMetric.alpaca_account_label.in_(account_labels))
-            .where(ExecutionTCAMetric.computed_at >= window_start)
-            .where(ExecutionTCAMetric.computed_at <= window_end)
+            .where(tca_activity_ts >= window_start)
+            .where(tca_activity_ts <= window_end)
             .group_by(ExecutionTCAMetric.alpaca_account_label, Strategy.name)
         )
         if symbol_filters:
@@ -4848,18 +4859,17 @@ def _strategy_source_activity(
                     raw_decision_count=raw_decision_count,
                     lineage_matched_decision_count=len(decision_rows),
                 )
+    execution_ids = [row.id for row in execution_rows]
     tca_rows: list[ExecutionTCAMetric] = []
+    tca_source_filters: list[ColumnElement[bool]] = []
     if decision_ids:
-        tca_stmt = (
-            select(ExecutionTCAMetric)
-            .join(Strategy, ExecutionTCAMetric.strategy_id == Strategy.id)
-            .where(Strategy.name.in_(strategy_filters))
-            .where(ExecutionTCAMetric.computed_at >= window_start)
-            .where(ExecutionTCAMetric.computed_at <= window_end)
-        )
-        tca_stmt = tca_stmt.where(
+        tca_source_filters.append(
             ExecutionTCAMetric.trade_decision_id.in_(decision_ids)
         )
+    if execution_ids:
+        tca_source_filters.append(ExecutionTCAMetric.execution_id.in_(execution_ids))
+    if tca_source_filters:
+        tca_stmt = select(ExecutionTCAMetric).where(or_(*tca_source_filters))
         if account_label:
             tca_stmt = tca_stmt.where(
                 ExecutionTCAMetric.alpaca_account_label == account_label
@@ -5015,7 +5025,7 @@ def _strategy_source_activity(
     if execution_count <= 0 and not quote_quality_only_rejects:
         missing_reasons.append("source_executions_missing")
     missing_reasons.extend(materialized_unsubmitted_reasons)
-    if decision_reject_blockers:
+    if decision_reject_blockers and execution_count <= 0:
         missing_reasons.extend(decision_reject_blockers)
     if (
         tca_sample_count <= 0
