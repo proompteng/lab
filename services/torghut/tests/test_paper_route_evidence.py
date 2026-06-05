@@ -8543,6 +8543,219 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertNotIn("INTC", next_audit_target["paper_route_probe_symbols"])
 
+    def test_profitability_lifecycle_reports_waiting_for_session_open(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="canonical H-PAIRS strategy",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    created_at=window_start,
+                    updated_at=window_start,
+                )
+            )
+            session.commit()
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": True,
+                    "reason": "non_live_mode",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.next-paper-route-runtime-window-targets.v1"
+                        ),
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-lifecycle",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/h-pairs-01.json"
+                                ),
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                                "bounded_evidence_collection_authorized": True,
+                                "bounded_evidence_collection_max_notional": "75000",
+                                "paper_route_probe_next_session_max_notional": "75000",
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "final_promotion_allowed": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "75000",
+                        "eligible_symbol_count": 2,
+                        "eligible_symbols": ["AAPL", "AMZN"],
+                        "active_symbols": [],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=window_start - timedelta(hours=2),
+            )
+
+        lifecycle = payload["profitability_proof_lifecycle"]
+        self.assertEqual(
+            lifecycle["schema_version"],
+            "torghut.paper-route-profitability-proof-lifecycle.v1",
+        )
+        self.assertEqual(lifecycle["state"], "waiting_for_session_open")
+        self.assertEqual(lifecycle["next_action"], "wait_for_regular_session_open")
+        self.assertFalse(lifecycle["proof_complete"])
+        self.assertFalse(lifecycle["promotion_authority_allowed"])
+        self.assertEqual(
+            payload["summary"]["profitability_proof_lifecycle_state"],
+            "waiting_for_session_open",
+        )
+        stages = {stage["name"]: stage for stage in lifecycle["stages"]}
+        self.assertEqual(stages["source_profit_target_selected"]["status"], "complete")
+        self.assertEqual(stages["bounded_live_paper_collection"]["status"], "pending")
+        self.assertIn(
+            "paper_route_session_window_not_open",
+            stages["bounded_live_paper_collection"]["blockers"],
+        )
+        self.assertEqual(stages["promotion_profit_authority"]["status"], "blocked")
+
+    def test_profitability_lifecycle_prefers_source_materialization_next_action(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="canonical H-PAIRS strategy",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    created_at=window_start,
+                    updated_at=window_start,
+                )
+            )
+            session.commit()
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "simple_submit_disabled",
+                    "blocked_reasons": [
+                        "runtime_ledger_source_collection_pending",
+                        "simple_submit_disabled",
+                    ],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_source_collection_candidate_total": 1,
+                    "runtime_ledger_source_collection_profit_target_candidate_total": 1,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                        ),
+                        "target_count": 1,
+                        "source_collection_target_count": 1,
+                        "source_collection_profit_target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-source-collection",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "account_label": "TORGHUT_SIM",
+                                "source_account_label": "TORGHUT_SIM",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/h-pairs-01.json"
+                                ),
+                                "source_collection_authorized": True,
+                                "source_collection_profit_target_candidate": True,
+                                "source_collection_priority": (
+                                    "profit_target_source_materialization"
+                                ),
+                                "source_collection_next_action": (
+                                    "materialize_runtime_ledger_source_window_refs"
+                                ),
+                                "source_collection_net_strategy_pnl_after_costs": (
+                                    "567.44720578"
+                                ),
+                                "source_collection_post_cost_expectancy_bps": (
+                                    "44.64923238"
+                                ),
+                                "bounded_evidence_collection_authorized": True,
+                                "bounded_evidence_collection_max_notional": "75000",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "final_promotion_allowed": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "75000",
+                        "eligible_symbol_count": 2,
+                        "eligible_symbols": ["AAPL", "AMZN"],
+                        "active_symbols": [],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=window_start - timedelta(hours=2),
+            )
+
+        lifecycle = payload["profitability_proof_lifecycle"]
+        self.assertEqual(
+            lifecycle["state"], "source_collection_materialization_pending"
+        )
+        self.assertEqual(
+            lifecycle["next_action"],
+            "materialize_runtime_ledger_source_window_refs",
+        )
+        self.assertEqual(lifecycle["source_profit_target_count"], 1)
+        self.assertIn("simple_submit_disabled", lifecycle["blockers"])
+        stages = {stage["name"]: stage for stage in lifecycle["stages"]}
+        runtime_import = stages["runtime_window_import"]
+        self.assertIn(
+            "materialize_runtime_ledger_source_window_refs",
+            runtime_import["evidence"]["source_collection_next_actions"],
+        )
+        self.assertEqual(
+            payload["summary"]["profitability_proof_lifecycle_next_action"],
+            "materialize_runtime_ledger_source_window_refs",
+        )
+
     def test_next_window_targets_are_scoped_to_strategy_universe(self) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
