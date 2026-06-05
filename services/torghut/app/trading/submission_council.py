@@ -997,6 +997,11 @@ def _runtime_ledger_bucket_payload(
         or payload_json.get("runtime_ledger_source_window_id"),
         "trade_decision_ids": payload_json.get("trade_decision_ids") or [],
         "execution_ids": payload_json.get("execution_ids") or [],
+        "execution_tca_metric_ids": (
+            payload_json.get("execution_tca_metric_ids")
+            or payload_json.get("runtime_ledger_execution_tca_metric_ids")
+            or []
+        ),
         "execution_order_event_ids": (
             payload_json.get("execution_order_event_ids") or []
         ),
@@ -1005,8 +1010,43 @@ def _runtime_ledger_bucket_payload(
         "authority_class": payload_json.get("authority_class"),
         "authority_reason": payload_json.get("authority_reason"),
         "pnl_derivation": payload_json.get("pnl_derivation"),
+        "cost_basis_counts": payload_json.get("cost_basis_counts") or {},
         "blockers": row.blockers_json or [],
     }
+
+
+_RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = (
+    "source_window_start",
+    "source_window_end",
+    "source_refs",
+    "source_ref",
+    "source_row_counts",
+    "source_window_ids",
+    "source_window_id",
+    "trade_decision_ids",
+    "execution_ids",
+    "execution_tca_metric_ids",
+    "execution_order_event_ids",
+    "source_offsets",
+    "source_materialization",
+    "authority_class",
+    "authority_reason",
+    "pnl_derivation",
+    "cost_basis_counts",
+)
+
+
+def _runtime_ledger_source_evidence_payload(
+    candidate: Mapping[str, object],
+) -> dict[str, object]:
+    payload = _runtime_ledger_paper_probation_payload(candidate)
+    evidence: dict[str, object] = {}
+    for key in _RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS:
+        value = payload.get(key)
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        evidence[key] = value
+    return evidence
 
 
 def _normalized_strategy_family(value: object) -> str | None:
@@ -2411,6 +2451,7 @@ def _runtime_ledger_paper_probation_import_plan(
             ),
             "selection_reason": selection_reason,
         }
+        target.update(_runtime_ledger_source_evidence_payload(candidate))
         if source_collection:
             target.update(
                 {
@@ -2844,6 +2885,7 @@ def _load_runtime_ledger_repair_candidates(
                 "source_window_end": payload.get("source_window_end"),
                 "source_refs": payload.get("source_refs"),
                 "source_row_counts": payload.get("source_row_counts"),
+                **_runtime_ledger_source_evidence_payload(payload),
                 "reason_codes": reason_codes,
                 "runtime_ledger_bucket": payload,
             }

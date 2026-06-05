@@ -247,6 +247,173 @@ def test_missing_proof_packet_is_proof_mode_not_authority() -> None:
     assert "runtime_ledger_proof_mode_not_authority" in report["blockers"]
 
 
+def test_embedded_source_collection_readback_does_not_create_authority() -> None:
+    source_target = _target() | {
+        "runtime_strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+        "source_kind": "runtime_ledger_source_collection_candidate",
+        "source_collection_profit_target_candidate": True,
+        "source_collection_net_strategy_pnl_after_costs": "567.44720578",
+        "source_collection_filled_notional": "127090.02495200",
+        "source_collection_post_cost_expectancy_bps": "44.64923238",
+        "target_notional": "75000",
+        "max_notional": "75000",
+        "source_collection_next_action": "materialize_runtime_ledger_source_window_refs",
+        "source_refs": [
+            "postgres:trade_decisions",
+            "postgres:executions",
+            "postgres:execution_tca_metrics",
+            "postgres:execution_order_events",
+            "postgres:order_feed_source_windows",
+        ],
+        "source_window_ids": ["window-1", "window-2"],
+        "source_row_counts": {
+            "trade_decisions": 3,
+            "executions": 3,
+            "execution_tca_metrics": 3,
+            "execution_order_events": 8,
+            "order_feed_source_windows": 8,
+        },
+        "final_promotion_blockers": [
+            "runtime_ledger_source_collection_only",
+            "live_runtime_ledger_required",
+        ],
+    }
+    evidence = _paper_route_evidence() | {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": {
+                "targets": [source_target],
+            }
+        }
+    }
+
+    report = _report(
+        paper_route_evidence=evidence,
+        proof_packet=None,
+        source_census=None,
+        runtime_summary=None,
+    )
+
+    assert report["blocker_stage"] == "proof_mode_not_authority"
+    assert report["source_proof"]["source_refs_present"] is True
+    assert report["source_proof"]["source_windows_present"] is True
+    assert report["source_proof"]["source_ref_count"] == 5
+    assert report["source_proof"]["source_window_count"] == 2
+    assert report["lifecycle_economics"]["lifecycle_complete"] is True
+    assert report["lifecycle_economics"]["economics_complete"] is True
+    assert report["source_collection_readback"]["present"] is True
+    assert report["source_collection_readback"]["source_refs_present"] is True
+    assert report["source_collection_readback"]["source_windows_present"] is True
+    assert report["source_collection_readback"]["profit_target_present"] is True
+    assert (
+        report["source_collection_readback"]["profit_target_source_refs_present"]
+        is True
+    )
+    assert (
+        report["source_collection_readback"]["profit_target_source_windows_present"]
+        is True
+    )
+    selected = report["source_collection_readback"]["selected_observation"]
+    assert selected["source_collection_net_strategy_pnl_after_costs"] == "567.44720578"
+    assert selected["source_collection_filled_notional"] == "127090.02495200"
+    assert selected["source_collection_next_action"] == (
+        "materialize_runtime_ledger_source_window_refs"
+    )
+    assert report["promotion_allowed"] is False
+    assert report["final_authority_ok"] is False
+    assert "runtime_ledger_proof_mode_not_authority" in report["blockers"]
+
+
+def test_source_collection_readback_prefers_materialized_refs_over_blank_target() -> (
+    None
+):
+    blank_target = _target() | {
+        "runtime_strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+        "source_kind": "runtime_ledger_source_collection_candidate",
+        "source_collection_profit_target_candidate": True,
+        "source_collection_net_strategy_pnl_after_costs": "567.44720578",
+        "source_collection_filled_notional": "127090.02495200",
+        "source_collection_post_cost_expectancy_bps": "44.64923238",
+        "target_notional": "75000",
+        "max_notional": "75000",
+        "source_collection_next_action": "materialize_runtime_ledger_source_window_refs",
+        "source_row_counts": {"strategy_runtime_ledger_buckets": 1},
+        "final_promotion_blockers": [
+            "runtime_ledger_source_refs_missing",
+            "runtime_ledger_source_collection_only",
+            "live_runtime_ledger_required",
+        ],
+    }
+    materialized_source = blank_target | {
+        "bucket_started_at": "2026-05-13T17:00:00+00:00",
+        "bucket_ended_at": "2026-05-13T17:30:00+00:00",
+        "source_refs": [
+            "postgres:trade_decisions",
+            "postgres:executions",
+            "postgres:execution_tca_metrics",
+            "postgres:execution_order_events",
+            "postgres:order_feed_source_windows",
+        ],
+        "source_window_ids": ["window-1", "window-2"],
+        "source_row_counts": {
+            "trade_decisions": 3,
+            "executions": 3,
+            "execution_tca_metrics": 3,
+            "execution_order_events": 8,
+            "order_feed_source_windows": 8,
+        },
+    }
+    evidence = _paper_route_evidence() | {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": {
+                "targets": [blank_target],
+            }
+        }
+    }
+    status = _status() | {
+        "live_submission_gate": {
+            "runtime_ledger_source_collection_profit_target_candidates": [
+                materialized_source
+            ],
+        }
+    }
+
+    report = _report(
+        status=status,
+        paper_route_evidence=evidence,
+        proof_packet=None,
+        source_census=None,
+        runtime_summary=None,
+    )
+
+    assert report["blocker_stage"] == "proof_mode_not_authority"
+    assert report["source_proof"]["source_refs_present"] is True
+    assert report["source_proof"]["source_windows_present"] is True
+    assert report["source_proof"]["reported_source_blockers"] == [
+        "runtime_ledger_source_refs_missing"
+    ]
+    selected = report["source_collection_readback"]["selected_observation"]
+    assert selected["bucket_started_at"] == "2026-05-13T17:00:00+00:00"
+    assert selected["bucket_ended_at"] == "2026-05-13T17:30:00+00:00"
+    assert selected["source_ref_count"] == 5
+    assert selected["source_window_count"] == 2
+    assert report["source_collection_readback"]["source_refs_present"] is True
+    assert report["source_collection_readback"]["source_windows_present"] is True
+    profit_target = report["source_collection_readback"]["profit_target_observation"]
+    assert profit_target["source_collection_net_strategy_pnl_after_costs"] == (
+        "567.44720578"
+    )
+    assert (
+        report["source_collection_readback"]["profit_target_source_refs_present"]
+        is True
+    )
+    assert (
+        report["source_collection_readback"]["profit_target_source_windows_present"]
+        is True
+    )
+    assert report["promotion_allowed"] is False
+    assert report["final_authority_ok"] is False
+
+
 def test_rollout_drift_is_first_blocker() -> None:
     report = _report(status=_status(revision="rev-b"))
 
