@@ -110,14 +110,14 @@ jobs:
                   git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" -- \
                     services/torghut \
                     packages/scripts/src/torghut \
-                    packages/scripts/src/shared \
+                    packages/scripts/src/shared/cli.ts \
+                    packages/scripts/src/shared/docker.ts \
+                    packages/scripts/src/shared/git.ts \
                     .github/workflows/torghut-build-push.yaml \
                     .github/workflows/torghut-ci.yml \
                     .github/workflows/torghut-deploy-automerge.yml \
                     .github/workflows/torghut-post-deploy-verify.yml \
-                    .github/workflows/torghut-release.yml \
-                    package.json \
-                    bun.lock
+                    .github/workflows/torghut-release.yml
                 )"
                 if [ -n "${TORGHUT_CHANGES}" ]; then
                   echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Torghut build inputs changed:"
@@ -261,9 +261,7 @@ jobs:
             argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml \
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml \
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
-            argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml \
-            argocd/applications/torghut-options/catalog/deployment.yaml \
-            argocd/applications/torghut-options/enricher/deployment.yaml; then
+            argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -306,8 +304,6 @@ jobs:
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml
-            argocd/applications/torghut-options/catalog/deployment.yaml
-            argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
             ## Summary
             Promote Torghut image into GitOps manifests.
@@ -353,8 +349,6 @@ jobs:
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml
-            argocd/applications/torghut-options/catalog/deployment.yaml
-            argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
             ## Summary
             Promote Torghut image into GitOps manifests.

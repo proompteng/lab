@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'argocd/applications/torghut/**'
-      - 'argocd/applications/torghut-options/**'
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -109,7 +108,7 @@ jobs:
             git fetch --no-tags --depth=200 origin main
           fi
 
-          for app in torghut torghut-options; do
+          for app in torghut; do
             kubectl annotate application "${app}" -n argocd argocd.argoproj.io/refresh=hard --overwrite
           done
 
@@ -125,7 +124,7 @@ jobs:
             git cat-file -e "${revision}^{commit}" >/dev/null 2>&1
           }
 
-          for app in torghut torghut-options; do
+          for app in torghut; do
             for attempt in $(seq 1 90); do
               STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
               SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
@@ -176,10 +175,6 @@ jobs:
                   echo "Torghut Argo health is Degraded after sync; continuing to runtime safety checks"
                   break
                 fi
-                if [ "${app}" = 'torghut-options' ] && [ "${HEALTH_STATUS}" = 'Degraded' ] && [ "${OPERATION_PHASE}" = 'Succeeded' ]; then
-                  echo "Torghut options Argo health is Degraded after sync; continuing to explicit workload rollout checks"
-                  break
-                fi
               fi
 
               if [ "${attempt}" -eq 90 ]; then
@@ -190,11 +185,6 @@ jobs:
               sleep 10
             done
           done
-
-          kubectl rollout status deployment/torghut-ws -n torghut --timeout=10m
-          kubectl rollout status deployment/torghut-options-catalog -n torghut --timeout=10m
-          kubectl rollout status deployment/torghut-options-enricher -n torghut --timeout=10m
-          kubectl rollout status deployment/torghut-ws-options -n torghut --timeout=10m
 
           set +e
           KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /tmp/torghut-ksvc-ready.err)"
@@ -404,11 +394,6 @@ jobs:
             http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
             "${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json" \
             "Torghut sim /trading/paper-route-evidence"
-          fetch_json_2xx \
-            http://torghut-ws.torghut.svc.cluster.local/readyz \
-            "${EVIDENCE_DIR}/torghut-ws-ready.json" \
-            "Torghut ws /readyz"
-
           export TORGHUT_REVENUE_REPAIR_DIGEST="${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
           export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
           export TORGHUT_READYZ_HTTP_STATUS
@@ -552,12 +537,10 @@ jobs:
           fi
 
           git checkout --quiet HEAD^ -- \
-            argocd/applications/torghut \
-            argocd/applications/torghut-options
+            argocd/applications/torghut
 
           if git diff --quiet HEAD -- \
-            argocd/applications/torghut \
-            argocd/applications/torghut-options; then
+            argocd/applications/torghut; then
             echo "No rollback diff detected"
             echo "should_rollback=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -645,7 +628,6 @@ jobs:
           delete-branch: true
           add-paths: |
             argocd/applications/torghut
-            argocd/applications/torghut-options
           body: |
             ## Summary
             Automatic rollback created because `torghut-post-deploy-verify` failed on `main`.

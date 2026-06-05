@@ -10,14 +10,6 @@ const agentsCiClusterRbac = readFileSync(
   new URL('../../../../../argocd/applications/agents-ci/runner-rbac-cluster.yaml', import.meta.url),
   'utf8',
 )
-const optionsTaConfigmap = readFileSync(
-  new URL('../../../../../argocd/applications/torghut-options/ta/configmap.yaml', import.meta.url),
-  'utf8',
-)
-const optionsTaFlinkDeployment = readFileSync(
-  new URL('../../../../../argocd/applications/torghut-options/ta/flinkdeployment.yaml', import.meta.url),
-  'utf8',
-)
 
 describe('torghut post-deploy verifier workflow', () => {
   it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
@@ -36,14 +28,10 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('[ "${OPERATION_PHASE}" = \'Succeeded\' ]')
   })
 
-  it('continues past degraded Torghut options Argo health only with explicit workload rollout checks', () => {
-    expect(workflow).toContain(
-      'Torghut options Argo health is Degraded after sync; continuing to explicit workload rollout checks',
-    )
-    expect(workflow).toContain('[ "${app}" = \'torghut-options\' ]')
-    expect(workflow).toContain('kubectl rollout status deployment/torghut-options-catalog -n torghut --timeout=10m')
-    expect(workflow).toContain('kubectl rollout status deployment/torghut-options-enricher -n torghut --timeout=10m')
-    expect(workflow).toContain('kubectl rollout status deployment/torghut-ws-options -n torghut --timeout=10m')
+  it('keeps options and websocket deployments out of core Torghut post-deploy verification', () => {
+    expect(workflow).not.toContain('torghut-options')
+    expect(workflow).not.toContain('kubectl rollout status deployment/torghut-ws')
+    expect(workflow).not.toContain('http://torghut-ws.torghut.svc.cluster.local/readyz')
   })
 
   it('delegates readyz acceptance to the revenue repair evidence validator', () => {
@@ -98,7 +86,8 @@ describe('torghut post-deploy verifier workflow', () => {
 
   it('requests Argo refresh before polling deployed revisions', () => {
     expect(workflow).toContain('argocd.argoproj.io/refresh=hard --overwrite')
-    expect(workflow).toContain('for app in torghut torghut-options; do')
+    expect(workflow).toContain('for app in torghut; do')
+    expect(workflow).not.toContain('for app in torghut torghut-options; do')
   })
 
   it('grants the ARC runner read access to Torghut Knative Service readiness', () => {
@@ -111,14 +100,6 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('agents-ci-runner-argocd-application-refresh')
     expect(agentsCiClusterRbac).toContain('argoproj.io')
     expect(agentsCiClusterRbac).toContain('patch')
-  })
-
-  it('rotates the options TA Kafka transactional client prefix with the restart nonce', () => {
-    expect(optionsTaFlinkDeployment).toContain('restartNonce: 9')
-    expect(optionsTaConfigmap).toContain('TA_KAFKA_TRANSACTION_TIMEOUT_MS: "120000"')
-    expect(optionsTaConfigmap).toContain('TA_CLIENT_ID: "torghut-options-ta-r8"')
-    expect(optionsTaConfigmap).toContain('TA_GROUP_ID: "torghut-options-ta-2026-03-08"')
-    expect(optionsTaFlinkDeployment).toContain('value: EXACTLY_ONCE')
   })
 
   it('closes superseded automatic rollback pull requests after successful verification', () => {
