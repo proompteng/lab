@@ -205,6 +205,41 @@ class TestMlxAutoresearch(TestCase):
         self.assertLess(optimistic, robust)
         self.assertLess(raw_only, robust)
 
+    def test_candidate_target_penalizes_execution_quality_adjusted_net(
+        self,
+    ) -> None:
+        base = {
+            "net_pnl_per_day": "900",
+            **_proof_metrics("800"),
+            "active_day_ratio": "1",
+            "positive_day_ratio": "1",
+            "avg_filled_notional_per_day": "300000",
+            "required_min_daily_notional": "250000",
+            "best_day_share": "0.10",
+        }
+
+        unadjusted = _candidate_target(base)
+        adjusted = _candidate_target(
+            {
+                **base,
+                "execution_quality_adjusted_window_net_pnl_per_day": "220",
+            }
+        )
+        blocked = _candidate_target(
+            {
+                **base,
+                "execution_quality_adjusted_window_net_pnl_per_day": "220",
+                "execution_quality_penalty_bps": "25",
+                "execution_quality_blockers": [
+                    "market_order_share_high",
+                    "queue_evidence_missing",
+                ],
+            }
+        )
+
+        self.assertLess(adjusted, unadjusted)
+        self.assertLess(blocked, adjusted)
+
     def test_descriptor_inference_covers_side_rank_and_universe_fallbacks(
         self,
     ) -> None:

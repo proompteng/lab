@@ -327,6 +327,15 @@ def _decimal(value: Any, *, default: Decimal = Decimal("0")) -> Decimal:
         return default
 
 
+def _maybe_decimal(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
 def _json_clone(payload: Mapping[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(json.dumps(payload, default=str)))
 
@@ -1006,6 +1015,22 @@ def _history_record(
     ranking = _mapping(candidate_payload.get("ranking"))
     replay_config = _mapping(candidate_payload.get("replay_config"))
     staged_search = _mapping(candidate_payload.get("staged_search"))
+    exact_replay_ranking = _mapping(
+        candidate_payload.get("exact_replay_ledger_ranking")
+    )
+    execution_quality = _mapping(
+        candidate_payload.get("execution_quality") or scorecard.get("execution_quality")
+    )
+    execution_quality_blockers = [
+        _string(item)
+        for item in cast(
+            list[Any],
+            candidate_payload.get("execution_quality_blockers")
+            or scorecard.get("execution_quality_blockers")
+            or [],
+        )
+        if _string(item)
+    ]
     promotion_readiness = _promotion_readiness_payload(family_plan=family_plan)
     deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
     return {
@@ -1238,6 +1263,27 @@ def _history_record(
             scorecard.get("exact_replay_ledger_artifact_fill_count")
             or candidate_payload.get("exact_replay_ledger_artifact_fill_count")
         ),
+        "exact_replay_ledger_ranking_authority": _string(
+            exact_replay_ranking.get("authority")
+        ),
+        "exact_replay_ledger_ranking_artifact_ref": _string(
+            exact_replay_ranking.get("artifact_ref")
+        ),
+        "execution_quality": execution_quality,
+        "execution_quality_blockers": execution_quality_blockers,
+        "execution_quality_blocker_count": len(execution_quality_blockers),
+        "execution_quality_penalty_bps": _string(
+            candidate_payload.get("execution_quality_penalty_bps")
+            or scorecard.get("execution_quality_penalty_bps")
+        ),
+        "execution_quality_penalty_amount": _string(
+            candidate_payload.get("execution_quality_penalty_amount")
+            or scorecard.get("execution_quality_penalty_amount")
+        ),
+        "execution_quality_adjusted_window_net_pnl_per_day": _string(
+            candidate_payload.get("execution_quality_adjusted_window_net_pnl_per_day")
+            or scorecard.get("execution_quality_adjusted_window_net_pnl_per_day")
+        ),
         "runtime_ledger_pnl_basis": _string(
             scorecard.get("runtime_ledger_pnl_basis")
             or candidate_payload.get("runtime_ledger_pnl_basis")
@@ -1280,6 +1326,9 @@ def _write_results_tsv(path: Path, history: list[dict[str, Any]]) -> None:
         "family_template_id",
         "candidate_id",
         "net_pnl_per_day",
+        "execution_quality_adjusted_window_net_pnl_per_day",
+        "execution_quality_penalty_bps",
+        "execution_quality_blocker_count",
         "active_day_ratio",
         "best_day_share",
         "max_drawdown",
@@ -1298,6 +1347,15 @@ def _write_results_tsv(path: Path, history: list[dict[str, Any]]) -> None:
                     _sanitize_tsv_field(item["family_template_id"]),
                     _sanitize_tsv_field(item["candidate_id"]),
                     _sanitize_tsv_field(item["net_pnl_per_day"]),
+                    _sanitize_tsv_field(
+                        item.get(
+                            "execution_quality_adjusted_window_net_pnl_per_day", ""
+                        )
+                    ),
+                    _sanitize_tsv_field(item.get("execution_quality_penalty_bps", "")),
+                    _sanitize_tsv_field(
+                        item.get("execution_quality_blocker_count", "")
+                    ),
                     _sanitize_tsv_field(item["active_day_ratio"]),
                     _sanitize_tsv_field(item["best_day_share"]),
                     _sanitize_tsv_field(item["max_drawdown"]),
@@ -1313,6 +1371,20 @@ def _write_results_tsv(path: Path, history: list[dict[str, Any]]) -> None:
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
+def _research_ranking_net_pnl_per_day(item: Mapping[str, Any]) -> float:
+    base = (
+        _maybe_decimal(item.get("deployable_lower_bound_net_pnl_per_day"))
+        or _maybe_decimal(item.get("net_pnl_per_day"))
+        or Decimal("0")
+    )
+    adjusted = _maybe_decimal(
+        item.get("execution_quality_adjusted_window_net_pnl_per_day")
+    )
+    if adjusted is not None:
+        base = min(base, adjusted)
+    return float(base)
+
+
 def _best_history_record(history: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not history:
         return None
@@ -1322,11 +1394,7 @@ def _best_history_record(history: list[dict[str, Any]]) -> dict[str, Any] | None
             item["status"] != "keep",
             bool(item["hard_vetoes"]),
             int(item["pareto_tier"]),
-            -float(
-                item.get("deployable_lower_bound_net_pnl_per_day")
-                or item["net_pnl_per_day"]
-                or "0"
-            ),
+            -_research_ranking_net_pnl_per_day(item),
             -float(item["net_pnl_per_day"] or "0"),
             -float(item["active_day_ratio"] or "0"),
         ),
@@ -2172,6 +2240,79 @@ def _write_exact_replay_ledger_ranking(
     }
 
 
+_EXACT_REPLAY_EXECUTION_QUALITY_FIELDS = (
+    "artifact_ref",
+    "window_start",
+    "window_end",
+    "execution_quality",
+    "execution_quality_blockers",
+    "execution_quality_penalty_bps",
+    "execution_quality_penalty_amount",
+    "execution_quality_adjusted_window_net_pnl_per_day",
+)
+
+
+def _exact_replay_ranking_by_candidate(
+    ranking_report: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    candidates = cast(list[Any], ranking_report.get("candidates") or [])
+    by_candidate: dict[str, dict[str, Any]] = {}
+    for item in candidates:
+        candidate = _mapping(item)
+        candidate_id = _string(candidate.get("candidate_id"))
+        if candidate_id and candidate_id not in by_candidate:
+            by_candidate[candidate_id] = candidate
+    return by_candidate
+
+
+def _with_exact_replay_execution_quality(
+    candidate_payload: Mapping[str, Any],
+    exact_replay_candidate: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    payload = _json_clone(candidate_payload)
+    if exact_replay_candidate is None:
+        return payload
+    exact_payload = _mapping(exact_replay_candidate)
+    metadata = _mapping(payload.get("exact_replay_ledger_ranking"))
+    for field in _EXACT_REPLAY_EXECUTION_QUALITY_FIELDS:
+        if field in exact_payload:
+            payload[field] = (
+                _json_clone(_mapping(exact_payload[field]))
+                if isinstance(exact_payload[field], Mapping)
+                else exact_payload[field]
+            )
+            metadata[field] = payload[field]
+    if metadata:
+        metadata["authority"] = "research_ranking_only_not_promotion_proof"
+        payload["exact_replay_ledger_ranking"] = metadata
+    return payload
+
+
+def _exact_replay_candidate_for_payload(
+    *,
+    candidate_payload: Mapping[str, Any],
+    by_candidate: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    candidate_id = _string(candidate_payload.get("candidate_id"))
+    if not candidate_id:
+        return None
+    exact_candidate = by_candidate.get(candidate_id)
+    if exact_candidate is None:
+        return None
+    payload_refs = {
+        str(Path(ref).expanduser().resolve(strict=False))
+        for ref in _exact_replay_ledger_refs(candidate_payload)
+    }
+    if not payload_refs:
+        return exact_candidate
+    exact_ref = _string(exact_candidate.get("artifact_ref"))
+    if not exact_ref:
+        return None
+    if str(Path(exact_ref).expanduser().resolve(strict=False)) not in payload_refs:
+        return None
+    return exact_candidate
+
+
 def _write_exact_replay_ledger_remediation(
     *,
     run_root: Path,
@@ -2750,9 +2891,24 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 existing=signal_bundle_stats,
             )
             manifest = _refresh_manifest()
+            exact_replay_by_candidate = _exact_replay_ranking_by_candidate(
+                cast(Mapping[str, Any], exact_replay_ledger_ranking["report"])
+            )
             top_candidates = cast(
                 list[dict[str, Any]], frontier_payload.get("top") or []
             )
+            top_candidates = [
+                _with_exact_replay_execution_quality(
+                    candidate,
+                    _exact_replay_candidate_for_payload(
+                        candidate_payload=candidate,
+                        by_candidate=exact_replay_by_candidate,
+                    ),
+                )
+                for candidate in top_candidates
+            ]
+            if top_candidates:
+                frontier_payload = {**frontier_payload, "top": top_candidates}
             keep_candidates = [
                 candidate
                 for candidate in top_candidates

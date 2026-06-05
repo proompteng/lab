@@ -1153,6 +1153,239 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(record["staged_full_replay_candidate_budget"], "96")
         self.assertEqual(record["staged_full_replay_candidates_started"], 7)
 
+    def test_history_record_flattens_exact_replay_execution_quality(self) -> None:
+        candidate_payload = runner._with_exact_replay_execution_quality(
+            {
+                "candidate_id": "candidate-1",
+                "hard_vetoes": [],
+                "ranking": {"pareto_tier": 1, "tie_breaker_score": "10"},
+                "objective_scorecard": {"net_pnl_per_day": "700"},
+                "full_window": {},
+                "replay_config": {},
+            },
+            {
+                "candidate_id": "candidate-1",
+                "artifact_ref": "/tmp/candidate-1-exact-replay-ledger.json",
+                "execution_quality": {
+                    "market_order_ratio": "0.8",
+                    "limit_order_ratio": "0.2",
+                },
+                "execution_quality_blockers": [
+                    "market_order_share_high",
+                    "queue_evidence_missing",
+                ],
+                "execution_quality_penalty_bps": "35",
+                "execution_quality_penalty_amount": "17.5",
+                "execution_quality_adjusted_window_net_pnl_per_day": "430",
+            },
+        )
+
+        record = runner._history_record(
+            runner_run_id="run-1",
+            experiment_index=1,
+            family_plan=FamilyAutoresearchPlan(
+                family_template=_family_template(),
+                seed_sweep_config=Path("/tmp/example.yaml"),
+                max_iterations=1,
+                keep_top_candidates=1,
+                frontier_top_n=1,
+                force_keep_top_candidate_if_all_vetoed=True,
+                symbol_prune_iterations=0,
+                symbol_prune_candidates=1,
+                symbol_prune_min_universe_size=2,
+                loss_repair_iterations=0,
+                loss_repair_candidates=1,
+                consistency_repair_iterations=0,
+                consistency_repair_candidates=2,
+                parameter_mutations={},
+                strategy_override_mutations={},
+            ),
+            iteration=1,
+            mutation_label="seed",
+            parent_candidate_id=None,
+            sweep_config_path=Path("/tmp/sweep.yaml"),
+            result_path=Path("/tmp/result.json"),
+            candidate_payload=candidate_payload,
+            rank=1,
+            status="keep",
+            objective_met=False,
+            dataset_snapshot_id="snap-1",
+        )
+
+        self.assertEqual(
+            record["execution_quality"]["market_order_ratio"],
+            "0.8",
+        )
+        self.assertEqual(record["execution_quality_blocker_count"], 2)
+        self.assertEqual(record["execution_quality_penalty_bps"], "35")
+        self.assertEqual(
+            record["execution_quality_adjusted_window_net_pnl_per_day"],
+            "430",
+        )
+        self.assertEqual(
+            record["exact_replay_ledger_ranking_authority"],
+            "research_ranking_only_not_promotion_proof",
+        )
+        self.assertNotIn("promotion_allowed", candidate_payload)
+
+    def test_best_history_record_uses_execution_quality_adjusted_cap(self) -> None:
+        weak_after_execution_quality = {
+            "status": "keep",
+            "hard_vetoes": [],
+            "pareto_tier": 1,
+            "candidate_id": "raw-winner",
+            "net_pnl_per_day": "900",
+            "deployable_lower_bound_net_pnl_per_day": "900",
+            "execution_quality_adjusted_window_net_pnl_per_day": "80",
+            "active_day_ratio": "1",
+        }
+        stronger_after_execution_quality = {
+            "status": "keep",
+            "hard_vetoes": [],
+            "pareto_tier": 1,
+            "candidate_id": "adjusted-winner",
+            "net_pnl_per_day": "300",
+            "deployable_lower_bound_net_pnl_per_day": "300",
+            "execution_quality_adjusted_window_net_pnl_per_day": "260",
+            "active_day_ratio": "1",
+        }
+
+        best = runner._best_history_record(
+            [weak_after_execution_quality, stronger_after_execution_quality]
+        )
+
+        self.assertEqual(best["candidate_id"], "adjusted-winner")
+
+    def test_maybe_decimal_returns_none_for_invalid_values(self) -> None:
+        self.assertIsNone(runner._maybe_decimal("not-a-decimal"))
+
+    def test_exact_replay_ranking_by_candidate_keeps_first_valid_candidate(
+        self,
+    ) -> None:
+        first = {
+            "candidate_id": "candidate-1",
+            "artifact_ref": "/tmp/first.json",
+        }
+        second = {
+            "candidate_id": "candidate-1",
+            "artifact_ref": "/tmp/second.json",
+        }
+
+        by_candidate = runner._exact_replay_ranking_by_candidate(
+            {
+                "candidates": [
+                    "not-a-mapping",
+                    {"candidate_id": ""},
+                    first,
+                    second,
+                ]
+            }
+        )
+
+        self.assertEqual(by_candidate, {"candidate-1": first})
+
+    def test_exact_replay_candidate_match_allows_payload_without_artifact_refs(
+        self,
+    ) -> None:
+        exact_candidate = {
+            "candidate_id": "candidate-1",
+            "artifact_ref": "/tmp/exact.json",
+        }
+
+        self.assertEqual(
+            runner._exact_replay_candidate_for_payload(
+                candidate_payload={"candidate_id": "candidate-1"},
+                by_candidate={"candidate-1": exact_candidate},
+            ),
+            exact_candidate,
+        )
+
+    def test_exact_replay_execution_quality_leaves_payload_without_candidate(
+        self,
+    ) -> None:
+        candidate_payload = {
+            "candidate_id": "candidate-1",
+            "exact_replay_ledger_ranking": {"path": "/tmp/ranking.json"},
+        }
+
+        self.assertEqual(
+            runner._with_exact_replay_execution_quality(candidate_payload, None),
+            candidate_payload,
+        )
+
+    def test_exact_replay_candidate_match_rejects_missing_candidate_id(self) -> None:
+        self.assertIsNone(
+            runner._exact_replay_candidate_for_payload(
+                candidate_payload={
+                    "exact_replay_ledger_artifact_ref": "/tmp/current.json"
+                },
+                by_candidate={
+                    "candidate-1": {
+                        "candidate_id": "candidate-1",
+                        "artifact_ref": "/tmp/current.json",
+                    }
+                },
+            )
+        )
+
+    def test_exact_replay_candidate_match_rejects_unranked_candidate(self) -> None:
+        self.assertIsNone(
+            runner._exact_replay_candidate_for_payload(
+                candidate_payload={"candidate_id": "candidate-1"},
+                by_candidate={},
+            )
+        )
+
+    def test_exact_replay_candidate_match_rejects_missing_exact_artifact(self) -> None:
+        self.assertIsNone(
+            runner._exact_replay_candidate_for_payload(
+                candidate_payload={
+                    "candidate_id": "candidate-1",
+                    "exact_replay_ledger_artifact_ref": "/tmp/current.json",
+                },
+                by_candidate={
+                    "candidate-1": {
+                        "candidate_id": "candidate-1",
+                    }
+                },
+            )
+        )
+
+    def test_exact_replay_candidate_match_returns_matching_artifact(self) -> None:
+        exact_candidate = {
+            "candidate_id": "candidate-1",
+            "artifact_ref": "/tmp/current.json",
+        }
+
+        self.assertEqual(
+            runner._exact_replay_candidate_for_payload(
+                candidate_payload={
+                    "candidate_id": "candidate-1",
+                    "exact_replay_ledger_artifact_refs": ["/tmp/current.json"],
+                },
+                by_candidate={"candidate-1": exact_candidate},
+            ),
+            exact_candidate,
+        )
+
+    def test_exact_replay_candidate_match_requires_artifact_when_present(
+        self,
+    ) -> None:
+        exact_candidate = runner._exact_replay_candidate_for_payload(
+            candidate_payload={
+                "candidate_id": "candidate-1",
+                "exact_replay_ledger_artifact_ref": "/tmp/current.json",
+            },
+            by_candidate={
+                "candidate-1": {
+                    "candidate_id": "candidate-1",
+                    "artifact_ref": "/tmp/stale.json",
+                }
+            },
+        )
+
+        self.assertIsNone(exact_candidate)
+
     def test_materialize_run_replay_tape_writes_bundle_and_receipt(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

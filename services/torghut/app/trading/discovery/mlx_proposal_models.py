@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 from app.trading.discovery.autoresearch import ProposalModelPolicy
 from app.trading.discovery.mlx_features import (
@@ -25,15 +25,38 @@ def _float(value: Any) -> float:
         return 0.0
 
 
+def _has_value(value: Any) -> bool:
+    return value not in (None, "")
+
+
+def _sequence_count(value: Any) -> int:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return len(cast(Sequence[object], value))
+    return 0
+
+
 def _candidate_target(row: Mapping[str, Any]) -> float:
     net = _float(row.get("net_pnl_per_day"))
     deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(row)
     deployable_net = (
         float(deployable_lower_bound) if deployable_lower_bound is not None else net
     )
+    if _has_value(row.get("execution_quality_adjusted_window_net_pnl_per_day")):
+        deployable_net = min(
+            deployable_net,
+            _float(row.get("execution_quality_adjusted_window_net_pnl_per_day")),
+        )
     proof_penalty = (
         deployable_lower_bound_missing_count(row) * 1_000.0
         + deployable_proof_failed_gate_count(row) * 1_000.0
+    )
+    execution_quality_penalty = min(
+        max(0.0, _float(row.get("execution_quality_penalty_bps"))) * 5.0,
+        500.0,
+    )
+    execution_quality_blocker_penalty = min(
+        _sequence_count(row.get("execution_quality_blockers")) * 150.0,
+        600.0,
     )
     activity = _float(row.get("active_day_ratio"))
     positive_day_ratio = _float(row.get("positive_day_ratio"))
@@ -73,6 +96,8 @@ def _candidate_target(row: Mapping[str, Any]) -> float:
         - (concentration_penalty * 100.0)
         - (veto_penalty * 250.0)
         - proof_penalty
+        - execution_quality_penalty
+        - execution_quality_blocker_penalty
         - (max(0.0, 1.0 - activity) * 400.0)
         - (max(0.0, 1.0 - positive_day_ratio) * 300.0)
         - (notional_shortfall_penalty * 350.0)
