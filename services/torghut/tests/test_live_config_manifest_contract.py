@@ -1283,6 +1283,21 @@ class TestLiveConfigManifestContract(TestCase):
             value_from.get("secretKeyRef"),
             {"name": "torghut-db-app", "key": "uri"},
         )
+        for name, key in (
+            ("TORGHUT_SIM_DB_HOST", "host"),
+            ("TORGHUT_SIM_DB_PORT", "port"),
+            ("TORGHUT_SIM_DB_USER", "username"),
+            ("TORGHUT_SIM_DB_PASSWORD", "password"),
+        ):
+            ref = cast(Mapping[str, object], env[name].get("valueFrom", {}))
+            self.assertEqual(
+                ref.get("secretKeyRef"),
+                {"name": "torghut-db-app", "key": key},
+            )
+        self.assertEqual(
+            env["SIM_DB_DSN"].get("value"),
+            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
+        )
         self.assertEqual(env["TRADING_MODE"].get("value"), "paper")
         self.assertEqual(env["TRADING_ACCOUNT_LABEL"].get("value"), "TORGHUT_SIM")
         self.assertEqual(env["TRADING_KILL_SWITCH_ENABLED"].get("value"), "false")
@@ -1293,6 +1308,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--expected-account-label TORGHUT_SIM", args)
         self.assertIn("--trading-mode paper", args)
         self.assertIn("--paper-base-url https://paper-api.alpaca.markets", args)
+        self.assertIn("--database-dsn-env SIM_DB_DSN", args)
         self.assertIn("--max-gross-market-value 100000", args)
         self.assertNotIn("--max-gross-market-value 2500", args)
         self.assertIn("--max-position-count 25", args)

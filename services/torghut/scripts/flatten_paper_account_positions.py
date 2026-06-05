@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
@@ -14,9 +15,10 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Protocol, cast
 
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.alpaca_client import TorghutAlpacaClient
 from app.config import settings
@@ -96,6 +98,14 @@ def _parse_args() -> argparse.Namespace:
         help="Alpaca paper endpoint to use; kept explicit to avoid inheriting live URLs.",
     )
     parser.add_argument(
+        "--database-dsn-env",
+        default="DB_DSN",
+        help=(
+            "Environment variable containing the database DSN for persisted "
+            "flatten lineage and position snapshots. Defaults to DB_DSN."
+        ),
+    )
+    parser.add_argument(
         "--max-gross-market-value",
         default=str(DEFAULT_MAX_GROSS_MARKET_VALUE),
         help="Refuse to submit flatten orders above this absolute market value.",
@@ -163,6 +173,41 @@ def _decimal(value: object, *, default: Decimal = Decimal("0")) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return default
+
+
+def _sqlalchemy_dsn(dsn: str) -> str:
+    text = dsn.strip()
+    if text.startswith("postgresql+psycopg://"):
+        return text
+    if text.startswith("postgres://"):
+        return text.replace("postgres://", "postgresql+psycopg://", 1)
+    if text.startswith("postgresql://"):
+        return text.replace("postgresql://", "postgresql+psycopg://", 1)
+    return text
+
+
+def _session_factory_from_env(
+    dsn_env: str,
+) -> tuple[sessionmaker[Session], Engine | None, str]:
+    resolved_env = dsn_env.strip() or "DB_DSN"
+    if resolved_env == "DB_DSN":
+        return SessionLocal, None, resolved_env
+    dsn = os.getenv(resolved_env)
+    if not dsn:
+        raise RuntimeError(
+            f"paper_account_flatten_database_dsn_env_missing:{resolved_env}"
+        )
+    engine = create_engine(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
+    return (
+        sessionmaker(
+            bind=engine,
+            autoflush=False,
+            expire_on_commit=False,
+            future=True,
+        ),
+        engine,
+        resolved_env,
+    )
 
 
 def _position_qty(position: Mapping[str, Any]) -> Decimal:
@@ -928,40 +973,50 @@ def main() -> int:
     )
     client = TorghutAlpacaClient(paper=True, base_url=str(args.paper_base_url or ""))
     firewall = OrderFirewall(client)
-    lineage_context = SessionLocal() if args.persist_lineage else nullcontext(None)
-    with lineage_context as lineage_session:
-        payload = flatten_paper_account_positions(
-            client=firewall,
-            account_label=str(args.account_label or ""),
-            expected_account_label=str(args.expected_account_label or ""),
-            trading_mode=str(args.trading_mode or ""),
-            apply=bool(args.apply),
-            max_gross_market_value=max_gross_market_value,
-            max_position_count=max(0, int(args.max_position_count)),
-            extended_hours_limit=bool(args.extended_hours_limit),
-            limit_away_bps=limit_away_bps,
-            wait_flat_seconds=max(0.0, float(args.wait_flat_seconds or 0.0)),
-            poll_seconds=max(0.1, float(args.poll_seconds or DEFAULT_POLL_SECONDS)),
-            persist_lineage=bool(args.persist_lineage),
-            lineage_session=cast(Session | None, lineage_session),
+    session_factory, session_engine, database_dsn_env = _session_factory_from_env(
+        str(args.database_dsn_env or "DB_DSN")
+    )
+    try:
+        lineage_context = (
+            session_factory() if args.persist_lineage else nullcontext(None)
         )
-    if args.persist_snapshot:
-        if (
-            payload["trading_mode"] == "paper"
-            and payload["account_label"] == payload["expected_account_label"]
-        ):
-            with SessionLocal() as session:
-                snapshot = snapshot_account_and_positions(
-                    session,
-                    cast(Any, firewall),
-                    str(args.account_label or ""),
-                )
-            payload["position_snapshot_id"] = str(snapshot.id)
-            payload["position_snapshot_as_of"] = snapshot.as_of.isoformat()
-        else:
-            payload["position_snapshot_skipped"] = (
-                "paper_account_label_or_mode_guard_failed"
+        with lineage_context as lineage_session:
+            payload = flatten_paper_account_positions(
+                client=firewall,
+                account_label=str(args.account_label or ""),
+                expected_account_label=str(args.expected_account_label or ""),
+                trading_mode=str(args.trading_mode or ""),
+                apply=bool(args.apply),
+                max_gross_market_value=max_gross_market_value,
+                max_position_count=max(0, int(args.max_position_count)),
+                extended_hours_limit=bool(args.extended_hours_limit),
+                limit_away_bps=limit_away_bps,
+                wait_flat_seconds=max(0.0, float(args.wait_flat_seconds or 0.0)),
+                poll_seconds=max(0.1, float(args.poll_seconds or DEFAULT_POLL_SECONDS)),
+                persist_lineage=bool(args.persist_lineage),
+                lineage_session=cast(Session | None, lineage_session),
             )
+        payload["database_dsn_env"] = database_dsn_env
+        if args.persist_snapshot:
+            if (
+                payload["trading_mode"] == "paper"
+                and payload["account_label"] == payload["expected_account_label"]
+            ):
+                with session_factory() as session:
+                    snapshot = snapshot_account_and_positions(
+                        session,
+                        cast(Any, firewall),
+                        str(args.account_label or ""),
+                    )
+                payload["position_snapshot_id"] = str(snapshot.id)
+                payload["position_snapshot_as_of"] = snapshot.as_of.isoformat()
+            else:
+                payload["position_snapshot_skipped"] = (
+                    "paper_account_label_or_mode_guard_failed"
+                )
+    finally:
+        if session_engine is not None:
+            session_engine.dispose()
     if args.json:
         print(json.dumps(payload, sort_keys=True))
     else:

@@ -951,6 +951,8 @@ class TestFlattenPaperAccountPositions(TestCase):
             "paper",
             "--paper-base-url",
             "https://paper-api.alpaca.markets",
+            "--database-dsn-env",
+            "SIM_DB_DSN",
             "--max-gross-market-value",
             "1234.56",
             "--max-position-count",
@@ -975,6 +977,7 @@ class TestFlattenPaperAccountPositions(TestCase):
         self.assertEqual(args.expected_account_label, "TORGHUT_SIM")
         self.assertEqual(args.trading_mode, "paper")
         self.assertEqual(args.paper_base_url, "https://paper-api.alpaca.markets")
+        self.assertEqual(args.database_dsn_env, "SIM_DB_DSN")
         self.assertEqual(args.max_gross_market_value, "1234.56")
         self.assertEqual(args.max_position_count, 3)
         self.assertTrue(args.extended_hours_limit)
@@ -985,6 +988,33 @@ class TestFlattenPaperAccountPositions(TestCase):
         self.assertTrue(args.persist_lineage)
         self.assertTrue(args.apply)
         self.assertTrue(args.json)
+
+    def test_database_dsn_normalization_and_missing_env_guard(self) -> None:
+        self.assertEqual(
+            flatten_script._sqlalchemy_dsn("postgresql+psycopg://u:p@host/db"),
+            "postgresql+psycopg://u:p@host/db",
+        )
+        self.assertEqual(
+            flatten_script._sqlalchemy_dsn("postgres://u:p@host/db"),
+            "postgresql+psycopg://u:p@host/db",
+        )
+        self.assertEqual(
+            flatten_script._sqlalchemy_dsn("postgresql://u:p@host/db"),
+            "postgresql+psycopg://u:p@host/db",
+        )
+        self.assertEqual(
+            flatten_script._sqlalchemy_dsn("sqlite+pysqlite:///:memory:"),
+            "sqlite+pysqlite:///:memory:",
+        )
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "paper_account_flatten_database_dsn_env_missing:SIM_DB_DSN",
+            ),
+        ):
+            flatten_script._session_factory_from_env("SIM_DB_DSN")
 
     def test_main_outputs_json_and_returns_clean_status(self) -> None:
         client = FakeFlattenClient()
@@ -1056,6 +1086,50 @@ class TestFlattenPaperAccountPositions(TestCase):
             "2026-05-31T06:35:00+00:00",
         )
         snapshot_account.assert_called_once()
+
+    def test_main_uses_database_dsn_env_for_snapshot_persistence(self) -> None:
+        client = FakeFlattenClient()
+        snapshot = SimpleNamespace(
+            id="sim-snapshot-1",
+            as_of=datetime(2026, 6, 5, 1, 30, tzinfo=timezone.utc),
+        )
+        argv = [
+            "flatten_paper_account_positions.py",
+            "--account-label",
+            "TORGHUT_SIM",
+            "--expected-account-label",
+            "TORGHUT_SIM",
+            "--trading-mode",
+            "paper",
+            "--database-dsn-env",
+            "SIM_DB_DSN",
+            "--persist-snapshot",
+            "--json",
+        ]
+
+        with (
+            patch.dict("os.environ", {"SIM_DB_DSN": "sqlite+pysqlite:///:memory:"}),
+            patch.object(sys, "argv", argv),
+            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(
+                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+            ),
+            patch.object(
+                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+            ) as snapshot_account,
+            redirect_stdout(StringIO()) as output,
+        ):
+            exit_code = flatten_script.main()
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["database_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(payload["position_snapshot_id"], "sim-snapshot-1")
+        snapshot_session = snapshot_account.call_args.args[0]
+        self.assertEqual(
+            str(snapshot_session.get_bind().url),
+            "sqlite+pysqlite:///:memory:",
+        )
 
     def test_main_skips_snapshot_persistence_when_guard_fails(self) -> None:
         client = FakeFlattenClient()

@@ -85,6 +85,7 @@ from app.trading.scheduler.simple_pipeline import (
     _target_probe_action,
     _target_probe_symbol_notional_budget,
     _target_probe_window,
+    _target_notional_sizing_audit_from_params,
     _target_truthy,
 )
 from app.trading.scheduler.pipeline_helpers import (
@@ -3951,6 +3952,575 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(params.get("price_snapshot", {}).get("bid"), "190.10")
         self.assertEqual(row.status, "planned")
 
+    def test_bounded_collection_target_source_enforces_target_notional_broker_sizing(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 4, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_allow_shorts = True
+        config.settings.trading_simple_max_notional_per_order = 100000.0
+        config.settings.trading_simple_max_notional_per_symbol = 100000.0
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("100000"),
+        )
+        target_metadata = {
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "hypothesis_id": "H-PAIRS-01",
+            "account_label": "TORGHUT_SIM",
+            "observed_stage": "paper",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_symbol_actions": {
+                "AAPL": "buy",
+                "AMZN": "sell",
+            },
+            "paper_route_probe_symbol_quantities": {
+                "AAPL": "1",
+                "AMZN": "1",
+            },
+            "paper_route_probe_next_session_max_notional": "75000",
+            "bounded_evidence_collection_authorized": True,
+            "bounded_live_paper_collection_authorized": True,
+            "evidence_collection_ok": True,
+            "source_decision_readiness": {"ready": True, "blockers": []},
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+        }
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AMZN",
+            event_ts=now,
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="bounded paper-route target source",
+            params={
+                "paper_route_target_plan": target_metadata,
+                "source_decision_mode": (
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                ),
+                "profit_proof_eligible": True,
+            },
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("250"),
+                spread=Decimal("0.02"),
+                bid=Decimal("250"),
+                ask=Decimal("250.02"),
+            ),
+        )
+
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            row = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "TORGHUT_SIM",
+            )
+
+            prepared = pipeline._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=row,
+                strategy=strategy,
+                account={
+                    "equity": "200000",
+                    "cash": "200000",
+                    "buying_power": "200000",
+                },
+                positions=[],
+            )
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], row_json["params"])
+            sizing = cast(dict[str, Any], params["paper_route_target_notional_sizing"])
+            simple_lane = cast(dict[str, Any], params["simple_lane"])
+            source_metadata = cast(dict[str, Any], params["paper_route_target_plan"])
+
+        self.assertIsNotNone(prepared)
+        assert prepared is not None
+        prepared_decision, _snapshot = prepared
+        self.assertEqual(prepared_decision.action, "sell")
+        self.assertEqual(prepared_decision.qty, Decimal("150"))
+        self.assertEqual(sizing["sizing_source"], "target_notional")
+        self.assertEqual(sizing["symbol_notional_budget"], "37500.0")
+        self.assertEqual(sizing["broker_resolved_qty"], "150")
+        self.assertEqual(sizing["resolved_qty"], "150")
+        self.assertEqual(
+            sizing["broker_quantity_resolution"]["reason"],
+            "sell_short_increasing_integer_only",
+        )
+        self.assertFalse(sizing["broker_quantity_resolution"]["fractional_allowed"])
+        self.assertEqual(simple_lane["final_qty"], "150")
+        self.assertTrue(simple_lane["target_source_notional_sized"])
+        self.assertEqual(
+            source_metadata["paper_route_target_notional_sizing"]["resolved_qty"],
+            "150",
+        )
+        self.assertEqual(row.status, "planned")
+
+    def test_bounded_collection_target_source_rejects_precheck_qty_clamp(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 4, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_allow_shorts = True
+        config.settings.trading_simple_max_notional_per_order = 1000.0
+        config.settings.trading_simple_max_notional_per_symbol = 100000.0
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("100000"),
+        )
+        target_metadata = {
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "hypothesis_id": "H-PAIRS-01",
+            "account_label": "TORGHUT_SIM",
+            "observed_stage": "paper",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_symbol_actions": {
+                "AAPL": "buy",
+                "AMZN": "sell",
+            },
+            "paper_route_probe_symbol_quantities": {
+                "AAPL": "1",
+                "AMZN": "1",
+            },
+            "paper_route_probe_next_session_max_notional": "75000",
+            "bounded_evidence_collection_authorized": True,
+            "bounded_live_paper_collection_authorized": True,
+            "evidence_collection_ok": True,
+            "source_decision_readiness": {"ready": True, "blockers": []},
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+        }
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AMZN",
+            event_ts=now,
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="bounded paper-route target source",
+            params={
+                "paper_route_target_plan": target_metadata,
+                "source_decision_mode": (
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                ),
+                "profit_proof_eligible": True,
+            },
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("250"),
+                spread=Decimal("0.02"),
+                bid=Decimal("250"),
+                ask=Decimal("250.02"),
+            ),
+        )
+
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            row = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "TORGHUT_SIM",
+            )
+
+            prepared = pipeline._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=row,
+                strategy=strategy,
+                account={
+                    "equity": "200000",
+                    "cash": "200000",
+                    "buying_power": "200000",
+                },
+                positions=[],
+            )
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], row_json["params"])
+            sizing = cast(dict[str, Any], params["paper_route_target_notional_sizing"])
+
+        self.assertIsNone(prepared)
+        self.assertEqual(row.status, "rejected")
+        self.assertEqual(
+            row_json["reject_reason_atomic"],
+            ["bounded_paper_route_target_notional_sizing_changed_by_precheck"],
+        )
+        self.assertEqual(sizing["resolved_qty"], "150")
+        self.assertEqual(sizing["precheck_resolved_qty"], "4")
+        self.assertIn(
+            "bounded_paper_route_target_qty_changed_by_precheck",
+            sizing["blockers"],
+        )
+
+    def test_bounded_collection_target_source_rejects_missing_target_sizing(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 4, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_allow_shorts = True
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("100000"),
+        )
+        target_metadata = {
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "hypothesis_id": "H-PAIRS-01",
+            "account_label": "TORGHUT_SIM",
+            "observed_stage": "paper",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_symbol_actions": {
+                "AAPL": "buy",
+                "AMZN": "sell",
+            },
+            "paper_route_probe_symbol_quantities": {
+                "AAPL": "1",
+                "AMZN": "1",
+            },
+            "bounded_evidence_collection_authorized": True,
+            "bounded_live_paper_collection_authorized": True,
+            "evidence_collection_ok": True,
+            "source_decision_readiness": {"ready": True, "blockers": []},
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+        }
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AMZN",
+            event_ts=now,
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="bounded paper-route target source",
+            params={
+                "paper_route_target_plan": target_metadata,
+                "source_decision_mode": (
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                ),
+                "profit_proof_eligible": True,
+            },
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("250"),
+                spread=Decimal("0.02"),
+                bid=Decimal("250"),
+                ask=Decimal("250.02"),
+            ),
+        )
+
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            row = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "TORGHUT_SIM",
+            )
+
+            prepared = pipeline._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=row,
+                strategy=strategy,
+                account={
+                    "equity": "200000",
+                    "cash": "200000",
+                    "buying_power": "200000",
+                },
+                positions=[],
+            )
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], row_json["params"])
+            sizing = cast(dict[str, Any], params["paper_route_target_notional_sizing"])
+
+        self.assertIsNone(prepared)
+        self.assertEqual(row.status, "rejected")
+        self.assertEqual(
+            row_json["reject_reason_atomic"],
+            ["bounded_paper_route_target_notional_sizing_missing"],
+        )
+        self.assertEqual(
+            sizing["blockers"],
+            ["bounded_paper_route_target_notional_cap_missing"],
+        )
+
+    def test_bounded_collection_target_sizing_helper_fail_closed_branches(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 4, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_allow_shorts = True
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("100000"),
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        direct_quote_decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="direct quote fallback",
+            params={
+                "price": Decimal("100"),
+                "imbalance_bid_px": Decimal("99.99"),
+                "imbalance_ask_px": Decimal("100.01"),
+                "imbalance_spread": Decimal("0.02"),
+            },
+        )
+        direct_quote = SimpleTradingPipeline._decision_quote_snapshot_for_target_sizing(
+            direct_quote_decision
+        )
+        assert direct_quote is not None
+        self.assertEqual(direct_quote["price"], "100")
+        self.assertIsNone(
+            SimpleTradingPipeline._decision_quote_snapshot_for_target_sizing(
+                direct_quote_decision.model_copy(update={"params": {}})
+            )
+        )
+
+        nested_audit = {"sizing_source": "target_notional", "resolved_qty": "3"}
+        self.assertEqual(
+            _target_notional_sizing_audit_from_params(
+                {"simple_lane": {"paper_route_target_notional_sizing": nested_audit}}
+            ),
+            nested_audit,
+        )
+
+        base_params = {
+            "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+            "profit_proof_eligible": True,
+        }
+        missing_metadata_decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="missing bounded target metadata",
+            params=base_params,
+        )
+        sized, reason = pipeline._bounded_collection_target_notional_sized_decision(
+            decision=missing_metadata_decision,
+            strategy=strategy,
+            positions=[],
+        )
+        self.assertEqual(reason, "bounded_paper_route_target_notional_sizing_missing")
+        self.assertEqual(
+            sized.params["paper_route_target_notional_sizing"]["blockers"],
+            ["bounded_paper_route_target_metadata_missing"],
+        )
+
+        def bounded_decision(
+            *,
+            symbol: str,
+            action: Literal["buy", "sell"],
+            target: Mapping[str, Any],
+            params_extra: Mapping[str, Any] | None = None,
+        ) -> StrategyDecision:
+            return StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol=symbol,
+                event_ts=now,
+                timeframe="1Min",
+                action=action,
+                qty=Decimal("1"),
+                rationale="bounded target helper branch",
+                params={
+                    **base_params,
+                    "paper_route_target_plan": dict(target),
+                    **dict(params_extra or {}),
+                },
+            )
+
+        appended_symbol_decision = bounded_decision(
+            symbol="AAPL",
+            action="buy",
+            target={
+                "paper_route_probe_next_session_max_notional": "1000",
+                "price_snapshot": {"symbol": "AAPL", "ask": "100", "bid": "99.99"},
+            },
+        )
+        sized, reason = pipeline._bounded_collection_target_notional_sized_decision(
+            decision=appended_symbol_decision,
+            strategy=strategy,
+            positions=[],
+        )
+        self.assertIsNone(reason)
+        self.assertEqual(
+            sized.params["paper_route_target_notional_sizing"]["symbols"], ["AAPL"]
+        )
+
+        missing_price_decision = bounded_decision(
+            symbol="AAPL",
+            action="buy",
+            target={
+                "paper_route_probe_symbols": ["AAPL"],
+                "paper_route_probe_next_session_max_notional": "1000",
+            },
+        )
+        sized, reason = pipeline._bounded_collection_target_notional_sized_decision(
+            decision=missing_price_decision,
+            strategy=strategy,
+            positions=[],
+        )
+        self.assertEqual(reason, "bounded_paper_route_target_notional_sizing_missing")
+        self.assertEqual(
+            sized.params["paper_route_target_notional_sizing"]["blockers"],
+            ["paper_route_target_notional_price_missing"],
+        )
+
+        tiny_target_decision = bounded_decision(
+            symbol="AAPL",
+            action="buy",
+            target={
+                "paper_route_probe_symbols": ["AAPL"],
+                "paper_route_probe_next_session_max_notional": "0.00001",
+                "price_snapshot": {"symbol": "AAPL", "ask": "100", "bid": "99.99"},
+            },
+        )
+        sized, reason = pipeline._bounded_collection_target_notional_sized_decision(
+            decision=tiny_target_decision,
+            strategy=strategy,
+            positions=[],
+        )
+        self.assertEqual(reason, "bounded_paper_route_target_notional_sizing_missing")
+        self.assertEqual(
+            sized.params["paper_route_target_notional_sizing"]["blockers"],
+            ["paper_route_target_notional_qty_below_min_step"],
+        )
+
+        broker_zero_decision = bounded_decision(
+            symbol="AMZN",
+            action="sell",
+            target={
+                "paper_route_probe_symbols": ["AMZN"],
+                "paper_route_probe_symbol_actions": {"AMZN": "sell"},
+                "paper_route_probe_next_session_max_notional": "50",
+                "price_snapshot": {"symbol": "AMZN", "bid": "100", "ask": "100.01"},
+            },
+        )
+        sized, reason = pipeline._bounded_collection_target_notional_sized_decision(
+            decision=broker_zero_decision,
+            strategy=strategy,
+            positions=[],
+        )
+        self.assertEqual(reason, "bounded_paper_route_target_notional_sizing_missing")
+        self.assertIn(
+            "paper_route_target_notional_broker_qty_below_min_step",
+            sized.params["paper_route_target_notional_sizing"]["blockers"],
+        )
+
     def test_paper_route_target_price_only_snapshot_refreshes_executable_quote(
         self,
     ) -> None:
@@ -4084,6 +4654,20 @@ class TestTradingPipeline(TestCase):
                     "account_label": "TORGHUT_SIM",
                     "observed_stage": "paper",
                     "source_kind": "paper_route_probe_runtime_observed",
+                    "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "paper_route_probe_symbols": ["AAPL"],
+                    "paper_route_probe_symbol_quantities": {"AAPL": "1"},
+                    "paper_route_probe_next_session_max_notional": "250",
+                    "bounded_evidence_collection_authorized": True,
+                    "bounded_live_paper_collection_authorized": True,
+                    "evidence_collection_ok": True,
+                    "source_decision_readiness": {"ready": True, "blockers": []},
+                    "promotion_allowed": False,
+                    "final_promotion_allowed": False,
+                    "final_promotion_authorized": False,
                 },
                 "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
                 "profit_proof_eligible": True,
