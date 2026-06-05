@@ -1365,6 +1365,18 @@ def _paper_route_probe_summary(
     }
 
 
+def _paper_route_probe_scope_plan(
+    primary_plan: Mapping[str, Any],
+    *candidate_plans: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    if _target_plan_probe_scope_symbols(primary_plan):
+        return primary_plan
+    for candidate_plan in candidate_plans:
+        if _target_plan_probe_scope_symbols(candidate_plan):
+            return candidate_plan
+    return primary_plan
+
+
 def _target_plan_probe_scope_symbols(target_plan: Mapping[str, Any]) -> list[str]:
     symbols: list[str] = []
     for target in _as_mapping_items(target_plan.get("targets")):
@@ -10536,16 +10548,17 @@ def build_paper_route_target_plan_payload(
         )
     )
     targets = _as_mapping_items(plan.get("targets"))[: max(0, target_limit)]
+    target_plan_source = _safe_text(
+        live_submission_gate.get("paper_route_target_plan_source")
+    ) or _target_plan_source(plan)
+    target_plan_error = _safe_text(
+        live_submission_gate.get("paper_route_target_plan_error")
+    )
     probe = _paper_route_probe_summary(
         route_reacquisition_book,
         target_plan=plan,
-        target_plan_source=_safe_text(
-            live_submission_gate.get("paper_route_target_plan_source")
-        )
-        or _target_plan_source(plan),
-        target_plan_error=_safe_text(
-            live_submission_gate.get("paper_route_target_plan_error")
-        ),
+        target_plan_source=target_plan_source,
+        target_plan_error=target_plan_error,
     )
     next_targets = _next_paper_route_runtime_window_targets(
         session=session,
@@ -10555,6 +10568,26 @@ def build_paper_route_target_plan_payload(
         generated_at=resolved_generated_at,
         target_account_audit_available=target_account_audit_available,
     )
+    scoped_probe_plan = (
+        _paper_route_probe_scope_plan(plan, next_targets)
+        if target_plan_source == "external_target_plan_url"
+        else plan
+    )
+    if scoped_probe_plan is not plan:
+        probe = _paper_route_probe_summary(
+            route_reacquisition_book,
+            target_plan=scoped_probe_plan,
+            target_plan_source=target_plan_source,
+            target_plan_error=target_plan_error,
+        )
+        next_targets = _next_paper_route_runtime_window_targets(
+            session=session,
+            targets=targets,
+            probe=probe,
+            live_submission_gate=live_submission_gate,
+            generated_at=resolved_generated_at,
+            target_account_audit_available=target_account_audit_available,
+        )
     runtime_window_import_plan = next_targets
     next_clean_after_discard_targets: Mapping[str, Any] = {}
     latest_closed_targets: Mapping[str, Any] = {}
@@ -10939,16 +10972,17 @@ def build_paper_route_evidence_audit(
             target_limit=effective_target_limit,
         )
     )
+    target_plan_source = _safe_text(
+        live_submission_gate.get("paper_route_target_plan_source")
+    ) or _target_plan_source(plan)
+    target_plan_error = _safe_text(
+        live_submission_gate.get("paper_route_target_plan_error")
+    )
     probe = _paper_route_probe_summary(
         route_reacquisition_book,
         target_plan=plan,
-        target_plan_source=_safe_text(
-            live_submission_gate.get("paper_route_target_plan_source")
-        )
-        or _target_plan_source(plan),
-        target_plan_error=_safe_text(
-            live_submission_gate.get("paper_route_target_plan_error")
-        ),
+        target_plan_source=target_plan_source,
+        target_plan_error=target_plan_error,
     )
     target_audit_cache: dict[tuple[object, ...], dict[str, object]] = {}
 
@@ -10978,13 +11012,6 @@ def build_paper_route_evidence_audit(
             target_audit_cache[cache_key] = audit
         return audit
 
-    target_audits = [
-        cached_target_audit(
-            target,
-            error_source="paper_route_source_target_audit",
-        )
-        for target in targets
-    ]
     next_targets = _next_paper_route_runtime_window_targets(
         session=session,
         targets=targets,
@@ -10993,6 +11020,33 @@ def build_paper_route_evidence_audit(
         generated_at=resolved_generated_at,
         target_account_audit_available=target_account_audit_available,
     )
+    scoped_probe_plan = (
+        _paper_route_probe_scope_plan(plan, next_targets)
+        if target_plan_source == "external_target_plan_url"
+        else plan
+    )
+    if scoped_probe_plan is not plan:
+        probe = _paper_route_probe_summary(
+            route_reacquisition_book,
+            target_plan=scoped_probe_plan,
+            target_plan_source=target_plan_source,
+            target_plan_error=target_plan_error,
+        )
+        next_targets = _next_paper_route_runtime_window_targets(
+            session=session,
+            targets=targets,
+            probe=probe,
+            live_submission_gate=live_submission_gate,
+            generated_at=resolved_generated_at,
+            target_account_audit_available=target_account_audit_available,
+        )
+    target_audits = [
+        cached_target_audit(
+            target,
+            error_source="paper_route_source_target_audit",
+        )
+        for target in targets
+    ]
     closed_window_start, closed_window_end = (
         _latest_closed_regular_equities_session_window(resolved_generated_at)
     )
