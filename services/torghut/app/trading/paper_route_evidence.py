@@ -7126,13 +7126,15 @@ def _hpairs_zero_activity_reason_flags(
     ).lower()
     audit_state = (_safe_text(runtime_window_import_audit.get("state")) or "").lower()
     import_ready = bool(runtime_window_import_audit.get("import_ready"))
-    window_import_ready = import_ready or audit_state in {
-        "import_due_source_activity_missing",
-        "import_due_runtime_ledger_missing",
-        "import_due_runtime_ledger_not_materialized",
-        "runtime_ledger_imported_but_not_evidence_grade",
-        "window_closed_import_ready",
-    }
+    window_import_ready = (
+        import_ready
+        or audit_state.startswith("import_due_")
+        or audit_state
+        in {
+            "runtime_ledger_imported_but_not_evidence_grade",
+            "window_closed_import_ready",
+        }
+    )
     no_market_window = not window_import_ready and (
         bool(
             {
@@ -7214,22 +7216,25 @@ def _hpairs_zero_activity_reason_flags(
         "import_due_runtime_ledger_missing",
         "import_due_runtime_ledger_not_materialized",
     }
-    source_decisions_missing = hpairs_target_count > 0 and hpairs_decision_count <= 0
+    source_decisions_missing = (
+        window_import_ready and hpairs_target_count > 0 and hpairs_decision_count <= 0
+    )
     source_executions_missing = hpairs_decision_count > 0 and (
         hpairs_submitted_order_count <= 0 or "source_executions_missing" in normalized
     )
     source_tca_missing = hpairs_submitted_order_count > 0 and (
         hpairs_tca_sample_count <= 0 or "source_tca_missing" in normalized
     )
-    runtime_ledger_bucket_missing = (
-        hpairs_decision_count > 0 and hpairs_runtime_bucket_count <= 0
-    ) or bool(
-        {
-            "runtime_ledger_bucket_missing",
-            "runtime_ledger_source_bucket_missing",
-            "runtime_ledger_evidence_grade_bucket_missing",
-        }
-        & normalized
+    runtime_ledger_bucket_missing = window_import_ready and (
+        (hpairs_decision_count > 0 and hpairs_runtime_bucket_count <= 0)
+        or bool(
+            {
+                "runtime_ledger_bucket_missing",
+                "runtime_ledger_source_bucket_missing",
+                "runtime_ledger_evidence_grade_bucket_missing",
+            }
+            & normalized
+        )
     )
     source_lineage_mismatch = bool(
         {
@@ -7255,6 +7260,28 @@ def _hpairs_zero_activity_reason_flags(
         "source_tca_missing": source_tca_missing,
         "runtime_ledger_bucket_missing": runtime_ledger_bucket_missing,
     }
+
+
+def _hpairs_zero_activity_visible_blockers(
+    blockers: Sequence[str],
+    *,
+    reason_flags: Mapping[str, bool],
+) -> list[str]:
+    gated_blockers = {
+        "source_decisions_missing": "source_decisions_missing",
+        "source_executions_missing": "source_executions_missing",
+        "source_tca_missing": "source_tca_missing",
+        "runtime_ledger_bucket_missing": "runtime_ledger_bucket_missing",
+        "runtime_ledger_source_bucket_missing": "runtime_ledger_bucket_missing",
+        "runtime_ledger_evidence_grade_bucket_missing": "runtime_ledger_bucket_missing",
+    }
+    visible: list[str] = []
+    for blocker in blockers:
+        flag_name = gated_blockers.get(blocker)
+        if flag_name is not None and not bool(reason_flags.get(flag_name)):
+            continue
+        visible.append(blocker)
+    return visible
 
 
 def _hpairs_zero_activity_state(reason_flags: Mapping[str, bool]) -> str:
@@ -7461,7 +7488,10 @@ def _hpairs_zero_activity_diagnostics(
         "generated_at": _isoformat(generated_at),
         "state": _hpairs_zero_activity_state(reason_flags),
         "reason_flags": reason_flags,
-        "blockers": blockers,
+        "blockers": _hpairs_zero_activity_visible_blockers(
+            blockers,
+            reason_flags=reason_flags,
+        ),
         "counts": {
             "hpairs_target_count": hpairs_target_count,
             "hpairs_skipped_target_count": len(skipped_targets),
