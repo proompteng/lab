@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 from decimal import Decimal
 import json
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -363,6 +364,308 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
         )
         self.assertTrue(target.target_metadata["source_collection_authorized"])
         self.assertNotIn("paper_route_probe_symbols", target.target_metadata)
+
+    def test_source_collection_materializable_lineage_rejects_aggregate_only_bucket_count(
+        self,
+    ) -> None:
+        self.assertFalse(
+            renew._runtime_window_source_collection_target_has_materializable_lineage(
+                {
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                    "source_row_counts": {"strategy_runtime_ledger_buckets": 1},
+                    "source_refs": ["postgres:strategy_runtime_ledger_buckets"],
+                }
+            )
+        )
+
+    def test_source_collection_materializable_lineage_accepts_concrete_source_count(
+        self,
+    ) -> None:
+        for row_count_key in (
+            "trade_decisions",
+            "executions",
+            "execution_tca_metrics",
+            "execution_order_events",
+            "order_feed_source_windows",
+        ):
+            with self.subTest(row_count_key=row_count_key):
+                self.assertTrue(
+                    renew._runtime_window_source_collection_target_has_materializable_lineage(
+                        {
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                            "source_row_counts": {
+                                "strategy_runtime_ledger_buckets": 1,
+                                row_count_key: 1,
+                            },
+                        }
+                    )
+                )
+
+    def test_paper_route_evidence_payload_skips_source_only_proof_plans(
+        self,
+    ) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "runtime_window_import_plan": {
+                    "source": "paper_route_prioritized_source_collection",
+                    "target_count": 6,
+                    "targets": [
+                        {
+                            "candidate_id": "stale-source-candidate",
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                            "window_start": "2026-05-13T17:00:00+00:00",
+                            "window_end": "2026-05-13T17:30:00+00:00",
+                        }
+                    ],
+                },
+                "observed_strategy_source_runtime_window_import_plan": {
+                    "source": "paper_route_observed_strategy_source_collection",
+                    "targets": [
+                        {
+                            "candidate_id": "observed-source-candidate",
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "source": "paper_route_evidence_audit",
+                    "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "current-hpairs-candidate",
+                            "strategy_name": ("microbar-cross-sectional-pairs-v1"),
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "window_start": "2026-06-05T13:30:00+00:00",
+                            "window_end": "2026-06-05T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "live_submission_gate": {
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "candidate_id": "gate-source-candidate",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(plan["source"], "paper_route_evidence_audit")
+        self.assertEqual(len(plan["targets"]), 1)
+        self.assertEqual(plan["targets"][0]["candidate_id"], "current-hpairs-candidate")
+        self.assertNotIn("merged_live_submission_gate_source_collection", plan)
+
+    def test_paper_route_evidence_payload_does_not_fallback_to_gate_source_collection(
+        self,
+    ) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "runtime_window_import_plan": {
+                    "source": "paper_route_prioritized_source_collection",
+                    "targets": [
+                        {
+                            "candidate_id": "direct-source-candidate",
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                        }
+                    ],
+                },
+                "live_submission_gate": {
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "candidate_id": "gate-source-candidate",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                            }
+                        ],
+                    },
+                },
+                "runtime_ledger_paper_probation_import_plan": {
+                    "source_collection_target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "top-level-source-candidate",
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertNotIn("targets", plan)
+        self.assertEqual(plan["schema_version"], "torghut.paper-route-evidence.v1")
+
+    def test_paper_route_evidence_payload_skips_source_only_fallback_slots(
+        self,
+    ) -> None:
+        latest_closed_plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "latest_closed_runtime_window_import_selection": {
+                    "selected": True,
+                    "state": "selected",
+                    "source_backed_evidence_present": True,
+                    "clean_window_importable": True,
+                },
+                "latest_closed_paper_route_runtime_window_targets": {
+                    "source": "paper_route_prioritized_source_collection",
+                    "session_readiness": {"import_ready": True},
+                    "targets": [
+                        {
+                            "candidate_id": "latest-closed-source-only",
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                        }
+                    ],
+                },
+                "runtime_window_import_plan": {
+                    "source": "paper_route_evidence_audit",
+                    "targets": [
+                        {
+                            "candidate_id": "direct-paper-proof",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertEqual(
+            latest_closed_plan["targets"][0]["candidate_id"], "direct-paper-proof"
+        )
+
+        clean_after_discard_plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "next_clean_paper_route_runtime_window_targets_after_discard": {
+                    "source": "paper_route_observed_strategy_source_collection",
+                    "targets": [
+                        {
+                            "candidate_id": "clean-after-discard-source-only",
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "source": "paper_route_evidence_audit",
+                    "targets": [
+                        {
+                            "candidate_id": "next-paper-proof",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertEqual(
+            clean_after_discard_plan["targets"][0]["candidate_id"],
+            "next-paper-proof",
+        )
+
+        source_only_plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "next_paper_route_runtime_window_targets": {
+                    "source": "paper_route_prioritized_source_collection",
+                    "targets": [
+                        {
+                            "candidate_id": "next-paper-source-only",
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertEqual(
+            source_only_plan["schema_version"], "torghut.paper-route-evidence.v1"
+        )
+        self.assertNotIn("targets", source_only_plan)
+
+    def test_aggregate_only_source_collection_target_blocks_before_import(
+        self,
+    ) -> None:
+        target = renew.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="c88421d619759b2cfaa6f4d0",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            target_dsn_env="SIM_DB_DSN",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+            source_kind="runtime_ledger_source_collection_candidate",
+            delay_adjusted_depth_stress_report_ref="",
+            window_start="2026-05-13T17:00:00+00:00",
+            window_end="2026-05-13T17:30:00+00:00",
+            target_metadata={
+                "source_row_counts": {"strategy_runtime_ledger_buckets": 1},
+                "source_collection_reason_codes": [
+                    "runtime_window_source_activity_missing"
+                ],
+            },
+        )
+        args = argparse.Namespace(runtime_window_target_plan_settlement_seconds=0)
+
+        with (
+            patch.object(
+                renew,
+                "_read_runtime_window_manifest",
+                return_value={"candidate_id": "c88421d619759b2cfaa6f4d0"},
+            ),
+            patch.object(renew.subprocess, "run") as run,
+        ):
+            result = renew._run_runtime_window_import_target(
+                args=args,
+                target=target,
+                manifest={},
+                run_id="test-run",
+                manifest_path=Path("manifest.yaml"),
+                window_start=datetime(2026, 5, 13, 17, tzinfo=timezone.utc),
+                window_end=datetime(2026, 5, 13, 17, 30, tzinfo=timezone.utc),
+                now=datetime(2026, 5, 13, 21, tzinfo=timezone.utc),
+            )
+
+        run.assert_not_called()
+        self.assertEqual(
+            result["reason"],
+            "runtime_ledger_source_collection_materialization_required",
+        )
+        self.assertEqual(result["proof_status"], "blocked")
+        blockers = [blocker["blocker"] for blocker in result["proof_blockers"]]
+        self.assertIn(
+            "runtime_ledger_source_collection_materialization_missing", blockers
+        )
+        self.assertIn("runtime_window_source_activity_missing", blockers)
 
     def test_target_plan_payload_prefers_selected_latest_closed_import_plan(
         self,
