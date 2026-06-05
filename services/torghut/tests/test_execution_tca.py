@@ -404,6 +404,49 @@ class TestExecutionTcaCostLineage(TestCase):
             "trade_decisions.decision_json+executions.order_fields",
         )
 
+    def test_upsert_prefers_explicit_policy_hash_over_nested_policy_payloads(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = self._insert_decision(
+                session,
+                strategy,
+                decision_hash="explicit-policy-decision",
+                execution_policy={"version": "decision-policy", "max_bps": "12"},
+            )
+            execution = self._insert_execution(
+                session,
+                decision,
+                order_id="explicit-policy-order",
+                raw_order={
+                    "commission": "0.02",
+                    "execution_policy": {
+                        "version": "raw-order-policy",
+                        "limit_offset_bps": "2",
+                    },
+                },
+                execution_audit_json={
+                    "execution_policy_hash": "policy-explicit",
+                    "execution_policy": {
+                        "version": "audit-policy",
+                        "limit_offset_bps": "1",
+                    },
+                },
+            )
+
+            upsert_execution_tca_metric(session, execution)
+            session.flush()
+            lineage = self._lineage(execution)
+
+        self.assertEqual(lineage["status"], "source_backed")
+        self.assertEqual(lineage["blockers"], [])
+        self.assertEqual(lineage["execution_policy_hash"], "policy-explicit")
+        self.assertEqual(
+            lineage["source_fields"]["execution_policy_hash"],
+            "execution_policy_hash",
+        )
+
     def test_upsert_blocks_ambiguous_policy_and_cost_model_hashes(self) -> None:
         with self.session_local() as session:
             strategy = self._insert_strategy(session)
