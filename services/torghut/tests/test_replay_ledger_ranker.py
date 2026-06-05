@@ -157,6 +157,39 @@ def _with_lob_reality_gap_evidence(
     return rows
 
 
+def _with_microstructure_stress_evidence(
+    rows: list[dict[str, object]],
+    *,
+    fragile: bool = False,
+) -> list[dict[str, object]]:
+    for index, row in enumerate(rows):
+        if fragile:
+            row["order_type"] = "market"
+            row["fill_status"] = "filled"
+            row["order_qty"] = "1000"
+            row["fill_qty"] = "1000"
+            row["spread_bps"] = "24"
+            row["order_book_imbalance"] = "-0.70"
+            row["event_type"] = "trade"
+            row["bid_size"] = "20"
+            row["ask_size"] = "980"
+            row.pop("bid", None)
+            row.pop("ask", None)
+        else:
+            row["order_type"] = "limit"
+            row["fill_status"] = "filled"
+            row["order_qty"] = "1000"
+            row["fill_qty"] = "1000"
+            row["spread_bps"] = "2"
+            row["order_book_imbalance"] = "0.25"
+            row["event_type"] = ("add", "trade", "cancel")[index % 3]
+            row["bid"] = "99.99"
+            row["ask"] = "100.01"
+            row["bid_size"] = "600"
+            row["ask_size"] = "500"
+    return rows
+
+
 def _payload(
     candidate_id: str,
     rows: list[dict[str, object]],
@@ -517,6 +550,95 @@ def test_ranker_discounts_fragile_lob_reality_gap_candidates(
         item["source_id"] for item in fragile["lob_reality_gap_stress"]["source_papers"]
     }
     assert fragile["lob_reality_gap_stress"]["promotion_authority"] is False
+
+
+def test_ranker_discounts_microstructure_fragile_candidates(
+    tmp_path: Path,
+) -> None:
+    stable = _payload(
+        "stable-microstructure-lower-raw-pnl",
+        _with_microstructure_stress_evidence(
+            _with_execution_quality(
+                _round_trip(
+                    day=18,
+                    symbol="NVDA",
+                    qty="1000",
+                    buy_price="100",
+                    sell_price="100.90",
+                    prefix="stable-microstructure",
+                ),
+                order_type="limit",
+                shortfall_bps="1",
+                limit_fill_probability="0.82",
+                queue_position="0.15",
+                opportunity_cost_bps="2",
+                price_improvement_bps="3",
+            ),
+            fragile=False,
+        ),
+    )
+    fragile_raw_winner = _payload(
+        "fragile-microstructure-higher-raw-pnl",
+        _with_microstructure_stress_evidence(
+            _with_execution_quality(
+                _round_trip(
+                    day=18,
+                    symbol="NVDA",
+                    qty="1000",
+                    buy_price="100",
+                    sell_price="101.00",
+                    prefix="fragile-microstructure",
+                ),
+                order_type="market",
+                shortfall_bps="1",
+                limit_fill_probability="0.82",
+                queue_position="0.15",
+                opportunity_cost_bps="2",
+                price_improvement_bps="3",
+            ),
+            fragile=True,
+        ),
+    )
+    stable_path = tmp_path / "stable-microstructure.json"
+    fragile_path = tmp_path / "fragile-microstructure.json"
+    stable_path.write_text(json.dumps(stable))
+    fragile_path.write_text(json.dumps(fragile_raw_winner))
+
+    report = build_replay_ledger_ranking_report(
+        [stable_path, fragile_path],
+        policy=ReplayLedgerRankingPolicy(
+            target_net_pnl_per_day=Decimal("1"),
+            min_window_weekday_count=1,
+            min_avg_filled_notional_per_day=Decimal("1"),
+            max_best_day_share=Decimal("1.0"),
+            max_gross_exposure_pct_equity=Decimal("1000.0"),
+            start_equity=Decimal("100000000"),
+        ),
+    )
+    top = report["candidates"][0]
+    fragile = report["candidates"][1]
+
+    assert top["candidate_id"] == "stable-microstructure-lower-raw-pnl"
+    assert fragile["candidate_id"] == "fragile-microstructure-higher-raw-pnl"
+    assert Decimal(str(fragile["window_net_pnl_per_day"])) > Decimal(
+        str(top["window_net_pnl_per_day"])
+    )
+    assert Decimal(str(fragile["microstructure_stress_penalty_bps"])) > Decimal(
+        str(top["microstructure_stress_penalty_bps"])
+    )
+    assert Decimal(
+        str(top["replay_quality_adjusted_window_net_pnl_per_day"])
+    ) > Decimal(str(fragile["replay_quality_adjusted_window_net_pnl_per_day"]))
+    source_ids = {
+        item["source_id"] for item in fragile["microstructure_stress"]["source_papers"]
+    }
+    assert {
+        "arxiv-2504.20349",
+        "arxiv-2507.06345",
+        "arxiv-2605.19584",
+    }.issubset(source_ids)
+    assert fragile["microstructure_stress"]["promotion_authority"] is False
+    assert fragile["microstructure_stress"]["proof_authority"] is False
 
 
 def test_lob_reality_gap_summary_fails_closed_without_signal_rows() -> None:
