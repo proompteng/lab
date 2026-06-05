@@ -9753,6 +9753,34 @@ def _source_collection_import_target_allowed(target: Mapping[str, Any]) -> bool:
     return True
 
 
+def _runtime_ledger_source_collection_import_window(
+    target: Mapping[str, Any],
+    *,
+    generated_at: datetime,
+) -> tuple[str, str, bool]:
+    window_start = _safe_text(
+        target.get("window_start")
+        or target.get("source_window_start")
+        or target.get("bucket_started_at")
+        or target.get("paper_route_probe_window_start")
+    )
+    window_end = _safe_text(
+        target.get("window_end")
+        or target.get("source_window_end")
+        or target.get("bucket_ended_at")
+        or target.get("paper_route_probe_window_end")
+    )
+    if window_start is not None and window_end is not None:
+        return window_start, window_end, False
+    if not _target_is_runtime_ledger_source_collection(target):
+        return window_start or "", window_end or "", False
+    if not _truthy_plan_value(target.get("source_collection_authorized")):
+        return window_start or "", window_end or "", False
+
+    session_start, session_end = _next_regular_equities_session_window(generated_at)
+    return session_start.isoformat(), session_end.isoformat(), True
+
+
 def _target_bounded_collection_notional(target: Mapping[str, Any]) -> str:
     for key in (
         "target_notional",
@@ -9807,6 +9835,8 @@ def _runtime_window_import_target_metadata(
 
 def _sanitized_runtime_ledger_source_collection_target(
     target: Mapping[str, Any],
+    *,
+    generated_at: datetime,
 ) -> dict[str, object]:
     strategy_name = _safe_text(target.get("strategy_name"))
     strategy_id = _safe_text(target.get("strategy_id"))
@@ -9847,6 +9877,17 @@ def _sanitized_runtime_ledger_source_collection_target(
     bounded_evidence_collection_authorized = (
         bounded_evidence_collection_requested and _safe_decimal(bounded_notional) > 0
     )
+    window_start, window_end, source_collection_window_defaulted = (
+        _runtime_ledger_source_collection_import_window(
+            target, generated_at=generated_at
+        )
+    )
+    paper_route_probe_window_start = (
+        _safe_text(target.get("paper_route_probe_window_start")) or window_start
+    )
+    paper_route_probe_window_end = (
+        _safe_text(target.get("paper_route_probe_window_end")) or window_end
+    )
     final_promotion_blockers = _unique_text_items(
         target.get("final_promotion_blockers")
     ) or list(RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS)
@@ -9873,8 +9914,10 @@ def _sanitized_runtime_ledger_source_collection_target(
         "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")) or "",
         "source_manifest_ref": _safe_text(target.get("source_manifest_ref")) or "",
         "source_kind": source_kind,
-        "window_start": _safe_text(target.get("window_start")) or "",
-        "window_end": _safe_text(target.get("window_end")) or "",
+        "window_start": window_start,
+        "window_end": window_end,
+        "paper_route_probe_window_start": paper_route_probe_window_start,
+        "paper_route_probe_window_end": paper_route_probe_window_end,
         "paper_probation_authorized": False,
         "paper_probation_authorization_scope": "",
         "paper_probation_satisfied_for_bounded_live_paper_collection": False,
@@ -9951,6 +9994,11 @@ def _sanitized_runtime_ledger_source_collection_target(
             or target.get("final_promotion_authorized")
         ),
     }
+    if source_collection_window_defaulted:
+        sanitized["runtime_ledger_source_collection_window_defaulted"] = True
+        sanitized["runtime_ledger_source_collection_window_default_source"] = (
+            "current_regular_session_source_collection_import_default"
+        )
     for key in (
         "source_collection_priority",
         "source_collection_profit_target_net_pnl_after_costs",
@@ -10046,9 +10094,11 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
     plan: Mapping[str, Any],
     live_submission_gate: Mapping[str, Any],
     target_limit: int,
+    generated_at: datetime | None = None,
 ) -> dict[str, object]:
     if not _live_gate_has_source_collection_pending(live_submission_gate):
         return {}
+    resolved_generated_at = generated_at or datetime.now(timezone.utc)
     limit = max(0, target_limit)
     candidate_targets: list[dict[str, object]] = []
 
@@ -10057,7 +10107,10 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
             return
         if not _source_collection_import_target_allowed(target):
             return
-        sanitized = _sanitized_runtime_ledger_source_collection_target(target)
+        sanitized = _sanitized_runtime_ledger_source_collection_target(
+            target,
+            generated_at=resolved_generated_at,
+        )
         candidate_targets.append(sanitized)
 
     def target_key(
@@ -10273,6 +10326,7 @@ def _observed_strategy_source_collection_target(
     observed_strategy_name: str,
     observed_count: int,
     contaminated_target: Mapping[str, Any],
+    generated_at: datetime,
 ) -> dict[str, object] | None:
     hypothesis_id = _safe_text(candidate.get("hypothesis_id"))
     candidate_id = _safe_text(candidate.get("candidate_id"))
@@ -10364,7 +10418,10 @@ def _observed_strategy_source_collection_target(
             "reason": "paper_route_account_contamination_strategy_observed",
         },
     }
-    return _sanitized_runtime_ledger_source_collection_target(target)
+    return _sanitized_runtime_ledger_source_collection_target(
+        target,
+        generated_at=generated_at,
+    )
 
 
 def _runtime_window_import_plan_metadata(plan: Mapping[str, Any]) -> dict[str, object]:
@@ -10416,6 +10473,7 @@ def _observed_strategy_source_collection_import_plan(
     live_submission_gate: Mapping[str, Any],
     candidate_plans: Sequence[Mapping[str, Any]],
     target_limit: int,
+    generated_at: datetime | None = None,
 ) -> dict[str, object]:
     if not _live_gate_has_source_collection_pending(live_submission_gate):
         return {}
@@ -10424,6 +10482,7 @@ def _observed_strategy_source_collection_import_plan(
     )
     if not candidates_by_strategy:
         return {}
+    resolved_generated_at = generated_at or datetime.now(timezone.utc)
     limit = max(0, target_limit)
     targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
@@ -10475,6 +10534,7 @@ def _observed_strategy_source_collection_import_plan(
                     observed_strategy_name=observed_strategy_name,
                     observed_count=observed_count,
                     contaminated_target=contaminated_target,
+                    generated_at=resolved_generated_at,
                 )
                 if target is None:
                     skipped_targets.append(
@@ -10545,6 +10605,7 @@ def build_paper_route_target_plan_payload(
             plan=plan,
             live_submission_gate=live_submission_gate,
             target_limit=target_limit,
+            generated_at=resolved_generated_at,
         )
     )
     targets = _as_mapping_items(plan.get("targets"))[: max(0, target_limit)]
@@ -10690,6 +10751,7 @@ def build_paper_route_target_plan_payload(
                     next_targets,
                 ),
                 target_limit=target_limit,
+                generated_at=resolved_generated_at,
             )
         )
         if _as_mapping_items(observed_strategy_source_targets.get("targets")):
@@ -10970,6 +11032,7 @@ def build_paper_route_evidence_audit(
             plan=plan,
             live_submission_gate=live_submission_gate,
             target_limit=effective_target_limit,
+            generated_at=resolved_generated_at,
         )
     )
     target_plan_source = _safe_text(
@@ -11147,6 +11210,7 @@ def build_paper_route_evidence_audit(
             raw_next_targets,
         ),
         target_limit=effective_target_limit,
+        generated_at=resolved_generated_at,
     )
     if _as_mapping_items(observed_strategy_source_targets.get("targets")):
         if _source_collection_import_plan_has_profit_target(source_targets):
