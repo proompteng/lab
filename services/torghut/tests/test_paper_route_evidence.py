@@ -143,7 +143,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ),
             "wait_for_settlement_before_import",
         )
-        self.assertEqual(next_action(session_state="paper_route_custom_state"), "inspect_paper_route_readiness")
+        self.assertEqual(
+            next_action(session_state="paper_route_custom_state"),
+            "inspect_paper_route_readiness",
+        )
 
     def test_execution_readiness_state_preserves_blocked_and_unknown_states(
         self,
@@ -5897,6 +5900,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         "source_collection_next_action": (
                             "materialize_runtime_ledger_source_window_refs"
                         ),
+                        "source_row_counts": {"execution_order_events": 2},
                         "runtime_ledger_bucket_ref": (
                             "strategy_runtime_ledger_buckets:run-1:start:end"
                         ),
@@ -5940,6 +5944,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         "source_collection_next_action": (
                             "materialize_runtime_ledger_source_window_refs"
                         ),
+                        "source_row_counts": {"execution_order_events": 2},
                         "runtime_ledger_bucket_ref": (
                             "strategy_runtime_ledger_buckets:run-1:start:end"
                         ),
@@ -6035,7 +6040,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
         self.assertEqual(plan, {})
 
-    def test_source_collection_import_keeps_bounded_bucket_seed_without_authority(
+    def test_source_collection_import_skips_bounded_bucket_seed_without_lineage(
         self,
     ) -> None:
         live_gate = {
@@ -6085,37 +6090,32 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target_limit=5,
         )
 
-        self.assertEqual(plan["target_count"], 1)
-        target = plan["targets"][0]
-        self.assertEqual(target["candidate_id"], "bounded-replay-seed")
-        self.assertEqual(target["account_label"], "TORGHUT_REPLAY")
-        self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
-        self.assertEqual(target["source_dsn_env"], "DB_DSN")
-        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
-        self.assertEqual(target["window_start"], "2026-05-13T17:00:00+00:00")
-        self.assertEqual(target["window_end"], "2026-05-13T17:30:00+00:00")
-        self.assertEqual(
-            target["runtime_ledger_bucket_ref"],
-            (
+        self.assertEqual(plan, {})
+        raw_target = {
+            "runtime_ledger_bucket_ref": (
                 "strategy_runtime_ledger_buckets:"
                 "rt-ledger-vwap-cap-safe-20260512-20260521-c88421d6:"
                 "2026-05-13T17:00:00+00:00:"
                 "2026-05-13T17:30:00+00:00"
             ),
-        )
-        self.assertEqual(target["max_notional"], "0")
-        self.assertFalse(target["promotion_allowed"])
-        self.assertFalse(target["final_promotion_allowed"])
-        self.assertFalse(target["live_capital_authorized"])
+            "window_start": "2026-05-13T17:00:00+00:00",
+            "window_end": "2026-05-13T17:30:00+00:00",
+            "account_label": "TORGHUT_REPLAY",
+            "source_account_label": "TORGHUT_REPLAY",
+            "source_dsn_env": "DB_DSN",
+        }
         self.assertFalse(
             paper_route_evidence._source_collection_target_has_materializable_lineage(
-                target
+                raw_target
             )
         )
         self.assertTrue(
             paper_route_evidence._source_collection_target_has_bounded_bucket_materialization_seed(
-                target
+                raw_target
             )
+        )
+        self.assertFalse(
+            paper_route_evidence._source_collection_import_target_allowed(raw_target)
         )
 
     def test_source_collection_import_allows_aggregate_replay_with_materializable_lineage(

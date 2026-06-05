@@ -1059,7 +1059,9 @@ def _paper_route_execution_readiness_next_action(
     account_pre_session_state: Mapping[str, Any],
     collection_authorized: bool,
 ) -> str:
-    blocker_set = set(collection_blockers) | set(evidence_blockers) | set(import_blockers)
+    blocker_set = (
+        set(collection_blockers) | set(evidence_blockers) | set(import_blockers)
+    )
     pre_session_state = _safe_text(account_pre_session_state.get("state"))
     if "paper_route_session_window_not_open" in blocker_set:
         if "paper_route_clean_window_baseline_snapshot_pending" in blocker_set:
@@ -1098,7 +1100,11 @@ def _paper_route_execution_readiness_state(
         return "ready_for_runtime_window_import"
     if import_ready and not import_blockers:
         return "window_closed_import_ready"
-    if collection_authorized and evidence_collection_ok and session_state == "collecting_session_evidence":
+    if (
+        collection_authorized
+        and evidence_collection_ok
+        and session_state == "collecting_session_evidence"
+    ):
         return "ready_for_bounded_collection"
     if session_state == "waiting_for_session_open":
         return "waiting_for_session_open"
@@ -1123,14 +1129,18 @@ def _paper_route_execution_readiness_contract(
     clean_window_baseline_state = _as_mapping(
         target.get("paper_route_clean_window_baseline_state")
     )
-    session_state = _safe_text(target.get("paper_route_session_readiness_state")) or "unknown"
+    session_state = (
+        _safe_text(target.get("paper_route_session_readiness_state")) or "unknown"
+    )
     collection_blockers = _unique_text_items(
         target.get("paper_route_session_collection_blockers")
     )
     evidence_blockers = _unique_text_items(
         target.get("bounded_evidence_collection_blockers")
     )
-    import_blockers = _unique_text_items(target.get("paper_route_session_import_blockers"))
+    import_blockers = _unique_text_items(
+        target.get("paper_route_session_import_blockers")
+    )
     source_decision_ready = bool(source_readiness.get("ready"))
     evidence_collection_ok = bool(target.get("evidence_collection_ok"))
     collection_authorized = bool(target.get("bounded_evidence_collection_authorized"))
@@ -1185,7 +1195,9 @@ def _paper_route_execution_readiness_contract(
                 "required_after": _safe_text(
                     account_pre_session_state.get("required_after")
                 ),
-                "blockers": _unique_text_items(account_pre_session_state.get("blockers")),
+                "blockers": _unique_text_items(
+                    account_pre_session_state.get("blockers")
+                ),
             },
             "clean_window_baseline": {
                 "state": _safe_text(clean_window_baseline_state.get("state")),
@@ -9713,7 +9725,7 @@ def _source_collection_target_has_bounded_bucket_materialization_seed(
 
 
 def _source_collection_import_target_allowed(target: Mapping[str, Any]) -> bool:
-    """Reject replay buckets that have neither real lineage nor bounded materialization coordinates."""
+    """Reject replay buckets that have no source lineage to materialize."""
 
     account_label = _safe_text(target.get("account_label"))
     source_account_label = (
@@ -9724,9 +9736,6 @@ def _source_collection_import_target_allowed(target: Mapping[str, Any]) -> bool:
         and source_account_label == "TORGHUT_REPLAY"
         and _safe_text(target.get("source_dsn_env")) == "DB_DSN"
         and not _source_collection_target_has_materializable_lineage(target)
-        and not _source_collection_target_has_bounded_bucket_materialization_seed(
-            target
-        )
     ):
         return False
     return True
