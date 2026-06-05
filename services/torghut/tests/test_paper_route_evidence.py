@@ -10944,66 +10944,45 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
 
         runtime_plan = payload["runtime_window_import_plan"]
-        self.assertEqual(
-            runtime_plan["source"], "paper_route_observed_strategy_source_collection"
-        )
+        self.assertEqual(runtime_plan["source"], "paper_route_evidence_audit")
         self.assertEqual(runtime_plan["target_count"], 1)
-        self.assertTrue(runtime_plan["session_readiness"]["import_ready"])
-        self.assertTrue(runtime_plan["runtime_window_import_handoff"]["import_ready"])
-        self.assertTrue(
-            runtime_plan["runtime_window_import_handoff"][
-                "source_collection_authorized"
-            ]
-        )
-        self.assertTrue(
-            runtime_plan["runtime_window_import_handoff"]["source_collection_only"]
-        )
-        self.assertFalse(
-            runtime_plan["runtime_window_import_handoff"][
-                "canary_collection_authorized"
-            ]
-        )
         self.assertEqual(
             runtime_plan["account_contamination_readiness"]["state"],
-            "contaminated_window_discarded",
-        )
-        self.assertIn(
-            "paper_route_account_contamination_detected",
-            runtime_plan["account_contamination_readiness"]["blockers"],
+            "clean",
         )
         self.assertEqual(
             runtime_plan["runtime_window_import_health_gate"]["blocked_target_count"],
             0,
         )
         target = runtime_plan["targets"][0]
-        self.assertEqual(target["candidate_id"], "candidate-tsmom")
-        self.assertEqual(target["hypothesis_id"], "H-TSMOM-LIQ-01")
-        self.assertEqual(target["runtime_strategy_name"], "intraday-tsmom-profit-v3")
-        self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
-        self.assertEqual(
+        self.assertEqual(target["candidate_id"], "candidate-hpairs")
+        self.assertEqual(target["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(target["strategy_name"], target_strategy.name)
+        self.assertEqual(target["source_kind"], "paper_route_probe_runtime_observed")
+        self.assertFalse(target["promotion_allowed"])
+        self.assertNotEqual(
             target["source_kind"], "runtime_ledger_source_collection_candidate"
         )
-        self.assertTrue(target["source_collection_authorized"])
-        self.assertFalse(target["promotion_allowed"])
-        self.assertNotIn("paper_route_probe_symbols", target)
-        self.assertEqual(target["dependency_quorum_decision"], "allow")
-        self.assertEqual(target["continuity_ok"], "true")
-        self.assertEqual(target["drift_ok"], "false")
-        self.assertTrue(target["runtime_window_import_health_gate"]["ready"])
-        self.assertEqual(target["runtime_window_import_health_gate_blockers"], [])
+        source_plan = payload["source_runtime_window_import_plan"]
         self.assertEqual(
-            target["runtime_window_import_promotion_blockers"],
-            ["drift_checks_not_ok"],
+            source_plan["source"], "paper_route_observed_strategy_source_collection"
         )
         self.assertEqual(
-            target["observed_from_contaminated_target"]["strategy_name"],
+            source_plan["account_contamination_readiness"]["state"],
+            "contaminated_window_discarded",
+        )
+        self.assertIn(
+            "paper_route_account_contamination_detected",
+            source_plan["account_contamination_readiness"]["blockers"],
+        )
+        self.assertEqual(source_plan["targets"][0]["candidate_id"], "candidate-tsmom")
+        self.assertEqual(
+            source_plan["targets"][0]["observed_from_contaminated_target"][
+                "strategy_name"
+            ],
             "intraday-tsmom-profit-v3",
         )
         self.assertEqual(payload["targets"][0]["candidate_id"], "candidate-tsmom")
-        self.assertEqual(
-            payload["source_runtime_window_import_plan"]["source"],
-            "paper_route_observed_strategy_source_collection",
-        )
 
     def test_evidence_selects_observed_strategy_source_collection_plan(self) -> None:
         generated_at = datetime(2026, 6, 2, 22, 30, tzinfo=timezone.utc)
@@ -11202,61 +11181,40 @@ class TestPaperRouteEvidenceAudit(TestCase):
             next_plan["targets"][0]["final_promotion_blockers"],
         )
         runtime_plan = payload["runtime_window_import_plan"]
-        self.assertEqual(
-            runtime_plan["source"], "paper_route_observed_strategy_source_collection"
-        )
-        self.assertTrue(runtime_plan["session_readiness"]["import_ready"])
-        self.assertTrue(runtime_plan["runtime_window_import_handoff"]["import_ready"])
-        self.assertTrue(
-            runtime_plan["runtime_window_import_handoff"][
-                "source_collection_authorized"
-            ]
-        )
-        self.assertTrue(
-            runtime_plan["runtime_window_import_handoff"]["source_collection_only"]
-        )
-        self.assertFalse(
-            runtime_plan["runtime_window_import_handoff"][
-                "canary_collection_authorized"
-            ]
-        )
+        self.assertEqual(runtime_plan["source"], "paper_route_evidence_audit")
         self.assertEqual(
             runtime_plan["runtime_window_import_health_gate"]["blocked_target_count"],
             0,
         )
         self.assertEqual(
             runtime_plan["account_contamination_readiness"]["state"],
+            "clean",
+        )
+        self.assertEqual(runtime_plan["targets"][0]["candidate_id"], "candidate-hpairs")
+        self.assertEqual(
+            runtime_plan["targets"][0]["selected_by"],
+            "paper_route_evidence_audit",
+        )
+        self.assertFalse(runtime_plan["targets"][0]["promotion_allowed"])
+        self.assertEqual(
+            payload["source_runtime_window_import_plan"]["source"],
+            "paper_route_observed_strategy_source_collection",
+        )
+        self.assertEqual(
+            payload["source_runtime_window_import_plan"][
+                "account_contamination_readiness"
+            ]["state"],
             "contaminated_window_discarded",
         )
         self.assertIn(
             "foreign_order_events_present",
-            runtime_plan["account_contamination_readiness"]["blockers"],
-        )
-        self.assertEqual(runtime_plan["targets"][0]["candidate_id"], "candidate-tsmom")
-        self.assertEqual(
-            runtime_plan["targets"][0]["selected_by"],
-            "paper_route_observed_strategy_source_collection",
+            payload["source_runtime_window_import_plan"][
+                "account_contamination_readiness"
+            ]["blockers"],
         )
         self.assertEqual(
-            runtime_plan["targets"][0]["dependency_quorum_decision"], "allow"
-        )
-        self.assertEqual(runtime_plan["targets"][0]["continuity_ok"], "true")
-        self.assertEqual(runtime_plan["targets"][0]["drift_ok"], "false")
-        self.assertTrue(
-            runtime_plan["targets"][0]["runtime_window_import_health_gate"]["ready"]
-        )
-        self.assertEqual(
-            runtime_plan["targets"][0]["runtime_window_import_health_gate_blockers"],
-            [],
-        )
-        self.assertFalse(runtime_plan["targets"][0]["promotion_allowed"])
-        self.assertIn(
-            "runtime_ledger_source_collection_only",
-            runtime_plan["targets"][0]["final_promotion_blockers"],
-        )
-        self.assertEqual(
-            payload["source_runtime_window_import_plan"]["source"],
-            "paper_route_observed_strategy_source_collection",
+            payload["source_runtime_window_import_plan"]["targets"][0]["candidate_id"],
+            "candidate-tsmom",
         )
         self.assertEqual(
             payload["observed_strategy_source_runtime_window_import_plan"]["source"],
@@ -11275,35 +11233,34 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             payload["summary"]["runtime_window_import_plan_source"],
-            "paper_route_observed_strategy_source_collection",
+            "paper_route_evidence_audit",
         )
         summary = payload["summary"]
-        self.assertTrue(summary["runtime_window_import_source_collection_only"])
+        self.assertFalse(summary["runtime_window_import_source_collection_only"])
         self.assertEqual(
             summary["runtime_window_import_account_contamination_state"],
-            "contaminated_window_discarded",
+            "clean",
         )
-        self.assertIn(
-            "foreign_order_events_present",
-            summary["runtime_window_import_account_contamination_blockers"],
+        self.assertEqual(
+            summary["runtime_window_import_account_contamination_blockers"], []
         )
         self.assertEqual(
             summary["summary_target_audit_source"],
-            "runtime_window_import_target_audits",
+            "paper_route_source_target_audits",
         )
         self.assertEqual(summary["source_plan_target_with_source_activity_count"], 0)
-        self.assertEqual(summary["target_with_source_activity_count"], 1)
+        self.assertEqual(summary["target_with_source_activity_count"], 0)
         self.assertEqual(summary["target_with_runtime_ledger_count"], 0)
         self.assertEqual(
-            summary["runtime_window_import_target_with_source_activity_count"], 1
+            summary["runtime_window_import_target_with_source_activity_count"], 0
         )
-        self.assertEqual(summary["readback"]["source_decisions_present_count"], 1)
-        self.assertEqual(summary["readback"]["submitted_lifecycle_present_count"], 1)
-        self.assertEqual(summary["readback"]["fills_or_executions_present_count"], 1)
-        self.assertEqual(summary["readback"]["source_refs_present_count"], 1)
-        self.assertNotIn("source_decisions_missing", summary["blockers"])
-        self.assertNotIn("source_executions_missing", summary["blockers"])
-        self.assertNotIn("source_tca_missing", summary["blockers"])
+        self.assertEqual(summary["readback"]["source_decisions_present_count"], 0)
+        self.assertEqual(summary["readback"]["submitted_lifecycle_present_count"], 0)
+        self.assertEqual(summary["readback"]["fills_or_executions_present_count"], 0)
+        self.assertEqual(summary["readback"]["source_refs_present_count"], 0)
+        self.assertIn("source_decisions_missing", summary["blockers"])
+        self.assertIn("source_executions_missing", summary["blockers"])
+        self.assertIn("source_tca_missing", summary["blockers"])
         self.assertIn("runtime_ledger_bucket_missing", summary["blockers"])
 
     def test_observed_strategy_source_collection_plan_limits_targets(self) -> None:

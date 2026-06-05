@@ -10871,7 +10871,6 @@ def build_paper_route_target_plan_payload(
                 )
             else:
                 source_targets = observed_strategy_source_targets
-            runtime_window_import_plan = source_targets
     runtime_import_readiness = _as_mapping(
         runtime_window_import_plan.get("session_readiness")
     )
@@ -11364,21 +11363,6 @@ def build_paper_route_evidence_audit(
             )
         else:
             source_targets = observed_strategy_source_targets
-        runtime_window_import_plan = source_targets
-        observed_source_targets = _as_mapping_items(
-            runtime_window_import_plan.get("targets")
-        )
-        runtime_window_import_target_audits = (
-            [
-                cached_target_audit(
-                    target,
-                    error_source="paper_route_observed_strategy_source_target_audit",
-                )
-                for target in observed_source_targets
-            ]
-            if run_full_runtime_import_audit
-            else _deferred_runtime_window_target_audits(observed_source_targets)
-        )
     runtime_window_import_audit = _runtime_window_import_audit(
         next_targets=runtime_window_import_plan,
         target_audits=target_audits,
@@ -11394,8 +11378,13 @@ def build_paper_route_evidence_audit(
     )
     summary_target_audits: Sequence[Mapping[str, object]]
     summary_target_audit_source: str
+    runtime_window_import_source_collection_only = (
+        _runtime_window_import_plan_is_source_collection_only(
+            runtime_window_import_plan
+        )
+    )
     if (
-        _as_mapping_items(observed_strategy_source_targets.get("targets"))
+        runtime_window_import_source_collection_only
         and runtime_window_import_target_audits
     ):
         summary_target_audits = runtime_window_import_target_audits
@@ -11580,9 +11569,7 @@ def build_paper_route_evidence_audit(
                 runtime_window_import_plan.get("source")
             ),
             "runtime_window_import_source_collection_only": (
-                _runtime_window_import_plan_is_source_collection_only(
-                    runtime_window_import_plan
-                )
+                runtime_window_import_source_collection_only
             ),
             "runtime_window_import_account_contamination_state": _safe_text(
                 _as_mapping(

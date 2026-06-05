@@ -164,6 +164,21 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "handoff",
     "promotion_gate",
 )
+SOURCE_COLLECTION_ONLY_PLAN_SOURCES = frozenset(
+    {
+        "paper_route_observed_strategy_source_collection",
+        "paper_route_prioritized_source_collection",
+    }
+)
+MATERIALIZABLE_SOURCE_ROW_COUNT_KEYS = frozenset(
+    {
+        "trade_decisions",
+        "executions",
+        "execution_tca_metrics",
+        "execution_order_events",
+        "order_feed_source_windows",
+    }
+)
 RUNTIME_WINDOW_TARGET_PLAN_DEFERRED_REASONS = frozenset(
     (
         "runtime_window_target_plan_window_not_closed",
@@ -793,10 +808,16 @@ def _runtime_window_target_plan_target_truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes"}
 
 
-def _runtime_window_target_plan_positive_mapping_count(value: object) -> bool:
+def _runtime_window_target_plan_positive_mapping_count(
+    value: object,
+    *,
+    allowed_keys: frozenset[str] | None = None,
+) -> bool:
     if not isinstance(value, Mapping):
         return False
-    for raw_count in value.values():
+    for raw_key, raw_count in value.items():
+        if allowed_keys is not None and str(raw_key or "").strip() not in allowed_keys:
+            continue
         try:
             if int(str(raw_count or "0")) > 0:
                 return True
@@ -825,15 +846,20 @@ def _runtime_window_source_collection_target_has_materializable_lineage(
         return True
     if _as_text(target.get("authority_class")) is not None:
         return True
-    if _runtime_window_target_plan_positive_mapping_count(
-        target.get("source_row_counts")
-    ):
-        return True
+    for key in ("source_row_counts", "runtime_ledger_source_row_counts"):
+        if _runtime_window_target_plan_positive_mapping_count(
+            target.get(key),
+            allowed_keys=MATERIALIZABLE_SOURCE_ROW_COUNT_KEYS,
+        ):
+            return True
     source_refs = [
         ref
         for ref in _as_text_list(target.get("source_refs"))
         if "strategy_runtime_ledger_buckets" not in ref
     ]
+    source_ref = _as_text(target.get("source_ref"))
+    if source_ref and "strategy_runtime_ledger_buckets" not in source_ref:
+        source_refs.append(source_ref)
     return bool(source_refs)
 
 
@@ -852,6 +878,34 @@ def _runtime_window_source_collection_target_allowed(
     ):
         return False
     return True
+
+
+def _runtime_window_target_plan_is_source_collection_only(
+    plan: Mapping[str, Any],
+) -> bool:
+    source = str(plan.get("source") or "").strip()
+    if source in SOURCE_COLLECTION_ONLY_PLAN_SOURCES:
+        return True
+    targets = _runtime_window_plan_target_items(plan)
+    return bool(targets) and all(
+        str(target.get("source_kind") or "").strip()
+        == "runtime_ledger_source_collection_candidate"
+        for target in targets
+    )
+
+
+def _runtime_window_target_plan_without_paper_route_source_collection_only(
+    plan: Mapping[str, Any],
+    *,
+    paper_route_evidence_payload: bool,
+) -> dict[str, Any]:
+    candidate_plan = _as_dict(plan)
+    if (
+        paper_route_evidence_payload
+        and _runtime_window_target_plan_is_source_collection_only(candidate_plan)
+    ):
+        return {}
+    return candidate_plan
 
 
 def _runtime_window_target_plan_source_collection_targets(
@@ -905,6 +959,15 @@ def _runtime_window_target_plan_with_live_gate_source_collection(
     plan: Mapping[str, Any],
 ) -> dict[str, Any]:
     merged_plan = dict(plan)
+    paper_route_evidence_payload = (
+        str(payload.get("schema_version") or "").strip()
+        == "torghut.paper-route-evidence.v1"
+    )
+    if (
+        paper_route_evidence_payload
+        and not _runtime_window_target_plan_is_source_collection_only(merged_plan)
+    ):
+        return merged_plan
     if (
         str(merged_plan.get("purpose") or "").strip()
         == "latest_closed_session_paper_route_runtime_window_import"
@@ -998,13 +1061,38 @@ def _latest_closed_runtime_window_target_plan_from_payload(
 def _runtime_window_target_plan_from_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
-    paper_route_plan = _as_dict(payload.get("next_paper_route_runtime_window_targets"))
-    latest_closed_plan = _latest_closed_runtime_window_target_plan_from_payload(payload)
     paper_route_evidence_payload = (
         str(payload.get("schema_version") or "").strip()
         == "torghut.paper-route-evidence.v1"
     )
-    direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
+    paper_route_plan = (
+        _runtime_window_target_plan_without_paper_route_source_collection_only(
+            _as_dict(payload.get("next_paper_route_runtime_window_targets")),
+            paper_route_evidence_payload=paper_route_evidence_payload,
+        )
+    )
+    clean_after_discard_plan = (
+        _runtime_window_target_plan_without_paper_route_source_collection_only(
+            _as_dict(
+                payload.get(
+                    "next_clean_paper_route_runtime_window_targets_after_discard"
+                )
+            ),
+            paper_route_evidence_payload=paper_route_evidence_payload,
+        )
+    )
+    latest_closed_plan = (
+        _runtime_window_target_plan_without_paper_route_source_collection_only(
+            _latest_closed_runtime_window_target_plan_from_payload(payload),
+            paper_route_evidence_payload=paper_route_evidence_payload,
+        )
+    )
+    direct_plan = (
+        _runtime_window_target_plan_without_paper_route_source_collection_only(
+            _as_dict(payload.get("runtime_window_import_plan")),
+            paper_route_evidence_payload=paper_route_evidence_payload,
+        )
+    )
     if paper_route_evidence_payload:
         plan = next(
             (
@@ -1012,16 +1100,7 @@ def _runtime_window_target_plan_from_payload(
                 for candidate_plan in (
                     latest_closed_plan,
                     direct_plan,
-                    _as_dict(
-                        payload.get(
-                            "next_clean_paper_route_runtime_window_targets_after_discard"
-                        )
-                    ),
-                    _as_dict(
-                        payload.get(
-                            "observed_strategy_source_runtime_window_import_plan"
-                        )
-                    ),
+                    clean_after_discard_plan,
                     paper_route_plan,
                 )
                 if _runtime_window_plan_target_items(candidate_plan)
@@ -1033,26 +1112,39 @@ def _runtime_window_target_plan_from_payload(
     source_runtime_window_plan = _as_dict(
         payload.get("source_runtime_window_import_plan")
     )
-    if not plan and _runtime_window_plan_target_items(source_runtime_window_plan):
+    if (
+        not plan
+        and not paper_route_evidence_payload
+        and _runtime_window_plan_target_items(source_runtime_window_plan)
+    ):
         plan = source_runtime_window_plan
     if not plan:
         if direct_plan:
             plan = direct_plan
         else:
             gate = _as_dict(payload.get("live_submission_gate"))
-            gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
+            gate_plan = (
+                _runtime_window_target_plan_without_paper_route_source_collection_only(
+                    _as_dict(gate.get("runtime_ledger_paper_probation_import_plan")),
+                    paper_route_evidence_payload=paper_route_evidence_payload,
+                )
+            )
             if gate_plan:
                 plan = gate_plan
             else:
-                top_level_gate_plan = _as_dict(
-                    payload.get("runtime_ledger_paper_probation_import_plan")
+                top_level_gate_plan = _runtime_window_target_plan_without_paper_route_source_collection_only(
+                    _as_dict(payload.get("runtime_ledger_paper_probation_import_plan")),
+                    paper_route_evidence_payload=paper_route_evidence_payload,
                 )
                 if top_level_gate_plan:
                     plan = top_level_gate_plan
                 elif paper_route_plan:
                     plan = paper_route_plan
                 else:
-                    plan = _as_dict(payload)
+                    plan = _runtime_window_target_plan_without_paper_route_source_collection_only(
+                        payload,
+                        paper_route_evidence_payload=paper_route_evidence_payload,
+                    )
     plan = _runtime_window_target_plan_with_live_gate_source_collection(
         payload=payload,
         plan=plan,
@@ -2735,6 +2827,75 @@ def _run_runtime_window_source_window_repair(
     return payload
 
 
+def _runtime_window_source_collection_materialization_blocked_result(
+    *,
+    target: RuntimeWindowImportTarget,
+    candidate_id: str,
+    manifest_path: Path,
+    window_start: datetime,
+    window_end: datetime,
+    window_selection: str,
+) -> dict[str, Any] | None:
+    if target.source_kind != "runtime_ledger_source_collection_candidate":
+        return None
+    if _runtime_window_import_needs_source_window_repair(target):
+        return None
+    target_metadata = _as_dict(target.target_metadata)
+    if _runtime_window_source_collection_target_has_materializable_lineage(
+        target_metadata
+    ):
+        return None
+    reason_codes = _as_text_list(target_metadata.get("source_collection_reason_codes"))
+    blocker_codes = list(
+        dict.fromkeys(
+            [
+                "runtime_ledger_source_collection_materialization_missing",
+                *reason_codes,
+            ]
+        )
+    )
+    next_action = (
+        _as_text(target_metadata.get("source_collection_next_action"))
+        or "materialize_runtime_ledger_source_window_refs"
+    )
+    proof_blockers = [
+        {
+            "blocker": blocker,
+            "hypothesis_id": target.hypothesis_id,
+            "candidate_id": candidate_id,
+            "observed_stage": target.observed_stage,
+            "window_start": _utc_iso(window_start),
+            "window_end": _utc_iso(window_end),
+            "source_collection_next_action": next_action,
+            "remediation": (
+                "Materialize concrete source refs, source window ids, execution ids, "
+                "or order-event/TCA source counts before runtime-window import."
+            ),
+        }
+        for blocker in blocker_codes
+    ]
+    return {
+        "status": "blocked",
+        "reason": "runtime_ledger_source_collection_materialization_required",
+        "window_start": _utc_iso(window_start),
+        "window_end": _utc_iso(window_end),
+        "window_selection": window_selection,
+        "hypothesis_id": target.hypothesis_id,
+        "candidate_id": candidate_id,
+        "strategy_name": target.strategy_name,
+        "account_label": target.account_label,
+        "source_account_label": target.source_account_label or target.account_label,
+        "source_dsn_env": target.source_dsn_env,
+        "target_dsn_env": target.target_dsn_env,
+        "source_kind": target.source_kind,
+        "artifact_refs": [str(manifest_path), *target.artifact_refs],
+        "target_metadata": target_metadata,
+        "proof_status": "blocked",
+        "proof_blockers": proof_blockers,
+        "summary": None,
+    }
+
+
 def _run_runtime_window_import_target(
     *,
     args: argparse.Namespace,
@@ -2829,6 +2990,18 @@ def _run_runtime_window_import_target(
     )
     if blocked_result is not None:
         return blocked_result
+    source_collection_materialization_blocked = (
+        _runtime_window_source_collection_materialization_blocked_result(
+            target=target,
+            candidate_id=candidate_id,
+            manifest_path=manifest_path,
+            window_start=window_start,
+            window_end=window_end,
+            window_selection=window_selection,
+        )
+    )
+    if source_collection_materialization_blocked is not None:
+        return source_collection_materialization_blocked
     delay_depth_report_ref = _runtime_manifest_delay_depth_stress_report_ref(
         target=target,
         runtime_manifest=runtime_manifest,

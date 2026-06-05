@@ -1128,7 +1128,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             plan["targets"][0]["window_start"], "2026-05-26T13:30:00+00:00"
         )
 
-    def test_runtime_window_target_plan_payload_prefers_selected_runtime_import_plan(
+    def test_runtime_window_target_plan_payload_skips_source_only_runtime_import_plan(
         self,
     ) -> None:
         plan = renewal._runtime_window_target_plan_from_payload(
@@ -1158,6 +1158,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 },
                 "next_paper_route_runtime_window_targets": {
                     "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "source": "paper_route_evidence_audit",
                     "target_count": 1,
                     "targets": [
                         {
@@ -1179,11 +1180,9 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             }
         )
 
-        self.assertEqual(
-            plan["source"], "paper_route_observed_strategy_source_collection"
-        )
-        self.assertEqual(plan["targets"][0]["candidate_id"], "cand-selected-source")
-        self.assertNotIn(
+        self.assertEqual(plan["source"], "paper_route_evidence_audit")
+        self.assertEqual(plan["targets"][0]["candidate_id"], "cand-contaminated-next")
+        self.assertIn(
             "paper_route_account_contamination_detected",
             plan["targets"][0]["candidate_blockers"],
         )
@@ -1469,7 +1468,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             ["H-SOURCE-COLLECTION", "H-PAPER-ROUTE"],
         )
 
-    def test_runtime_window_target_plan_payload_keeps_sim_gate_source_collection(
+    def test_runtime_window_target_plan_payload_does_not_merge_sim_gate_source_collection(
         self,
     ) -> None:
         plan = renewal._runtime_window_target_plan_from_payload(
@@ -1477,6 +1476,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 "schema_version": "torghut.paper-route-evidence.v1",
                 "next_paper_route_runtime_window_targets": {
                     "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "source": "paper_route_evidence_audit",
                     "target_count": 1,
                     "targets": [
                         {
@@ -1518,16 +1518,13 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             }
         )
 
-        self.assertTrue(plan["merged_live_submission_gate_source_collection"])
-        self.assertEqual(plan["source_collection_target_count"], 1)
-        self.assertEqual(plan["paper_route_target_count"], 1)
-        self.assertEqual(plan["target_count"], 2)
+        self.assertNotIn("merged_live_submission_gate_source_collection", plan)
+        self.assertEqual(plan["source"], "paper_route_evidence_audit")
+        self.assertEqual(plan["target_count"], 1)
         self.assertEqual(
             [target["hypothesis_id"] for target in plan["targets"]],
-            ["H-SOURCE-COLLECTION", "H-PAPER-ROUTE"],
+            ["H-PAPER-ROUTE"],
         )
-        self.assertFalse(plan["targets"][0]["promotion_allowed"])
-        self.assertFalse(plan["targets"][0]["final_promotion_allowed"])
 
     def test_runtime_window_target_plan_skips_aggregate_replay_source_collection(
         self,
