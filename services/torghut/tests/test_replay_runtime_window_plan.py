@@ -194,6 +194,10 @@ def test_handoff_builds_non_promotional_runtime_window_target(
     )
     assert target["replay_execution_quality_penalty_bps"] != "0"
     assert "replay_execution_quality_adjusted_window_net_pnl_per_day" in target
+    assert target["replay_lob_reality_gap_penalty_bps"] != "0"
+    assert "replay_lob_reality_gap_stress" in target
+    assert "replay_lob_reality_gap_blockers" in target
+    assert "replay_quality_adjusted_window_net_pnl_per_day" in target
     assert target["hypothesis_id"] == "H-PAIRS-01"
     assert target["strategy_family"] == "microbar_cross_sectional_pairs"
     assert target["strategy_name"] == "microbar-cross-sectional-pairs-v1"

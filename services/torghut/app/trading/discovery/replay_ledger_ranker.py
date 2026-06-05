@@ -10,7 +10,11 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
 
+from app.trading.discovery.lob_reality_gap_stress import (
+    extract_lob_reality_gap_stress,
+)
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
+from app.trading.models import SignalEnvelope
 from app.trading.runtime_ledger import RuntimeLedgerBucket, build_runtime_ledger_buckets
 
 EXACT_REPLAY_LEDGER_RANKING_SCHEMA_VERSION = "torghut.exact-replay-ledger-ranking.v1"
@@ -209,6 +213,11 @@ class ReplayLedgerCandidateRanking:
     execution_quality_penalty_bps: Decimal
     execution_quality_penalty_amount: Decimal
     execution_quality_adjusted_window_net_pnl_per_day: Decimal
+    lob_reality_gap_stress: Mapping[str, object]
+    lob_reality_gap_blockers: tuple[str, ...]
+    lob_reality_gap_penalty_bps: Decimal
+    lob_reality_gap_penalty_amount: Decimal
+    replay_quality_adjusted_window_net_pnl_per_day: Decimal
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -281,6 +290,13 @@ class ReplayLedgerCandidateRanking:
             ),
             "execution_quality_adjusted_window_net_pnl_per_day": str(
                 self.execution_quality_adjusted_window_net_pnl_per_day
+            ),
+            "lob_reality_gap_stress": _payload_object(self.lob_reality_gap_stress),
+            "lob_reality_gap_blockers": list(self.lob_reality_gap_blockers),
+            "lob_reality_gap_penalty_bps": str(self.lob_reality_gap_penalty_bps),
+            "lob_reality_gap_penalty_amount": str(self.lob_reality_gap_penalty_amount),
+            "replay_quality_adjusted_window_net_pnl_per_day": str(
+                self.replay_quality_adjusted_window_net_pnl_per_day
             ),
         }
 
@@ -379,6 +395,18 @@ def rank_replay_ledger_payload(
         total_net - execution_quality_penalty_amount,
         Decimal(window_weekday_count),
     )
+    lob_reality_gap_stress = _lob_reality_gap_stress_summary(rows)
+    lob_reality_gap_penalty_bps = cast(
+        Decimal, lob_reality_gap_stress["effective_replay_rank_penalty_bps"]
+    )
+    lob_reality_gap_penalty_amount = _safe_divide(
+        total_filled_notional * lob_reality_gap_penalty_bps,
+        Decimal("10000"),
+    )
+    replay_quality_adjusted_window_net_pnl_per_day = _safe_divide(
+        total_net - execution_quality_penalty_amount - lob_reality_gap_penalty_amount,
+        Decimal(window_weekday_count),
+    )
     blockers = _promotion_blockers(
         payload=payload,
         rows=rows,
@@ -468,6 +496,15 @@ def rank_replay_ledger_payload(
         execution_quality_penalty_amount=execution_quality_penalty_amount,
         execution_quality_adjusted_window_net_pnl_per_day=(
             execution_quality_adjusted_window_net_pnl_per_day
+        ),
+        lob_reality_gap_stress=lob_reality_gap_stress,
+        lob_reality_gap_blockers=tuple(
+            cast(tuple[str, ...], lob_reality_gap_stress["lob_reality_gap_blockers"])
+        ),
+        lob_reality_gap_penalty_bps=lob_reality_gap_penalty_bps,
+        lob_reality_gap_penalty_amount=lob_reality_gap_penalty_amount,
+        replay_quality_adjusted_window_net_pnl_per_day=(
+            replay_quality_adjusted_window_net_pnl_per_day
         ),
     )
 
@@ -925,6 +962,89 @@ def _execution_quality_summary(
     }
 
 
+def _lob_reality_gap_stress_summary(
+    rows: Sequence[Mapping[str, object]],
+) -> Mapping[str, object]:
+    signal_rows = _lob_signal_rows(rows)
+    warnings: list[str] = []
+    if not signal_rows:
+        warnings.append("missing_lob_reality_gap_rows")
+        stress_payload: dict[str, object] = {
+            "schema_version": "torghut.lob-reality-gap-stress.v2",
+            "status": "preview_only_lob_reality_gap_stress_ranking",
+            "source_papers": [],
+            "row_count": 0,
+            "replay_rank_penalty_bps": 0.0,
+            "warnings": list(warnings),
+            "research_ranking_only": True,
+            "prefilter_only": True,
+            "promotion_proof": False,
+            "proof_authority": False,
+            "promotion_authority": False,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_authority_ok": False,
+        }
+    else:
+        stress_payload = extract_lob_reality_gap_stress(signal_rows).to_payload()
+        warnings.extend(_string_list(stress_payload.get("warnings")))
+
+    warning_penalty_bps = Decimal(len(warnings)) * Decimal("2")
+    raw_penalty_bps = _decimal(stress_payload.get("replay_rank_penalty_bps"))
+    effective_penalty_bps = (raw_penalty_bps or Decimal("0")) + warning_penalty_bps
+    blockers = tuple(f"lob_reality_gap_{warning}" for warning in _dedupe(warnings))
+    return {
+        **stress_payload,
+        "lob_reality_gap_blockers": blockers,
+        "lob_reality_gap_warning_penalty_bps": warning_penalty_bps,
+        "effective_replay_rank_penalty_bps": effective_penalty_bps,
+    }
+
+
+def _lob_signal_rows(
+    rows: Sequence[Mapping[str, object]],
+) -> tuple[SignalEnvelope, ...]:
+    signals: list[SignalEnvelope] = []
+    for index, row in enumerate(rows):
+        event_ts = _row_event_ts(row)
+        symbol = _text(row.get("symbol"))
+        if event_ts is None or not symbol:
+            continue
+        signals.append(
+            SignalEnvelope(
+                event_ts=event_ts,
+                symbol=symbol,
+                timeframe=_text(row.get("timeframe")) or None,
+                ingest_ts=_row_ingest_ts(row),
+                seq=index,
+                source=_text(row.get("source")) or "exact_replay_ledger",
+                payload={str(key): value for key, value in row.items()},
+            )
+        )
+    return tuple(signals)
+
+
+def _row_event_ts(row: Mapping[str, object]) -> datetime | None:
+    for key in (
+        "event_ts",
+        "executed_at",
+        "timestamp",
+        "created_at",
+        "submitted_at",
+        "filled_at",
+    ):
+        if (parsed := _parse_window_datetime(row.get(key))) is not None:
+            return parsed
+    return None
+
+
+def _row_ingest_ts(row: Mapping[str, object]) -> datetime | None:
+    for key in ("ingest_ts", "ingested_at", "observed_at"):
+        if (parsed := _parse_window_datetime(row.get(key))) is not None:
+            return parsed
+    return None
+
+
 def _daily_bucket_ranges(
     start: datetime,
     end: datetime,
@@ -1209,9 +1329,11 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 
 def _ranking_sort_key(candidate: ReplayLedgerCandidateRanking) -> tuple[object, ...]:
     return (
+        -candidate.replay_quality_adjusted_window_net_pnl_per_day,
         -candidate.execution_quality_adjusted_window_net_pnl_per_day,
         -candidate.window_net_pnl_per_day,
         -candidate.total_net_pnl_after_costs,
+        candidate.lob_reality_gap_penalty_bps,
         candidate.execution_quality_penalty_bps,
         candidate.best_day_share,
         candidate.max_drawdown,

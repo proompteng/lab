@@ -123,6 +123,40 @@ def _with_execution_quality(
     return rows
 
 
+def _with_lob_reality_gap_evidence(
+    rows: list[dict[str, object]],
+    *,
+    fragile: bool = False,
+) -> list[dict[str, object]]:
+    event_cycle = ("add", "trade", "cancel")
+    for index, row in enumerate(rows):
+        if fragile:
+            row["bid"] = str(100 + Decimal(index) * Decimal("0.12"))
+            row["ask"] = str(Decimal(str(row["bid"])) + Decimal("0.02"))
+            row["bid_size"] = "950"
+            row["ask_size"] = "50"
+            row["round_trip_latency_ms"] = "2"
+            row["trade_direction"] = "buy"
+            row["trade_size"] = "900"
+            row["odd_lot_bid_size"] = "4" if index else "80"
+            row["odd_lot_ask_size"] = "3" if index else "82"
+            row["off_exchange_trade"] = index > 0
+            row["lob_event_type"] = "cancel_replace" if index > 0 else "trade"
+        else:
+            row["bid"] = "99.99"
+            row["ask"] = "100.01"
+            row["bid_size"] = "510" if index % 2 == 0 else "500"
+            row["ask_size"] = "500" if index % 2 == 0 else "510"
+            row["round_trip_latency_ms"] = str(Decimal("1.0") + Decimal(index) / 10)
+            row["trade_direction"] = "buy" if index % 2 == 0 else "sell"
+            row["trade_size"] = "8"
+            row["odd_lot_bid_size"] = "40"
+            row["odd_lot_ask_size"] = "42"
+            row["off_exchange_trade"] = False
+            row["lob_event_type"] = event_cycle[index % len(event_cycle)]
+    return rows
+
+
 def _payload(
     candidate_id: str,
     rows: list[dict[str, object]],
@@ -400,6 +434,126 @@ def test_ranker_penalizes_missing_closing_auction_mechanism_evidence(
     }.issubset(set(missing["execution_quality_blockers"]))
     assert Decimal(str(missing["execution_quality_penalty_bps"])) > Decimal("0")
     assert missing["promotion_status"] == "blocked_pending_runtime_promotion_proof"
+
+
+def test_ranker_discounts_fragile_lob_reality_gap_candidates(
+    tmp_path: Path,
+) -> None:
+    stable = _payload(
+        "stable-lob-lower-raw-pnl",
+        _with_lob_reality_gap_evidence(
+            _with_execution_quality(
+                _round_trip(
+                    day=18,
+                    symbol="NVDA",
+                    qty="1000",
+                    buy_price="100",
+                    sell_price="100.90",
+                    prefix="stable-lob",
+                ),
+                order_type="limit",
+                shortfall_bps="1",
+                limit_fill_probability="0.82",
+                queue_position="0.15",
+                opportunity_cost_bps="2",
+                price_improvement_bps="3",
+            ),
+            fragile=False,
+        ),
+    )
+    fragile_raw_winner = _payload(
+        "fragile-lob-higher-raw-pnl",
+        _with_lob_reality_gap_evidence(
+            _with_execution_quality(
+                _round_trip(
+                    day=18,
+                    symbol="NVDA",
+                    qty="1000",
+                    buy_price="100",
+                    sell_price="101.00",
+                    prefix="fragile-lob",
+                ),
+                order_type="limit",
+                shortfall_bps="1",
+                limit_fill_probability="0.82",
+                queue_position="0.15",
+                opportunity_cost_bps="2",
+                price_improvement_bps="3",
+            ),
+            fragile=True,
+        ),
+    )
+    stable_path = tmp_path / "stable.json"
+    fragile_path = tmp_path / "fragile.json"
+    stable_path.write_text(json.dumps(stable))
+    fragile_path.write_text(json.dumps(fragile_raw_winner))
+
+    report = build_replay_ledger_ranking_report(
+        [stable_path, fragile_path],
+        policy=ReplayLedgerRankingPolicy(
+            target_net_pnl_per_day=Decimal("1"),
+            min_window_weekday_count=1,
+            min_avg_filled_notional_per_day=Decimal("1"),
+            max_best_day_share=Decimal("1.0"),
+            max_gross_exposure_pct_equity=Decimal("1000.0"),
+            start_equity=Decimal("100000000"),
+        ),
+    )
+    top = report["candidates"][0]
+    fragile = report["candidates"][1]
+
+    assert top["candidate_id"] == "stable-lob-lower-raw-pnl"
+    assert fragile["candidate_id"] == "fragile-lob-higher-raw-pnl"
+    assert Decimal(str(fragile["window_net_pnl_per_day"])) > Decimal(
+        str(top["window_net_pnl_per_day"])
+    )
+    assert Decimal(str(fragile["lob_reality_gap_penalty_bps"])) > Decimal(
+        str(top["lob_reality_gap_penalty_bps"])
+    )
+    assert Decimal(
+        str(top["replay_quality_adjusted_window_net_pnl_per_day"])
+    ) > Decimal(str(fragile["replay_quality_adjusted_window_net_pnl_per_day"]))
+    assert "arxiv-2603.24137" in {
+        item["source_id"] for item in fragile["lob_reality_gap_stress"]["source_papers"]
+    }
+    assert fragile["lob_reality_gap_stress"]["promotion_authority"] is False
+
+
+def test_lob_reality_gap_summary_fails_closed_without_signal_rows() -> None:
+    summary = ranker._lob_reality_gap_stress_summary(
+        [{"symbol": "NVDA", "executed_at": "bad-date"}]
+    )
+
+    assert summary["row_count"] == 0
+    assert summary["promotion_authority"] is False
+    assert summary["effective_replay_rank_penalty_bps"] == Decimal("2")
+    assert summary["lob_reality_gap_blockers"] == (
+        "lob_reality_gap_missing_lob_reality_gap_rows",
+    )
+
+
+def test_lob_signal_rows_use_fallback_timestamps_and_ingest_fields() -> None:
+    signals = ranker._lob_signal_rows(
+        [
+            {
+                "symbol": "NVDA",
+                "submitted_at": "2026-05-18T14:31:00Z",
+                "ingested_at": "2026-05-18T14:31:01Z",
+                "source": "historical_lob_replay",
+                "timeframe": "1m",
+            },
+            {
+                "symbol": "",
+                "executed_at": "2026-05-18T14:32:00Z",
+            },
+        ]
+    )
+
+    assert len(signals) == 1
+    assert signals[0].event_ts == datetime(2026, 5, 18, 14, 31, tzinfo=timezone.utc)
+    assert signals[0].ingest_ts == datetime(2026, 5, 18, 14, 31, 1, tzinfo=timezone.utc)
+    assert signals[0].source == "historical_lob_replay"
+    assert signals[0].timeframe == "1m"
 
 
 def test_ranker_blocks_replay_only_and_over_equity_artifacts() -> None:
