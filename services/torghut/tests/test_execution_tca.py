@@ -447,6 +447,123 @@ class TestExecutionTcaCostLineage(TestCase):
             "execution_policy_hash",
         )
 
+    def test_upsert_prefers_selected_policy_payload_over_advisor_context(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = self._insert_decision(
+                session,
+                strategy,
+                decision_hash="advisor-context-decision",
+                execution_policy={
+                    "approved": True,
+                    "selected_order_type": "market",
+                    "adaptive": {
+                        "key": "AAPL:range",
+                        "applied": False,
+                        "sample_size": 0,
+                    },
+                },
+                decision_json={
+                    "strategy_id": str(strategy.id),
+                    "symbol": "AAPL",
+                    "action": "buy",
+                    "qty": "10",
+                    "order_type": "market",
+                    "time_in_force": "day",
+                    "submit_path": "direct_alpaca",
+                    "params": {
+                        "price": "100",
+                        "execution_policy": {
+                            "approved": True,
+                            "selected_order_type": "market",
+                            "adaptive": {
+                                "key": "AAPL:range",
+                                "applied": False,
+                                "sample_size": 0,
+                            },
+                        },
+                    },
+                    "execution_advisor": {
+                        "enabled": False,
+                        "applied": False,
+                        "fallback_reason": "advisor_disabled",
+                        "preferred_order_type": None,
+                    },
+                },
+            )
+            execution = self._insert_execution(
+                session,
+                decision,
+                order_id="advisor-context-order",
+                raw_order={
+                    "commission": "0.02",
+                    "cost_model": {"source": "broker_reported_commission"},
+                },
+            )
+
+            upsert_execution_tca_metric(session, execution)
+            session.flush()
+            lineage = self._lineage(execution)
+
+        self.assertEqual(lineage["status"], "source_backed")
+        self.assertNotIn("execution_policy_hash_ambiguous", lineage["blockers"])
+        self.assertIsInstance(lineage["execution_policy_hash"], str)
+        self.assertEqual(
+            lineage["source_fields"]["execution_policy_hash"],
+            "execution_policy_payload",
+        )
+
+    def test_upsert_uses_advisor_policy_payload_when_selected_policy_missing(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = self._insert_decision(
+                session,
+                strategy,
+                decision_hash="advisor-only-decision",
+                execution_policy=None,
+                decision_json={
+                    "strategy_id": str(strategy.id),
+                    "symbol": "AAPL",
+                    "action": "buy",
+                    "qty": "10",
+                    "order_type": "market",
+                    "time_in_force": "day",
+                    "submit_path": "direct_alpaca",
+                    "params": {"price": "100"},
+                    "execution_advisor": {
+                        "enabled": False,
+                        "applied": False,
+                        "fallback_reason": "advisor_disabled",
+                        "preferred_order_type": None,
+                    },
+                },
+            )
+            execution = self._insert_execution(
+                session,
+                decision,
+                order_id="advisor-only-order",
+                raw_order={
+                    "commission": "0.02",
+                    "cost_model": {"source": "broker_reported_commission"},
+                },
+            )
+
+            upsert_execution_tca_metric(session, execution)
+            session.flush()
+            lineage = self._lineage(execution)
+
+        self.assertEqual(lineage["status"], "source_backed")
+        self.assertNotIn("execution_policy_hash_missing", lineage["blockers"])
+        self.assertIsInstance(lineage["execution_policy_hash"], str)
+        self.assertEqual(
+            lineage["source_fields"]["execution_policy_hash"],
+            "execution_policy_advisor_payload",
+        )
+
     def test_upsert_blocks_ambiguous_policy_and_cost_model_hashes(self) -> None:
         with self.session_local() as session:
             strategy = self._insert_strategy(session)

@@ -73,9 +73,11 @@ _EXECUTION_POLICY_HASH_KEYS = (
     "execution_policy_sha256",
     "policy_hash",
 )
-_EXECUTION_POLICY_PAYLOAD_KEYS = (
+_EXECUTION_POLICY_PRIMARY_PAYLOAD_KEYS = (
     "execution_policy",
     "execution_policy_context",
+)
+_EXECUTION_POLICY_ADVISORY_PAYLOAD_KEYS = (
     "execution_advisor",
     "_execution_advice_provenance",
 )
@@ -658,11 +660,21 @@ def _execution_policy_hash_candidates(
     payload_hashes = _hash_candidates(
         source_payloads,
         hash_keys=(),
-        payload_keys=_EXECUTION_POLICY_PAYLOAD_KEYS,
+        payload_keys=_EXECUTION_POLICY_PRIMARY_PAYLOAD_KEYS,
     )
     if payload_hashes:
         if len(payload_hashes) == 1:
             source_fields["execution_policy_hash"] = "execution_policy_payload"
+        return payload_hashes
+
+    payload_hashes = _hash_candidates(
+        source_payloads,
+        hash_keys=(),
+        payload_keys=_EXECUTION_POLICY_ADVISORY_PAYLOAD_KEYS,
+    )
+    if payload_hashes:
+        if len(payload_hashes) == 1:
+            source_fields["execution_policy_hash"] = "execution_policy_advisor_payload"
         return payload_hashes
 
     decision_policy_hash = _decision_execution_policy_hash(
