@@ -449,6 +449,45 @@ def _safe_decimal(value: object) -> Decimal | None:
         return None
 
 
+def _decimal_text(value: Decimal) -> str:
+    text = format(value, "f")
+    if "." not in text:
+        return text
+    return text.rstrip("0").rstrip(".") or "0"
+
+
+def _bounded_paper_route_probe_notional() -> Decimal:
+    return max(
+        _safe_decimal(settings.trading_simple_paper_route_probe_max_notional)
+        or Decimal("0"),
+        Decimal("0"),
+    )
+
+
+def _bounded_paper_route_probe_collection_payload(
+    *,
+    authorized: bool,
+) -> dict[str, object]:
+    notional = _bounded_paper_route_probe_notional() if authorized else Decimal("0")
+    bounded_authorized = notional > 0
+    if not bounded_authorized:
+        return {
+            "bounded_evidence_collection_authorized": False,
+            "bounded_evidence_collection_max_notional": "0",
+            "max_notional": "0",
+        }
+    notional_text = _decimal_text(notional)
+    return {
+        "bounded_evidence_collection_authorized": True,
+        "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
+        "bounded_evidence_collection_max_notional": notional_text,
+        "paper_route_probe_next_session_max_notional": notional_text,
+        "paper_route_probe_effective_max_notional": notional_text,
+        "target_notional": notional_text,
+        "max_notional": notional_text,
+    }
+
+
 def _safe_bool(value: object) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -1849,7 +1888,7 @@ def _runtime_ledger_paper_probation_candidates(
             "final_promotion_allowed": False,
             "paper_probation_reason_codes": [_RUNTIME_LEDGER_PAPER_PROBATION_REASON],
             "paper_probation_target_capital_stage": "shadow",
-            "max_notional": "0",
+            **_bounded_paper_route_probe_collection_payload(authorized=True),
         }
         for candidate in candidates
         if _runtime_ledger_paper_probation_eligible(candidate)
@@ -1904,9 +1943,7 @@ def _runtime_ledger_source_collection_target_progress_payload(
 ) -> dict[str, object]:
     target = _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_NET_PNL_AFTER_COSTS
     shortfall = max(target - net_pnl_after_costs, Decimal("0"))
-    progress_ratio = (
-        net_pnl_after_costs / target if target > 0 else Decimal("0")
-    )
+    progress_ratio = net_pnl_after_costs / target if target > 0 else Decimal("0")
     if net_pnl_after_costs > 0:
         required_notional_scale = max(target / net_pnl_after_costs, Decimal("1"))
     else:
@@ -1938,14 +1975,16 @@ def _runtime_ledger_source_collection_profit_target_metadata(
         "source_collection_priority": "source_window_evidence_collection",
     }
     if profit_target_candidate:
-        net_pnl_after_costs = (
-            _safe_decimal(payload.get("net_strategy_pnl_after_costs")) or Decimal("0")
-        )
+        net_pnl_after_costs = _safe_decimal(
+            payload.get("net_strategy_pnl_after_costs")
+        ) or Decimal("0")
         filled_notional = _safe_decimal(payload.get("filled_notional")) or Decimal("0")
         metadata.update(
             {
                 "source_collection_priority": "profit_target_source_materialization",
-                "source_collection_net_strategy_pnl_after_costs": str(net_pnl_after_costs),
+                "source_collection_net_strategy_pnl_after_costs": str(
+                    net_pnl_after_costs
+                ),
                 "source_collection_post_cost_expectancy_bps": str(
                     _safe_decimal(payload.get("post_cost_expectancy_bps"))
                     or Decimal("0")
@@ -1989,6 +2028,11 @@ def _runtime_ledger_source_collection_candidates(
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "final_promotion_allowed": False,
+            **_bounded_paper_route_probe_collection_payload(
+                authorized=_runtime_ledger_source_collection_profit_target_candidate(
+                    candidate
+                )
+            ),
             "source_collection_reason_codes": [
                 reason
                 for reason in _normalize_reason_codes(
@@ -2002,7 +2046,6 @@ def _runtime_ledger_source_collection_candidates(
                 )
                 if reason in _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS
             ],
-            "max_notional": "0",
         }
         for candidate in candidates
         if _runtime_ledger_source_collection_candidate(candidate)
@@ -2271,6 +2314,9 @@ def _runtime_ledger_paper_probation_import_plan(
             "evidence_collection_ok": True,
             "canary_collection_authorized": paper_probation_satisfied,
             "bounded_live_paper_collection_authorized": paper_probation_satisfied,
+            **_bounded_paper_route_probe_collection_payload(
+                authorized=paper_probation_satisfied or profit_target_source_collection
+            ),
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "evidence_collection_stage": "paper",
@@ -2298,7 +2344,6 @@ def _runtime_ledger_paper_probation_import_plan(
                 else "runtime_ledger_paper_probation"
             ),
             "selection_reason": selection_reason,
-            "max_notional": "0",
         }
         if source_collection:
             target.update(

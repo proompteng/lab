@@ -9054,6 +9054,21 @@ def _source_collection_import_target_allowed(target: Mapping[str, Any]) -> bool:
     return True
 
 
+def _target_bounded_collection_notional(target: Mapping[str, Any]) -> str:
+    for key in (
+        "target_notional",
+        "paper_route_probe_target_notional",
+        "paper_route_probe_effective_max_notional",
+        "bounded_evidence_collection_max_notional",
+        "paper_route_probe_next_session_max_notional",
+        "max_notional",
+    ):
+        amount = _safe_decimal(target.get(key))
+        if amount > 0:
+            return _decimal_text(amount)
+    return "0"
+
+
 def _runtime_window_import_target_metadata(
     target: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -9122,6 +9137,17 @@ def _sanitized_runtime_ledger_source_collection_target(
         _safe_text(target.get("source_kind"))
         or RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
     )
+    bounded_evidence_collection_requested = _truthy_plan_value(
+        target.get("bounded_evidence_collection_authorized")
+    )
+    bounded_notional = (
+        _target_bounded_collection_notional(target)
+        if bounded_evidence_collection_requested
+        else "0"
+    )
+    bounded_evidence_collection_authorized = (
+        bounded_evidence_collection_requested and _safe_decimal(bounded_notional) > 0
+    )
     final_promotion_blockers = _unique_text_items(
         target.get("final_promotion_blockers")
     ) or list(RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS)
@@ -9166,9 +9192,26 @@ def _sanitized_runtime_ledger_source_collection_target(
         ),
         "proof_mode": "probation",
         "evidence_collection_ok": True,
-        "canary_collection_authorized": False,
-        "bounded_live_paper_collection_authorized": False,
-        "bounded_evidence_collection_authorized": False,
+        "canary_collection_authorized": bool(
+            bounded_evidence_collection_authorized
+            and target.get("canary_collection_authorized")
+        ),
+        "bounded_live_paper_collection_authorized": bool(
+            bounded_evidence_collection_authorized
+            and target.get("bounded_live_paper_collection_authorized")
+        ),
+        "bounded_evidence_collection_authorized": (
+            bounded_evidence_collection_authorized
+        ),
+        "bounded_evidence_collection_scope": _safe_text(
+            target.get("bounded_evidence_collection_scope")
+        )
+        or (
+            "paper_route_probe_next_session_only"
+            if bounded_evidence_collection_authorized
+            else ""
+        ),
+        "bounded_evidence_collection_max_notional": bounded_notional,
         "capital_promotion_allowed": False,
         "live_capital_authorized": False,
         "final_authority_ok": False,
@@ -9199,7 +9242,10 @@ def _sanitized_runtime_ledger_source_collection_target(
         or RUNTIME_LEDGER_SOURCE_COLLECTION_SELECTED_BY,
         "selection_reason": _safe_text(target.get("selection_reason"))
         or "positive_activity_needs_source_window_runtime_evidence",
-        "max_notional": "0",
+        "target_notional": bounded_notional,
+        "paper_route_probe_next_session_max_notional": bounded_notional,
+        "paper_route_probe_effective_max_notional": bounded_notional,
+        "max_notional": bounded_notional,
         "stripped_source_promotion_authority": bool(
             target.get("promotion_allowed")
             or target.get("final_promotion_allowed")

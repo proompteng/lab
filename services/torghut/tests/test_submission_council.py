@@ -1537,7 +1537,9 @@ class TestSubmissionCouncil(TestCase):
         self.assertFalse(paper_candidates[0]["capital_promotion_allowed"])
         self.assertFalse(paper_candidates[0]["final_authority_ok"])
         self.assertFalse(paper_candidates[0]["final_promotion_allowed"])
-        self.assertEqual(paper_candidates[0]["max_notional"], "0")
+        self.assertTrue(paper_candidates[0]["bounded_evidence_collection_authorized"])
+        self.assertEqual(paper_candidates[0]["target_notional"], "25")
+        self.assertEqual(paper_candidates[0]["max_notional"], "25")
         import_plan = gate["runtime_ledger_paper_probation_import_plan"]
         self.assertIsInstance(import_plan, dict)
         self.assertEqual(
@@ -1593,6 +1595,10 @@ class TestSubmissionCouncil(TestCase):
         self.assertTrue(target["evidence_collection_ok"])
         self.assertTrue(target["canary_collection_authorized"])
         self.assertTrue(target["bounded_live_paper_collection_authorized"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(target["target_notional"], "25")
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
+        self.assertEqual(target["max_notional"], "25")
         self.assertFalse(target["capital_promotion_allowed"])
         self.assertFalse(target["final_authority_ok"])
         self.assertEqual(target["promotion_allowed"], False)
@@ -2157,7 +2163,10 @@ class TestSubmissionCouncil(TestCase):
         self.assertFalse(target["paper_probation_authorized"])
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_allowed"])
-        self.assertEqual(target["max_notional"], "0")
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(target["target_notional"], "25")
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
+        self.assertEqual(target["max_notional"], "25")
         self.assertEqual(
             target["selection_reason"], "profit_target_source_window_evidence_pending"
         )
@@ -2286,7 +2295,10 @@ class TestSubmissionCouncil(TestCase):
         target = plan["targets"][0]
         self.assertEqual(target["candidate_id"], "ca4e6e3c7d639e3363dc5860")
         self.assertTrue(target["paper_probation_authorized"])
-        self.assertEqual(target["max_notional"], "0")
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(target["target_notional"], "25")
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
+        self.assertEqual(target["max_notional"], "25")
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_allowed"])
         self.assertIn(

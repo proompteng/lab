@@ -5956,6 +5956,54 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(target["final_promotion_allowed"])
         self.assertTrue(target["stripped_source_promotion_authority"])
 
+    def test_source_collection_import_plan_preserves_bounded_authorized_notional(
+        self,
+    ) -> None:
+        live_gate = {
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+            "runtime_ledger_source_collection_candidates": [
+                {
+                    "hypothesis_id": "H-DIRECT",
+                    "candidate_id": "direct-bounded-source-collection",
+                    "observed_stage": "paper",
+                    "strategy_family": "intraday_tsmom_consistent",
+                    "strategy_name": "intraday-tsmom-profit-v3",
+                    "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                    "account": "TORGHUT_SIM",
+                    "source_account_label": "TORGHUT_SIM",
+                    "source_dsn_env": "SIM_DB_DSN",
+                    "target_dsn_env": "SIM_DB_DSN",
+                    "window_start": "2026-06-02T13:30:00+00:00",
+                    "window_end": "2026-06-02T20:00:00+00:00",
+                    "source_collection_authorized": True,
+                    "source_collection_reason_codes": [
+                        "runtime_ledger_source_collection_pending"
+                    ],
+                    "bounded_evidence_collection_authorized": True,
+                    "bounded_evidence_collection_max_notional": "25",
+                    "target_notional": "25",
+                    "promotion_allowed": True,
+                    "final_promotion_allowed": True,
+                    "max_notional": "25000",
+                }
+            ],
+        }
+
+        plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan={"targets": []},
+            live_submission_gate=live_gate,
+            target_limit=5,
+        )
+
+        target = plan["targets"][0]
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(target["target_notional"], "25")
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
+        self.assertEqual(target["max_notional"], "25")
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertTrue(target["stripped_source_promotion_authority"])
+
     def test_builder_exports_missing_runtime_window_health_gate_as_blockers(
         self,
     ) -> None:
