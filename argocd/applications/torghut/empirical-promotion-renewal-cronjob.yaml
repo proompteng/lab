@@ -148,6 +148,8 @@ spec:
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
                 - name: TORGHUT_IMAGE_DIGEST
                   value: sha256:ab230606092556bdc1b7f329e6c108750dfa41d054c2b3db0b7530470cbf274d
+                - name: TORGHUT_COMMIT
+                  value: 769d9780df80138a4fb220b2dab35ad7190185fe
                 - name: TORGHUT_EMPIRICAL_CEPH_BUCKET
                   valueFrom:
                     configMapKeyRef:

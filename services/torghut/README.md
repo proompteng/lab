@@ -361,8 +361,8 @@ Testing rules for the trading core:
   May 13 doc 191 `torghut.source-serving-repair-receipt-ledger.v1` ledger. It binds repair and routeability evidence
   to the source commit, serving build commit, serving image digest, manifest image digest, and required contract
   canaries. Missing or mismatched source-serving proof keeps the ledger in repair-only zero-notional mode; the Torghut
-  release manifest updater now writes `TORGHUT_IMAGE_DIGEST` into live and sim Knative env so runtime payloads can
-  report the promoted digest.
+  release manifest updater now writes `TORGHUT_IMAGE_DIGEST` and `TORGHUT_COMMIT` into runtime/proof surfaces so
+  runtime payloads can report the promoted digest and scheduled proof packets can fail closed on stale code lineage.
 - `GET /trading/status`, `GET /trading/health`, `GET /readyz`, and `GET /trading/consumer-evidence` now expose the
   May 13 doc 192 `torghut.freshness-carry-ledger.v1` ledger. It derives TA signal, TCA, empirical, market-context,
   quant-evidence, and source-serving freshness dimensions from existing status inputs, emits bounded zero-notional
