@@ -50,6 +50,7 @@ spec:
                       --target-plan-readback-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan?runtime_window_import_audit=deferred
                       --target-plan-readback-timeout-seconds 10
                       --require-target-plan-readback-clean
+                      --allow-pending-clean-window-baseline-readback
                     )
                   fi
                   /opt/venv/bin/python scripts/flatten_paper_account_positions.py \

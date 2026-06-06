@@ -183,6 +183,15 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--allow-pending-clean-window-baseline-readback",
+        action="store_true",
+        help=(
+            "Allow the explicit pre-session pending clean-window baseline state when "
+            "this cleanup job runs before the baseline window can be evaluated. Dirty, "
+            "missing, stale, or unreadable readbacks still fail when clean readback is required."
+        ),
+    )
+    parser.add_argument(
         "--persist-lineage",
         action="store_true",
         help=(
@@ -316,6 +325,33 @@ def _target_plan_baseline_readback(
         "source_auditable": bool(baseline.get("source_auditable")),
         "blockers": blockers,
     }
+
+
+def _target_plan_readback_pending_clean_window_baseline_only(
+    readback: Mapping[str, object],
+) -> bool:
+    if _safe_text(readback.get("state")) != "blocked":
+        return False
+    if int(readback.get("matching_target_count") or 0) <= 0:
+        return False
+    targets = [_as_mapping(target) for target in _as_sequence(readback.get("targets"))]
+    if not targets:
+        return False
+    allowed_readback_blockers = {
+        "paper_route_clean_window_baseline_snapshot_pending",
+        "paper_route_target_plan_clean_window_baseline_not_clean",
+        "paper_route_target_plan_readback_snapshot_id_mismatch",
+    }
+    if set(_readback_blockers(readback.get("blockers"))) - allowed_readback_blockers:
+        return False
+    for target in targets:
+        if _safe_text(target.get("state")) != "pending_until_clean_window_baseline":
+            return False
+        if set(_readback_blockers(target.get("blockers"))) != {
+            "paper_route_clean_window_baseline_snapshot_pending"
+        }:
+            return False
+    return True
 
 
 def _readback_datetime(value: object) -> datetime | None:
@@ -1333,6 +1369,12 @@ def main() -> int:
                 args.require_target_plan_readback_clean
             )
             payload["target_plan_readback_clean"] = readback.get("state") == "clean"
+            payload["target_plan_readback_pending_clean_window_baseline_allowed"] = (
+                bool(args.allow_pending_clean_window_baseline_readback)
+                and _target_plan_readback_pending_clean_window_baseline_only(
+                    _as_mapping(readback)
+                )
+            )
     finally:
         if session_engine is not None:
             session_engine.dispose()
@@ -1347,6 +1389,7 @@ def main() -> int:
         return 2
     if bool(payload.get("target_plan_readback_required_clean")) and not bool(
         payload.get("target_plan_readback_clean")
+        or payload.get("target_plan_readback_pending_clean_window_baseline_allowed")
     ):
         return 3
     return 0

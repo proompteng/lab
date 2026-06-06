@@ -1342,6 +1342,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertIn("--target-plan-readback-timeout-seconds 10", args)
         self.assertIn("--require-target-plan-readback-clean", args)
+        self.assertIn("--allow-pending-clean-window-baseline-readback", args)
         self.assertIn('"${target_plan_readback_args[@]}"', args)
         self.assertIn("--persist-lineage", args)
         self.assertIn("--apply", args)
