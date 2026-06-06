@@ -1482,6 +1482,259 @@ class TestFlattenPaperAccountPositions(TestCase):
             readback["blockers"],
         )
 
+    def test_required_target_plan_readback_allows_pre_session_pending_baseline(
+        self,
+    ) -> None:
+        client = FakeFlattenClient()
+        snapshot = SimpleNamespace(
+            id="snapshot-1",
+            as_of=datetime(2026, 6, 5, 13, 6, tzinfo=timezone.utc),
+        )
+        target_plan = {
+            "schema_version": "torghut.paper-route-target-plan.v1",
+            "next_paper_route_runtime_window_targets": {
+                "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                "clean_window_baseline_readiness": {
+                    "state": "clean_window_required",
+                    "blockers": ["paper_route_clean_window_baseline_snapshot_pending"],
+                },
+                "targets": [
+                    {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "account_label": "TORGHUT_SIM",
+                        "window_start": "2026-06-05T13:30:00+00:00",
+                        "window_end": "2026-06-05T20:00:00+00:00",
+                        "paper_route_clean_window_baseline_state": {
+                            "state": "pending_until_clean_window_baseline",
+                            "blockers": [
+                                "paper_route_clean_window_baseline_snapshot_pending"
+                            ],
+                        },
+                    }
+                ],
+            },
+        }
+        argv = [
+            "flatten_paper_account_positions.py",
+            "--account-label",
+            "TORGHUT_SIM",
+            "--expected-account-label",
+            "TORGHUT_SIM",
+            "--trading-mode",
+            "paper",
+            "--persist-snapshot",
+            "--target-plan-readback-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--require-target-plan-readback-clean",
+            "--allow-pending-clean-window-baseline-readback",
+            "--json",
+        ]
+
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(
+                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+            ),
+            patch.object(
+                flatten_script, "SessionLocal", return_value=FakeSessionContext()
+            ),
+            patch.object(
+                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+            ),
+            patch.object(
+                flatten_script.urllib.request,
+                "urlopen",
+                return_value=FakeHttpResponse(target_plan),
+            ),
+            redirect_stdout(StringIO()) as output,
+        ):
+            exit_code = flatten_script.main()
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["target_plan_readback_required_clean"])
+        self.assertFalse(payload["target_plan_readback_clean"])
+        self.assertTrue(
+            payload["target_plan_readback_pending_clean_window_baseline_allowed"]
+        )
+        self.assertIn(
+            "paper_route_clean_window_baseline_snapshot_pending",
+            payload["target_plan_readback"]["blockers"],
+        )
+
+    def test_pending_baseline_allowance_still_fails_dirty_readback(self) -> None:
+        client = FakeFlattenClient()
+        snapshot = SimpleNamespace(
+            id="snapshot-1",
+            as_of=datetime(2026, 6, 5, 13, 16, tzinfo=timezone.utc),
+        )
+        target_plan = {
+            "schema_version": "torghut.paper-route-target-plan.v1",
+            "next_paper_route_runtime_window_targets": {
+                "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                "clean_window_baseline_readiness": {
+                    "state": "clean_window_required",
+                    "blockers": ["paper_route_account_pre_session_snapshot_stale"],
+                },
+                "targets": [
+                    {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "account_label": "TORGHUT_SIM",
+                        "window_start": "2026-06-05T13:30:00+00:00",
+                        "window_end": "2026-06-05T20:00:00+00:00",
+                        "paper_route_clean_window_baseline_state": {
+                            "state": "blocked",
+                            "blockers": [
+                                "paper_route_account_pre_session_snapshot_stale"
+                            ],
+                        },
+                    }
+                ],
+            },
+        }
+        argv = [
+            "flatten_paper_account_positions.py",
+            "--account-label",
+            "TORGHUT_SIM",
+            "--expected-account-label",
+            "TORGHUT_SIM",
+            "--trading-mode",
+            "paper",
+            "--persist-snapshot",
+            "--target-plan-readback-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--require-target-plan-readback-clean",
+            "--allow-pending-clean-window-baseline-readback",
+            "--json",
+        ]
+
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(
+                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+            ),
+            patch.object(
+                flatten_script, "SessionLocal", return_value=FakeSessionContext()
+            ),
+            patch.object(
+                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+            ),
+            patch.object(
+                flatten_script.urllib.request,
+                "urlopen",
+                return_value=FakeHttpResponse(target_plan),
+            ),
+            redirect_stdout(StringIO()) as output,
+        ):
+            exit_code = flatten_script.main()
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 3)
+        self.assertTrue(payload["target_plan_readback_required_clean"])
+        self.assertFalse(payload["target_plan_readback_clean"])
+        self.assertFalse(
+            payload["target_plan_readback_pending_clean_window_baseline_allowed"]
+        )
+        self.assertIn(
+            "paper_route_account_pre_session_snapshot_stale",
+            payload["target_plan_readback"]["blockers"],
+        )
+
+    def test_pending_baseline_allowance_predicate_fails_closed_edges(self) -> None:
+        self.assertFalse(
+            flatten_script._target_plan_readback_pending_clean_window_baseline_only(
+                {
+                    "state": "clean",
+                    "matching_target_count": 1,
+                    "targets": [
+                        {
+                            "state": "pending_until_clean_window_baseline",
+                            "blockers": [
+                                "paper_route_clean_window_baseline_snapshot_pending"
+                            ],
+                        }
+                    ],
+                    "blockers": [
+                        "paper_route_clean_window_baseline_snapshot_pending",
+                        "paper_route_target_plan_clean_window_baseline_not_clean",
+                    ],
+                }
+            )
+        )
+        self.assertFalse(
+            flatten_script._target_plan_readback_pending_clean_window_baseline_only(
+                {
+                    "state": "blocked",
+                    "matching_target_count": 0,
+                    "targets": [
+                        {
+                            "state": "pending_until_clean_window_baseline",
+                            "blockers": [
+                                "paper_route_clean_window_baseline_snapshot_pending"
+                            ],
+                        }
+                    ],
+                    "blockers": [
+                        "paper_route_clean_window_baseline_snapshot_pending",
+                        "paper_route_target_plan_clean_window_baseline_not_clean",
+                    ],
+                }
+            )
+        )
+        self.assertFalse(
+            flatten_script._target_plan_readback_pending_clean_window_baseline_only(
+                {
+                    "state": "blocked",
+                    "matching_target_count": 1,
+                    "targets": [],
+                    "blockers": [
+                        "paper_route_clean_window_baseline_snapshot_pending",
+                        "paper_route_target_plan_clean_window_baseline_not_clean",
+                    ],
+                }
+            )
+        )
+        self.assertFalse(
+            flatten_script._target_plan_readback_pending_clean_window_baseline_only(
+                {
+                    "state": "blocked",
+                    "matching_target_count": 1,
+                    "targets": [
+                        {
+                            "state": "blocked",
+                            "blockers": [
+                                "paper_route_clean_window_baseline_snapshot_pending"
+                            ],
+                        }
+                    ],
+                    "blockers": [
+                        "paper_route_clean_window_baseline_snapshot_pending",
+                        "paper_route_target_plan_clean_window_baseline_not_clean",
+                    ],
+                }
+            )
+        )
+        self.assertFalse(
+            flatten_script._target_plan_readback_pending_clean_window_baseline_only(
+                {
+                    "state": "blocked",
+                    "matching_target_count": 1,
+                    "targets": [
+                        {
+                            "state": "pending_until_clean_window_baseline",
+                            "blockers": ["paper_route_account_pre_session_not_flat"],
+                        }
+                    ],
+                    "blockers": [
+                        "paper_route_clean_window_baseline_snapshot_pending",
+                        "paper_route_target_plan_clean_window_baseline_not_clean",
+                    ],
+                }
+            )
+        )
+
     def test_main_uses_database_dsn_env_for_snapshot_persistence(self) -> None:
         client = FakeFlattenClient()
         snapshot = SimpleNamespace(
