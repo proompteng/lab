@@ -66,6 +66,10 @@ from scripts.import_hypothesis_runtime_windows import (
     _source_decision_mode,
     _source_decision_mode_counts,
     _source_decision_rows_profit_proof_eligible,
+    _source_decision_action_offsets_open_qty,
+    _source_row_lineage_missing_or_matches,
+    _filter_source_rows_for_runtime_window,
+    _runtime_open_qtys_by_symbol_from_execution_rows,
     _source_runtime_ledger_payload_from_row,
     _source_order_feed_payload_delta_fill,
     _required_order_lifecycle_source_row_count,
@@ -1471,6 +1475,88 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(summary["authoritative_target_notional_sizing_count"], 1)
         self.assertEqual(summary["missing_target_notional_sizing_count"], 0)
         self.assertEqual(summary["blockers"], [])
+
+    def test_post_window_closeout_helpers_fail_closed(self) -> None:
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+
+        self.assertFalse(
+            _source_row_lineage_missing_or_matches(
+                {"candidate_id": "other-candidate"},
+                candidate_id="candidate-1",
+                hypothesis_id=None,
+            )
+        )
+        self.assertFalse(
+            _source_row_lineage_missing_or_matches(
+                {"hypothesis_id": "other-hypothesis"},
+                candidate_id=None,
+                hypothesis_id="H-PAIRS-01",
+            )
+        )
+        self.assertEqual(
+            _runtime_open_qtys_by_symbol_from_execution_rows(
+                [
+                    {"symbol": "AAPL", "side": "buy", "filled_qty": "0"},
+                    {
+                        "side": "buy",
+                        "filled_qty": "1",
+                        "avg_fill_price": "100",
+                    },
+                    {
+                        "symbol": "MSFT",
+                        "side": "hold",
+                        "filled_qty": "1",
+                        "avg_fill_price": "100",
+                    },
+                ]
+            ),
+            {},
+        )
+        self.assertFalse(
+            _source_decision_action_offsets_open_qty(
+                {"action": "sell"},
+                open_qtys={"AAPL": Decimal("1")},
+            )
+        )
+        self.assertFalse(
+            _source_decision_action_offsets_open_qty(
+                {"symbol": "AAPL", "action": "sell"},
+                open_qtys={},
+            )
+        )
+        self.assertTrue(
+            _source_decision_action_offsets_open_qty(
+                {"symbol": "AAPL", "action": "buy"},
+                open_qtys={"AAPL": Decimal("-1")},
+            )
+        )
+
+        decisions, executions, order_rows, diagnostics = (
+            _filter_source_rows_for_runtime_window(
+                decision_rows=[
+                    {
+                        "trade_decision_id": "decision-close",
+                        "computed_at": window_end + timedelta(minutes=5),
+                        "symbol": "AAPL",
+                        "action": "sell",
+                        "source_decision_mode": "bounded_paper_route_collection",
+                    }
+                ],
+                execution_rows=[],
+                order_lifecycle_rows=[],
+                window_end=window_end,
+                closeout_end=window_end + timedelta(hours=1),
+                candidate_id="candidate-1",
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+            )
+        )
+
+        self.assertEqual(decisions, [])
+        self.assertEqual(executions, [])
+        self.assertEqual(order_rows, [])
+        self.assertEqual(diagnostics["post_window_closeout_decision_count"], 0)
+        self.assertEqual(diagnostics["post_window_closeout_open_qty_by_symbol"], {})
 
     def test_runtime_rows_fail_closed_on_non_authoritative_target_notional_sizing(
         self,
@@ -8691,6 +8777,298 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertNotIn(
             "order_feed_unlinked_fill_lifecycle_present",
             _source_activity_diagnostics_blockers(diagnostics),
+        )
+
+    def test_query_timestamps_includes_verified_post_window_closeout(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        closeout_at = window_end + timedelta(minutes=5)
+        entry_payload = {
+            "action": "buy",
+            "source_decision_mode": "bounded_paper_route_collection",
+            "candidate_id": "candidate-1",
+            "hypothesis_id": "H-PAIRS-01",
+            "paper_route_target_notional_sizing": {
+                "schema_version": "torghut.paper-route-target-notional-sizing.v1",
+                "sizing_source": "target_notional",
+                "target_notional": "75000",
+                "requested_qty": "1",
+                "resolved_qty": "1",
+                "blockers": [],
+            },
+        }
+        closeout_payload = {
+            "action": "sell",
+            "source_decision_mode": "bounded_paper_route_collection",
+        }
+
+        def decision_row(
+            decision_id: str,
+            created_at: datetime,
+            action_payload: dict[str, object],
+        ) -> tuple[object, ...]:
+            return (
+                decision_id,
+                created_at,
+                "AAPL",
+                "TORGHUT_SIM",
+                "microbar-cross-sectional-pairs-v1",
+                decision_id,
+                action_payload,
+            )
+
+        def execution_row(
+            execution_id: str,
+            decision_id: str,
+            decision_created_at: datetime,
+            event_at: datetime,
+            side: str,
+            qty: str,
+            price: str,
+            payload: dict[str, object],
+            tca_id: str,
+        ) -> tuple[object, ...]:
+            return (
+                execution_id,
+                decision_id,
+                decision_created_at,
+                event_at,
+                event_at,
+                "AAPL",
+                side,
+                Decimal(qty),
+                Decimal(price),
+                Decimal("0.01"),
+                {
+                    "cost_amount": "0.01",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+                {},
+                "TORGHUT_SIM",
+                "microbar-cross-sectional-pairs-v1",
+                decision_id,
+                payload,
+                f"order-{decision_id}",
+                f"client-{decision_id}",
+                "filled",
+                tca_id,
+            )
+
+        def order_event_row(
+            event_id: str,
+            decision_id: str,
+            execution_id: str,
+            event_at: datetime,
+            event_type: str,
+            side: str,
+            qty: str,
+            price: str,
+            payload: dict[str, object],
+            source_offset: int,
+        ) -> tuple[object, ...]:
+            is_fill = event_type == "fill"
+            return (
+                event_id,
+                decision_id,
+                execution_id,
+                event_at,
+                "AAPL",
+                "TORGHUT_SIM",
+                "microbar-cross-sectional-pairs-v1",
+                decision_id,
+                payload,
+                f"order-{decision_id}",
+                f"client-{decision_id}",
+                event_type,
+                "filled" if is_fill else "new",
+                side,
+                Decimal(qty),
+                Decimal(qty) if is_fill else Decimal("0"),
+                Decimal(qty) if is_fill else None,
+                Decimal(price) if is_fill else None,
+                Decimal(qty) * Decimal(price) if is_fill else None,
+                "cumulative_to_delta" if is_fill else None,
+                f"fingerprint-{event_id}",
+                "alpaca.trade_updates",
+                0,
+                source_offset,
+                f"source-window-{event_id}",
+                {},
+                {
+                    "cost_amount": "0.01",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+                {
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+                "inserted",
+                None,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                [],
+            )
+
+        cursor = _FakeCursor()
+        cursor._results = [
+            [
+                decision_row(
+                    "decision-buy",
+                    window_start + timedelta(minutes=5),
+                    entry_payload,
+                ),
+                decision_row("decision-close", closeout_at, closeout_payload),
+            ],
+            [
+                execution_row(
+                    "execution-buy",
+                    "decision-buy",
+                    window_start + timedelta(minutes=5),
+                    window_start + timedelta(minutes=5, seconds=2),
+                    "buy",
+                    "1",
+                    "100",
+                    entry_payload,
+                    "tca-buy",
+                ),
+                execution_row(
+                    "execution-close",
+                    "decision-close",
+                    closeout_at,
+                    closeout_at + timedelta(seconds=2),
+                    "sell",
+                    "1",
+                    "101",
+                    closeout_payload,
+                    "tca-close",
+                ),
+            ],
+            [
+                order_event_row(
+                    "new-buy",
+                    "decision-buy",
+                    "execution-buy",
+                    window_start + timedelta(minutes=5, seconds=1),
+                    "new",
+                    "buy",
+                    "1",
+                    "100",
+                    entry_payload,
+                    10,
+                ),
+                order_event_row(
+                    "fill-buy",
+                    "decision-buy",
+                    "execution-buy",
+                    window_start + timedelta(minutes=5, seconds=2),
+                    "fill",
+                    "buy",
+                    "1",
+                    "100",
+                    entry_payload,
+                    11,
+                ),
+                order_event_row(
+                    "new-close",
+                    "decision-close",
+                    "execution-close",
+                    closeout_at + timedelta(seconds=1),
+                    "new",
+                    "sell",
+                    "1",
+                    "101",
+                    closeout_payload,
+                    12,
+                ),
+                order_event_row(
+                    "fill-close",
+                    "decision-close",
+                    "execution-close",
+                    closeout_at + timedelta(seconds=2),
+                    "fill",
+                    "sell",
+                    "1",
+                    "101",
+                    closeout_payload,
+                    13,
+                ),
+            ],
+            [],
+            [],
+            [],
+            [],
+        ]
+        connection = _FakeConnection(cursor)
+        diagnostics: dict[str, object] = {}
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            decisions, executions, tca_rows = _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=["microbar-cross-sectional-pairs-v1"],
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=window_end,
+                candidate_id="candidate-1",
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+                allow_authoritative_runtime_ledger_materialization=True,
+                source_activity_diagnostics=diagnostics,
+            )
+
+        self.assertEqual(len(cursor.executed), 7)
+        self.assertEqual(
+            cursor.executed[0][1][4],
+            window_end + timedelta(hours=1),
+        )
+        self.assertEqual(
+            cursor.executed[1][1][4],
+            window_end + timedelta(hours=1),
+        )
+        self.assertEqual(
+            cursor.executed[2][1][6],
+            window_end + timedelta(hours=1),
+        )
+        self.assertEqual(len(decisions), 2)
+        self.assertEqual(len(executions), 2)
+        self.assertEqual(diagnostics["post_window_closeout_decision_count"], 1)
+        self.assertEqual(diagnostics["post_window_closeout_execution_count"], 1)
+        self.assertEqual(diagnostics["post_window_closeout_order_event_count"], 2)
+        runtime_rows = [
+            row
+            for row in tca_rows
+            if row.get("post_cost_expectancy_basis") == POST_COST_BASIS_RUNTIME_LEDGER
+        ]
+        self.assertEqual(len(runtime_rows), 1)
+        runtime_row = runtime_rows[0]
+        self.assertTrue(runtime_row["authoritative"])
+        self.assertEqual(runtime_row["runtime_ledger_blockers"], [])
+        bucket = runtime_row["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["closed_trade_count"], 1)
+        self.assertEqual(bucket["open_position_count"], 0)
+        self.assertEqual(
+            bucket["source_window_end"], "2026-03-06T15:05:02.000001+00:00"
+        )
+        self.assertNotIn("unclosed_position", bucket["blockers"])
+        self.assertNotIn(
+            "paper_route_target_notional_sizing_missing",
+            bucket["blockers"],
         )
 
     def test_query_timestamps_uses_source_events_but_materializes_target_account(
