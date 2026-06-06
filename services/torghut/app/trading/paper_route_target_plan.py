@@ -35,6 +35,7 @@ PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS = (
     "paper_route_runtime_ledger_import_pending",
 )
 PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID = "H-PAIRS-01"
+PAPER_ROUTE_TARGET_NOTIONAL_SOURCE_DECISION_SEED_QTY = Decimal("1")
 
 
 def _to_str_map(value: object) -> dict[str, Any]:
@@ -450,6 +451,20 @@ def _target_symbol_quantities(target: Mapping[str, Any]) -> dict[str, Decimal]:
     return quantities
 
 
+def _target_source_decision_quantities(
+    target: Mapping[str, Any],
+) -> dict[str, Decimal]:
+    quantities = _target_symbol_quantities(target)
+    if quantities:
+        return quantities
+    if _target_notional(target) <= 0:
+        return {}
+    return {
+        symbol: PAPER_ROUTE_TARGET_NOTIONAL_SOURCE_DECISION_SEED_QTY
+        for symbol in _target_symbol_actions(target)
+    }
+
+
 def _target_notional(target: Mapping[str, Any]) -> Decimal:
     return _positive_decimal_from_fields(
         target,
@@ -557,7 +572,6 @@ def _target_identity_blockers(identity: Mapping[str, Any]) -> list[str]:
         "account_label",
         "source_plan_ref",
         "target_notional",
-        "target_quantity",
         "bounded_collection_stage",
     )
     blockers = [
@@ -565,7 +579,6 @@ def _target_identity_blockers(identity: Mapping[str, Any]) -> list[str]:
         for field in required
         if not _safe_text(identity.get(field))
         or (field == "target_notional" and _safe_decimal(identity.get(field)) <= 0)
-        or (field == "target_quantity" and _safe_decimal(identity.get(field)) <= 0)
     ]
     if (
         _safe_text(identity.get("account_label"))
@@ -629,7 +642,7 @@ def _target_materialization_blockers(
     missing_quantity_symbols = sorted(
         symbol for symbol in actions if symbol not in quantities
     )
-    if missing_quantity_symbols:
+    if missing_quantity_symbols and target_notional <= 0:
         blockers.append("paper_route_target_symbol_quantities_missing")
     return sorted(dict.fromkeys(blockers))
 
@@ -751,6 +764,15 @@ def _paper_route_decision_payload(
     decision_strategy_id = _safe_text(identity.get("strategy_id")) or _safe_text(
         identity.get("runtime_strategy_name")
     )
+    explicit_symbol_quantities = _target_symbol_quantities(target)
+    quantity_source = (
+        "target_plan_explicit_quantity"
+        if symbol in explicit_symbol_quantities
+        else "target_notional_runtime_sizing_seed"
+    )
+    target_notional_sizing_required = (
+        target_notional > 0 and symbol not in explicit_symbol_quantities
+    )
     source_decision_metadata: dict[str, Any] = {
         "mode": "paper_route_target_plan_source_decision",
         "source": PAPER_ROUTE_MATERIALIZATION_SOURCE,
@@ -777,17 +799,18 @@ def _paper_route_decision_payload(
         "qty": _decimal_text(quantity),
         "target_quantity": _decimal_text(quantity),
         "target_notional": _decimal_text(target_notional),
+        "target_quantity_source": quantity_source,
+        "target_notional_sizing_required": target_notional_sizing_required,
         "paper_route_probe_next_session_max_notional": _decimal_text(target_notional),
         "paper_route_probe_effective_max_notional": _decimal_text(target_notional),
         "paper_route_probe_window_start": identity.get("window_start"),
         "paper_route_probe_window_end": identity.get("window_end"),
         "paper_route_probe_symbols": sorted(_target_symbol_actions(target)),
         "paper_route_probe_symbol_actions": _target_symbol_actions(target),
+        "paper_route_probe_symbol_quantity_source": quantity_source,
         "paper_route_probe_symbol_quantities": {
             item_symbol: _decimal_text(item_quantity)
-            for item_symbol, item_quantity in sorted(
-                _target_symbol_quantities(target).items()
-            )
+            for item_symbol, item_quantity in sorted(explicit_symbol_quantities.items())
         },
         "bounded_collection_stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
         "bounded_evidence_collection_authorized": True,
@@ -862,6 +885,8 @@ def _paper_route_decision_payload(
         "qty": _decimal_text(quantity),
         "target_quantity": _decimal_text(quantity),
         "target_notional": _decimal_text(target_notional),
+        "target_quantity_source": quantity_source,
+        "target_notional_sizing_required": target_notional_sizing_required,
         "bounded_collection_stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
         "bounded_evidence_collection_max_notional": _safe_text(
             target.get("bounded_evidence_collection_max_notional")
@@ -879,6 +904,8 @@ def _paper_route_decision_payload(
             "side": action,
             "qty": _decimal_text(quantity),
             "target_notional": _decimal_text(target_notional),
+            "target_quantity_source": quantity_source,
+            "target_notional_sizing_required": target_notional_sizing_required,
             "order_type": "market",
             "time_in_force": "day",
             "live_capital_routing_enabled": False,
@@ -918,6 +945,8 @@ def _paper_route_decision_payload(
             "source_plan_ref": identity.get("source_plan_ref"),
             "target_notional": _decimal_text(target_notional),
             "target_quantity": _decimal_text(quantity),
+            "target_quantity_source": quantity_source,
+            "target_notional_sizing_required": target_notional_sizing_required,
             "bounded_collection_stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
             "promotion_allowed": False,
             "final_authority_ok": False,
@@ -992,7 +1021,7 @@ def materialize_bounded_paper_route_target_plan(
 
         target_notional = _safe_decimal(identity.get("target_notional"))
         for symbol, action in _target_symbol_actions(target).items():
-            quantity = _target_symbol_quantities(target)[symbol]
+            quantity = _target_source_decision_quantities(target)[symbol]
             payload = _paper_route_decision_payload(
                 target=target,
                 identity=identity,

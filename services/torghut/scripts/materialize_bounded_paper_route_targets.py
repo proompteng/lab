@@ -244,9 +244,7 @@ def _target_bounded_materialization_authorized(target: Mapping[str, Any]) -> boo
 
 def _target_materialization_score(target: Mapping[str, Any]) -> tuple[int, int, int]:
     materializable_shape = int(
-        bool(_target_symbol_actions(target))
-        and _target_notional(target) > 0
-        and _target_quantity(target) > 0
+        bool(_target_symbol_actions(target)) and _target_notional(target) > 0
     )
     bounded_authorized = int(
         _target_bounded_materialization_authorized(target) and materializable_shape
@@ -294,7 +292,9 @@ def _candidate_materialization_plans(
         ),
         (
             "latest_closed_paper_route_runtime_window_targets",
-            _to_str_map(payload.get("latest_closed_paper_route_runtime_window_targets")),
+            _to_str_map(
+                payload.get("latest_closed_paper_route_runtime_window_targets")
+            ),
         ),
         (
             "next_paper_route_runtime_window_targets",
@@ -864,7 +864,7 @@ def _safety_blockers(
             blockers.append(
                 f"paper_route_materialization_target_{index}_target_notional_exceeds_max"
             )
-        if _safe_decimal(summary.get("target_quantity")) <= 0:
+        if _safe_decimal(summary.get("target_quantity")) <= 0 and target_notional <= 0:
             blockers.append(
                 f"paper_route_materialization_target_{index}_target_quantity_missing"
             )

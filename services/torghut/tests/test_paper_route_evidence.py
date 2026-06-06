@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -806,6 +806,22 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
 
         self.assertEqual(quantities, {"AAPL": "0.5", "AMZN": "0.7"})
+
+    def test_probe_symbol_quantities_do_not_seed_notional_authoritative_targets(
+        self,
+    ) -> None:
+        quantities = _paper_route_probe_symbol_quantities(
+            {
+                "target_notional": "75000",
+                "paper_route_probe_symbol_actions": {
+                    "AAPL": "buy",
+                    "AMZN": "sell",
+                },
+            },
+            ["AAPL", "AMZN"],
+        )
+
+        self.assertEqual(quantities, {})
 
     def test_non_pair_probe_symbol_actions_default_to_buy(self) -> None:
         actions = _paper_route_probe_symbol_actions(
@@ -3159,7 +3175,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target = plan["targets"][0]
             self.assertEqual(
                 target["paper_route_probe_symbol_quantities"],
-                {"AAPL": "1", "AMZN": "1"},
+                {},
+            )
+            self.assertEqual(target["paper_route_probe_target_quantity"], "0")
+            self.assertEqual(
+                target["paper_route_probe_symbol_quantity_source"],
+                "target_notional_runtime_sizing",
             )
             self.assertFalse(target["promotion_allowed"])
             self.assertFalse(target["final_promotion_allowed"])
@@ -3170,10 +3191,26 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 generated_at=generated_at,
                 bounded_notional_limit=Decimal("25"),
             )
+            decision_payloads = [
+                row.decision_json
+                for row in session.execute(select(TradeDecision)).scalars().all()
+            ]
 
         self.assertEqual(materialized["materialized_decision_count"], 2)
         self.assertEqual(materialized["route_submission_count"], 2)
         self.assertEqual(materialized["blocked_target_count"], 0)
+        self.assertEqual(len(decision_payloads), 2)
+        for decision_payload in decision_payloads:
+            self.assertEqual(
+                decision_payload["target_quantity_source"],
+                "target_notional_runtime_sizing_seed",
+            )
+            self.assertTrue(decision_payload["target_notional_sizing_required"])
+            source_metadata = decision_payload["params"][
+                "paper_route_target_plan_source_decision"
+            ]
+            self.assertEqual(source_metadata["paper_route_probe_symbol_quantities"], {})
+            self.assertTrue(source_metadata["target_notional_sizing_required"])
         self.assertFalse(materialized["promotion_allowed"])
         self.assertFalse(materialized["final_promotion_allowed"])
         self.assertFalse(materialized["live_capital_routing_enabled"])

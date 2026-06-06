@@ -1211,7 +1211,10 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_skips_before_ope
 ) -> None:
     payload = {
         "next_paper_route_runtime_window_targets": _plan(
-            _hpairs_target(target_notional="75000")
+            _hpairs_target(
+                target_notional="75000",
+                paper_route_probe_symbol_quantities={},
+            )
         ),
     }
     monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
@@ -1272,7 +1275,10 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_writes_when_open
 ) -> None:
     payload = {
         "next_paper_route_runtime_window_targets": _plan(
-            _hpairs_target(target_notional="75000")
+            _hpairs_target(
+                target_notional="75000",
+                paper_route_probe_symbol_quantities={},
+            )
         ),
     }
     monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
@@ -1846,7 +1852,7 @@ def test_paper_route_target_plan_missing_dsn_live_capital_mode_and_empty_plan_ar
     assert "paper_route_materialization_target_plan_targets_missing" in blockers
 
 
-def test_paper_route_target_plan_rejects_exceeded_notional_missing_quantity_and_missing_actions(
+def test_paper_route_target_plan_rejects_exceeded_notional_and_missing_actions(
     tmp_path: Path,
     sqlite_dsn: str,
     capsys: pytest.CaptureFixture[str],
@@ -1873,7 +1879,6 @@ def test_paper_route_target_plan_rejects_exceeded_notional_missing_quantity_and_
     assert (
         "paper_route_materialization_target_0_target_notional_exceeds_max" in blockers
     )
-    assert "paper_route_materialization_target_0_target_quantity_missing" in blockers
     assert "paper_route_materialization_target_0_symbol_actions_missing" in blockers
     assert _count_decisions(sqlite_dsn) == 0
 
