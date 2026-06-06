@@ -272,18 +272,87 @@ spec:
                       text('select quote_ident(:role)'),
                       {'role': runtime_role},
                   ).scalar_one()
-                  statements = [
-                      f'GRANT USAGE, CREATE ON SCHEMA public TO {quoted_role}',
-                      f'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {quoted_role}',
-                      f'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {quoted_role}',
-                      f'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {quoted_role}',
-                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO {quoted_role}',
-                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO {quoted_role}',
-                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO {quoted_role}',
-                  ]
-                  for statement in statements:
-                      connection.execute(text(statement))
-                  print(f'granted simulation runtime privileges to {runtime_role}')
+                  missing_relations = connection.execute(
+                      text(
+                          """
+                          SELECT c.oid::regclass::text AS object_name
+                          FROM pg_class c
+                          JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public'
+                            AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                            AND NOT (
+                              has_table_privilege(:runtime_role, c.oid, 'SELECT')
+                              AND has_table_privilege(:runtime_role, c.oid, 'INSERT')
+                              AND has_table_privilege(:runtime_role, c.oid, 'UPDATE')
+                              AND has_table_privilege(:runtime_role, c.oid, 'DELETE')
+                              AND has_table_privilege(:runtime_role, c.oid, 'TRUNCATE')
+                              AND has_table_privilege(:runtime_role, c.oid, 'REFERENCES')
+                              AND has_table_privilege(:runtime_role, c.oid, 'TRIGGER')
+                            )
+                          ORDER BY c.relkind, c.relname
+                          """
+                      ),
+                      {'runtime_role': runtime_role},
+                  ).scalars().all()
+                  missing_sequences = connection.execute(
+                      text(
+                          """
+                          SELECT c.oid::regclass::text AS object_name
+                          FROM pg_class c
+                          JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public'
+                            AND c.relkind = 'S'
+                            AND NOT (
+                              has_sequence_privilege(:runtime_role, c.oid, 'USAGE')
+                              AND has_sequence_privilege(:runtime_role, c.oid, 'SELECT')
+                              AND has_sequence_privilege(:runtime_role, c.oid, 'UPDATE')
+                            )
+                          ORDER BY c.relname
+                          """
+                      ),
+                      {'runtime_role': runtime_role},
+                  ).scalars().all()
+                  missing_functions = connection.execute(
+                      text(
+                          """
+                          SELECT p.oid::regprocedure::text AS object_name
+                          FROM pg_proc p
+                          JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public'
+                            AND NOT has_function_privilege(:runtime_role, p.oid, 'EXECUTE')
+                          ORDER BY p.proname, p.oid
+                          """
+                      ),
+                      {'runtime_role': runtime_role},
+                  ).scalars().all()
+
+                  connection.exec_driver_sql(f'GRANT USAGE, CREATE ON SCHEMA public TO {quoted_role}')
+                  for object_name in missing_relations:
+                      connection.exec_driver_sql(
+                          f'GRANT ALL PRIVILEGES ON TABLE {object_name} TO {quoted_role}'
+                      )
+                  for object_name in missing_sequences:
+                      connection.exec_driver_sql(
+                          f'GRANT ALL PRIVILEGES ON SEQUENCE {object_name} TO {quoted_role}'
+                      )
+                  for object_name in missing_functions:
+                      connection.exec_driver_sql(
+                          f'GRANT EXECUTE ON FUNCTION {object_name} TO {quoted_role}'
+                      )
+                  connection.exec_driver_sql(
+                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO {quoted_role}'
+                  )
+                  connection.exec_driver_sql(
+                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO {quoted_role}'
+                  )
+                  connection.exec_driver_sql(
+                      f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO {quoted_role}'
+                  )
+                  print(
+                      'granted missing simulation runtime privileges to '
+                      f'{runtime_role}: relations={len(missing_relations)} '
+                      f'sequences={len(missing_sequences)} functions={len(missing_functions)}'
+                  )
               PY
           env:
             - name: DB_DSN

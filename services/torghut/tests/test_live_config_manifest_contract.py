@@ -2185,8 +2185,27 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("autoresearch_portfolio_candidates", args)
         self.assertIn("public_table_exists", args)
         self.assertIn(upgrade_heads, args)
-        self.assertIn("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public", args)
-        self.assertIn("granted simulation runtime privileges", args)
+        self.assertIn("missing_relations = connection.execute", args)
+        self.assertIn("missing_sequences = connection.execute", args)
+        self.assertIn("missing_functions = connection.execute", args)
+        self.assertIn("has_table_privilege(:runtime_role, c.oid, 'SELECT')", args)
+        self.assertIn("has_sequence_privilege(:runtime_role, c.oid, 'USAGE')", args)
+        self.assertIn("has_function_privilege(:runtime_role, p.oid, 'EXECUTE')", args)
+        self.assertIn(
+            "GRANT ALL PRIVILEGES ON TABLE {object_name} TO {quoted_role}", args
+        )
+        self.assertIn(
+            "GRANT ALL PRIVILEGES ON SEQUENCE {object_name} TO {quoted_role}", args
+        )
+        self.assertIn("GRANT EXECUTE ON FUNCTION {object_name} TO {quoted_role}", args)
+        self.assertIn(
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES",
+            args,
+        )
+        self.assertIn("granted missing simulation runtime privileges", args)
+        self.assertNotIn("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public", args)
+        self.assertNotIn("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public", args)
+        self.assertNotIn("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public", args)
         self.assertLess(
             args.index("CREATE EXTENSION IF NOT EXISTS vector"),
             args.index("c.oid::regclass::text AS object_name"),
@@ -2205,7 +2224,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertLess(
             args.index(upgrade_heads),
-            args.index("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public"),
+            args.index("missing_relations = connection.execute"),
         )
 
     def test_profitability_sweep_universes_are_chip_only(self) -> None:
