@@ -7,10 +7,11 @@ spec:
   schedule: "23 8,21 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 0
   startingDeadlineSeconds: 900
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 1800
       backoffLimit: 2
       activeDeadlineSeconds: 900
       template:

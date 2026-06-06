@@ -1643,6 +1643,41 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(_params(hpairs).get("max_gross_exposure_pct_equity"), "10.0")
 
+    def test_torghut_scheduled_jobs_do_not_leave_failed_children_degrading_argo(
+        self,
+    ) -> None:
+        cronjob_paths = (
+            "argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml",
+            "argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml",
+            "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml",
+            "argocd/applications/torghut/execution-tca-refresh-cronjob.yaml",
+            "argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml",
+            "argocd/applications/torghut/paper-account-flatten-cronjob.yaml",
+            "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml",
+        )
+        checked_cronjobs = 0
+        for relative_path in cronjob_paths:
+            for manifest in _load_yaml_mappings(relative_path):
+                self.assertEqual(manifest.get("kind"), "CronJob")
+                spec = cast(Mapping[str, object], manifest.get("spec", {}))
+                self.assertEqual(spec.get("failedJobsHistoryLimit"), 0)
+                job_spec = cast(
+                    Mapping[str, object],
+                    cast(Mapping[str, object], spec.get("jobTemplate", {})).get(
+                        "spec", {}
+                    ),
+                )
+                self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 1800)
+                checked_cronjobs += 1
+        self.assertEqual(checked_cronjobs, 8)
+
+        replay_cronworkflow = _load_yaml_mapping(
+            "argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"
+        )
+        self.assertEqual(replay_cronworkflow.get("kind"), "CronWorkflow")
+        replay_spec = cast(Mapping[str, object], replay_cronworkflow.get("spec", {}))
+        self.assertEqual(replay_spec.get("failedJobsHistoryLimit"), 0)
+
     def test_tigerbeetle_journal_order_events_cronjob_covers_live_and_sim(
         self,
     ) -> None:
@@ -1716,7 +1751,8 @@ class TestLiveConfigManifestContract(TestCase):
             self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
             self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
             self.assertEqual(spec.get("successfulJobsHistoryLimit"), 2)
-            self.assertEqual(spec.get("failedJobsHistoryLimit"), 3)
+            self.assertEqual(spec.get("failedJobsHistoryLimit"), 0)
+            self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 1800)
             self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
             self.assertEqual(job_spec.get("backoffLimit"), 0)
             template = cast(

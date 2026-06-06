@@ -10,10 +10,11 @@ spec:
   schedule: "*/6 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 0
   startingDeadlineSeconds: 300
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 1800
       backoffLimit: 0
       activeDeadlineSeconds: 900
       template:
@@ -103,10 +104,11 @@ spec:
   schedule: "21,51 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 0
   startingDeadlineSeconds: 300
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 1800
       backoffLimit: 0
       activeDeadlineSeconds: 900
       template:
