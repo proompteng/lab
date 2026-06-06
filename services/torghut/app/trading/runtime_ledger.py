@@ -117,6 +117,32 @@ _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
         "runtime_ledger_cost_basis_non_promotion_grade",
     }
 )
+_POST_COST_EXPECTANCY_SUPPRESSING_BLOCKERS = (
+    _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS
+    | frozenset(
+        {
+            "unclosed_position",
+            "runtime_order_lifecycle_missing",
+            "order_feed_lifecycle_missing",
+            "runtime_decision_lifecycle_missing",
+            "submitted_order_lifecycle_missing",
+            "order_decision_linkage_missing",
+            "fill_order_linkage_missing",
+            "fill_order_submission_missing",
+            "runtime_ledger_source_window_ids_missing",
+            "runtime_ledger_trade_decision_refs_missing",
+            "runtime_ledger_execution_refs_missing",
+            "runtime_ledger_execution_order_event_refs_missing",
+            "runtime_ledger_source_offsets_missing",
+            "runtime_ledger_source_materialization_missing",
+            "runtime_ledger_authority_class_missing",
+            "source_decision_mode_not_profit_proof_eligible",
+            "runtime_source_not_promotion_authority",
+            "execution_reconstruction_not_runtime_ledger_proof",
+            _TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER,
+        }
+    )
+)
 _SOURCE_REF_BLOCKER_SOURCE_WINDOW_MISSING = "runtime_ledger_source_window_ids_missing"
 _SOURCE_REF_BLOCKER_TRADE_DECISION_MISSING = (
     "runtime_ledger_trade_decision_refs_missing"
@@ -524,7 +550,12 @@ def _build_bucket(
             / accumulator.filled_notional
             * _BPS_MULTIPLIER
         )
-    if not unique_blockers and accumulator.filled_notional > 0:
+    # Realized post-cost expectancy is an economic measurement. Keep it populated
+    # when the closed-trip economics are complete even if separate lifecycle or
+    # source-authority blockers still prevent promotion.
+    if diagnostic_closed_trade_expectancy_bps is not None and not (
+        _POST_COST_EXPECTANCY_SUPPRESSING_BLOCKERS & set(unique_blockers)
+    ):
         post_cost_expectancy_bps = diagnostic_closed_trade_expectancy_bps
     if source_authority_claimed and diagnostic_closed_trade_expectancy_bps is None:
         unique_blockers = _dedupe(

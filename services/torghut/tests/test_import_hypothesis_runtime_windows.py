@@ -947,7 +947,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(aggregate_only))
 
-    def test_runtime_ledger_profit_proof_rejects_source_ref_aliases(
+    def test_runtime_ledger_profit_proof_accepts_source_ref_aliases(
         self,
     ) -> None:
         source_window_ref_bucket = _complete_runtime_ledger_bucket(
@@ -969,16 +969,59 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
         )
 
-        self.assertIn(
+        self.assertNotIn(
             "runtime_ledger_source_window_ids_missing",
             _runtime_ledger_bucket_profit_proof_blockers(source_window_ref_bucket),
         )
-        self.assertFalse(
+        self.assertTrue(
             _runtime_ledger_bucket_profit_proof_present(source_window_ref_bucket)
         )
         self.assertTrue(
             _runtime_ledger_bucket_profit_proof_present(runtime_source_window_id_bucket)
         )
+
+    def test_runtime_ledger_source_context_writes_ref_aliases(self) -> None:
+        payload = _with_runtime_ledger_source_authority_context(
+            {"fill_count": 2},
+            source_window_start=datetime(2026, 6, 5, 13, 30, tzinfo=timezone.utc),
+            source_window_end=datetime(2026, 6, 5, 20, 0, tzinfo=timezone.utc),
+            source_refs=[
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            source_row_counts={
+                "trade_decisions": 1,
+                "executions": 1,
+                "execution_tca_metrics": 1,
+                "execution_order_events": 1,
+                "order_feed_source_windows": 1,
+            },
+            trade_decision_ids=["decision-1"],
+            execution_ids=["execution-1"],
+            execution_tca_metric_ids=["tca-1"],
+            execution_order_event_ids=["event-1"],
+            source_window_ids=["window-1"],
+            source_offsets=[
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 1}
+            ],
+            source_materialization="execution_order_events",
+            authority_class="runtime_order_feed_execution_source",
+            authority_reason="event_sourced_runtime_ledger_profit_proof",
+        )
+
+        self.assertEqual(payload["trade_decision_refs"], ["decision-1"])
+        self.assertEqual(payload["decision_refs"], ["decision-1"])
+        self.assertEqual(payload["execution_refs"], ["execution-1"])
+        self.assertEqual(payload["execution_tca_metric_refs"], ["tca-1"])
+        self.assertEqual(payload["runtime_ledger_execution_tca_metric_refs"], ["tca-1"])
+        self.assertEqual(payload["execution_order_event_refs"], ["event-1"])
+        self.assertEqual(
+            payload["runtime_ledger_execution_order_event_refs"], ["event-1"]
+        )
+        self.assertEqual(payload["source_window_refs"], ["window-1"])
+        self.assertEqual(payload["runtime_ledger_source_window_refs"], ["window-1"])
 
     def test_runtime_ledger_profit_proof_requires_explicit_authority_marker(
         self,
