@@ -1885,6 +1885,43 @@ def _with_runtime_ledger_source_authority_context(
         )
         if merged_values:
             payload[key] = list(dict.fromkeys(merged_values))
+    for source_key, alias_keys in (
+        (
+            "trade_decision_ids",
+            ("trade_decision_refs", "decision_ids", "decision_refs"),
+        ),
+        ("execution_ids", ("execution_refs", "runtime_ledger_execution_ids")),
+        (
+            "execution_tca_metric_ids",
+            (
+                "execution_tca_metric_refs",
+                "runtime_ledger_execution_tca_metric_ids",
+                "runtime_ledger_execution_tca_metric_refs",
+            ),
+        ),
+        (
+            "execution_order_event_ids",
+            (
+                "execution_order_event_refs",
+                "runtime_ledger_execution_order_event_ids",
+                "runtime_ledger_execution_order_event_refs",
+            ),
+        ),
+        (
+            "source_window_ids",
+            (
+                "source_window_refs",
+                "runtime_ledger_source_window_ids",
+                "runtime_ledger_source_window_refs",
+            ),
+        ),
+    ):
+        values = _metadata_text_list(payload.get(source_key))
+        if not values:
+            continue
+        for alias_key in alias_keys:
+            existing_values = _metadata_text_list(payload.get(alias_key))
+            payload[alias_key] = list(dict.fromkeys([*existing_values, *values]))
     if source_offsets:
         existing_offsets = [
             dict(item)

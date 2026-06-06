@@ -1616,6 +1616,59 @@ def test_source_authority_lifecycle_rows_can_be_clean_evidence_candidate() -> No
     assert bucket.post_cost_expectancy_bps is not None
 
 
+def test_source_authority_unfilled_order_keeps_realized_expectancy_blocked() -> None:
+    rows = [
+        *_source_authority_lifecycle_rows(),
+        {
+            "event_type": "decision",
+            "executed_at": _ts(6),
+            "decision_id": "decision-stale",
+            "order_id": "order-stale",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+            "execution_policy_hash": "policy",
+            "cost_model_hash": "broker-cost-v1",
+            "lineage_hash": "lineage",
+        },
+        {
+            "event_type": "order_submitted",
+            "executed_at": _ts(7),
+            "decision_id": "decision-stale",
+            "order_id": "order-stale",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+            "execution_order_event_id": "event-new-stale",
+            "source_window_id": "window-stale",
+            "source_topic": "alpaca.trade_updates",
+            "source_partition": 0,
+            "source_offset": 10,
+            "execution_policy_hash": "policy",
+            "cost_model_hash": "broker-cost-v1",
+            "lineage_hash": "lineage",
+        },
+    ]
+
+    bucket = build_runtime_ledger_buckets(
+        rows,
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.closed_trade_count == 1
+    assert bucket.open_position_count == 0
+    assert "unfilled_order_present" in bucket.blockers
+    assert bucket.post_cost_expectancy_bps is not None
+    assert (
+        bucket.diagnostic_closed_trade_expectancy_bps == bucket.post_cost_expectancy_bps
+    )
+
+
 def test_source_authority_open_position_blocks_final_expectancy() -> None:
     bucket = build_runtime_ledger_buckets(
         _source_authority_lifecycle_rows(include_sell=False),
