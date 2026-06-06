@@ -36,6 +36,7 @@ data class OptionsTaConfig(
   val s3AccessKey: String?,
   val s3SecretKey: String?,
   val deliveryGuarantee: DeliveryGuarantee,
+  val statusDeliveryGuarantee: DeliveryGuarantee,
   val transactionTimeoutMs: Long,
   val clickhouseUrl: String?,
   val clickhouseUsername: String?,
@@ -77,19 +78,6 @@ data class OptionsTaConfig(
         fallback: String? = null,
         default: Boolean,
       ): Boolean = envEither(preferred, fallback)?.lowercase()?.let { it in setOf("1", "true", "yes") } ?: default
-
-      fun envDeliveryGuarantee(
-        preferred: String,
-        fallback: String? = null,
-        default: DeliveryGuarantee,
-      ): DeliveryGuarantee =
-        when (envEither(preferred, fallback)?.trim()?.uppercase()) {
-          null -> default
-          "EXACTLY_ONCE" -> DeliveryGuarantee.EXACTLY_ONCE
-          "AT_LEAST_ONCE" -> DeliveryGuarantee.AT_LEAST_ONCE
-          "NONE" -> DeliveryGuarantee.NONE
-          else -> default
-        }
 
       val checkpointBase =
         envEither(
@@ -137,7 +125,15 @@ data class OptionsTaConfig(
         s3AccessKey = envEither("OPTIONS_TA_S3_ACCESS_KEY", "TA_S3_ACCESS_KEY"),
         s3SecretKey = envEither("OPTIONS_TA_S3_SECRET_KEY", "TA_S3_SECRET_KEY"),
         deliveryGuarantee =
-          envDeliveryGuarantee("OPTIONS_TA_KAFKA_DELIVERY_GUARANTEE", "TA_KAFKA_DELIVERY_GUARANTEE", DeliveryGuarantee.EXACTLY_ONCE),
+          parseOptionsDeliveryGuarantee(
+            envEither("OPTIONS_TA_KAFKA_DELIVERY_GUARANTEE", "TA_KAFKA_DELIVERY_GUARANTEE"),
+            DeliveryGuarantee.EXACTLY_ONCE,
+          ),
+        statusDeliveryGuarantee =
+          parseOptionsDeliveryGuarantee(
+            envEither("OPTIONS_TA_STATUS_KAFKA_DELIVERY_GUARANTEE", "TA_STATUS_KAFKA_DELIVERY_GUARANTEE"),
+            DeliveryGuarantee.AT_LEAST_ONCE,
+          ),
         transactionTimeoutMs = envLong("OPTIONS_TA_KAFKA_TRANSACTION_TIMEOUT_MS", "TA_KAFKA_TRANSACTION_TIMEOUT_MS", 120_000),
         clickhouseUrl = clickhouseUrl,
         clickhouseUsername = envEither("OPTIONS_TA_CLICKHOUSE_USERNAME", "TA_CLICKHOUSE_USERNAME", "torghut"),
@@ -171,3 +167,15 @@ data class OptionsTaConfig(
     }
   }
 }
+
+internal fun parseOptionsDeliveryGuarantee(
+  value: String?,
+  default: DeliveryGuarantee,
+): DeliveryGuarantee =
+  when (value?.trim()?.uppercase()) {
+    null -> default
+    "EXACTLY_ONCE" -> DeliveryGuarantee.EXACTLY_ONCE
+    "AT_LEAST_ONCE" -> DeliveryGuarantee.AT_LEAST_ONCE
+    "NONE" -> DeliveryGuarantee.NONE
+    else -> default
+  }

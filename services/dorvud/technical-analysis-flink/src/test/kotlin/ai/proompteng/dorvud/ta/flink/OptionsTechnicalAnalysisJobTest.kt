@@ -1,11 +1,30 @@
 package ai.proompteng.dorvud.ta.flink
 
 import ai.proompteng.dorvud.ta.stream.OptionsContractFeaturePayload
+import org.apache.flink.connector.base.DeliveryGuarantee
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class OptionsTechnicalAnalysisJobTest {
+  @Test
+  fun `status sink delivery guarantee defaults to non transactional status output`() {
+    assertEquals(DeliveryGuarantee.AT_LEAST_ONCE, parseOptionsDeliveryGuarantee(null, DeliveryGuarantee.AT_LEAST_ONCE))
+    assertEquals(
+      DeliveryGuarantee.AT_LEAST_ONCE,
+      parseOptionsDeliveryGuarantee("AT_LEAST_ONCE", DeliveryGuarantee.EXACTLY_ONCE),
+    )
+    assertEquals(
+      DeliveryGuarantee.EXACTLY_ONCE,
+      parseOptionsDeliveryGuarantee("exactly_once", DeliveryGuarantee.AT_LEAST_ONCE),
+    )
+    assertEquals(DeliveryGuarantee.NONE, parseOptionsDeliveryGuarantee("none", DeliveryGuarantee.AT_LEAST_ONCE))
+    assertEquals(
+      DeliveryGuarantee.AT_LEAST_ONCE,
+      parseOptionsDeliveryGuarantee("bad-value", DeliveryGuarantee.AT_LEAST_ONCE),
+    )
+  }
+
   @Test
   fun `surface payload is suppressed until coverage is meaningful`() {
     val payload =
