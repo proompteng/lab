@@ -1953,6 +1953,11 @@ class TestLiveConfigManifestContract(TestCase):
             item.get("name"): item
             for item in cast(list[Mapping[str, object]], container.get("env", []))
         }
+        self.assertRegex(str(env["TORGHUT_COMMIT"].get("value")), r"^[0-9a-f]{40}$")
+        self.assertRegex(
+            str(env["TORGHUT_IMAGE_DIGEST"].get("value")),
+            r"^sha256:[0-9a-f]{64}$",
+        )
         db_dsn = cast(Mapping[str, object], env["DB_DSN"])
         db_value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
         self.assertEqual(
