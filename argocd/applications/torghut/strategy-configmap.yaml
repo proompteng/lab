@@ -432,8 +432,8 @@ data:
         base_timeframe: "1Sec"
         universe_type: microbar_cross_sectional_pairs_v1
         universe_symbols: ["AAPL", "AMZN"]
-        max_notional_per_trade: 75000
-        max_position_pct_equity: 6.0
+        max_notional_per_trade: 1000000
+        max_position_pct_equity: 10.0
         params:
           entry_minute_after_open: "60"
           exit_minute_after_open: "120"
@@ -442,7 +442,7 @@ data:
           selection_mode: "continuation"
           top_n: "1"
           min_cross_section_continuation_rank: "0.55"
-          max_gross_exposure_pct_equity: "4.0"
+          max_gross_exposure_pct_equity: "10.0"
           max_pair_legs: "2"
           max_entries_per_session: "1"
           entry_cooldown_seconds: "600"

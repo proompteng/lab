@@ -4282,6 +4282,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(target["max_notional"], "0")
         self.assertEqual(target["paper_route_probe_symbols"], ["AAPL"])
+        self.assertEqual(target["target_notional"], "25")
+        self.assertEqual(target["paper_route_probe_target_notional"], "25")
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "25")
         self.assertEqual(
             target["source_decision_readiness"]["blockers"],
@@ -4731,6 +4733,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
             [],
         )
         self.assertEqual(target["max_notional"], "0")
+        self.assertEqual(target["target_notional"], "63180")
+        self.assertEqual(target["paper_route_probe_target_notional"], "63180")
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "63180")
         self.assertEqual(target["paper_route_probe_effective_max_notional"], "63180")
         self.assertEqual(
