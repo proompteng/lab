@@ -8773,6 +8773,665 @@ class TestPaperRouteEvidenceAudit(TestCase):
             payload["targets"][0]["readiness"]["evidence_collection_blockers"],
         )
 
+    def test_source_activity_includes_verified_post_window_flatten_closeout(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 6, 5, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 5, 20, tzinfo=timezone.utc)
+        entry_at = window_start + timedelta(hours=6, minutes=20)
+        close_at = window_end + timedelta(minutes=5)
+        strategy_name = "post-window-flatten-closeout"
+        candidate_id = "c88421d619759b2cfaa6f4d0"
+        hypothesis_id = "H-PAIRS-01"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="post-window flatten closeout fixture",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            entry_decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": candidate_id,
+                    "hypothesis_id": hypothesis_id,
+                    "params": {
+                        "source_candidate_ids": [candidate_id],
+                        "source_hypothesis_ids": [hypothesis_id],
+                        "source_decision_mode": "bounded_paper_route_collection",
+                    },
+                },
+                rationale="post-window flatten entry fixture",
+                status="filled",
+                created_at=entry_at,
+                executed_at=entry_at,
+            )
+            close_decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "sell",
+                    "qty": "1",
+                    "params": {
+                        "source_decision_mode": "bounded_paper_route_collection",
+                        "profit_proof_eligible": True,
+                    },
+                },
+                rationale="post-window account flatten fixture",
+                status="filled",
+                created_at=close_at,
+                executed_at=close_at,
+            )
+            session.add_all([entry_decision, close_decision])
+            session.flush()
+
+            def add_filled_lifecycle(
+                *,
+                decision: TradeDecision,
+                side: str,
+                event_at: datetime,
+                source_offset: int,
+            ) -> None:
+                execution = Execution(
+                    trade_decision_id=decision.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id=f"post-window-closeout-{source_offset}",
+                    client_order_id=f"post-window-closeout-client-{source_offset}",
+                    symbol="AAPL",
+                    side=side,
+                    order_type="limit",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    status="filled",
+                    raw_order={},
+                    created_at=event_at,
+                    updated_at=event_at,
+                    last_update_at=event_at,
+                    order_feed_last_event_ts=event_at,
+                )
+                session.add(execution)
+                session.flush()
+                source_window = OrderFeedSourceWindow(
+                    consumer_group="torghut-order-feed",
+                    source_topic="trade_updates",
+                    source_partition=0,
+                    alpaca_account_label="TORGHUT_SIM",
+                    assignment_mode="group",
+                    collector_identity="test-order-feed",
+                    source_revision="alpaca_trade_updates_v1",
+                    window_started_at=event_at,
+                    window_ended_at=event_at,
+                    start_offset=source_offset,
+                    end_offset=source_offset,
+                    consumed_count=1,
+                    inserted_count=1,
+                    status="inserted",
+                    status_reason="linked_execution_and_decision",
+                    payload_json={
+                        "source_ref": {
+                            "topic": "trade_updates",
+                            "partition": 0,
+                            "offset": source_offset,
+                        },
+                        "source_coverage_complete": True,
+                        "promotion_authority_eligible": False,
+                    },
+                )
+                session.add(source_window)
+                session.flush()
+                session.add(
+                    ExecutionOrderEvent(
+                        event_fingerprint=f"post-window-closeout-{source_offset}",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=source_offset,
+                        alpaca_account_label="TORGHUT_SIM",
+                        feed_seq=source_offset,
+                        event_ts=event_at,
+                        symbol="AAPL",
+                        alpaca_order_id=execution.alpaca_order_id,
+                        client_order_id=execution.client_order_id,
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        filled_qty_delta=Decimal("1"),
+                        avg_fill_price=Decimal("100"),
+                        raw_event={
+                            "event": "fill",
+                            "order": {
+                                "id": execution.alpaca_order_id,
+                                "client_order_id": execution.client_order_id,
+                                "symbol": "AAPL",
+                                "status": "filled",
+                                "qty": "1",
+                                "filled_qty": "1",
+                                "filled_avg_price": "100",
+                            },
+                        },
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        source_window_id=source_window.id,
+                        created_at=event_at,
+                    )
+                )
+                signed_qty = Decimal("-1") if side == "sell" else Decimal("1")
+                session.add(
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        side=side,
+                        arrival_price=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=signed_qty,
+                        slippage_bps=Decimal("0"),
+                        shortfall_notional=Decimal("0"),
+                        realized_shortfall_bps=Decimal("0"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=event_at,
+                        created_at=event_at,
+                        updated_at=event_at,
+                    )
+                )
+
+            add_filled_lifecycle(
+                decision=entry_decision,
+                side="buy",
+                event_at=entry_at,
+                source_offset=501,
+            )
+            add_filled_lifecycle(
+                decision=close_decision,
+                side="sell",
+                event_at=close_at,
+                source_offset=502,
+            )
+            session.commit()
+
+            source_activity = _strategy_source_activity(
+                session,
+                strategy_name=strategy_name,
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL"],
+                window_start=window_start,
+                window_end=window_end,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=True,
+            )
+
+        lifecycle = source_activity["source_lifecycle"]
+        self.assertEqual(source_activity["decision_count"], 2)
+        self.assertEqual(source_activity["execution_count"], 2)
+        self.assertEqual(source_activity["post_window_closeout_decision_count"], 1)
+        self.assertEqual(source_activity["post_window_closeout_execution_count"], 1)
+        self.assertEqual(source_activity["post_window_closeout_order_event_count"], 1)
+        self.assertEqual(source_activity["post_window_closeout_tca_count"], 1)
+        self.assertEqual(lifecycle["net_filled_qty_by_symbol"], {"AAPL": "0"})
+        self.assertEqual(lifecycle["open_symbols_after_source_fills"], [])
+        self.assertTrue(lifecycle["closed_round_trip_evidence"])
+        self.assertNotIn(
+            "source_close_missing",
+            source_activity["source_lifecycle_blockers"],
+        )
+        self.assertNotIn(
+            "source_closed_round_trip_missing",
+            source_activity["source_lifecycle_blockers"],
+        )
+
+    def test_post_window_closeout_candidate_helpers_fail_closed(self) -> None:
+        candidate_id = "candidate-closeout"
+        hypothesis_id = "H-CLOSEOUT"
+        eligible_decision = TradeDecision(
+            alpaca_account_label="TORGHUT_SIM",
+            symbol="AAPL",
+            timeframe="1Sec",
+            decision_json={
+                "action": "sell",
+                "params": {
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "source_candidate_ids": ["other-candidate"],
+                    "source_hypothesis_ids": [hypothesis_id],
+                },
+            },
+            rationale="candidate helper fixture",
+            status="filled",
+        )
+        hypothesis_mismatch = TradeDecision(
+            alpaca_account_label="TORGHUT_SIM",
+            symbol="AAPL",
+            timeframe="1Sec",
+            decision_json={
+                "action": "sell",
+                "params": {
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "source_candidate_ids": [candidate_id],
+                    "source_hypothesis_ids": ["other-hypothesis"],
+                },
+            },
+            rationale="hypothesis helper fixture",
+            status="filled",
+        )
+        ineligible_mode = TradeDecision(
+            alpaca_account_label="TORGHUT_SIM",
+            symbol="AAPL",
+            timeframe="1Sec",
+            decision_json={
+                "action": "sell",
+                "params": {"source_decision_mode": "replay"},
+            },
+            rationale="mode helper fixture",
+            status="filled",
+        )
+        short_cover = TradeDecision(
+            alpaca_account_label="TORGHUT_SIM",
+            symbol="AAPL",
+            timeframe="1Sec",
+            decision_json={"action": "buy"},
+            rationale="short cover helper fixture",
+            status="filled",
+        )
+        unknown_symbol = TradeDecision(
+            alpaca_account_label="TORGHUT_SIM",
+            symbol="MSFT",
+            timeframe="1Sec",
+            decision_json={"action": "sell"},
+            rationale="unknown symbol helper fixture",
+            status="filled",
+        )
+
+        self.assertFalse(
+            paper_route_evidence._source_decision_lineage_missing_or_matches(
+                eligible_decision,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
+        )
+        self.assertFalse(
+            paper_route_evidence._source_decision_lineage_missing_or_matches(
+                hypothesis_mismatch,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
+        )
+        self.assertFalse(
+            paper_route_evidence._post_window_action_offsets_open_qty(
+                unknown_symbol,
+                open_qtys={"AAPL": Decimal("1")},
+            )
+        )
+        self.assertTrue(
+            paper_route_evidence._post_window_action_offsets_open_qty(
+                short_cover,
+                open_qtys={"AAPL": Decimal("-1")},
+            )
+        )
+        self.assertFalse(
+            paper_route_evidence._trade_decision_is_post_window_closeout_candidate(
+                ineligible_mode,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                open_qtys={"AAPL": Decimal("1")},
+            )
+        )
+        self.assertFalse(
+            paper_route_evidence._trade_decision_is_post_window_closeout_candidate(
+                eligible_decision,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                open_qtys={"AAPL": Decimal("1")},
+            )
+        )
+        row_without_id = SimpleNamespace(id=None, value="raw")
+        first_row = SimpleNamespace(id="same-id", value="first")
+        duplicate_row = SimpleNamespace(id="same-id", value="duplicate")
+        self.assertEqual(
+            paper_route_evidence._unique_model_rows_by_id(
+                [row_without_id, first_row, duplicate_row]
+            ),
+            [row_without_id, first_row],
+        )
+
+    def test_post_window_closeout_source_rows_require_complete_refs(self) -> None:
+        window_end = datetime(2026, 6, 5, 20, tzinfo=timezone.utc)
+        close_at = window_end + timedelta(minutes=5)
+        lifecycle_summary = {"net_filled_qty_by_symbol": {"AAPL": "1"}}
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="post-window-closeout-incomplete-refs",
+                description="post-window closeout incomplete refs fixture",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_end,
+                updated_at=window_end,
+            )
+            session.add(strategy)
+            session.flush()
+
+            self.assertEqual(
+                paper_route_evidence._post_window_closeout_source_rows(
+                    session,
+                    strategy_ids=[],
+                    account_label="TORGHUT_SIM",
+                    symbol_filters=["AAPL"],
+                    window_end=window_end,
+                    candidate_id="candidate-closeout",
+                    hypothesis_id="H-CLOSEOUT",
+                    lifecycle_summary=lifecycle_summary,
+                ),
+                ([], [], [], [], []),
+            )
+            self.assertEqual(
+                paper_route_evidence._post_window_closeout_source_rows(
+                    session,
+                    strategy_ids=[strategy.id],
+                    account_label="TORGHUT_SIM",
+                    symbol_filters=["MSFT"],
+                    window_end=window_end,
+                    candidate_id="candidate-closeout",
+                    hypothesis_id="H-CLOSEOUT",
+                    lifecycle_summary=lifecycle_summary,
+                ),
+                ([], [], [], [], []),
+            )
+
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "sell",
+                    "params": {
+                        "source_decision_mode": "bounded_paper_route_collection",
+                    },
+                },
+                rationale="post-window closeout incomplete refs fixture",
+                status="filled",
+                created_at=close_at,
+                executed_at=close_at,
+            )
+            session.add(decision)
+            session.flush()
+
+            self.assertEqual(
+                paper_route_evidence._post_window_closeout_source_rows(
+                    session,
+                    strategy_ids=[strategy.id],
+                    account_label="TORGHUT_SIM",
+                    symbol_filters=["AAPL"],
+                    window_end=window_end,
+                    candidate_id="candidate-closeout",
+                    hypothesis_id="H-CLOSEOUT",
+                    lifecycle_summary=lifecycle_summary,
+                ),
+                ([], [], [], [], []),
+            )
+
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="post-window-incomplete-order",
+                client_order_id="post-window-incomplete-client",
+                symbol="AAPL",
+                side="sell",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=close_at,
+                updated_at=close_at,
+                last_update_at=close_at,
+                order_feed_last_event_ts=close_at,
+            )
+            session.add(execution)
+            session.flush()
+
+            self.assertEqual(
+                paper_route_evidence._post_window_closeout_source_rows(
+                    session,
+                    strategy_ids=[strategy.id],
+                    account_label="TORGHUT_SIM",
+                    symbol_filters=["AAPL"],
+                    window_end=window_end,
+                    candidate_id="candidate-closeout",
+                    hypothesis_id="H-CLOSEOUT",
+                    lifecycle_summary=lifecycle_summary,
+                ),
+                ([], [], [], [], []),
+            )
+
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="post-window-incomplete-fill",
+                    source_topic="trade_updates",
+                    source_partition=0,
+                    source_offset=900,
+                    alpaca_account_label="TORGHUT_SIM",
+                    feed_seq=900,
+                    event_ts=close_at,
+                    symbol="AAPL",
+                    alpaca_order_id=execution.alpaca_order_id,
+                    client_order_id=execution.client_order_id,
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    filled_qty_delta=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    raw_event={
+                        "event": "fill",
+                        "order": {
+                            "id": execution.alpaca_order_id,
+                            "client_order_id": execution.client_order_id,
+                            "symbol": "AAPL",
+                            "status": "filled",
+                            "qty": "1",
+                            "filled_qty": "1",
+                            "filled_avg_price": "100",
+                        },
+                    },
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    created_at=close_at,
+                )
+            )
+            session.flush()
+
+            self.assertEqual(
+                paper_route_evidence._post_window_closeout_source_rows(
+                    session,
+                    strategy_ids=[strategy.id],
+                    account_label="TORGHUT_SIM",
+                    symbol_filters=["AAPL"],
+                    window_end=window_end,
+                    candidate_id="candidate-closeout",
+                    hypothesis_id="H-CLOSEOUT",
+                    lifecycle_summary=lifecycle_summary,
+                ),
+                ([], [], [], [], []),
+            )
+
+    def test_source_activity_closeout_query_timeout_fails_closed(self) -> None:
+        window_start = datetime(2026, 6, 5, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 5, 20, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(hours=6)
+        candidate_id = "candidate-closeout-timeout"
+        hypothesis_id = "H-CLOSEOUT-TIMEOUT"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="post-window-closeout-timeout",
+                description="post-window closeout timeout fixture",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": candidate_id,
+                    "hypothesis_id": hypothesis_id,
+                    "params": {
+                        "source_decision_mode": "bounded_paper_route_collection",
+                        "source_candidate_ids": [candidate_id],
+                        "source_hypothesis_ids": [hypothesis_id],
+                    },
+                },
+                rationale="post-window closeout timeout entry fixture",
+                status="filled",
+                created_at=event_at,
+                executed_at=event_at,
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="post-window-timeout-entry-order",
+                client_order_id="post-window-timeout-entry-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at,
+                updated_at=event_at,
+                last_update_at=event_at,
+                order_feed_last_event_ts=event_at,
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="post-window-timeout-entry-fill",
+                    source_topic="trade_updates",
+                    source_partition=0,
+                    source_offset=901,
+                    alpaca_account_label="TORGHUT_SIM",
+                    feed_seq=901,
+                    event_ts=event_at,
+                    symbol="AAPL",
+                    alpaca_order_id=execution.alpaca_order_id,
+                    client_order_id=execution.client_order_id,
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    filled_qty_delta=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    raw_event={
+                        "event": "fill",
+                        "order": {
+                            "id": execution.alpaca_order_id,
+                            "client_order_id": execution.client_order_id,
+                            "symbol": "AAPL",
+                            "status": "filled",
+                            "qty": "1",
+                            "filled_qty": "1",
+                            "filled_avg_price": "100",
+                        },
+                    },
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    created_at=event_at,
+                )
+            )
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    side="buy",
+                    arrival_price=Decimal("100"),
+                    avg_fill_price=Decimal("100"),
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("1"),
+                    slippage_bps=Decimal("0"),
+                    shortfall_notional=Decimal("0"),
+                    realized_shortfall_bps=Decimal("0"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=event_at,
+                    created_at=event_at,
+                    updated_at=event_at,
+                )
+            )
+            session.commit()
+
+            with (
+                patch(
+                    "app.trading.paper_route_evidence._post_window_closeout_source_rows",
+                    side_effect=SQLAlchemyError("statement timeout"),
+                ),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
+            ):
+                source_activity = _strategy_source_activity(
+                    session,
+                    strategy_name=strategy.name,
+                    account_label="TORGHUT_SIM",
+                    symbols=["AAPL"],
+                    window_start=window_start,
+                    window_end=window_end,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    require_source_lineage=True,
+                )
+
+        self.assertEqual(rollback.call_count, 1)
+        self.assertTrue(source_activity["missing"])
+        self.assertTrue(source_activity["query_unavailable"])
+        self.assertEqual(
+            source_activity["unavailable_source"],
+            "post_window_closeout_source_rows",
+        )
+        self.assertEqual(
+            source_activity["missing_reasons"],
+            ["source_closeout_readback_unavailable"],
+        )
+        self.assertEqual(source_activity["raw_decision_count"], 1)
+        self.assertEqual(source_activity["lineage_matched_decision_count"], 1)
+
     def test_source_activity_uses_order_feed_event_time_for_execution_window(
         self,
     ) -> None:
