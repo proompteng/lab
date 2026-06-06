@@ -23,6 +23,10 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
     selectorPath: ['spec', 'jobTemplate', 'spec', 'template', 'spec'],
   },
   {
+    path: 'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
+    selectorPath: ['spec', 'jobTemplate', 'spec', 'template', 'spec'],
+  },
+  {
     path: 'argocd/applications/torghut/analysis-template-runtime-ready.yaml',
     selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
   },
@@ -102,6 +106,7 @@ describe('Torghut manifest scheduling', () => {
       'argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml',
       'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml',
       'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml',
+      'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
       'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml',
       'argocd/applications/torghut/paper-account-flatten-cronjob.yaml',
       'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml',
@@ -118,7 +123,7 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(8)
+    expect(checkedCronJobs).toBe(9)
 
     const replayCronWorkflow = parseManifest(
       'argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml',

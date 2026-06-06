@@ -40,6 +40,7 @@ resources:
   - order-feed-source-window-repair-cronjob.yaml
   - empirical-artifacts-retention-cronjob.yaml
   - execution-tca-refresh-cronjob.yaml
+  - zero-notional-drift-repair-cronjob.yaml
   - paper-account-flatten-cronjob.yaml
   - whitepaper-autoresearch-workflowtemplate.yaml
   - whitepaper-autoresearch-replay-materialization-cronworkflow.yaml

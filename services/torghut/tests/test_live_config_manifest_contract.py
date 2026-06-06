@@ -1242,6 +1242,84 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--apply", args)
         self.assertEqual(args.count("scripts/refresh_execution_tca_metrics.py"), 2)
 
+    def test_zero_notional_drift_repair_cronjob_runs_capital_safe_repair_endpoint(
+        self,
+    ) -> None:
+        spec, container = _load_cronjob_container(
+            "argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml"
+        )
+
+        self.assertEqual(spec.get("schedule"), "*/10 9-16 * * 1-5")
+        self.assertEqual(spec.get("timeZone"), "America/New_York")
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("failedJobsHistoryLimit"), 0)
+        self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
+        job_spec = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        )
+        template = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], job_spec.get("template", {})),
+        )
+        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+        self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 1800)
+        self.assertEqual(job_spec.get("backoffLimit"), 0)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
+        self.assertEqual(pod_spec.get("restartPolicy"), "Never")
+        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
+        self.assertEqual(
+            pod_spec.get("nodeSelector"),
+            {"kubernetes.io/arch": "arm64"},
+        )
+        self.assertIn(
+            "registry.ide-newton.ts.net/lab/torghut@sha256:",
+            str(container.get("image")),
+        )
+        resources = cast(Mapping[str, object], container.get("resources", {}))
+        self.assertEqual(
+            resources,
+            {
+                "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi",
+                    "ephemeral-storage": "128Mi",
+                },
+                "limits": {
+                    "cpu": "500m",
+                    "memory": "512Mi",
+                    "ephemeral-storage": "512Mi",
+                },
+            },
+        )
+        env = {
+            item.get("name"): item
+            for item in cast(list[Mapping[str, object]], container.get("env", []))
+        }
+        self.assertEqual(env["PYTHONUNBUFFERED"].get("value"), "1")
+
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/run_zero_notional_repair.py", args)
+        self.assertEqual(args.count("scripts/run_zero_notional_repair.py"), 2)
+        self.assertLess(
+            args.index("service=torghut-sim"),
+            args.index("service=torghut started_at"),
+        )
+        self.assertIn(
+            "--service-url http://torghut-sim.torghut.svc.cluster.local", args
+        )
+        self.assertIn("--service-url http://torghut.torghut.svc.cluster.local", args)
+        self.assertIn("--action rerun_drift_checks_for_blocked_hypotheses", args)
+        self.assertEqual(args.count("--execute"), 2)
+        self.assertEqual(args.count("--drift-limit 1000"), 2)
+        self.assertEqual(args.count("--allow-no-selected-repair"), 2)
+        self.assertEqual(args.count("--allow-no-signal-blocked"), 2)
+        self.assertNotIn("--max-notional", args)
+        self.assertNotIn("--paper-notional", args)
+        self.assertNotIn("--live-notional", args)
+        self.assertNotIn("alpaca", args.lower())
+        self.assertNotIn("DB_DSN", args)
+
     def test_paper_account_flatten_cronjob_can_clean_dirty_paper_proof_account(
         self,
     ) -> None:
@@ -1651,6 +1729,7 @@ class TestLiveConfigManifestContract(TestCase):
             "argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml",
             "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml",
             "argocd/applications/torghut/execution-tca-refresh-cronjob.yaml",
+            "argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml",
             "argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml",
             "argocd/applications/torghut/paper-account-flatten-cronjob.yaml",
             "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml",
@@ -1669,7 +1748,7 @@ class TestLiveConfigManifestContract(TestCase):
                 )
                 self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 1800)
                 checked_cronjobs += 1
-        self.assertEqual(checked_cronjobs, 8)
+        self.assertEqual(checked_cronjobs, 9)
 
         replay_cronworkflow = _load_yaml_mapping(
             "argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"
