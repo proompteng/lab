@@ -1,0 +1,74 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-zero-notional-drift-repair
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: zero-notional-drift-repair
+spec:
+  schedule: "*/10 9-16 * * 1-5"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 0
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 1800
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: run-zero-notional-drift-repair
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:904409b0a8127e59381251485f2aeddaacf0b78045155579d4f5804ed5d5f39f
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+                  ephemeral-storage: 512Mi
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  echo "stage=zero_notional_drift_repair service=torghut-sim started_at=$(date -Iseconds)"
+                  /opt/venv/bin/python scripts/run_zero_notional_repair.py \
+                    --service-url http://torghut-sim.torghut.svc.cluster.local \
+                    --action rerun_drift_checks_for_blocked_hypotheses \
+                    --execute \
+                    --drift-limit 1000 \
+                    --attempts 3 \
+                    --timeout-seconds 45 \
+                    --retry-backoff-seconds 5 \
+                    --allow-no-selected-repair \
+                    --allow-no-signal-blocked \
+                    --json
+                  echo "stage=zero_notional_drift_repair service=torghut started_at=$(date -Iseconds)"
+                  /opt/venv/bin/python scripts/run_zero_notional_repair.py \
+                    --service-url http://torghut.torghut.svc.cluster.local \
+                    --action rerun_drift_checks_for_blocked_hypotheses \
+                    --execute \
+                    --drift-limit 1000 \
+                    --attempts 3 \
+                    --timeout-seconds 45 \
+                    --retry-backoff-seconds 5 \
+                    --allow-no-selected-repair \
+                    --allow-no-signal-blocked \
+                    --json
+                  echo "stage=zero_notional_drift_repair completed_at=$(date -Iseconds)"
