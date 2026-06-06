@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -9992,6 +9993,148 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertNotIn(
             "source_closed_round_trip_missing",
             source_activity["source_lifecycle_blockers"],
+        )
+
+    def test_source_lifecycle_nets_final_execution_qty_when_order_feed_is_cumulative(
+        self,
+    ) -> None:
+        event_at = datetime(2026, 6, 5, 15, 14, tzinfo=timezone.utc)
+        buy_execution_id = uuid.uuid4()
+        sell_execution_id = uuid.uuid4()
+        buy_decision_id = uuid.uuid4()
+        sell_decision_id = uuid.uuid4()
+        buy_execution = Execution(
+            id=buy_execution_id,
+            trade_decision_id=buy_decision_id,
+            alpaca_account_label="TORGHUT_SIM",
+            alpaca_order_id="cumulative-buy-order",
+            client_order_id="cumulative-buy-client",
+            symbol="AAPL",
+            side="buy",
+            order_type="limit",
+            time_in_force="day",
+            submitted_qty=Decimal("119.7394"),
+            filled_qty=Decimal("119.7394"),
+            avg_fill_price=Decimal("313.10"),
+            status="filled",
+            raw_order={},
+            created_at=event_at,
+            updated_at=event_at,
+            last_update_at=event_at,
+        )
+        sell_execution = Execution(
+            id=sell_execution_id,
+            trade_decision_id=sell_decision_id,
+            alpaca_account_label="TORGHUT_SIM",
+            alpaca_order_id="cumulative-sell-order",
+            client_order_id="cumulative-sell-client",
+            symbol="AAPL",
+            side="sell",
+            order_type="limit",
+            time_in_force="day",
+            submitted_qty=Decimal("119.7394"),
+            filled_qty=Decimal("119.7394"),
+            avg_fill_price=Decimal("308.12"),
+            status="filled",
+            raw_order={},
+            created_at=event_at + timedelta(minutes=1),
+            updated_at=event_at + timedelta(minutes=1),
+            last_update_at=event_at + timedelta(minutes=1),
+        )
+        cumulative_buy_events = [
+            ExecutionOrderEvent(
+                event_fingerprint=f"cumulative-buy-{index}",
+                source_topic="trade_updates",
+                source_partition=0,
+                source_offset=100 + index,
+                alpaca_account_label="TORGHUT_SIM",
+                event_ts=event_at + timedelta(seconds=index),
+                symbol="AAPL",
+                alpaca_order_id=buy_execution.alpaca_order_id,
+                client_order_id=buy_execution.client_order_id,
+                event_type=event_type,
+                status=status,
+                qty=Decimal("119.7394"),
+                filled_qty=filled_qty,
+                filled_qty_delta=filled_qty_delta,
+                raw_event={},
+                execution_id=buy_execution_id,
+                trade_decision_id=buy_decision_id,
+                created_at=event_at + timedelta(seconds=index),
+            )
+            for index, (event_type, status, filled_qty, filled_qty_delta) in enumerate(
+                (
+                    ("partial_fill", "partially_filled", Decimal("83"), None),
+                    ("fill", "filled", Decimal("119.7394"), None),
+                    ("partial_fill", "partially_filled", Decimal("83.7394"), None),
+                    (
+                        "fill",
+                        "filled",
+                        Decimal("119.7394"),
+                        Decimal("119.7394"),
+                    ),
+                ),
+                start=1,
+            )
+        ]
+        sell_event = ExecutionOrderEvent(
+            event_fingerprint="cumulative-sell-fill",
+            source_topic="trade_updates",
+            source_partition=0,
+            source_offset=200,
+            alpaca_account_label="TORGHUT_SIM",
+            event_ts=event_at + timedelta(minutes=1),
+            symbol="AAPL",
+            alpaca_order_id=sell_execution.alpaca_order_id,
+            client_order_id=sell_execution.client_order_id,
+            event_type="fill",
+            status="filled",
+            qty=Decimal("119.7394"),
+            filled_qty=Decimal("119.7394"),
+            filled_qty_delta=None,
+            raw_event={},
+            execution_id=sell_execution_id,
+            trade_decision_id=sell_decision_id,
+            created_at=event_at + timedelta(minutes=1),
+        )
+
+        lifecycle = paper_route_evidence._source_activity_lifecycle_summary(
+            execution_rows=[buy_execution, sell_execution],
+            order_event_rows=[*cumulative_buy_events, sell_event],
+            tca_rows=[],
+        )
+        fallback_lifecycle = paper_route_evidence._source_activity_lifecycle_summary(
+            execution_rows=[],
+            order_event_rows=[
+                ExecutionOrderEvent(
+                    event_fingerprint="event-only-sell-fill",
+                    source_topic="trade_updates",
+                    source_partition=0,
+                    source_offset=300,
+                    alpaca_account_label="TORGHUT_SIM",
+                    event_ts=event_at,
+                    symbol="AAPL",
+                    alpaca_order_id="event-only-sell-order",
+                    client_order_id="event-only-sell-client",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    filled_qty_delta=None,
+                    raw_event={"side": "sell"},
+                    created_at=event_at,
+                )
+            ],
+            tca_rows=[],
+        )
+
+        self.assertEqual(lifecycle["net_filled_qty_by_symbol"], {"AAPL": "0"})
+        self.assertEqual(lifecycle["open_symbols_after_source_fills"], [])
+        self.assertTrue(lifecycle["closed_round_trip_evidence"])
+        self.assertNotIn("source_close_missing", lifecycle["blockers"])
+        self.assertEqual(
+            fallback_lifecycle["net_filled_qty_by_symbol"],
+            {"AAPL": "-1"},
         )
 
     def test_hpairs_collection_blocks_missing_lifecycle_costs_and_flatten(
