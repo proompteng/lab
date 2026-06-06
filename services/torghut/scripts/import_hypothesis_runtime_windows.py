@@ -2966,6 +2966,103 @@ def _runtime_ledger_tca_materialization_metadata(
     }
 
 
+def _runtime_ledger_tca_rows_from_observed_buckets(
+    buckets: Sequence[object],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for bucket in buckets:
+        payload_json = _as_mapping(getattr(bucket, "payload_json", {}))
+        bucket_payloads: list[Any] = []
+        raw_payloads = _as_sequence(payload_json.get("runtime_ledger_buckets")) or []
+        bucket_payloads.extend(raw_payloads)
+        single_payload = _as_mapping(payload_json.get("runtime_ledger_bucket"))
+        if single_payload:
+            bucket_payloads.append(single_payload)
+        for raw_payload in bucket_payloads:
+            ledger_payload = _as_mapping(raw_payload)
+            if not ledger_payload:
+                continue
+            rows.append(
+                {
+                    "runtime_ledger_bucket": ledger_payload,
+                    "authoritative": ledger_payload.get("authoritative"),
+                    "authority_reason": ledger_payload.get("authority_reason"),
+                    "pnl_derivation": ledger_payload.get("pnl_derivation"),
+                    "runtime_ledger_blockers": ledger_payload.get("blockers"),
+                    "post_cost_expectancy_basis": ledger_payload.get("pnl_basis"),
+                    "paper_route_target_notional_sizing": ledger_payload.get(
+                        "paper_route_target_notional_sizing"
+                    ),
+                }
+            )
+    return rows
+
+
+def _runtime_observation_payload_with_observed_runtime_ledger_materialization(
+    *,
+    source_kind: str,
+    runtime_observation_payload: Mapping[str, Any],
+    buckets: Sequence[object],
+) -> dict[str, Any]:
+    observed_rows = _runtime_ledger_tca_rows_from_observed_buckets(buckets)
+    if not observed_rows:
+        return dict(runtime_observation_payload)
+
+    observed_materialization = _runtime_ledger_tca_materialization_metadata(
+        observed_rows
+    )
+    observed_authority = _runtime_observation_authority_payload(
+        source_kind=source_kind,
+        tca_rows=observed_rows,
+    )
+    observed_materialization_blockers = sorted(
+        dict.fromkeys(
+            [
+                *_metadata_text_list(
+                    observed_materialization.get(
+                        "runtime_ledger_materialization_blockers"
+                    )
+                ),
+                *_metadata_text_list(
+                    observed_materialization.get("runtime_ledger_profit_proof_blockers")
+                ),
+            ]
+        )
+    )
+    source_diagnostics = {
+        **_as_mapping(runtime_observation_payload.get("source_activity_diagnostics")),
+        "observed_runtime_ledger_materialization_authority": True,
+        "observed_runtime_ledger_tca_row_count": observed_materialization[
+            "runtime_ledger_tca_row_count"
+        ],
+        "observed_runtime_ledger_runtime_bucket_row_count": (
+            observed_materialization["runtime_ledger_tca_runtime_bucket_row_count"]
+        ),
+        "observed_runtime_ledger_profit_proof_count": observed_materialization[
+            "runtime_ledger_tca_profit_proof_count"
+        ],
+        "observed_runtime_ledger_materialization_blockers": (
+            observed_materialization["runtime_ledger_materialization_blockers"]
+        ),
+        "observed_runtime_ledger_profit_proof_blockers": (
+            observed_materialization["runtime_ledger_profit_proof_blockers"]
+        ),
+    }
+    return {
+        **dict(runtime_observation_payload),
+        **observed_authority,
+        **observed_materialization,
+        "runtime_ledger_materialization_authority_source": ("observed_runtime_buckets"),
+        "source_activity_diagnostics": source_diagnostics,
+        "source_activity_diagnostic_blockers": observed_materialization_blockers,
+        "source_activity_diagnostic_blockers_from_source_query": (
+            _metadata_text_list(
+                runtime_observation_payload.get("source_activity_diagnostic_blockers")
+            )
+        ),
+    }
+
+
 def _runtime_window_import_audit_summary(
     *,
     run_id: str,
@@ -7695,6 +7792,13 @@ def main() -> int:
                 else None,
             }
         )
+    runtime_observation_payload = (
+        _runtime_observation_payload_with_observed_runtime_ledger_materialization(
+            source_kind=source_kind,
+            runtime_observation_payload=runtime_observation_payload,
+            buckets=buckets,
+        )
+    )
     if getattr(args, "audit_only", False):
         summary = _runtime_window_import_audit_summary(
             run_id=args.run_id,
