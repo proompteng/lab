@@ -11114,6 +11114,193 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(runtime_payload["promotion_authority"], "runtime_ledger")
         self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], True)
 
+    def test_main_uses_observed_bucket_materialization_over_stale_source_diagnostics(
+        self,
+    ) -> None:
+        args = SimpleNamespace(
+            run_id="run-observed-clean",
+            candidate_id="H-TSMOM-LIQ-01",
+            hypothesis_id="H-TSMOM-LIQ-01",
+            observed_stage="paper",
+            strategy_family="intraday_tsmom_consistent",
+            source_dsn="postgresql://source",
+            source_dsn_env="DB_DSN",
+            strategy_name="intraday-tsmom-profit-v3",
+            account_label="TORGHUT_SIM",
+            source_account_label="TORGHUT_SIM",
+            window_start="2026-03-06T14:30:00Z",
+            window_end="2026-03-06T15:00:00Z",
+            bucket_minutes=30,
+            sample_minutes=5,
+            source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
+            source_kind="paper_route_probe_runtime_observed",
+            artifact_ref=[],
+            delay_adjusted_depth_stress_report_ref="",
+            dataset_snapshot_ref="observed-clean-snapshot",
+            target_metadata_json=json.dumps(
+                {
+                    "paper_probation_authorized": True,
+                    "paper_probation_authorization_scope": "evidence_collection_only",
+                    "evidence_collection_stage": "paper",
+                    "promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                    "final_promotion_allowed": False,
+                }
+            ),
+            dependency_quorum_decision="allow",
+            continuity_ok="true",
+            drift_ok="true",
+            json=False,
+        )
+        fake_session = _FakeSession()
+        manifest = SimpleNamespace(
+            strategy_family="intraday_tsmom_consistent",
+            strategy_id="intraday_tsmom_v2@research",
+            max_allowed_slippage_bps=Decimal("6"),
+        )
+        stale_source_bucket = _complete_runtime_ledger_bucket(
+            closed_trade_count=0,
+            open_position_count=1,
+            blockers=["unclosed_position"],
+            paper_route_target_notional_sizing={
+                "requires_target_notional_sizing": True,
+                "authoritative_target_notional_sizing_count": 0,
+                "missing_target_notional_sizing_count": 2,
+                "non_authoritative_sizing_source_counts": {},
+                "blockers": ["paper_route_target_notional_sizing_missing"],
+            },
+        )
+        stale_source_tca_row = {
+            "computed_at": datetime(2026, 3, 6, 14, 59, 59, tzinfo=timezone.utc),
+            "abs_slippage_bps": Decimal("10"),
+            "post_cost_expectancy_bps": Decimal("40"),
+            "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+            "post_cost_promotion_eligible": True,
+            "runtime_ledger_bucket": stale_source_bucket,
+        }
+        clean_observed_bucket = _complete_runtime_ledger_bucket(
+            run_id="run-observed-clean",
+            candidate_id="H-TSMOM-LIQ-01",
+            hypothesis_id="H-TSMOM-LIQ-01",
+            observed_stage="paper",
+            account_label="TORGHUT_SIM",
+            strategy_id="intraday-tsmom-profit-v3",
+            bucket_started_at="2026-03-06T14:30:00+00:00",
+            bucket_ended_at="2026-03-06T15:00:00+00:00",
+            paper_route_target_notional_sizing={
+                "requires_target_notional_sizing": True,
+                "authoritative_target_notional_sizing_count": 2,
+                "missing_target_notional_sizing_count": 0,
+                "non_authoritative_sizing_source_counts": {},
+                "blockers": [],
+            },
+        )
+
+        with (
+            patch(
+                "scripts.import_hypothesis_runtime_windows._parse_args",
+                return_value=args,
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                return_value=(
+                    SimpleNamespace(
+                        path="config/trading/hypotheses/h-tsmom-liq-01.json"
+                    ),
+                    manifest,
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                return_value=(
+                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [],
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_source_dsn",
+                return_value=(
+                    [stale_source_tca_row],
+                    {
+                        "runtime_ledger_source_bucket_count": 1,
+                        "runtime_ledger_source_bucket_run_ids": ["stale-source-run"],
+                        "runtime_ledger_source_bucket_fill_count": 2,
+                        "runtime_ledger_source_bucket_tca_row_count": 1,
+                        "runtime_ledger_source_bucket_profit_proof_count": 0,
+                        "runtime_ledger_source_bucket_profit_proof_blockers": [
+                            "unclosed_position",
+                            "paper_route_target_notional_sizing_missing",
+                        ],
+                    },
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                return_value=[
+                    SimpleNamespace(
+                        payload_json={
+                            "runtime_ledger_buckets": [clean_observed_bucket],
+                        }
+                    )
+                ],
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                return_value={"run_id": "run-observed-clean"},
+            ) as persist_windows,
+            patch(
+                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                return_value=fake_session,
+            ),
+            patch("builtins.print"),
+        ):
+            exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        runtime_payload = persist_windows.call_args.kwargs[
+            "runtime_observation_payload"
+        ]
+        self.assertEqual(
+            runtime_payload["runtime_ledger_materialization_authority_source"],
+            "observed_runtime_buckets",
+        )
+        self.assertTrue(runtime_payload["authoritative"])
+        self.assertEqual(
+            runtime_payload["authority_reason"], "runtime_ledger_profit_proof"
+        )
+        self.assertEqual(runtime_payload["promotion_authority"], "runtime_ledger")
+        self.assertTrue(runtime_payload["runtime_ledger_profit_proof_present"])
+        self.assertEqual(runtime_payload["runtime_ledger_tca_profit_proof_count"], 1)
+        self.assertEqual(
+            runtime_payload["runtime_ledger_tca_runtime_bucket_row_count"], 1
+        )
+        self.assertEqual(
+            runtime_payload[
+                "runtime_ledger_source_execution_materialized_bucket_count"
+            ],
+            1,
+        )
+        self.assertEqual(runtime_payload["runtime_ledger_materialization_blockers"], [])
+        self.assertEqual(runtime_payload["runtime_ledger_profit_proof_blockers"], [])
+        self.assertEqual(runtime_payload["source_activity_diagnostic_blockers"], [])
+        self.assertEqual(
+            runtime_payload["source_activity_diagnostic_blockers_from_source_query"],
+            [
+                "runtime_ledger_source_bucket_profit_proof_missing",
+                "unclosed_position",
+                "paper_route_target_notional_sizing_missing",
+            ],
+        )
+        self.assertEqual(
+            runtime_payload["paper_route_target_notional_sizing_authoritative_count"],
+            2,
+        )
+        self.assertEqual(
+            runtime_payload["paper_route_target_notional_sizing_missing_count"],
+            0,
+        )
+
     def test_main_attaches_delay_adjusted_depth_report_to_runtime_payload(
         self,
     ) -> None:
