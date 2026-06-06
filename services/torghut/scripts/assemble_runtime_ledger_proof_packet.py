@@ -81,6 +81,28 @@ RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS = frozenset(
         "runtime_ledger_stage_not_live",
     }
 )
+RUNTIME_IMPORT_MATERIALIZATION_STRUCTURAL_BLOCKERS = frozenset(
+    {
+        "execution_tca_missing",
+        "runtime_ledger_authority_class_missing",
+        "runtime_ledger_bucket_missing",
+        "runtime_ledger_evidence_grade_bucket_missing",
+        "runtime_ledger_execution_order_event_refs_missing",
+        "runtime_ledger_execution_refs_missing",
+        "runtime_ledger_execution_tca_refs_missing",
+        "runtime_ledger_explicit_costs_missing",
+        "runtime_ledger_source_materialization_missing",
+        "runtime_ledger_source_offsets_missing",
+        "runtime_ledger_source_refs_missing",
+        "runtime_ledger_source_window_ids_missing",
+        "runtime_ledger_source_window_missing",
+        "runtime_ledger_trade_decision_refs_missing",
+        "source_decisions_missing",
+        "source_executions_missing",
+        "source_runtime_ledger_missing",
+        "source_tca_missing",
+    }
+)
 DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS = 30.0
 
 
@@ -1242,6 +1264,31 @@ def _runtime_import_target_blocker_codes(value: object) -> list[str]:
     return blockers
 
 
+def _runtime_import_proof_blocker_codes(value: object) -> list[str]:
+    return [
+        blocker
+        for blocker in _runtime_import_target_blocker_codes(value)
+        if blocker not in RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS
+    ]
+
+
+def _is_runtime_import_materialization_blocker(blocker: str) -> bool:
+    if blocker in RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS:
+        return False
+    return (
+        blocker.startswith("runtime_window_import_")
+        or blocker in RUNTIME_IMPORT_MATERIALIZATION_STRUCTURAL_BLOCKERS
+    )
+
+
+def _runtime_import_materialization_blocker_codes(value: object) -> list[str]:
+    return [
+        blocker
+        for blocker in _runtime_import_proof_blocker_codes(value)
+        if _is_runtime_import_materialization_blocker(blocker)
+    ]
+
+
 _RUNTIME_LEDGER_PROMOTION_GRADE_SOURCE_MATERIALIZATIONS = frozenset(
     {
         "execution_order_events",
@@ -1303,13 +1350,9 @@ def _runtime_ledger_readback_authority_markers_present(
 def _runtime_import_materialization_metadata_blockers(
     observation: Mapping[str, Any],
 ) -> list[str]:
-    blockers = [
-        blocker
-        for blocker in _text_list(
-            observation.get("runtime_ledger_target_metadata_blockers")
-        )
-        if blocker not in RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS
-    ]
+    blockers = _runtime_import_materialization_blocker_codes(
+        observation.get("runtime_ledger_target_metadata_blockers")
+    )
     proof_count = max(
         _int(observation.get("runtime_ledger_tca_profit_proof_count")),
         _int(observation.get("runtime_ledger_source_bucket_profit_proof_count")),
@@ -1326,30 +1369,6 @@ def _runtime_import_materialization_metadata_blockers(
         blockers.append(
             "runtime_window_import_source_execution_materialization_missing"
         )
-    target_notional_sizing_required_count = _int(
-        observation.get("paper_route_target_notional_sizing_required_count")
-    )
-    if target_notional_sizing_required_count > 0:
-        target_notional_sizing_authoritative_count = _int(
-            observation.get("paper_route_target_notional_sizing_authoritative_count")
-        )
-        target_notional_sizing_missing_count = _int(
-            observation.get("paper_route_target_notional_sizing_missing_count")
-        )
-        target_notional_sizing_non_authoritative_count = _int(
-            observation.get(
-                "paper_route_target_notional_sizing_non_authoritative_count"
-            )
-        )
-        if (
-            target_notional_sizing_missing_count > 0
-            or target_notional_sizing_authoritative_count
-            < target_notional_sizing_required_count
-        ):
-            blockers.append("paper_route_target_notional_sizing_missing")
-        if target_notional_sizing_non_authoritative_count > 0:
-            blockers.append("paper_route_target_notional_sizing_not_authoritative")
-
     source_materializations = _text_list(
         observation.get("runtime_ledger_source_materializations")
     )
@@ -1378,6 +1397,38 @@ def _runtime_import_materialization_metadata_blockers(
         blockers.append(
             "runtime_window_import_replay_or_artifact_derivation_not_authority"
         )
+    return list(dict.fromkeys(blockers))
+
+
+def _runtime_import_metadata_proof_blockers(
+    observation: Mapping[str, Any],
+) -> list[str]:
+    blockers = _runtime_import_proof_blocker_codes(
+        observation.get("runtime_ledger_target_metadata_blockers")
+    )
+    target_notional_sizing_required_count = _int(
+        observation.get("paper_route_target_notional_sizing_required_count")
+    )
+    if target_notional_sizing_required_count > 0:
+        target_notional_sizing_authoritative_count = _int(
+            observation.get("paper_route_target_notional_sizing_authoritative_count")
+        )
+        target_notional_sizing_missing_count = _int(
+            observation.get("paper_route_target_notional_sizing_missing_count")
+        )
+        target_notional_sizing_non_authoritative_count = _int(
+            observation.get(
+                "paper_route_target_notional_sizing_non_authoritative_count"
+            )
+        )
+        if (
+            target_notional_sizing_missing_count > 0
+            or target_notional_sizing_authoritative_count
+            < target_notional_sizing_required_count
+        ):
+            blockers.append("paper_route_target_notional_sizing_missing")
+        if target_notional_sizing_non_authoritative_count > 0:
+            blockers.append("paper_route_target_notional_sizing_not_authoritative")
     return list(dict.fromkeys(blockers))
 
 
@@ -1536,7 +1587,7 @@ def _runtime_import_target_surface_blockers(
             )
     if target.get("materialized") is False:
         blockers.extend(
-            _runtime_import_target_blocker_codes(target.get("proof_blockers"))
+            _runtime_import_materialization_blocker_codes(target.get("proof_blockers"))
         )
     blockers.extend(
         _runtime_import_readback_blockers(
@@ -1557,6 +1608,7 @@ def _runtime_import_materialization_summary(
     authority_reasons: list[str] = []
     pnl_derivations: list[str] = []
     materialization_blockers: list[str] = []
+    profit_proof_blockers: list[str] = []
     materialized_targets: list[dict[str, Any]] = []
     unmaterialized_targets: list[dict[str, Any]] = []
     counts = {
@@ -1648,9 +1700,15 @@ def _runtime_import_materialization_summary(
             )
         if profit_proof_count <= 0:
             target_blockers.append("runtime_window_import_target_profit_proof_missing")
+        observation_proof_blockers = _runtime_import_proof_blocker_codes(
+            observation.get("runtime_ledger_profit_proof_blockers")
+        )
+        _extend_unique(profit_proof_blockers, observation_proof_blockers)
         _extend_unique(
             target_blockers,
-            _text_list(observation.get("runtime_ledger_profit_proof_blockers")),
+            _runtime_import_materialization_blocker_codes(
+                observation.get("runtime_ledger_profit_proof_blockers")
+            ),
         )
         _extend_unique(
             target_blockers,
@@ -1672,8 +1730,17 @@ def _runtime_import_materialization_summary(
             _text_list(observation.get("runtime_ledger_materialization_blockers")),
         )
         _extend_unique(
-            materialization_blockers,
-            _text_list(observation.get("runtime_ledger_profit_proof_blockers")),
+            profit_proof_blockers,
+            observation_proof_blockers,
+        )
+        target = _mapping(summary.get("runtime_materialization_target"))
+        _extend_unique(
+            profit_proof_blockers,
+            _runtime_import_proof_blocker_codes(target.get("proof_blockers")),
+        )
+        _extend_unique(
+            profit_proof_blockers,
+            _runtime_import_metadata_proof_blockers(observation),
         )
         _extend_unique(
             materialization_blockers,
@@ -1730,6 +1797,7 @@ def _runtime_import_materialization_summary(
         "authority_reasons": authority_reasons,
         "pnl_derivations": pnl_derivations,
         "blockers": materialization_blockers,
+        "profit_proof_blockers": profit_proof_blockers,
     }
 
 
@@ -2557,6 +2625,32 @@ def build_runtime_ledger_proof_packet(
             materialization_blockers
             or ["runtime_window_import_runtime_ledger_materialization_missing"],
         )
+    runtime_import_profit_proof_blockers = _text_list(
+        materialization_summary.get("profit_proof_blockers")
+    )
+    runtime_import_profit_proof_ok = (
+        not runtime_import_due or not runtime_import_profit_proof_blockers
+    )
+    _check(
+        checks,
+        "runtime_window_import_profit_proof_blockers",
+        passed=runtime_import_profit_proof_ok,
+        observed={
+            "runtime_import_due": runtime_import_due,
+            "blockers": runtime_import_profit_proof_blockers,
+            "materialization_blockers": materialization_blockers,
+        },
+        expected=(
+            "runtime-window import carries no remaining proof/economics blockers; "
+            "source-row materialization blockers are reported separately"
+        ),
+        blockers=runtime_import_profit_proof_blockers,
+        status=None
+        if runtime_import_due
+        else "waiting_for_paper_route_runtime_window_import",
+    )
+    if runtime_import_due:
+        _extend_unique(blockers, runtime_import_profit_proof_blockers)
 
     completion = completion_status or {}
     live_scale_gate = _completion_live_scale_gate(completion)
