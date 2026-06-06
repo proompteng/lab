@@ -78,6 +78,7 @@ EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS = (
 )
 RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
 RUNTIME_LEDGER_CARRY_IN_LOOKBACK = timedelta(days=5)
+RUNTIME_LEDGER_POST_WINDOW_CLOSEOUT_LOOKAHEAD = timedelta(seconds=3600)
 RUNTIME_LEDGER_FLAT_START_SNAPSHOT_STALE_SECONDS = 900
 RUNTIME_LEDGER_FLAT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = 300
 RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
@@ -747,6 +748,8 @@ def _source_decision_target_notional_sizing_summary(
 
 
 def _source_row_is_paper_route_probe_exit(row: Mapping[str, object]) -> bool:
+    if _first_bool(row, "post_window_closeout", "runtime_ledger_post_window_closeout"):
+        return True
     for payload in _source_decision_priority_payloads(row):
         metadata = _as_mapping(payload.get("paper_route_probe_exit"))
         if _direct_text(metadata, "mode") == "paper_route_exit":
@@ -1043,6 +1046,327 @@ def _source_row_matches_lineage(
     ):
         return False
     return True
+
+
+def _source_row_lineage_missing_or_matches(
+    row: Mapping[str, object],
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+) -> bool:
+    if candidate_id is not None:
+        candidate_values = _text_values(row, *SOURCE_LINEAGE_CANDIDATE_KEYS)
+        if candidate_values and candidate_id not in candidate_values:
+            return False
+    if hypothesis_id is not None:
+        hypothesis_values = _text_values(row, *SOURCE_LINEAGE_HYPOTHESIS_KEYS)
+        if hypothesis_values and hypothesis_id not in hypothesis_values:
+            return False
+    return True
+
+
+def _source_row_time_before(
+    row: Mapping[str, object],
+    *,
+    window_end: datetime,
+) -> bool:
+    event_time = _runtime_ledger_row_time(row)
+    return event_time is None or event_time < window_end
+
+
+def _source_row_time_after_window(
+    row: Mapping[str, object],
+    *,
+    window_end: datetime,
+    closeout_end: datetime,
+) -> bool:
+    event_time = _runtime_ledger_row_time(row)
+    return (
+        event_time is not None
+        and event_time > window_end
+        and event_time <= closeout_end
+    )
+
+
+def _runtime_open_qtys_by_symbol_from_execution_rows(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, Decimal]:
+    open_qtys: dict[str, Decimal] = {}
+    for row in rows:
+        if not _execution_row_has_fill(row):
+            continue
+        symbol = _runtime_source_row_symbol(row)
+        if symbol is None:
+            continue
+        signed_qty = _execution_signed_qty(
+            side=_first_text(row, "side", "action", "order_side"),
+            qty=_first_positive_decimal(
+                row,
+                "filled_qty",
+                "filled_quantity",
+                "qty",
+                "quantity",
+            ),
+        )
+        if signed_qty == 0:
+            continue
+        open_qtys[symbol] = open_qtys.get(symbol, Decimal("0")) + signed_qty
+    return {symbol: qty for symbol, qty in sorted(open_qtys.items()) if qty != 0}
+
+
+def _source_decision_action_offsets_open_qty(
+    row: Mapping[str, object],
+    *,
+    open_qtys: Mapping[str, Decimal],
+) -> bool:
+    symbol = _runtime_source_row_symbol(row)
+    if symbol is None:
+        return False
+    open_qty = open_qtys.get(symbol, Decimal("0"))
+    if open_qty == 0:
+        return False
+    action = (_first_text(row, "action", "side", "order_side") or "").lower()
+    if open_qty > 0:
+        return action in {"sell", "short", "sell_short"}
+    return action in {"buy", "cover", "buy_to_cover"}
+
+
+def _source_row_decision_ids(row: Mapping[str, object]) -> set[str]:
+    return set(
+        _source_identifier_values(
+            [row],
+            "trade_decision_id",
+            "decision_id",
+            "decision_hash",
+        )
+    )
+
+
+def _source_row_execution_ids(row: Mapping[str, object]) -> set[str]:
+    return set(_source_identifier_values([row], "execution_id"))
+
+
+def _mark_post_window_closeout_source_row(
+    row: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        **dict(row),
+        "post_window_closeout": True,
+        "runtime_ledger_post_window_closeout": True,
+        "runtime_ledger_closeout_reason": "post_window_fill_offsets_window_open_qty",
+    }
+
+
+def _filter_source_rows_for_runtime_window(
+    *,
+    decision_rows: list[dict[str, object]],
+    execution_rows: list[dict[str, object]],
+    order_lifecycle_rows: list[dict[str, object]],
+    window_end: datetime,
+    closeout_end: datetime,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+    require_source_lineage: bool,
+) -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+    dict[str, object],
+]:
+    lineaged_decision_rows = [
+        row
+        for row in decision_rows
+        if _source_row_time_before(row, window_end=window_end)
+        and _source_row_matches_lineage(
+            row,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            require_source_lineage=require_source_lineage,
+        )
+    ]
+    lineaged_execution_rows = [
+        row
+        for row in execution_rows
+        if _source_row_time_before(row, window_end=window_end)
+        and _source_row_matches_lineage(
+            row,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            require_source_lineage=require_source_lineage,
+        )
+    ]
+    lineaged_order_rows = [
+        row
+        for row in order_lifecycle_rows
+        if _source_row_time_before(row, window_end=window_end)
+        and _source_row_matches_lineage(
+            row,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            require_source_lineage=require_source_lineage,
+        )
+    ]
+    diagnostics: dict[str, object] = {
+        "post_window_closeout_lookahead_seconds": int(
+            RUNTIME_LEDGER_POST_WINDOW_CLOSEOUT_LOOKAHEAD.total_seconds()
+        ),
+        "post_window_closeout_query_end": closeout_end.isoformat(),
+    }
+    if closeout_end <= window_end:
+        diagnostics.update(
+            {
+                "post_window_closeout_open_qty_by_symbol": {},
+                "post_window_closeout_decision_count": 0,
+                "post_window_closeout_execution_count": 0,
+                "post_window_closeout_order_event_count": 0,
+            }
+        )
+        return (
+            lineaged_decision_rows,
+            lineaged_execution_rows,
+            lineaged_order_rows,
+            diagnostics,
+        )
+
+    open_qtys = _runtime_open_qtys_by_symbol_from_execution_rows(
+        lineaged_execution_rows
+    )
+    diagnostics["post_window_closeout_open_qty_by_symbol"] = {
+        symbol: str(qty) for symbol, qty in open_qtys.items()
+    }
+    if not open_qtys:
+        diagnostics.update(
+            {
+                "post_window_closeout_decision_count": 0,
+                "post_window_closeout_execution_count": 0,
+                "post_window_closeout_order_event_count": 0,
+            }
+        )
+        return (
+            lineaged_decision_rows,
+            lineaged_execution_rows,
+            lineaged_order_rows,
+            diagnostics,
+        )
+
+    closeout_decision_rows = [
+        row
+        for row in decision_rows
+        if _source_row_time_after_window(
+            row,
+            window_end=window_end,
+            closeout_end=closeout_end,
+        )
+        and source_decision_mode_is_profit_proof_eligible(_source_decision_mode(row))
+        and _source_row_lineage_missing_or_matches(
+            row,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+        )
+        and _source_decision_action_offsets_open_qty(row, open_qtys=open_qtys)
+    ]
+    closeout_decision_ids = set[str]()
+    for row in closeout_decision_rows:
+        closeout_decision_ids.update(_source_row_decision_ids(row))
+    if not closeout_decision_ids:
+        diagnostics.update(
+            {
+                "post_window_closeout_decision_count": 0,
+                "post_window_closeout_execution_count": 0,
+                "post_window_closeout_order_event_count": 0,
+            }
+        )
+        return (
+            lineaged_decision_rows,
+            lineaged_execution_rows,
+            lineaged_order_rows,
+            diagnostics,
+        )
+
+    closeout_execution_rows = [
+        row
+        for row in execution_rows
+        if _source_row_time_after_window(
+            row,
+            window_end=window_end,
+            closeout_end=closeout_end,
+        )
+        and _source_row_decision_ids(row) & closeout_decision_ids
+        and _execution_row_has_fill(row)
+        and _execution_query_row_has_tca_ref(row)
+    ]
+    closeout_execution_decision_ids = set[str]()
+    closeout_execution_ids = set[str]()
+    for row in closeout_execution_rows:
+        closeout_execution_decision_ids.update(_source_row_decision_ids(row))
+        closeout_execution_ids.update(_source_row_execution_ids(row))
+
+    closeout_order_rows = [
+        row
+        for row in order_lifecycle_rows
+        if _source_row_time_after_window(
+            row,
+            window_end=window_end,
+            closeout_end=closeout_end,
+        )
+        and (
+            _source_row_decision_ids(row) & closeout_decision_ids
+            or _source_row_execution_ids(row) & closeout_execution_ids
+        )
+        and _source_authority_order_event_row(row)
+    ]
+    fill_order_decision_ids = set[str]()
+    for row in closeout_order_rows:
+        if _runtime_ledger_event_type(row) not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        fill_order_decision_ids.update(_source_row_decision_ids(row))
+        if _source_row_execution_ids(row) & closeout_execution_ids:
+            fill_order_decision_ids.update(closeout_execution_decision_ids)
+
+    eligible_decision_ids = (
+        closeout_decision_ids
+        & closeout_execution_decision_ids
+        & fill_order_decision_ids
+    )
+    eligible_execution_ids = {
+        execution_id
+        for row in closeout_execution_rows
+        if _source_row_decision_ids(row) & eligible_decision_ids
+        for execution_id in _source_row_execution_ids(row)
+    }
+    eligible_closeout_decision_rows = [
+        _mark_post_window_closeout_source_row(row)
+        for row in closeout_decision_rows
+        if _source_row_decision_ids(row) & eligible_decision_ids
+    ]
+    eligible_closeout_execution_rows = [
+        _mark_post_window_closeout_source_row(row)
+        for row in closeout_execution_rows
+        if _source_row_decision_ids(row) & eligible_decision_ids
+    ]
+    eligible_closeout_order_rows = [
+        _mark_post_window_closeout_source_row(row)
+        for row in closeout_order_rows
+        if (
+            _source_row_decision_ids(row) & eligible_decision_ids
+            or _source_row_execution_ids(row) & eligible_execution_ids
+        )
+    ]
+    diagnostics.update(
+        {
+            "post_window_closeout_decision_count": len(eligible_closeout_decision_rows),
+            "post_window_closeout_execution_count": len(
+                eligible_closeout_execution_rows
+            ),
+            "post_window_closeout_order_event_count": len(eligible_closeout_order_rows),
+        }
+    )
+    return (
+        [*lineaged_decision_rows, *eligible_closeout_decision_rows],
+        [*lineaged_execution_rows, *eligible_closeout_execution_rows],
+        [*lineaged_order_rows, *eligible_closeout_order_rows],
+        diagnostics,
+    )
 
 
 def _runtime_ledger_equity_denominator_from_rows(
@@ -5930,6 +6254,11 @@ def _query_timestamps(
     carry_in_order_lifecycle_rows: list[dict[str, object]] = []
     flat_start_position_snapshot: dict[str, object] | None = None
     carry_in_window_start = window_start - RUNTIME_LEDGER_CARRY_IN_LOOKBACK
+    source_activity_window_end = (
+        window_end + RUNTIME_LEDGER_POST_WINDOW_CLOSEOUT_LOOKAHEAD
+        if allow_authoritative_runtime_ledger_materialization
+        else window_end
+    )
     symbol_filter = _metadata_symbol_list(symbols or ())
     if source_activity_diagnostics is not None:
         source_activity_diagnostics.update(
@@ -5939,6 +6268,7 @@ def _query_timestamps(
                 "source_account_label": source_account_label,
                 "window_start": window_start.isoformat(),
                 "window_end": window_end.isoformat(),
+                "source_activity_window_end": source_activity_window_end.isoformat(),
                 "carry_in_window_start": carry_in_window_start.isoformat(),
                 "carry_in_window_end": window_start.isoformat(),
                 "source_activity_symbol_filter": symbol_filter,
@@ -6004,7 +6334,7 @@ def _query_timestamps(
                     source_query_account_label,
                     list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
                     window_start,
-                    window_end,
+                    source_activity_window_end,
                     *decision_symbol_params,
                 ),
             )
@@ -6017,30 +6347,6 @@ def _query_timestamps(
                 source_activity_diagnostics["decision_rows_before_lineage_filter"] = (
                     len(decision_lifecycle_rows)
                 )
-            decision_lifecycle_rows = [
-                row
-                for row in decision_lifecycle_rows
-                if _source_row_matches_lineage(
-                    row,
-                    candidate_id=candidate_id,
-                    hypothesis_id=hypothesis_id,
-                    require_source_lineage=require_source_lineage,
-                )
-            ]
-            if source_activity_diagnostics is not None:
-                source_activity_diagnostics["decision_rows_after_lineage_filter"] = len(
-                    decision_lifecycle_rows
-                )
-            decision_lifecycle_rows = _attach_source_lineage_context(
-                decision_lifecycle_rows,
-                candidate_id=candidate_id,
-                hypothesis_id=hypothesis_id,
-            )
-            decisions = []
-            for row in decision_lifecycle_rows:
-                computed_at = row.get("computed_at")
-                if isinstance(computed_at, datetime):
-                    decisions.append(computed_at)
             cur.execute(
                 f"""
                 select
@@ -6101,7 +6407,7 @@ def _query_timestamps(
                     source_query_account_label,
                     source_query_account_label,
                     window_start,
-                    window_end,
+                    source_activity_window_end,
                     *execution_symbol_params,
                 ),
             )
@@ -6122,38 +6428,6 @@ def _query_timestamps(
                 ] = sum(
                     1 for row in execution_rows if _execution_query_row_has_tca_ref(row)
                 )
-            execution_rows = [
-                row
-                for row in execution_rows
-                if _source_row_matches_lineage(
-                    row,
-                    candidate_id=candidate_id,
-                    hypothesis_id=hypothesis_id,
-                    require_source_lineage=require_source_lineage,
-                )
-            ]
-            if source_activity_diagnostics is not None:
-                source_activity_diagnostics["execution_rows_after_lineage_filter"] = (
-                    len(execution_rows)
-                )
-                source_activity_diagnostics[
-                    "fill_execution_rows_after_lineage_filter"
-                ] = sum(1 for row in execution_rows if _execution_row_has_fill(row))
-                source_activity_diagnostics[
-                    "execution_tca_rows_after_lineage_filter"
-                ] = sum(
-                    1 for row in execution_rows if _execution_query_row_has_tca_ref(row)
-                )
-            execution_rows = _attach_source_lineage_context(
-                execution_rows,
-                candidate_id=candidate_id,
-                hypothesis_id=hypothesis_id,
-            )
-            executions = []
-            for row in execution_rows:
-                execution_event_at = row.get("execution_event_at")
-                if isinstance(execution_event_at, datetime):
-                    executions.append(execution_event_at)
             cur.execute(
                 f"""
                 select
@@ -6260,7 +6534,7 @@ def _query_timestamps(
                     source_query_account_label,
                     source_account_label,
                     window_start,
-                    window_end,
+                    source_activity_window_end,
                     *order_event_symbol_params,
                 ),
             )
@@ -6280,17 +6554,37 @@ def _query_timestamps(
                     for row in order_lifecycle_rows
                     if _runtime_ledger_event_type(row) in _RUNTIME_LEDGER_FILL_EVENTS
                 )
-            order_lifecycle_rows = [
-                row
-                for row in order_lifecycle_rows
-                if _source_row_matches_lineage(
-                    row,
-                    candidate_id=candidate_id,
-                    hypothesis_id=hypothesis_id,
-                    require_source_lineage=require_source_lineage,
-                )
-            ]
+            (
+                decision_lifecycle_rows,
+                execution_rows,
+                order_lifecycle_rows,
+                post_window_closeout_diagnostics,
+            ) = _filter_source_rows_for_runtime_window(
+                decision_rows=decision_lifecycle_rows,
+                execution_rows=execution_rows,
+                order_lifecycle_rows=order_lifecycle_rows,
+                window_end=window_end,
+                closeout_end=source_activity_window_end,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=require_source_lineage,
+            )
             if source_activity_diagnostics is not None:
+                source_activity_diagnostics.update(post_window_closeout_diagnostics)
+                source_activity_diagnostics["decision_rows_after_lineage_filter"] = len(
+                    decision_lifecycle_rows
+                )
+                source_activity_diagnostics["execution_rows_after_lineage_filter"] = (
+                    len(execution_rows)
+                )
+                source_activity_diagnostics[
+                    "fill_execution_rows_after_lineage_filter"
+                ] = sum(1 for row in execution_rows if _execution_row_has_fill(row))
+                source_activity_diagnostics[
+                    "execution_tca_rows_after_lineage_filter"
+                ] = sum(
+                    1 for row in execution_rows if _execution_query_row_has_tca_ref(row)
+                )
                 source_activity_diagnostics[
                     "order_lifecycle_rows_after_lineage_filter"
                 ] = len(order_lifecycle_rows)
@@ -6301,11 +6595,31 @@ def _query_timestamps(
                     for row in order_lifecycle_rows
                     if _runtime_ledger_event_type(row) in _RUNTIME_LEDGER_FILL_EVENTS
                 )
+            decision_lifecycle_rows = _attach_source_lineage_context(
+                decision_lifecycle_rows,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
+            execution_rows = _attach_source_lineage_context(
+                execution_rows,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
             order_lifecycle_rows = _attach_source_lineage_context(
                 order_lifecycle_rows,
                 candidate_id=candidate_id,
                 hypothesis_id=hypothesis_id,
             )
+            decisions = []
+            for row in decision_lifecycle_rows:
+                computed_at = row.get("computed_at")
+                if isinstance(computed_at, datetime):
+                    decisions.append(computed_at)
+            executions = []
+            for row in execution_rows:
+                execution_event_at = row.get("execution_event_at")
+                if isinstance(execution_event_at, datetime):
+                    executions.append(execution_event_at)
             if allow_authoritative_runtime_ledger_materialization:
                 cur.execute(
                     f"""
