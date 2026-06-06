@@ -14,7 +14,7 @@ from collections import Counter
 from collections.abc import Generator, Mapping, Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, func, or_, select, text
@@ -58,6 +58,7 @@ from .session_context import is_regular_equities_session_date
 
 
 logger = logging.getLogger(__name__)
+TModelRow = TypeVar("TModelRow")
 
 
 def _paper_route_evidence_query_timeout_ms() -> int:
@@ -94,6 +95,9 @@ PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS = 900
 PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = 300
 PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS = 900
 PAPER_ROUTE_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS = 3600
+PAPER_ROUTE_POST_WINDOW_CLOSEOUT_LOOKAHEAD_SECONDS = (
+    PAPER_ROUTE_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS
+)
 HPAIRS_REQUIRED_PAPER_ROUTE_SYMBOLS = ("AAPL", "AMZN")
 PAPER_ROUTE_TARGET_PLAN_ENDPOINT = "/trading/paper-route-target-plan"
 DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
@@ -3809,6 +3813,285 @@ def _trade_decision_is_paper_route_closeout(row: TradeDecision) -> bool:
     return _safe_text(metadata.get("mode")) == "paper_route_exit"
 
 
+def _trade_decision_action(row: TradeDecision) -> str | None:
+    payload = _as_mapping(row.decision_json)
+    params = _as_mapping(payload.get("params"))
+    return _safe_text(payload.get("action")) or _safe_text(params.get("action"))
+
+
+def _source_decision_lineage_missing_or_matches(
+    row: TradeDecision,
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+) -> bool:
+    if candidate_id is not None:
+        candidate_values = _source_lineage_values(
+            row.decision_json,
+            SOURCE_LINEAGE_CANDIDATE_KEYS,
+        )
+        if candidate_values and candidate_id not in candidate_values:
+            return False
+    if hypothesis_id is not None:
+        hypothesis_values = _source_lineage_values(
+            row.decision_json,
+            SOURCE_LINEAGE_HYPOTHESIS_KEYS,
+        )
+        if hypothesis_values and hypothesis_id not in hypothesis_values:
+            return False
+    return True
+
+
+def _open_symbol_qtys_from_lifecycle(
+    lifecycle_summary: Mapping[str, object],
+) -> dict[str, Decimal]:
+    net_by_symbol = _as_mapping(lifecycle_summary.get("net_filled_qty_by_symbol"))
+    open_qtys: dict[str, Decimal] = {}
+    for symbol, raw_qty in net_by_symbol.items():
+        normalized_symbol = _safe_text(symbol)
+        qty = _safe_decimal(raw_qty)
+        if normalized_symbol and qty != 0:
+            open_qtys[normalized_symbol.upper()] = qty
+    return open_qtys
+
+
+def _post_window_action_offsets_open_qty(
+    row: TradeDecision,
+    *,
+    open_qtys: Mapping[str, Decimal],
+) -> bool:
+    symbol = (_safe_text(row.symbol) or "").upper()
+    open_qty = _safe_decimal(open_qtys.get(symbol))
+    if open_qty == 0:
+        return False
+    action = (_trade_decision_action(row) or "").lower()
+    if open_qty > 0:
+        return action in {"sell", "short"}
+    return action in {"buy", "cover"}
+
+
+def _trade_decision_is_post_window_closeout_candidate(
+    row: TradeDecision,
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+    open_qtys: Mapping[str, Decimal],
+) -> bool:
+    mode = _trade_decision_source_decision_mode(row)
+    if not source_decision_mode_is_profit_proof_eligible(mode):
+        return False
+    if not _source_decision_lineage_missing_or_matches(
+        row,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+    ):
+        return False
+    return _post_window_action_offsets_open_qty(row, open_qtys=open_qtys)
+
+
+def _unique_model_rows_by_id(rows: Sequence[TModelRow]) -> list[TModelRow]:
+    unique_rows: list[TModelRow] = []
+    seen: set[object] = set()
+    for row in rows:
+        row_id = getattr(row, "id", None)
+        if row_id is None:
+            unique_rows.append(row)
+            continue
+        if row_id in seen:
+            continue
+        seen.add(row_id)
+        unique_rows.append(row)
+    return unique_rows
+
+
+def _post_window_closeout_source_rows(
+    session: Session,
+    *,
+    strategy_ids: Sequence[object],
+    account_label: str | None,
+    symbol_filters: Sequence[str],
+    window_end: datetime,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+    lifecycle_summary: Mapping[str, object],
+) -> tuple[
+    list[TradeDecision],
+    list[Execution],
+    list[ExecutionOrderEvent],
+    list[ExecutionTCAMetric],
+    list[OrderFeedSourceWindow],
+]:
+    open_qtys = _open_symbol_qtys_from_lifecycle(lifecycle_summary)
+    if not open_qtys or not strategy_ids:
+        return [], [], [], [], []
+
+    closeout_cutoff = window_end + timedelta(
+        seconds=PAPER_ROUTE_POST_WINDOW_CLOSEOUT_LOOKAHEAD_SECONDS
+    )
+    candidate_symbols = sorted(
+        set(open_qtys) & {item.upper() for item in symbol_filters}
+    )
+    if not candidate_symbols:
+        return [], [], [], [], []
+
+    stmt = (
+        select(TradeDecision)
+        .options(selectinload(TradeDecision.strategy))
+        .where(TradeDecision.strategy_id.in_(strategy_ids))
+        .where(TradeDecision.created_at > window_end)
+        .where(TradeDecision.created_at <= closeout_cutoff)
+        .where(TradeDecision.symbol.in_(candidate_symbols))
+        .order_by(TradeDecision.created_at.asc(), TradeDecision.id.asc())
+        .limit(PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT)
+    )
+    if account_label:
+        stmt = stmt.where(TradeDecision.alpaca_account_label == account_label)
+
+    _maybe_set_paper_route_audit_statement_timeout(session)
+    candidate_rows = [
+        row
+        for row in session.execute(stmt).scalars().all()
+        if _trade_decision_is_post_window_closeout_candidate(
+            row,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            open_qtys=open_qtys,
+        )
+    ]
+    if not candidate_rows:
+        return [], [], [], [], []
+
+    candidate_ids = [row.id for row in candidate_rows]
+    execution_activity_ts = _execution_activity_timestamp()
+    execution_stmt = (
+        select(Execution)
+        .where(Execution.trade_decision_id.in_(candidate_ids))
+        .where(execution_activity_ts > window_end)
+        .where(execution_activity_ts <= closeout_cutoff)
+        .where(Execution.filled_qty > 0)
+        .order_by(execution_activity_ts.asc(), Execution.id.asc())
+        .limit(PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT)
+    )
+    if account_label:
+        execution_stmt = execution_stmt.where(
+            Execution.alpaca_account_label == account_label
+        )
+    execution_stmt = execution_stmt.where(Execution.symbol.in_(candidate_symbols))
+
+    _maybe_set_paper_route_audit_statement_timeout(session)
+    execution_rows = list(session.execute(execution_stmt).scalars().all())
+    if not execution_rows:
+        return [], [], [], [], []
+
+    execution_decision_ids = {
+        row.trade_decision_id for row in execution_rows if row.trade_decision_id
+    }
+    execution_ids = [row.id for row in execution_rows]
+    order_event_activity_ts = _order_event_activity_timestamp()
+    order_event_stmt = (
+        select(ExecutionOrderEvent)
+        .where(
+            or_(
+                ExecutionOrderEvent.trade_decision_id.in_(candidate_ids),
+                ExecutionOrderEvent.execution_id.in_(execution_ids),
+            )
+        )
+        .where(order_event_activity_ts > window_end)
+        .where(order_event_activity_ts <= closeout_cutoff)
+        .order_by(order_event_activity_ts.asc(), ExecutionOrderEvent.id.asc())
+        .limit(PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT)
+    )
+    if account_label:
+        order_event_stmt = order_event_stmt.where(
+            ExecutionOrderEvent.alpaca_account_label == account_label
+        )
+    order_event_stmt = order_event_stmt.where(
+        ExecutionOrderEvent.symbol.in_(candidate_symbols)
+    )
+
+    _maybe_set_paper_route_audit_statement_timeout(session)
+    order_event_rows = list(session.execute(order_event_stmt).scalars().all())
+    if not order_event_rows:
+        return [], [], [], [], []
+
+    fill_event_decision_ids = {
+        row.trade_decision_id
+        for row in order_event_rows
+        if row.trade_decision_id and _order_event_has_complete_fill_lifecycle(row)
+    }
+    tca_stmt = (
+        select(ExecutionTCAMetric)
+        .where(
+            or_(
+                ExecutionTCAMetric.trade_decision_id.in_(candidate_ids),
+                ExecutionTCAMetric.execution_id.in_(execution_ids),
+            )
+        )
+        .order_by(ExecutionTCAMetric.computed_at.asc(), ExecutionTCAMetric.id.asc())
+        .limit(PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT)
+    )
+    if account_label:
+        tca_stmt = tca_stmt.where(
+            ExecutionTCAMetric.alpaca_account_label == account_label
+        )
+    tca_stmt = tca_stmt.where(ExecutionTCAMetric.symbol.in_(candidate_symbols))
+
+    _maybe_set_paper_route_audit_statement_timeout(session)
+    tca_rows = list(session.execute(tca_stmt).scalars().all())
+    tca_decision_ids = {
+        row.trade_decision_id for row in tca_rows if row.trade_decision_id
+    }
+    eligible_decision_ids = (
+        execution_decision_ids & fill_event_decision_ids & tca_decision_ids
+    )
+    if not eligible_decision_ids:
+        return [], [], [], [], []
+
+    eligible_decision_rows = [
+        row for row in candidate_rows if row.id in eligible_decision_ids
+    ]
+    eligible_execution_rows = [
+        row for row in execution_rows if row.trade_decision_id in eligible_decision_ids
+    ]
+    eligible_order_event_rows = [
+        row
+        for row in order_event_rows
+        if row.trade_decision_id in eligible_decision_ids
+        or row.execution_id in {execution.id for execution in eligible_execution_rows}
+    ]
+    eligible_tca_rows = [
+        row
+        for row in tca_rows
+        if row.trade_decision_id in eligible_decision_ids
+        or row.execution_id in {execution.id for execution in eligible_execution_rows}
+    ]
+    source_window_ids = sorted(
+        {
+            row.source_window_id
+            for row in eligible_order_event_rows
+            if row.source_window_id is not None
+        }
+    )
+    source_window_rows: list[OrderFeedSourceWindow] = []
+    if source_window_ids:
+        _maybe_set_paper_route_audit_statement_timeout(session)
+        source_window_rows = list(
+            session.execute(
+                select(OrderFeedSourceWindow)
+                .where(OrderFeedSourceWindow.id.in_(source_window_ids))
+                .order_by(OrderFeedSourceWindow.window_ended_at.asc())
+                .limit(PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT)
+            ).scalars()
+        )
+    return (
+        eligible_decision_rows,
+        eligible_execution_rows,
+        eligible_order_event_rows,
+        eligible_tca_rows,
+        source_window_rows,
+    )
+
+
 def _source_closeout_fillability_summary(
     *,
     decision_rows: Sequence[TradeDecision],
@@ -4984,6 +5267,71 @@ def _strategy_source_activity(
                 raw_decision_count=raw_decision_count,
                 lineage_matched_decision_count=len(decision_rows),
             )
+    post_window_closeout_decision_rows: list[TradeDecision] = []
+    post_window_closeout_execution_rows: list[Execution] = []
+    post_window_closeout_order_event_rows: list[ExecutionOrderEvent] = []
+    post_window_closeout_tca_rows: list[ExecutionTCAMetric] = []
+    post_window_closeout_source_window_rows: list[OrderFeedSourceWindow] = []
+    initial_lifecycle_summary = _source_activity_lifecycle_summary(
+        execution_rows=execution_rows,
+        order_event_rows=order_event_rows,
+        tca_rows=tca_rows,
+    )
+    if (
+        order_event_rows
+        and tca_rows
+        and _open_symbol_qtys_from_lifecycle(initial_lifecycle_summary)
+    ):
+        try:
+            (
+                post_window_closeout_decision_rows,
+                post_window_closeout_execution_rows,
+                post_window_closeout_order_event_rows,
+                post_window_closeout_tca_rows,
+                post_window_closeout_source_window_rows,
+            ) = _post_window_closeout_source_rows(
+                session,
+                strategy_ids=strategy_ids,
+                account_label=account_label,
+                symbol_filters=symbol_filters,
+                window_end=window_end,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                lifecycle_summary=initial_lifecycle_summary,
+            )
+        except SQLAlchemyError as exc:
+            _rollback_after_source_activity_error(
+                session,
+                source="post_window_closeout_source_rows",
+                exc=exc,
+            )
+            return _unavailable_source_activity(
+                strategy_name=strategy_name,
+                strategy_lookup_names=strategy_filters,
+                account_label=account_label,
+                symbols=symbol_filters,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=require_source_lineage,
+                source="post_window_closeout_source_rows",
+                missing_reason="source_closeout_readback_unavailable",
+                raw_decision_count=raw_decision_count,
+                lineage_matched_decision_count=len(decision_rows),
+            )
+    if post_window_closeout_decision_rows:
+        decision_rows = _unique_model_rows_by_id(
+            [*decision_rows, *post_window_closeout_decision_rows]
+        )
+        execution_rows = _unique_model_rows_by_id(
+            [*execution_rows, *post_window_closeout_execution_rows]
+        )
+        order_event_rows = _unique_model_rows_by_id(
+            [*order_event_rows, *post_window_closeout_order_event_rows]
+        )
+        tca_rows = _unique_model_rows_by_id([*tca_rows, *post_window_closeout_tca_rows])
+        source_window_rows = _unique_model_rows_by_id(
+            [*source_window_rows, *post_window_closeout_source_window_rows]
+        )
     decision_count = len(decision_rows)
     execution_count = len(execution_rows)
     tca_sample_count = len(tca_rows)
@@ -5207,6 +5555,17 @@ def _strategy_source_activity(
             materialized_unsubmitted_decision_count
         ),
         "materialized_unsubmitted_reasons": materialized_unsubmitted_reasons,
+        "post_window_closeout_decision_count": len(post_window_closeout_decision_rows),
+        "post_window_closeout_execution_count": len(
+            post_window_closeout_execution_rows
+        ),
+        "post_window_closeout_order_event_count": len(
+            post_window_closeout_order_event_rows
+        ),
+        "post_window_closeout_tca_count": len(post_window_closeout_tca_rows),
+        "post_window_closeout_source_window_count": len(
+            post_window_closeout_source_window_rows
+        ),
         "source_decision_mode_counts": _source_decision_mode_counts(decision_rows),
         "execution_count": execution_count,
         "linked_execution_count": execution_count,
