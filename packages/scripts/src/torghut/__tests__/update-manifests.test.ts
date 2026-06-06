@@ -22,6 +22,7 @@ const createFixture = () => {
   const empiricalPromotionRenewalManifestPath = join(dir, 'empirical-promotion-renewal-cronjob.yaml')
   const executionTcaRefreshManifestPath = join(dir, 'execution-tca-refresh-cronjob.yaml')
   const orderFeedSourceWindowRepairManifestPath = join(dir, 'order-feed-source-window-repair-cronjob.yaml')
+  const zeroNotionalDriftRepairManifestPath = join(dir, 'zero-notional-drift-repair-cronjob.yaml')
   const paperAccountFlattenManifestPath = join(dir, 'paper-account-flatten-cronjob.yaml')
   const boundedPaperRouteTargetMaterializationManifestPath = join(
     dir,
@@ -106,6 +107,7 @@ spec:
     empiricalPromotionRenewalManifestPath,
     executionTcaRefreshManifestPath,
     orderFeedSourceWindowRepairManifestPath,
+    zeroNotionalDriftRepairManifestPath,
     paperAccountFlattenManifestPath,
     boundedPaperRouteTargetMaterializationManifestPath,
     whitepaperSemanticBackfillManifestPath,
@@ -207,6 +209,7 @@ spec:
     empiricalPromotionRenewalManifestPath,
     executionTcaRefreshManifestPath,
     orderFeedSourceWindowRepairManifestPath,
+    zeroNotionalDriftRepairManifestPath,
     paperAccountFlattenManifestPath,
     boundedPaperRouteTargetMaterializationManifestPath,
     whitepaperSemanticBackfillManifestPath,
@@ -242,6 +245,7 @@ const updateOptionsForFixture = (
   empiricalPromotionRenewalManifestPath: relative(repoRoot, fixture.empiricalPromotionRenewalManifestPath),
   executionTcaRefreshManifestPath: relative(repoRoot, fixture.executionTcaRefreshManifestPath),
   orderFeedSourceWindowRepairManifestPath: relative(repoRoot, fixture.orderFeedSourceWindowRepairManifestPath),
+  zeroNotionalDriftRepairManifestPath: relative(repoRoot, fixture.zeroNotionalDriftRepairManifestPath),
   paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
   boundedPaperRouteTargetMaterializationManifestPath: relative(
     repoRoot,
@@ -325,6 +329,7 @@ describe('update-manifests', () => {
     const empiricalPromotionRenewalManifest = readFileSync(fixture.empiricalPromotionRenewalManifestPath, 'utf8')
     const executionTcaRefreshManifest = readFileSync(fixture.executionTcaRefreshManifestPath, 'utf8')
     const orderFeedSourceWindowRepairManifest = readFileSync(fixture.orderFeedSourceWindowRepairManifestPath, 'utf8')
+    const zeroNotionalDriftRepairManifest = readFileSync(fixture.zeroNotionalDriftRepairManifestPath, 'utf8')
     const paperAccountFlattenManifest = readFileSync(fixture.paperAccountFlattenManifestPath, 'utf8')
     const boundedPaperRouteTargetMaterializationManifest = readFileSync(
       fixture.boundedPaperRouteTargetMaterializationManifestPath,
@@ -370,6 +375,7 @@ describe('update-manifests', () => {
       empiricalPromotionRenewalManifest,
       executionTcaRefreshManifest,
       orderFeedSourceWindowRepairManifest,
+      zeroNotionalDriftRepairManifest,
       paperAccountFlattenManifest,
       boundedPaperRouteTargetMaterializationManifest,
       whitepaperSemanticBackfillManifest,
@@ -404,7 +410,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(19)
+    expect(result.changedPaths.length).toBe(20)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -426,7 +432,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: v0.600.0')
       expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     }
-    expect(result.changedPaths.length).toBe(21)
+    expect(result.changedPaths.length).toBe(22)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
