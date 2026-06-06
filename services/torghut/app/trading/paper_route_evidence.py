@@ -10194,6 +10194,8 @@ def _profitability_lifecycle_authority_blockers(
     ):
         satisfied.update(PROFITABILITY_LIFECYCLE_RUNTIME_IMPORT_SATISFIED_BLOCKERS)
     if runtime_ledger_status == "complete":
+        if runtime_import_status == "complete":
+            satisfied.update(PROFITABILITY_LIFECYCLE_RUNTIME_IMPORT_SATISFIED_BLOCKERS)
         satisfied.update(PROFITABILITY_LIFECYCLE_RUNTIME_LEDGER_SATISFIED_BLOCKERS)
     return sorted(
         blocker for blocker in _unique_text_items(blockers) if blocker not in satisfied
