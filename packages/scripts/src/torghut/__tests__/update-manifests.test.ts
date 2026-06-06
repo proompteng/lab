@@ -283,6 +283,15 @@ describe('update-manifests', () => {
     )
     expect(migrationManifest).toContain('DB_WAIT_DATABASE="${database}"')
     expect(migrationManifest).toContain('dsn = database_url(dsn, database)')
+    expect(migrationManifest).toContain('missing_relations = connection.execute')
+    expect(migrationManifest).toContain("has_table_privilege(:runtime_role, c.oid, 'SELECT')")
+    expect(migrationManifest).toContain("has_sequence_privilege(:runtime_role, c.oid, 'USAGE')")
+    expect(migrationManifest).toContain("has_function_privilege(:runtime_role, p.oid, 'EXECUTE')")
+    expect(migrationManifest).toContain('GRANT ALL PRIVILEGES ON TABLE {object_name} TO {quoted_role}')
+    expect(migrationManifest).toContain('granted missing simulation runtime privileges')
+    expect(migrationManifest).not.toContain('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public')
+    expect(migrationManifest).not.toContain('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public')
+    expect(migrationManifest).not.toContain('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public')
   })
 
   it('keeps the whitepaper semantic backfill hook on arm64 nodes', () => {
