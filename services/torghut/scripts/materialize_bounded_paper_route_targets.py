@@ -24,6 +24,7 @@ from app.trading.paper_route_target_plan import (
     PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL,
     PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID,
     materialize_bounded_paper_route_target_plan,
+    paper_route_target_execution_capacity_blockers,
     paper_route_target_plan_targets,
 )
 
@@ -512,6 +513,9 @@ def _target_summaries(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
         actions = _target_symbol_actions(target)
         quantities = _target_symbol_quantities(target)
         target_notional = _target_notional(target)
+        capacity_contract = _to_str_map(
+            target.get("paper_route_execution_capacity_contract")
+        )
         bounded_evidence_collection_authorized = _truthy(
             target.get("bounded_evidence_collection_authorized")
         )
@@ -545,6 +549,10 @@ def _target_summaries(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
                     _target_bounded_materialization_authorized(target)
                 ),
                 "evidence_collection_ok": _truthy(target.get("evidence_collection_ok")),
+                "execution_capacity_state": _safe_text(capacity_contract.get("state")),
+                "execution_capacity_blockers": (
+                    paper_route_target_execution_capacity_blockers(target)
+                ),
                 "symbols": sorted(actions),
                 "symbol_actions": actions,
                 "symbol_quantities": {
@@ -880,6 +888,13 @@ def _safety_blockers(
             blockers.append(
                 f"paper_route_materialization_target_{index}_symbol_actions_missing"
             )
+        for capacity_blocker in cast(
+            Sequence[object], summary.get("execution_capacity_blockers", [])
+        ):
+            if capacity_blocker_text := _safe_text(capacity_blocker):
+                blockers.append(
+                    f"paper_route_materialization_target_{index}_{capacity_blocker_text}"
+                )
 
     blockers.extend(
         _confirmation_blockers(

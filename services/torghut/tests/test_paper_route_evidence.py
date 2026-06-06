@@ -2312,6 +2312,342 @@ class TestPaperRouteEvidenceAudit(TestCase):
             1,
         )
 
+    def test_target_plan_exposes_execution_capacity_contract_for_notional_target(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
+        old_probe_cap = (
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional
+        )
+        old_order_cap = (
+            paper_route_evidence.settings.trading_simple_max_notional_per_order
+        )
+        old_symbol_cap = (
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol
+        )
+        old_fractional = (
+            paper_route_evidence.settings.trading_fractional_equities_enabled
+        )
+        old_shorts = paper_route_evidence.settings.trading_allow_shorts
+        try:
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional = 25.0
+            paper_route_evidence.settings.trading_simple_max_notional_per_order = None
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol = None
+            paper_route_evidence.settings.trading_fractional_equities_enabled = True
+            paper_route_evidence.settings.trading_allow_shorts = True
+            with Session(self.engine) as session:
+                session.add(
+                    Strategy(
+                        name="paper-route-candidate-v1",
+                        description="capacity-ready target source strategy",
+                        enabled=True,
+                        base_timeframe="1Sec",
+                        universe_type="static",
+                        universe_symbols=["AAPL", "AMZN"],
+                        max_notional_per_trade=Decimal("25"),
+                    )
+                )
+                session.commit()
+
+                payload = self._build_basic_paper_route_target_plan(
+                    session,
+                    generated_at=generated_at,
+                )
+        finally:
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional = old_probe_cap
+            paper_route_evidence.settings.trading_simple_max_notional_per_order = (
+                old_order_cap
+            )
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol = (
+                old_symbol_cap
+            )
+            paper_route_evidence.settings.trading_fractional_equities_enabled = (
+                old_fractional
+            )
+            paper_route_evidence.settings.trading_allow_shorts = old_shorts
+
+        target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        capacity = target["paper_route_execution_capacity_contract"]
+
+        self.assertEqual(
+            capacity["schema_version"],
+            paper_route_evidence.PAPER_ROUTE_EXECUTION_CAPACITY_CONTRACT_SCHEMA_VERSION,
+        )
+        self.assertEqual(capacity["state"], "capacity_ready")
+        self.assertEqual(capacity["target_notional"], "25")
+        self.assertEqual(capacity["effective_collection_notional_cap"], "25")
+        self.assertEqual(capacity["capacity_ratio_to_target"], "1")
+        self.assertEqual(capacity["blockers"], [])
+        self.assertEqual(
+            capacity["configured_caps"]["paper_route_probe_max_notional"], "25"
+        )
+        self.assertEqual(
+            capacity["configured_caps"]["strategy_max_notional_per_trade"], "25"
+        )
+        self.assertEqual(
+            capacity["price_snapshot_missing_symbols"],
+            ["AAPL", "AMZN"],
+        )
+        readiness = target["paper_route_execution_readiness_contract"]
+        self.assertEqual(
+            readiness["phase_gates"]["execution_capacity"]["state"],
+            "capacity_ready",
+        )
+        self.assertEqual(readiness["phase_gates"]["execution_capacity"]["blockers"], [])
+
+    def test_target_plan_blocks_bounded_collection_when_capacity_cap_is_too_low(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
+        old_probe_cap = (
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional
+        )
+        old_order_cap = (
+            paper_route_evidence.settings.trading_simple_max_notional_per_order
+        )
+        old_symbol_cap = (
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol
+        )
+        try:
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional = 25.0
+            paper_route_evidence.settings.trading_simple_max_notional_per_order = 10.0
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol = None
+            with Session(self.engine) as session:
+                session.add(
+                    Strategy(
+                        name="paper-route-candidate-v1",
+                        description="capacity-blocked target source strategy",
+                        enabled=True,
+                        base_timeframe="1Sec",
+                        universe_type="static",
+                        universe_symbols=["AAPL", "AMZN"],
+                        max_notional_per_trade=Decimal("25"),
+                    )
+                )
+                session.commit()
+
+                payload = self._build_basic_paper_route_target_plan(
+                    session,
+                    generated_at=generated_at,
+                )
+        finally:
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional = old_probe_cap
+            paper_route_evidence.settings.trading_simple_max_notional_per_order = (
+                old_order_cap
+            )
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol = (
+                old_symbol_cap
+            )
+
+        target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        capacity = target["paper_route_execution_capacity_contract"]
+
+        self.assertEqual(capacity["state"], "blocked")
+        self.assertEqual(capacity["effective_collection_notional_cap"], "20")
+        self.assertEqual(capacity["capacity_ratio_to_target"], "0.8")
+        self.assertIn(
+            "paper_route_execution_capacity_order_cap_below_target_notional",
+            capacity["blockers"],
+        )
+        self.assertIn(
+            "paper_route_execution_capacity_below_target_notional",
+            target["bounded_evidence_collection_blockers"],
+        )
+        self.assertFalse(target["evidence_collection_ok"])
+
+    def test_execution_capacity_contract_reports_missing_notional_and_symbols(
+        self,
+    ) -> None:
+        old_probe_cap = (
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional
+        )
+        try:
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional = None
+            capacity = paper_route_evidence._paper_route_execution_capacity_contract({})
+        finally:
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional = old_probe_cap
+
+        self.assertEqual(capacity["state"], "blocked")
+        self.assertEqual(capacity["target_notional"], "0")
+        self.assertEqual(capacity["effective_collection_notional_cap"], "0")
+        self.assertEqual(capacity["capacity_ratio_to_target"], "0")
+        self.assertEqual(capacity["symbol_capacity"], [])
+        self.assertEqual(
+            capacity["blockers"],
+            [
+                "paper_route_execution_capacity_symbols_missing",
+                "paper_route_execution_capacity_target_notional_missing",
+            ],
+        )
+
+    def test_execution_capacity_contract_estimates_broker_quantities_from_quotes(
+        self,
+    ) -> None:
+        old_probe_cap = (
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional
+        )
+        old_order_cap = (
+            paper_route_evidence.settings.trading_simple_max_notional_per_order
+        )
+        old_symbol_cap = (
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol
+        )
+        old_fractional = (
+            paper_route_evidence.settings.trading_fractional_equities_enabled
+        )
+        old_shorts = paper_route_evidence.settings.trading_allow_shorts
+        try:
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional = 30.0
+            paper_route_evidence.settings.trading_simple_max_notional_per_order = 15.0
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol = 10.0
+            paper_route_evidence.settings.trading_fractional_equities_enabled = True
+            paper_route_evidence.settings.trading_allow_shorts = True
+
+            capacity = paper_route_evidence._paper_route_execution_capacity_contract(
+                {
+                    "target_notional": "20",
+                    "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                    "paper_route_probe_symbol_actions": {
+                        "AAPL": "buy",
+                        "AMZN": "sell",
+                    },
+                    "price_snapshots": {
+                        "AAPL": {"ask": "2"},
+                        "AMZN": {"bid": "5"},
+                    },
+                    "source_decision_readiness": {
+                        "matched_strategy": {"max_notional_per_trade": "30"}
+                    },
+                }
+            )
+        finally:
+            paper_route_evidence.settings.trading_simple_paper_route_probe_max_notional = old_probe_cap
+            paper_route_evidence.settings.trading_simple_max_notional_per_order = (
+                old_order_cap
+            )
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol = (
+                old_symbol_cap
+            )
+            paper_route_evidence.settings.trading_fractional_equities_enabled = (
+                old_fractional
+            )
+            paper_route_evidence.settings.trading_allow_shorts = old_shorts
+
+        self.assertEqual(capacity["state"], "capacity_ready")
+        self.assertEqual(capacity["effective_collection_notional_cap"], "20")
+        self.assertEqual(capacity["capacity_ratio_to_target"], "1")
+        self.assertEqual(capacity["blockers"], [])
+        self.assertEqual(
+            capacity["configured_caps"],
+            {
+                "paper_route_probe_max_notional": "30",
+                "simple_max_notional_per_order": "15",
+                "simple_max_notional_per_symbol": "10",
+                "strategy_max_notional_per_trade": "30",
+                "fractional_equities_enabled": True,
+                "shorts_enabled": True,
+            },
+        )
+        aapl_capacity, amzn_capacity = capacity["symbol_capacity"]
+        self.assertEqual(aapl_capacity["reference_price"], "2")
+        self.assertEqual(aapl_capacity["requested_qty"], "5")
+        self.assertEqual(aapl_capacity["broker_resolved_qty"], "5")
+        self.assertEqual(aapl_capacity["broker_resolved_notional"], "10")
+        self.assertEqual(amzn_capacity["reference_price"], "5")
+        self.assertEqual(amzn_capacity["requested_qty"], "2")
+        self.assertEqual(amzn_capacity["broker_resolved_qty"], "2")
+        self.assertEqual(amzn_capacity["broker_resolved_notional"], "10")
+
+    def test_execution_capacity_contract_blocks_short_qty_below_min_step(
+        self,
+    ) -> None:
+        old_fractional = (
+            paper_route_evidence.settings.trading_fractional_equities_enabled
+        )
+        old_shorts = paper_route_evidence.settings.trading_allow_shorts
+        try:
+            paper_route_evidence.settings.trading_fractional_equities_enabled = True
+            paper_route_evidence.settings.trading_allow_shorts = False
+
+            capacity = paper_route_evidence._paper_route_execution_capacity_contract(
+                {
+                    "target_notional": "10",
+                    "paper_route_probe_effective_max_notional": "10",
+                    "paper_route_probe_symbols": ["AMZN"],
+                    "paper_route_probe_symbol_actions": {"AMZN": "sell"},
+                    "price_snapshot": {"symbol": "AMZN", "price": "100"},
+                }
+            )
+        finally:
+            paper_route_evidence.settings.trading_fractional_equities_enabled = (
+                old_fractional
+            )
+            paper_route_evidence.settings.trading_allow_shorts = old_shorts
+
+        self.assertEqual(capacity["state"], "blocked")
+        self.assertEqual(
+            capacity["blockers"],
+            [
+                "paper_route_execution_capacity_broker_qty_below_min_step",
+                "paper_route_execution_capacity_short_sells_disabled",
+            ],
+        )
+        self.assertEqual(capacity["symbol_capacity"][0]["reference_price"], "100")
+        self.assertEqual(capacity["symbol_capacity"][0]["requested_qty"], "0.1")
+        self.assertEqual(capacity["symbol_capacity"][0]["broker_resolved_qty"], "0")
+        self.assertFalse(capacity["configured_caps"]["shorts_enabled"])
+
+    def test_execution_capacity_contract_blocks_probe_and_symbol_caps_below_target(
+        self,
+    ) -> None:
+        old_symbol_cap = (
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol
+        )
+        try:
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol = 10.0
+
+            capacity = paper_route_evidence._paper_route_execution_capacity_contract(
+                {
+                    "target_notional": "25",
+                    "paper_route_probe_effective_max_notional": "20",
+                    "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                    "paper_route_probe_symbol_actions": {
+                        "AAPL": "buy",
+                        "AMZN": "sell",
+                    },
+                }
+            )
+        finally:
+            paper_route_evidence.settings.trading_simple_max_notional_per_symbol = (
+                old_symbol_cap
+            )
+
+        self.assertEqual(capacity["state"], "blocked")
+        self.assertEqual(capacity["effective_collection_notional_cap"], "20")
+        self.assertEqual(capacity["capacity_ratio_to_target"], "0.8")
+        self.assertIn(
+            "paper_route_execution_capacity_probe_cap_below_target_notional",
+            capacity["blockers"],
+        )
+        self.assertIn(
+            "paper_route_execution_capacity_symbol_cap_below_target_notional",
+            capacity["blockers"],
+        )
+        self.assertIn(
+            "paper_route_execution_capacity_below_target_notional",
+            capacity["blockers"],
+        )
+
+    def test_price_snapshot_reference_price_uses_midpoint_when_no_action_quote(
+        self,
+    ) -> None:
+        reference_price = paper_route_evidence._price_snapshot_reference_price(
+            {"bid": "9", "ask": "11"},
+            action="hold",
+        )
+
+        self.assertEqual(reference_price, Decimal("10"))
+
     def test_target_plan_deferred_mode_builds_only_next_window(self) -> None:
         generated_at = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
         window_purposes: list[str] = []

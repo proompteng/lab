@@ -693,11 +693,62 @@ def test_paper_route_target_plan_target_summary_accepts_explicit_quantity_and_sy
             "bounded_evidence_collection_authorized": True,
             "bounded_materialization_authorized": True,
             "evidence_collection_ok": True,
+            "execution_capacity_state": None,
+            "execution_capacity_blockers": [],
             "symbols": ["AAPL", "AMZN"],
             "symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
             "symbol_quantities": {"AAPL": "3", "AMZN": "3"},
         }
     ]
+
+
+def test_paper_route_materializer_blocks_notional_target_missing_capacity_contract() -> (
+    None
+):
+    target = _hpairs_target(
+        paper_route_probe_symbol_quantities={},
+        target_quantity="",
+        paper_route_execution_capacity_contract={},
+    )
+    plan = _plan(target)
+    summaries = cli._target_summaries(plan)
+    args = Namespace(
+        account_label="TORGHUT_SIM",
+        max_notional="20",
+        capital_mode="paper",
+        promotion_allowed=False,
+        final_promotion_allowed=False,
+        final_authority_ok=False,
+        capital_promotion_allowed=False,
+        commit=False,
+        allow_dynamic_target_plan=False,
+        confirm_account_label=None,
+        confirm_dsn_env=None,
+        confirm_hypothesis_id=None,
+        confirm_candidate_id=None,
+        confirm_runtime_strategy_name=None,
+        confirm_target_plan_ref=None,
+        confirm_selected_plan_source=None,
+        confirm_target_count_min=None,
+        operator_confirmation=cli.OPERATOR_CONFIRMATION,
+    )
+
+    blockers = cli._safety_blockers(
+        args=args,
+        plan=plan,
+        plan_source={},
+        summaries=summaries,
+        dsn="sqlite+pysqlite:///:memory:",
+        dsn_env="SIM_DB_DSN",
+    )
+
+    assert summaries[0]["execution_capacity_blockers"] == [
+        "paper_route_execution_capacity_contract_missing"
+    ]
+    assert (
+        "paper_route_materialization_target_0_paper_route_execution_capacity_contract_missing"
+        in blockers
+    )
 
 
 def test_paper_route_materializer_window_datetime_helpers_handle_edge_cases() -> None:
@@ -1214,6 +1265,14 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_skips_before_ope
             _hpairs_target(
                 target_notional="75000",
                 paper_route_probe_symbol_quantities={},
+                paper_route_execution_capacity_contract={
+                    "schema_version": "torghut.paper-route-execution-capacity-contract.v1",
+                    "state": "capacity_ready",
+                    "target_notional": "75000",
+                    "effective_collection_notional_cap": "75000",
+                    "capacity_ratio_to_target": "1",
+                    "blockers": [],
+                },
             )
         ),
     }
@@ -1278,6 +1337,14 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_writes_when_open
             _hpairs_target(
                 target_notional="75000",
                 paper_route_probe_symbol_quantities={},
+                paper_route_execution_capacity_contract={
+                    "schema_version": "torghut.paper-route-execution-capacity-contract.v1",
+                    "state": "capacity_ready",
+                    "target_notional": "75000",
+                    "effective_collection_notional_cap": "75000",
+                    "capacity_ratio_to_target": "1",
+                    "blockers": [],
+                },
             )
         ),
     }

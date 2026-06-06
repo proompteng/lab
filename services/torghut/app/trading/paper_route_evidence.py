@@ -54,6 +54,7 @@ from .runtime_strategy_resolution import (
     runtime_strategy_name_from_strategy_id,
     strategy_names_from_strategy_id,
 )
+from .quantity_rules import quantize_qty_for_symbol, resolve_quantity_resolution
 from .session_context import is_regular_equities_session_date
 
 
@@ -86,6 +87,9 @@ RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION = (
 )
 PAPER_ROUTE_EXECUTION_READINESS_CONTRACT_SCHEMA_VERSION = (
     "torghut.paper-route-execution-readiness-contract.v1"
+)
+PAPER_ROUTE_EXECUTION_CAPACITY_CONTRACT_SCHEMA_VERSION = (
+    "torghut.paper-route-execution-capacity-contract.v1"
 )
 DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
@@ -798,6 +802,11 @@ def _decimal_text(value: object) -> str:
     return text.rstrip("0").rstrip(".") or "0"
 
 
+def _positive_decimal_or_none(value: object) -> Decimal | None:
+    amount = _safe_decimal(value)
+    return amount if amount > 0 else None
+
+
 def _optional_decimal_text(value: object) -> str | None:
     if value is None:
         return None
@@ -1160,6 +1169,284 @@ def _paper_route_execution_readiness_state(
     return session_state or "unknown"
 
 
+def _target_capacity_notional(target: Mapping[str, object]) -> Decimal:
+    for key in (
+        "target_notional",
+        "paper_route_probe_target_notional",
+        "paper_route_probe_effective_max_notional",
+        "bounded_evidence_collection_max_notional",
+        "paper_route_probe_next_session_max_notional",
+    ):
+        amount = _safe_decimal(target.get(key))
+        if amount > 0:
+            return amount
+    return Decimal("0")
+
+
+def _target_capacity_strategy_max_notional(
+    target: Mapping[str, object],
+) -> Decimal | None:
+    readiness = _as_mapping(target.get("source_decision_readiness"))
+    matched_strategy = _as_mapping(readiness.get("matched_strategy"))
+    return _positive_decimal_or_none(matched_strategy.get("max_notional_per_trade"))
+
+
+def _target_capacity_price_snapshot(
+    target: Mapping[str, object],
+    *,
+    symbol: str,
+) -> dict[str, Any]:
+    snapshots = _as_mapping(target.get("price_snapshots"))
+    for key in (symbol, symbol.upper(), symbol.lower()):
+        snapshot = _as_mapping(snapshots.get(key))
+        if snapshot:
+            return snapshot
+
+    snapshot = _as_mapping(target.get("price_snapshot"))
+    snapshot_symbol = (_safe_text(snapshot.get("symbol")) or "").upper()
+    if snapshot and (not snapshot_symbol or snapshot_symbol == symbol):
+        return snapshot
+    return {}
+
+
+def _price_snapshot_reference_price(
+    snapshot: Mapping[str, object],
+    *,
+    action: str,
+) -> Decimal | None:
+    if action == "buy":
+        preferred = _positive_decimal_or_none(
+            snapshot.get("ask") or snapshot.get("ask_price") or snapshot.get("ap")
+        )
+        if preferred is not None:
+            return preferred
+    if action == "sell":
+        preferred = _positive_decimal_or_none(
+            snapshot.get("bid") or snapshot.get("bid_price") or snapshot.get("bp")
+        )
+        if preferred is not None:
+            return preferred
+
+    for key in ("price", "mid", "mid_price", "midpoint"):
+        amount = _positive_decimal_or_none(snapshot.get(key))
+        if amount is not None:
+            return amount
+    bid = _positive_decimal_or_none(
+        snapshot.get("bid") or snapshot.get("bid_price") or snapshot.get("bp")
+    )
+    ask = _positive_decimal_or_none(
+        snapshot.get("ask") or snapshot.get("ask_price") or snapshot.get("ap")
+    )
+    if bid is not None and ask is not None:
+        return (bid + ask) / Decimal("2")
+    return bid or ask
+
+
+def _target_capacity_symbol_contracts(
+    *,
+    target: Mapping[str, object],
+    symbols: Sequence[str],
+    actions: Mapping[str, str],
+    symbol_budget: Decimal,
+    per_order_cap: Decimal | None,
+    per_symbol_cap: Decimal | None,
+    strategy_cap: Decimal | None,
+) -> tuple[list[dict[str, object]], list[str]]:
+    contracts: list[dict[str, object]] = []
+    blockers: list[str] = []
+    for symbol in symbols:
+        action = actions.get(symbol) or "buy"
+        caps = [symbol_budget]
+        if per_order_cap is not None:
+            caps.append(per_order_cap)
+        if per_symbol_cap is not None:
+            caps.append(per_symbol_cap)
+        if strategy_cap is not None:
+            caps.append(strategy_cap)
+        effective_notional_cap = min(caps) if caps else Decimal("0")
+        snapshot = _target_capacity_price_snapshot(target, symbol=symbol)
+        reference_price = _price_snapshot_reference_price(snapshot, action=action)
+        estimate: dict[str, object] = {
+            "symbol": symbol,
+            "action": action,
+            "target_symbol_notional_budget": _decimal_text(symbol_budget),
+            "effective_symbol_notional_cap": _decimal_text(effective_notional_cap),
+            "reference_price": (
+                _decimal_text(reference_price) if reference_price is not None else None
+            ),
+            "price_snapshot_available": bool(snapshot),
+        }
+        if reference_price is not None and reference_price > 0:
+            requested_qty = effective_notional_cap / reference_price
+            broker_resolution = resolve_quantity_resolution(
+                symbol,
+                action=action,
+                global_enabled=settings.trading_fractional_equities_enabled,
+                allow_shorts=settings.trading_allow_shorts,
+                position_qty=Decimal("0"),
+                requested_qty=requested_qty,
+            )
+            broker_qty = quantize_qty_for_symbol(
+                symbol,
+                requested_qty,
+                fractional_equities_enabled=broker_resolution.fractional_allowed,
+            )
+            estimate["requested_qty"] = _decimal_text(requested_qty)
+            estimate["broker_resolved_qty"] = _decimal_text(broker_qty)
+            estimate["broker_resolved_notional"] = _decimal_text(
+                broker_qty * reference_price
+            )
+            estimate["broker_quantity_resolution"] = broker_resolution.to_payload()
+            if broker_resolution.short_increasing and not settings.trading_allow_shorts:
+                blockers.append("paper_route_execution_capacity_short_sells_disabled")
+            if broker_qty <= 0:
+                blockers.append(
+                    "paper_route_execution_capacity_broker_qty_below_min_step"
+                )
+        contracts.append(estimate)
+    return contracts, blockers
+
+
+def _paper_route_execution_capacity_contract(
+    target: Mapping[str, object],
+) -> dict[str, object]:
+    target_notional = _target_capacity_notional(target)
+    symbols = _unique_text_items(target.get("paper_route_probe_symbols"))
+    actions = {
+        str(symbol).strip().upper(): str(action).strip().lower()
+        for symbol, action in _as_mapping(
+            target.get("paper_route_probe_symbol_actions")
+        ).items()
+        if str(symbol).strip() and str(action).strip().lower() in {"buy", "sell"}
+    }
+    symbol_count = len(symbols)
+    per_order_cap = _positive_decimal_or_none(
+        settings.trading_simple_max_notional_per_order
+    )
+    per_symbol_cap = _positive_decimal_or_none(
+        settings.trading_simple_max_notional_per_symbol
+    )
+    strategy_cap = _target_capacity_strategy_max_notional(target)
+    probe_cap = (
+        _positive_decimal_or_none(
+            target.get("paper_route_probe_effective_max_notional")
+        )
+        or _positive_decimal_or_none(
+            target.get("paper_route_probe_next_session_max_notional")
+        )
+        or _positive_decimal_or_none(
+            settings.trading_simple_paper_route_probe_max_notional
+        )
+    )
+
+    blockers: list[str] = []
+    if target_notional <= 0:
+        blockers.append("paper_route_execution_capacity_target_notional_missing")
+    if not symbols:
+        blockers.append("paper_route_execution_capacity_symbols_missing")
+
+    aggregate_caps = [target_notional] if target_notional > 0 else []
+    if probe_cap is not None:
+        aggregate_caps.append(probe_cap)
+        if target_notional > 0 and probe_cap < target_notional:
+            blockers.append(
+                "paper_route_execution_capacity_probe_cap_below_target_notional"
+            )
+    if symbol_count > 0:
+        if per_order_cap is not None:
+            aggregate_caps.append(per_order_cap * Decimal(symbol_count))
+            if (
+                target_notional > 0
+                and per_order_cap * Decimal(symbol_count) < target_notional
+            ):
+                blockers.append(
+                    "paper_route_execution_capacity_order_cap_below_target_notional"
+                )
+        if per_symbol_cap is not None:
+            aggregate_caps.append(per_symbol_cap * Decimal(symbol_count))
+            if (
+                target_notional > 0
+                and per_symbol_cap * Decimal(symbol_count) < target_notional
+            ):
+                blockers.append(
+                    "paper_route_execution_capacity_symbol_cap_below_target_notional"
+                )
+        if strategy_cap is not None:
+            aggregate_caps.append(strategy_cap * Decimal(symbol_count))
+            if (
+                target_notional > 0
+                and strategy_cap * Decimal(symbol_count) < target_notional
+            ):
+                blockers.append(
+                    "paper_route_execution_capacity_strategy_cap_below_target_notional"
+                )
+
+    effective_collection_cap = min(aggregate_caps) if aggregate_caps else Decimal("0")
+    if target_notional > 0 and effective_collection_cap < target_notional:
+        blockers.append("paper_route_execution_capacity_below_target_notional")
+
+    symbol_budget = (
+        target_notional / Decimal(symbol_count)
+        if target_notional > 0 and symbol_count > 0
+        else Decimal("0")
+    )
+    symbol_contracts, symbol_blockers = _target_capacity_symbol_contracts(
+        target=target,
+        symbols=symbols,
+        actions=actions,
+        symbol_budget=symbol_budget,
+        per_order_cap=per_order_cap,
+        per_symbol_cap=per_symbol_cap,
+        strategy_cap=strategy_cap,
+    )
+    blockers.extend(symbol_blockers)
+    blockers = sorted(dict.fromkeys(blockers))
+    state = "blocked" if blockers else "capacity_ready"
+    capacity_ratio = (
+        effective_collection_cap / target_notional
+        if target_notional > 0
+        else Decimal("0")
+    )
+    return {
+        "schema_version": PAPER_ROUTE_EXECUTION_CAPACITY_CONTRACT_SCHEMA_VERSION,
+        "state": state,
+        "authority": "bounded_paper_route_collection_capacity_only",
+        "target_notional": _decimal_text(target_notional),
+        "effective_collection_notional_cap": _decimal_text(effective_collection_cap),
+        "capacity_ratio_to_target": _decimal_text(capacity_ratio),
+        "blockers": blockers,
+        "symbol_count": symbol_count,
+        "symbols": symbols,
+        "configured_caps": {
+            "paper_route_probe_max_notional": (
+                _decimal_text(probe_cap) if probe_cap is not None else None
+            ),
+            "simple_max_notional_per_order": (
+                _decimal_text(per_order_cap) if per_order_cap is not None else None
+            ),
+            "simple_max_notional_per_symbol": (
+                _decimal_text(per_symbol_cap) if per_symbol_cap is not None else None
+            ),
+            "strategy_max_notional_per_trade": (
+                _decimal_text(strategy_cap) if strategy_cap is not None else None
+            ),
+            "fractional_equities_enabled": (
+                settings.trading_fractional_equities_enabled
+            ),
+            "shorts_enabled": settings.trading_allow_shorts,
+        },
+        "symbol_capacity": symbol_contracts,
+        "price_snapshot_missing_symbols": [
+            item["symbol"]
+            for item in symbol_contracts
+            if not bool(item.get("price_snapshot_available"))
+        ],
+        "proof_boundary": (
+            "capacity_ready_is_not_profit_proof_until_orders_fill_tca_and_runtime_ledger_import"
+        ),
+    }
+
+
 def _paper_route_execution_readiness_contract(
     target: Mapping[str, object],
 ) -> dict[str, object]:
@@ -1169,6 +1456,9 @@ def _paper_route_execution_readiness_contract(
     )
     clean_window_baseline_state = _as_mapping(
         target.get("paper_route_clean_window_baseline_state")
+    )
+    execution_capacity = _as_mapping(
+        target.get("paper_route_execution_capacity_contract")
     )
     session_state = (
         _safe_text(target.get("paper_route_session_readiness_state")) or "unknown"
@@ -1259,6 +1549,19 @@ def _paper_route_execution_readiness_contract(
                 or _safe_text(target.get("paper_route_probe_effective_max_notional"))
                 or "0",
                 "blockers": evidence_blockers,
+            },
+            "execution_capacity": {
+                "state": _safe_text(execution_capacity.get("state")),
+                "target_notional": _safe_text(
+                    execution_capacity.get("target_notional")
+                ),
+                "effective_collection_notional_cap": _safe_text(
+                    execution_capacity.get("effective_collection_notional_cap")
+                ),
+                "capacity_ratio_to_target": _safe_text(
+                    execution_capacity.get("capacity_ratio_to_target")
+                ),
+                "blockers": _unique_text_items(execution_capacity.get("blockers")),
             },
             "runtime_window_import": {
                 "ready": import_ready,
@@ -2894,6 +3197,22 @@ def _next_paper_route_runtime_window_targets(
                 health_gate=health_gate,
             )
         )
+        execution_capacity_contract = _paper_route_execution_capacity_contract(
+            {
+                **pair_balance_target,
+                "source_decision_readiness": source_decision_readiness,
+                "paper_route_probe_symbols": target_probe_symbols,
+                "paper_route_probe_symbol_actions": pair_symbol_actions,
+                "target_notional": next_notional,
+                "paper_route_probe_target_notional": next_notional,
+                "paper_route_probe_effective_max_notional": next_notional,
+                "bounded_evidence_collection_max_notional": next_notional,
+                "paper_route_probe_next_session_max_notional": next_notional,
+            }
+        )
+        execution_capacity_blockers = _unique_text_items(
+            execution_capacity_contract.get("blockers")
+        )
         stale_collection_blockers_cleared_by_current_inputs = (
             _hpairs_stale_collection_blockers_cleared_by_current_inputs(
                 target=pair_balance_target,
@@ -2915,6 +3234,7 @@ def _next_paper_route_runtime_window_targets(
                 ),
                 *_unique_text_items(source_decision_readiness.get("blockers")),
                 *current_collection_prerequisite_blockers,
+                *execution_capacity_blockers,
                 *target_account_audit_blockers,
                 *account_pre_session_blockers,
                 *clean_window_baseline_blockers,
@@ -2973,6 +3293,8 @@ def _next_paper_route_runtime_window_targets(
             "runtime_window_import_promotion_blockers": (
                 health_gate_promotion_blockers
             ),
+            "paper_route_execution_capacity_contract": execution_capacity_contract,
+            "paper_route_execution_capacity_blockers": execution_capacity_blockers,
             "window_start": _isoformat(window_start),
             "window_end": _isoformat(window_end),
             "paper_route_probe_symbols": target_probe_symbols,
