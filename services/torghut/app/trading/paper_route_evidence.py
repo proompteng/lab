@@ -2991,6 +2991,8 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_probe_missing_strategy_universe_symbols": (
                 missing_strategy_universe_symbols
             ),
+            "target_notional": next_notional,
+            "paper_route_probe_target_notional": next_notional,
             "paper_route_probe_next_session_max_notional": next_notional,
             "paper_route_probe_effective_max_notional": next_notional,
             "paper_route_probe_window_start": _isoformat(window_start),

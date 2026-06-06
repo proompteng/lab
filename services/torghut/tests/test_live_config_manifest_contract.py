@@ -29,6 +29,7 @@ _LIVE_EXECUTION_CHIP_TECH_UNIVERSE = _RESEARCHED_CHIP_TECH_UNIVERSE
 _QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE = ("AAPL", "AMZN", "INTC", "NVDA")
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
+_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL = "1000000"
 
 
 def _repo_root() -> Path:
@@ -480,14 +481,14 @@ class TestLiveConfigManifestContract(TestCase):
                 self.assertEqual(name, "microbar-cross-sectional-pairs-v1")
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_notional_per_trade"),
-                    Decimal("75000"),
+                    Decimal(_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL),
                 )
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("6.0"),
+                    Decimal("10.0"),
                 )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
-                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "4.0")
+                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "10.0")
                 self.assertEqual(params.get("max_pair_legs"), "2")
                 self.assertEqual(params.get("top_n"), "1")
                 self.assertEqual(
@@ -690,7 +691,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            "75000",
+            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
@@ -1534,7 +1535,9 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--plan-url-attempts 3", args)
         self.assertIn("--database-dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--max-notional 75000", args)
+        self.assertIn(
+            f"--max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}", args
+        )
         self.assertIn("--commit", args)
         self.assertIn("--allow-dynamic-target-plan", args)
         self.assertIn("--skip-unless-active-target-window", args)
@@ -1558,7 +1561,10 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn("--confirm-target-count-min 1", args)
-        self.assertIn("--confirm-max-notional 75000", args)
+        self.assertIn(
+            f"--confirm-max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}",
+            args,
+        )
         self.assertIn(
             "--operator-confirmation MATERIALIZE_BOUNDED_TORGHUT_SIM_PAPER_ROUTE_TARGETS",
             args,
@@ -1570,6 +1576,48 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("--capital-promotion-allowed", args)
         self.assertNotIn("--final-authority-ok", args)
         self.assertNotIn("PA3SX7FYNUTF", args)
+
+    def test_hpairs_bounded_paper_collection_notional_contract_is_aligned(
+        self,
+    ) -> None:
+        live_env = _load_torghut_knative_env()
+        sim_env = _load_knative_env(
+            "argocd/applications/torghut/knative-service-sim.yaml"
+        )
+        _, materializer_container = _load_cronjob_container(
+            "argocd/applications/torghut/"
+            "bounded-paper-route-target-materialization-cronjob.yaml"
+        )
+        args = "\n".join(str(item) for item in materializer_container.get("args", []))
+        strategies = {
+            str(strategy.get("name")): strategy
+            for strategy in _load_torghut_strategy_catalog()
+        }
+        hpairs = strategies["microbar-cross-sectional-pairs-v1"]
+
+        self.assertEqual(
+            live_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
+            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
+        )
+        self.assertEqual(
+            sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
+            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
+        )
+        self.assertIn(
+            f"--max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}", args
+        )
+        self.assertIn(
+            f"--confirm-max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}",
+            args,
+        )
+        self.assertEqual(
+            _strategy_decimal(hpairs, "max_notional_per_trade"),
+            Decimal(_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL),
+        )
+        self.assertEqual(
+            _strategy_decimal(hpairs, "max_position_pct_equity"), Decimal("10.0")
+        )
+        self.assertEqual(_params(hpairs).get("max_gross_exposure_pct_equity"), "10.0")
 
     def test_tigerbeetle_journal_order_events_cronjob_covers_live_and_sim(
         self,
@@ -2240,7 +2288,8 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertFalse(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
         self.assertEqual(
-            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"), "75000"
+            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
+            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
         )
         self.assertTrue(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
         self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "iex")
