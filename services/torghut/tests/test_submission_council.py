@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -56,6 +57,9 @@ from app.trading.submission_council import (
     _maybe_set_runtime_ledger_status_statement_timeout,
     _metric_window_activity_reason_codes,
     _rollback_runtime_ledger_status_session,
+    _runtime_ledger_aggregate_candidate_payloads,
+    _runtime_ledger_latest_payloads_per_symbol,
+    _runtime_ledger_merge_count_maps,
     _runtime_ledger_paper_probation_candidates,
     _runtime_ledger_repair_reason_codes,
     _runtime_ledger_repair_score,
@@ -65,6 +69,7 @@ from app.trading.submission_council import (
     _runtime_ledger_paper_probation_import_plan,
     _runtime_ledger_source_collection_candidates,
     _runtime_ledger_source_collection_target_progress_payload,
+    _runtime_ledger_unique_sequence,
     build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     load_quant_evidence_status,
@@ -2297,6 +2302,207 @@ class TestSubmissionCouncil(TestCase):
             target["safe_evidence_collection_path"][0],
             "materialize_runtime_ledger_source_window_refs",
         )
+
+    def test_runtime_ledger_candidate_aggregation_helpers_fail_closed(self) -> None:
+        self.assertEqual(
+            _runtime_ledger_latest_payloads_per_symbol(
+                [
+                    {"symbol": "AAPL", "marker": "newest-aapl"},
+                    {"symbol": "AAPL", "marker": "older-aapl"},
+                ]
+            ),
+            [{"symbol": "AAPL", "marker": "newest-aapl"}],
+        )
+        self.assertEqual(
+            _runtime_ledger_latest_payloads_per_symbol(
+                [
+                    {"symbol": "AAPL", "marker": "symbol-bucket"},
+                    {"marker": "portfolio-bucket"},
+                ]
+            ),
+            [{"marker": "portfolio-bucket"}],
+        )
+        self.assertEqual(
+            _runtime_ledger_merge_count_maps(
+                [
+                    {"counts": "not-a-map"},
+                    {"counts": {"": 3, "zero": 0, "policy": "2"}},
+                ],
+                "counts",
+            ),
+            {"policy": 2},
+        )
+        self.assertEqual(
+            _runtime_ledger_unique_sequence(
+                [
+                    {"items": "not-a-sequence"},
+                    {
+                        "items": [
+                            {"topic": "fills", "offset": 1},
+                            {"topic": "fills", "offset": 1},
+                        ]
+                    },
+                    {"items": [{"topic": "fills", "offset": 2}]},
+                ],
+                "items",
+            ),
+            [{"topic": "fills", "offset": 1}, {"topic": "fills", "offset": 2}],
+        )
+        self.assertEqual(_runtime_ledger_aggregate_candidate_payloads([]), {})
+
+    def test_runtime_ledger_repair_candidates_aggregate_same_window_symbol_buckets(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        window_start = datetime(2026, 6, 5, 15, 13, 23, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 5, 20, 6, tzinfo=timezone.utc)
+        registry_items = [
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                "strategy_family": "microbar_cross_sectional_pairs",
+                "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+            }
+        ]
+
+        with session_local() as session:
+            session.add_all(
+                [
+                    StrategyRuntimeLedgerBucket(
+                        run_id="hpairs-friday-window",
+                        candidate_id="c88421d619759b2cfaa6f4d0",
+                        hypothesis_id="H-PAIRS-01",
+                        observed_stage="paper",
+                        bucket_started_at=window_start,
+                        bucket_ended_at=window_end,
+                        account_label="TORGHUT_SIM",
+                        runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+                        strategy_family="microbar_cross_sectional_pairs",
+                        fill_count=16,
+                        decision_count=4,
+                        submitted_order_count=8,
+                        cancelled_order_count=0,
+                        rejected_order_count=0,
+                        unfilled_order_count=0,
+                        closed_trade_count=13,
+                        open_position_count=0,
+                        filled_notional=Decimal("149316.19255257"),
+                        gross_strategy_pnl=Decimal("-742.50905543"),
+                        cost_amount=Decimal("9.76"),
+                        net_strategy_pnl_after_costs=Decimal("-752.26905543"),
+                        post_cost_expectancy_bps=Decimal("-50.38094279"),
+                        ledger_schema_version="torghut.exact_replay_ledger.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy": 8},
+                        cost_model_hash_counts={"cost": 8},
+                        lineage_hash_counts={"lineage": 8},
+                        blockers_json=[],
+                        payload_json={
+                            "symbol": "AAPL",
+                            "source_refs": ["postgres:executions:aapl"],
+                            "source_offsets": [
+                                {
+                                    "topic": "torghut.trade-updates.v1",
+                                    "partition": 0,
+                                    "offset": 100,
+                                }
+                            ],
+                            "pnl_derivation": "execution_reconstruction",
+                        },
+                        created_at=window_end + timedelta(minutes=1),
+                        updated_at=window_end + timedelta(minutes=1),
+                    ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="hpairs-friday-window",
+                        candidate_id="c88421d619759b2cfaa6f4d0",
+                        hypothesis_id="H-PAIRS-01",
+                        observed_stage="paper",
+                        bucket_started_at=window_start,
+                        bucket_ended_at=window_end,
+                        account_label="TORGHUT_SIM",
+                        runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+                        strategy_family="microbar_cross_sectional_pairs",
+                        fill_count=6,
+                        decision_count=3,
+                        submitted_order_count=9,
+                        cancelled_order_count=0,
+                        rejected_order_count=0,
+                        unfilled_order_count=0,
+                        closed_trade_count=4,
+                        open_position_count=0,
+                        filled_notional=Decimal("74055.97138900"),
+                        gross_strategy_pnl=Decimal("876.38483500"),
+                        cost_amount=Decimal("1.42"),
+                        net_strategy_pnl_after_costs=Decimal("874.96483500"),
+                        post_cost_expectancy_bps=Decimal("118.14912675"),
+                        ledger_schema_version="torghut.exact_replay_ledger.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy": 9},
+                        cost_model_hash_counts={"cost": 9},
+                        lineage_hash_counts={"lineage": 9},
+                        blockers_json=[],
+                        payload_json={
+                            "symbol": "AMZN",
+                            "source_refs": ["postgres:executions:amzn"],
+                            "source_offsets": [
+                                {
+                                    "topic": "torghut.trade-updates.v1",
+                                    "partition": 0,
+                                    "offset": 101,
+                                }
+                            ],
+                            "pnl_derivation": "execution_reconstruction",
+                        },
+                        created_at=window_end + timedelta(minutes=2),
+                        updated_at=window_end + timedelta(minutes=2),
+                    ),
+                ]
+            )
+            session.commit()
+
+            candidates = _load_runtime_ledger_repair_candidates(
+                session,
+                registry_items=registry_items,
+                limit=5,
+            )
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate["fill_count"], 22)
+        self.assertEqual(candidate["submitted_order_count"], 17)
+        self.assertEqual(candidate["closed_trade_count"], 17)
+        self.assertEqual(candidate["filled_notional"], "223372.16394157")
+        self.assertEqual(candidate["net_strategy_pnl_after_costs"], "122.69577957")
+        runtime_bucket = cast(Mapping[str, object], candidate["runtime_ledger_bucket"])
+        self.assertEqual(
+            runtime_bucket["runtime_ledger_bucket_aggregation"],
+            "portfolio_window_from_symbol_buckets",
+        )
+        self.assertEqual(runtime_bucket["runtime_ledger_aggregate_bucket_count"], 2)
+        self.assertEqual(
+            runtime_bucket["runtime_ledger_aggregate_symbols"], ["AAPL", "AMZN"]
+        )
+
+        source_candidates = _runtime_ledger_source_collection_candidates(candidates)
+        self.assertEqual(len(source_candidates), 1)
+        self.assertFalse(
+            source_candidates[0]["source_collection_profit_target_candidate"]
+        )
+        self.assertEqual(
+            source_candidates[0]["source_collection_priority"],
+            "source_window_evidence_collection",
+        )
+        plan = _runtime_ledger_paper_probation_import_plan(source_candidates)
+        self.assertEqual(plan["source_collection_profit_target_count"], 0)
+        self.assertEqual(plan["targets"][0]["max_notional"], "0")
 
     def test_htsmom_runtime_candidate_alias_unlocks_paper_probation_only(
         self,

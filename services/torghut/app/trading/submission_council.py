@@ -963,6 +963,7 @@ def _runtime_ledger_bucket_payload(
         "account_label": row.account_label,
         "runtime_strategy_name": row.runtime_strategy_name,
         "strategy_family": row.strategy_family,
+        "symbol": payload_json.get("symbol"),
         "fill_count": row.fill_count,
         "decision_count": row.decision_count,
         "submitted_order_count": row.submitted_order_count,
@@ -1013,6 +1014,210 @@ def _runtime_ledger_bucket_payload(
         "cost_basis_counts": payload_json.get("cost_basis_counts") or {},
         "blockers": row.blockers_json or [],
     }
+
+
+_RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS = (
+    "fill_count",
+    "decision_count",
+    "submitted_order_count",
+    "cancelled_order_count",
+    "rejected_order_count",
+    "unfilled_order_count",
+    "closed_trade_count",
+    "open_position_count",
+)
+_RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS = (
+    "filled_notional",
+    "gross_strategy_pnl",
+    "cost_amount",
+    "net_strategy_pnl_after_costs",
+)
+_RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS = (
+    "execution_policy_hash_counts",
+    "cost_model_hash_counts",
+    "lineage_hash_counts",
+    "cost_basis_counts",
+    "source_row_counts",
+)
+_RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS = (
+    "source_refs",
+    "source_window_ids",
+    "trade_decision_ids",
+    "execution_ids",
+    "execution_tca_metric_ids",
+    "execution_order_event_ids",
+    "source_offsets",
+)
+_RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS = (
+    "source_materialization",
+    "authority_class",
+    "authority_reason",
+    "pnl_derivation",
+)
+
+
+def _runtime_ledger_candidate_group_key(
+    payload: Mapping[str, object],
+) -> tuple[str, str, str, str, str, str, str, str, str]:
+    return (
+        _safe_text(payload.get("hypothesis_id")) or "",
+        _safe_text(payload.get("candidate_id")) or "",
+        _safe_text(payload.get("run_id")) or "",
+        _safe_text(payload.get("bucket_started_at")) or "",
+        _safe_text(payload.get("bucket_ended_at")) or "",
+        _safe_text(payload.get("observed_stage")) or "",
+        _safe_text(payload.get("account_label")) or "",
+        _safe_text(payload.get("runtime_strategy_name")) or "",
+        _safe_text(payload.get("strategy_family")) or "",
+    )
+
+
+def _runtime_ledger_bucket_symbol(payload: Mapping[str, object]) -> str | None:
+    symbol = _safe_text(payload.get("symbol"))
+    return symbol.upper() if symbol is not None else None
+
+
+def _runtime_ledger_latest_payloads_per_symbol(
+    payloads: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    no_symbol = [
+        payload
+        for payload in payloads
+        if _runtime_ledger_bucket_symbol(payload) is None
+    ]
+    if no_symbol:
+        return [dict(no_symbol[0])]
+    by_symbol: dict[str, dict[str, object]] = {}
+    for payload in payloads:
+        symbol = _runtime_ledger_bucket_symbol(payload)
+        if symbol is None or symbol in by_symbol:
+            continue
+        by_symbol[symbol] = dict(payload)
+    return list(by_symbol.values())
+
+
+def _runtime_ledger_merge_count_maps(
+    payloads: Sequence[Mapping[str, object]],
+    key: str,
+) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for payload in payloads:
+        value = payload.get(key)
+        if not isinstance(value, Mapping):
+            continue
+        for raw_name, raw_count in cast(Mapping[object, object], value).items():
+            name = str(raw_name or "").strip()
+            count = _safe_int(raw_count)
+            if not name or count <= 0:
+                continue
+            merged[name] = merged.get(name, 0) + count
+    return dict(sorted(merged.items()))
+
+
+def _runtime_ledger_unique_sequence(
+    payloads: Sequence[Mapping[str, object]],
+    key: str,
+) -> list[object]:
+    values: list[object] = []
+    seen: set[str] = set()
+    for payload in payloads:
+        raw_values = payload.get(key)
+        if not isinstance(raw_values, Sequence) or isinstance(
+            raw_values, (str, bytes, bytearray)
+        ):
+            continue
+        for value in cast(Sequence[object], raw_values):
+            marker = json.dumps(value, sort_keys=True, default=str)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            values.append(value)
+    return values
+
+
+def _runtime_ledger_common_text(
+    payloads: Sequence[Mapping[str, object]],
+    key: str,
+) -> str | None:
+    values = sorted(
+        {
+            value
+            for payload in payloads
+            if (value := _safe_text(payload.get(key))) is not None
+        }
+    )
+    return values[0] if len(values) == 1 else None
+
+
+def _runtime_ledger_aggregate_candidate_payloads(
+    payloads: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    selected = _runtime_ledger_latest_payloads_per_symbol(payloads)
+    if len(selected) <= 1:
+        return dict(selected[0]) if selected else {}
+
+    aggregate = dict(selected[0])
+    symbols = sorted(
+        symbol
+        for payload in selected
+        if (symbol := _runtime_ledger_bucket_symbol(payload)) is not None
+    )
+    for key in _RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS:
+        aggregate[key] = sum(_safe_int(payload.get(key)) for payload in selected)
+    for key in _RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS:
+        aggregate[key] = _decimal_text(
+            sum(
+                (
+                    _safe_decimal(payload.get(key)) or Decimal("0")
+                    for payload in selected
+                ),
+                Decimal("0"),
+            ),
+        )
+    filled_notional = _safe_decimal(aggregate.get("filled_notional")) or Decimal("0")
+    net_pnl = _safe_decimal(aggregate.get("net_strategy_pnl_after_costs")) or Decimal(
+        "0"
+    )
+    aggregate["post_cost_expectancy_bps"] = (
+        _decimal_text(net_pnl / filled_notional * Decimal("10000"))
+        if filled_notional > 0
+        else None
+    )
+    for key in _RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS:
+        merged = _runtime_ledger_merge_count_maps(selected, key)
+        if merged:
+            aggregate[key] = merged
+    for key in _RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS:
+        merged_sequence = _runtime_ledger_unique_sequence(selected, key)
+        if merged_sequence:
+            aggregate[key] = merged_sequence
+    aggregate_blockers = [
+        blocker
+        for payload in selected
+        for blocker in (
+            [
+                str(item).strip()
+                for item in cast(Sequence[object], payload.get("blockers") or [])
+                if str(item).strip()
+            ]
+            + runtime_ledger_promotion_source_authority_blockers(payload)
+        )
+    ]
+    aggregate["blockers"] = _normalize_reason_codes(aggregate_blockers)
+    aggregate["symbol"] = symbols[0] if len(symbols) == 1 else None
+    aggregate["symbols"] = symbols
+    aggregate["runtime_ledger_bucket_aggregation"] = (
+        "portfolio_window_from_symbol_buckets"
+    )
+    aggregate["runtime_ledger_aggregate_bucket_count"] = len(selected)
+    aggregate["runtime_ledger_aggregate_symbols"] = symbols
+    for key in _RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS:
+        common_value = _runtime_ledger_common_text(selected, key)
+        if common_value is not None:
+            aggregate[key] = common_value
+        else:
+            aggregate.pop(key, None)
+    return aggregate
 
 
 _RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = (
@@ -2825,8 +3030,10 @@ def _load_runtime_ledger_repair_candidates(
         _rollback_runtime_ledger_status_session(session)
         return []
 
-    candidates: list[dict[str, object]] = []
-    seen: set[tuple[str, str, str, str, str]] = set()
+    payload_groups: dict[
+        tuple[str, str, str, str, str, str, str, str, str],
+        list[dict[str, object]],
+    ] = {}
     for row in rows:
         payload = _runtime_ledger_bucket_payload(row)
         if (
@@ -2835,17 +3042,17 @@ def _load_runtime_ledger_repair_candidates(
             and _safe_int(payload.get("closed_trade_count")) <= 0
         ):
             continue
-        manifest = manifests.get(row.hypothesis_id) or {}
-        candidate_key = (
-            str(payload.get("hypothesis_id") or ""),
-            str(payload.get("candidate_id") or ""),
-            str(payload.get("run_id") or ""),
-            str(payload.get("bucket_started_at") or ""),
-            str(payload.get("bucket_ended_at") or ""),
-        )
-        if candidate_key in seen:
+        payload_groups.setdefault(
+            _runtime_ledger_candidate_group_key(payload),
+            [],
+        ).append(payload)
+
+    candidates: list[dict[str, object]] = []
+    for payloads in payload_groups.values():
+        payload = _runtime_ledger_aggregate_candidate_payloads(payloads)
+        if not payload:
             continue
-        seen.add(candidate_key)
+        manifest = manifests.get(_safe_text(payload.get("hypothesis_id")) or "") or {}
         reason_codes = _runtime_ledger_repair_reason_codes(
             payload,
             manifest=manifest,
