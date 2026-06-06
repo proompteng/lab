@@ -829,6 +829,54 @@ class TestRuntimeLedgerProofPacket(TestCase):
             ],
         )
 
+    def test_packet_blocks_stale_assembly_image_against_live_status(self) -> None:
+        status = _status()
+        status["build"] = {
+            "version": "v0.596.0-371-gcurrent",
+            "commit": "abc123",
+            "image_digest": "sha256:current",
+            "active_revision": "torghut-01158",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "TORGHUT_COMMIT": "abc123",
+                "TORGHUT_IMAGE_DIGEST": "sha256:stale",
+            },
+            clear=True,
+        ):
+            result = packet.build_runtime_ledger_proof_packet(
+                status,
+                proof_mode="authority",
+                paper_route_evidence=_paper_route_evidence(),
+                runtime_window_import=_runtime_import(),
+                completion_status=_completion(),
+                min_runtime_ledger_net_pnl=Decimal("500"),
+                min_runtime_ledger_daily_net_pnl=Decimal("500"),
+                min_runtime_ledger_trading_days=1,
+                generated_at="2026-05-26T21:05:00+00:00",
+            )
+
+        self.assertFalse(result["ok"], result)
+        self.assertIn(
+            "proof_packet_assembly_image_digest_mismatch",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "rerun_runtime_window_import_on_current_torghut_image",
+            result["required_actions"],
+        )
+        parity = result["checks"]["runtime_code_parity"]
+        self.assertFalse(parity["passed"])
+        self.assertEqual(
+            parity["observed"]["live_status_build"]["image_digest"], "sha256:current"
+        )
+        self.assertEqual(
+            parity["observed"]["assembly_runtime"]["image_digest"], "sha256:stale"
+        )
+        self.assertEqual(result["lineage"]["code"]["commit"], "abc123")
+
     def test_packet_lineage_preserves_runtime_window_readback_refs(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),

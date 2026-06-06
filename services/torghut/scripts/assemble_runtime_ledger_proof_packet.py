@@ -1771,6 +1771,87 @@ def _first_env_text(names: Sequence[str]) -> str:
     return ""
 
 
+def _normalize_image_digest(value: object) -> str:
+    text = _text(value)
+    marker = "sha256:"
+    if marker not in text:
+        return ""
+    return text[text.index(marker) :]
+
+
+def _commit_refs_match(left: str, right: str) -> bool:
+    if not left or not right:
+        return True
+    return left == right or left.startswith(right) or right.startswith(left)
+
+
+def _assembly_code_lineage() -> dict[str, Any]:
+    code_commit = _first_env_text(
+        (
+            "TORGHUT_COMMIT",
+            "TORGHUT_IMAGE_COMMIT",
+            "GIT_COMMIT",
+            "SOURCE_COMMIT",
+            "CODE_COMMIT",
+            "COMMIT_SHA",
+        )
+    )
+    image_digest = _first_env_text(
+        (
+            "TORGHUT_IMAGE_DIGEST",
+            "IMAGE_DIGEST",
+            "CONTAINER_IMAGE_DIGEST",
+            "K_REVISION_IMAGE_DIGEST",
+        )
+    )
+    image = _first_env_text(("TORGHUT_IMAGE", "CONTAINER_IMAGE", "IMAGE"))
+    return {
+        "commit": code_commit,
+        "image": image,
+        "image_digest": image_digest,
+        "commit_available": bool(code_commit),
+        "image_digest_available": bool(image_digest),
+    }
+
+
+def _status_build_code_lineage(status: Mapping[str, Any]) -> dict[str, Any]:
+    build = _mapping(status.get("build"))
+    return {
+        "version": _text(build.get("version")),
+        "commit": _text(build.get("commit")),
+        "image_digest": _text(build.get("image_digest")),
+        "active_revision": _text(build.get("active_revision")),
+        "commit_available": bool(_text(build.get("commit"))),
+        "image_digest_available": bool(_text(build.get("image_digest"))),
+    }
+
+
+def _runtime_code_parity(status: Mapping[str, Any]) -> dict[str, Any]:
+    status_code = _status_build_code_lineage(status)
+    assembly_code = _assembly_code_lineage()
+    status_digest = _normalize_image_digest(status_code.get("image_digest"))
+    assembly_digest = _normalize_image_digest(assembly_code.get("image_digest"))
+    status_commit = _text(status_code.get("commit"))
+    assembly_commit = _text(assembly_code.get("commit"))
+    blockers: list[str] = []
+    if status_digest and assembly_digest and status_digest != assembly_digest:
+        blockers.append("proof_packet_assembly_image_digest_mismatch")
+    if (
+        status_commit
+        and assembly_commit
+        and not _commit_refs_match(status_commit, assembly_commit)
+    ):
+        blockers.append("proof_packet_assembly_commit_mismatch")
+    return {
+        "schema_version": "torghut.runtime-ledger-proof-packet-code-parity.v1",
+        "live_status_build": status_code,
+        "assembly_runtime": assembly_code,
+        "image_digest_parity_checked": bool(status_digest and assembly_digest),
+        "commit_parity_checked": bool(status_commit and assembly_commit),
+        "blockers": blockers,
+    }
+
+
 def _runtime_ledger_immutable_lineage(
     *,
     identity: Mapping[str, object],
@@ -1900,24 +1981,7 @@ def _runtime_ledger_immutable_lineage(
     runtime_strategy = _text(
         identity.get("runtime_strategy_name") or identity.get("strategy_name")
     )
-    code_commit = _first_env_text(
-        (
-            "TORGHUT_IMAGE_COMMIT",
-            "GIT_COMMIT",
-            "SOURCE_COMMIT",
-            "CODE_COMMIT",
-            "COMMIT_SHA",
-        )
-    )
-    image_digest = _first_env_text(
-        (
-            "TORGHUT_IMAGE_DIGEST",
-            "IMAGE_DIGEST",
-            "CONTAINER_IMAGE_DIGEST",
-            "K_REVISION_IMAGE_DIGEST",
-        )
-    )
-    image = _first_env_text(("TORGHUT_IMAGE", "CONTAINER_IMAGE", "IMAGE"))
+    code = _assembly_code_lineage()
     return {
         "schema_version": "torghut.runtime-ledger-proof-packet-lineage.v1",
         "hypothesis_id": _text(identity.get("hypothesis_id")),
@@ -1944,13 +2008,7 @@ def _runtime_ledger_immutable_lineage(
             "metric_window_id_count": len(metric_window_ids),
             "promotion_decision_id_count": len(promotion_decision_ids),
         },
-        "code": {
-            "commit": code_commit,
-            "image": image,
-            "image_digest": image_digest,
-            "commit_available": bool(code_commit),
-            "image_digest_available": bool(image_digest),
-        },
+        "code": code,
     }
 
 
@@ -2066,6 +2124,13 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
             )
         elif blocker == RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER:
             _extend_unique(actions, ["rerun_proof_packet_in_authority_mode"])
+        elif blocker in {
+            "proof_packet_assembly_image_digest_mismatch",
+            "proof_packet_assembly_commit_mismatch",
+        }:
+            _extend_unique(
+                actions, ["rerun_runtime_window_import_on_current_torghut_image"]
+            )
         elif blocker.startswith("runtime_ledger_") or blocker in {
             "filled_notional_missing",
             "closed_round_trip_missing",
@@ -2229,6 +2294,21 @@ def build_runtime_ledger_proof_packet(
         blockers=live_blockers,
     )
     _extend_unique(blockers, live_blockers)
+
+    runtime_code_parity = _runtime_code_parity(status)
+    runtime_code_parity_blockers = _text_list(runtime_code_parity.get("blockers"))
+    _check(
+        checks,
+        "runtime_code_parity",
+        passed=not runtime_code_parity_blockers,
+        observed=runtime_code_parity,
+        expected=(
+            "proof-packet assembler runtime image and commit match live Torghut "
+            "status when both sides expose build identity"
+        ),
+        blockers=runtime_code_parity_blockers,
+    )
+    _extend_unique(blockers, runtime_code_parity_blockers)
 
     plan = _paper_route_target_plan(paper_route_evidence)
     paper_targets = _paper_route_targets(plan)
@@ -3299,6 +3379,7 @@ def build_runtime_ledger_proof_packet(
                 "materialization": materialization_summary,
                 "lineage": runtime_import_lineage,
             },
+            "runtime_code_parity": runtime_code_parity,
             "completion_live_scale": {
                 "gate_status": live_scale_gate.get("status"),
                 "runtime_ledger_summary": dict(runtime_summary),
