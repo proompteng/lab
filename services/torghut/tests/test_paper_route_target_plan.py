@@ -24,6 +24,7 @@ from app.trading.paper_route_target_plan import (
     _paper_route_source_materialization_blockers,
     _target_identity_keys,
     _target_plan_selection_score,
+    _target_source_decision_quantities,
     _target_source_decision_ready,
     _truthy,
     materialize_bounded_paper_route_target_plan,
@@ -131,11 +132,108 @@ def _plan(*targets: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def test_materializer_accepts_notional_authoritative_target_without_quantities(
+    db_session: Session,
+) -> None:
+    target = _hpairs_target(
+        paper_route_probe_symbol_quantities={},
+        target_symbol_quantities={},
+        symbol_quantities={},
+        target_quantity="",
+        target_notional="20",
+    )
+
+    result = materialize_bounded_paper_route_target_plan(
+        db_session,
+        _plan(target),
+        generated_at=datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+        bounded_notional_limit=Decimal("20"),
+    )
+    decisions = db_session.execute(select(TradeDecision)).scalars().all()
+
+    assert result["materialized_decision_count"] == 2
+    assert result["blocked_target_count"] == 0
+    assert len(decisions) == 2
+    for decision in decisions:
+        payload = decision.decision_json
+        assert payload["qty"] == "1"
+        assert payload["target_quantity_source"] == (
+            "target_notional_runtime_sizing_seed"
+        )
+        assert payload["target_notional_sizing_required"] is True
+        metadata = payload["params"]["paper_route_target_plan_source_decision"]
+        assert metadata["paper_route_probe_symbol_quantities"] == {}
+        assert metadata["paper_route_probe_symbol_quantity_source"] == (
+            "target_notional_runtime_sizing_seed"
+        )
+        assert metadata["target_notional_sizing_required"] is True
+
+
+def test_materializer_preserves_explicit_quantities_without_runtime_sizing(
+    db_session: Session,
+) -> None:
+    target = _hpairs_target(
+        target_notional="20",
+        paper_route_probe_symbol_quantities={
+            "AAPL": "0.25",
+            "AMZN": "0.75",
+        },
+    )
+
+    result = materialize_bounded_paper_route_target_plan(
+        db_session,
+        _plan(target),
+        generated_at=datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+        bounded_notional_limit=Decimal("20"),
+    )
+    decisions = db_session.execute(select(TradeDecision)).scalars().all()
+
+    assert result["materialized_decision_count"] == 2
+    assert result["blocked_target_count"] == 0
+    assert {
+        decision.symbol: decision.decision_json["qty"] for decision in decisions
+    } == {
+        "AAPL": "0.25",
+        "AMZN": "0.75",
+    }
+    for decision in decisions:
+        payload = decision.decision_json
+        assert payload["target_quantity_source"] == "target_plan_explicit_quantity"
+        assert payload["target_notional_sizing_required"] is False
+        metadata = payload["params"]["paper_route_target_plan_source_decision"]
+        assert metadata["paper_route_probe_symbol_quantities"] == {
+            "AAPL": "0.25",
+            "AMZN": "0.75",
+        }
+        assert (
+            metadata["paper_route_probe_symbol_quantity_source"]
+            == "target_plan_explicit_quantity"
+        )
+        assert metadata["target_notional_sizing_required"] is False
+
+
 def test_materialization_truthy_helper_accepts_numeric_and_text_readiness() -> None:
     assert _truthy(1) is True
     assert _truthy(0) is False
     assert _truthy("true") is True
     assert _truthy("false") is False
+
+
+def test_target_source_decision_quantities_fail_closed_without_quantity_or_notional() -> (
+    None
+):
+    assert (
+        _target_source_decision_quantities(
+            _hpairs_target(
+                paper_route_probe_symbol_quantities={},
+                target_symbol_quantities={},
+                symbol_quantities={},
+                target_quantity="",
+                target_notional="0",
+            )
+        )
+        == {}
+    )
 
 
 def test_target_source_decision_readiness_accepts_text_truth() -> None:

@@ -1699,12 +1699,19 @@ def _paper_route_probe_symbol_quantities(
         fallback_quantity = _safe_decimal(target.get(field))
         if fallback_quantity > 0:
             break
-    if fallback_quantity <= 0 and normalized_symbols:
-        # The bounded source materializer requires an explicit quantity per leg.
-        # H-PAIRS collection is capped independently by the target notional and
-        # simple-pipeline risk clamps; use the minimum integer probe leg so the
-        # materializer can create auditable source decisions instead of
-        # silently producing a zero-decision packet.
+    target_notional = Decimal("0")
+    for field in (
+        "target_notional",
+        "paper_route_probe_target_notional",
+        "paper_route_probe_effective_max_notional",
+        "bounded_evidence_collection_max_notional",
+        "paper_route_probe_next_session_max_notional",
+        "max_notional",
+    ):
+        target_notional = _safe_decimal(target.get(field))
+        if target_notional > 0:
+            break
+    if fallback_quantity <= 0 and normalized_symbols and target_notional <= 0:
         fallback_quantity = Decimal("1")
 
     if fallback_quantity > 0:
@@ -2576,6 +2583,10 @@ def _next_paper_route_runtime_window_targets(
             or runtime_strategy_name
             or strategy_name
             or "",
+            "target_notional": next_notional,
+            "paper_route_probe_target_notional": next_notional,
+            "paper_route_probe_next_session_max_notional": next_notional,
+            "paper_route_probe_effective_max_notional": next_notional,
         }
         pair_balance_required = _target_requires_balanced_pair_probe(
             pair_balance_target
@@ -2970,7 +2981,9 @@ def _next_paper_route_runtime_window_targets(
                 )
             ),
             "paper_route_probe_symbol_quantity_source": (
-                "target_plan_explicit_or_min_integer_probe"
+                "target_plan_explicit_quantity"
+                if pair_symbol_quantities
+                else "target_notional_runtime_sizing"
             ),
             "paper_route_probe_pair_balance_required": pair_balance_required,
             "paper_route_probe_pair_balance_state": pair_balance_state,
