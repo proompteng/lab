@@ -104,6 +104,15 @@ DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.loca
 DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
     "http://torghut-sim.torghut.svc.cluster.local"
 )
+MATERIALIZABLE_SOURCE_ROW_COUNT_KEYS = frozenset(
+    {
+        "trade_decisions",
+        "executions",
+        "execution_tca_metrics",
+        "execution_order_events",
+        "order_feed_source_windows",
+    }
+)
 RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet.json"
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
 RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX = "runtime-ledger-proof-packets/{run_id}"
@@ -10235,11 +10244,17 @@ def _target_is_runtime_ledger_source_collection(
     )
 
 
-def _positive_mapping_count(value: object) -> bool:
+def _positive_mapping_count(
+    value: object,
+    *,
+    allowed_keys: frozenset[str] | None = None,
+) -> bool:
     if not isinstance(value, Mapping):
         return False
-    typed_value = cast(Mapping[str, object], value)
-    for raw_count in typed_value.values():
+    typed_value = cast(Mapping[object, object], value)
+    for raw_key, raw_count in typed_value.items():
+        if allowed_keys is not None and str(raw_key or "").strip() not in allowed_keys:
+            continue
         if _safe_int(raw_count) > 0:
             return True
     return False
@@ -10263,13 +10278,20 @@ def _source_collection_target_has_materializable_lineage(
         return True
     if _safe_text(target.get("authority_class")) is not None:
         return True
-    if _positive_mapping_count(target.get("source_row_counts")):
-        return True
+    for key in ("source_row_counts", "runtime_ledger_source_row_counts"):
+        if _positive_mapping_count(
+            target.get(key),
+            allowed_keys=MATERIALIZABLE_SOURCE_ROW_COUNT_KEYS,
+        ):
+            return True
     source_refs = [
         ref
         for ref in _unique_text_items(target.get("source_refs"))
         if "strategy_runtime_ledger_buckets" not in ref
     ]
+    source_ref = _safe_text(target.get("source_ref"))
+    if source_ref is not None and "strategy_runtime_ledger_buckets" not in source_ref:
+        source_refs.append(source_ref)
     return bool(source_refs)
 
 
