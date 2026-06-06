@@ -2829,6 +2829,70 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["promotion_authority"]["blocking_reasons"],
         )
 
+    def test_packet_keeps_economics_blockers_out_of_materialization_missing(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import()
+        item = runtime_import["imports"][0]
+        assert isinstance(item, dict)
+        summary = item["summary"]
+        assert isinstance(summary, dict)
+        observation = summary["runtime_observation"]
+        assert isinstance(observation, dict)
+        target = summary["runtime_materialization_target"]
+        assert isinstance(target, dict)
+        observation["runtime_ledger_profit_proof_blockers"] = [
+            "runtime_ledger_bucket_blockers_present",
+            "mean_daily_net_pnl_after_costs_below_500",
+            "open_positions_present",
+        ]
+        observation["paper_route_target_notional_sizing_required_count"] = 1
+        observation["paper_route_target_notional_sizing_authoritative_count"] = 0
+        observation["paper_route_target_notional_sizing_missing_count"] = 1
+        target["materialized"] = False
+        target["proof_blockers"] = ["runtime_ledger_pnl_basis_missing"]
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertTrue(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertFalse(
+            result["checks"]["runtime_window_import_profit_proof_blockers"]["passed"]
+        )
+        self.assertEqual(materialization["materialized_target_count"], 1)
+        self.assertEqual(materialization["unmaterialized_target_count"], 0)
+        self.assertNotIn(
+            "runtime_window_import_target_materialization_missing",
+            materialization["blockers"],
+        )
+        self.assertNotIn(
+            "runtime_window_import_runtime_ledger_materialization_missing",
+            materialization["blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_pnl_basis_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "paper_route_target_notional_sizing_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertNotIn(
+            "run_runtime_window_import_from_paper_route_target_plan",
+            result["required_actions"],
+        )
+
     def test_packet_blocks_authority_when_runtime_import_readback_lacks_row_refs(
         self,
     ) -> None:
