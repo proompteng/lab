@@ -4718,6 +4718,120 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         )
         self.assertNotIn("generic_not_allowed", [item["blocker"] for item in blockers])
 
+    def test_runtime_window_import_blocker_ladder_points_to_next_missing_artifact(
+        self,
+    ) -> None:
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref="manifest.json",
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+        payload = {
+            "promotion_allowed": False,
+            "source_activity_diagnostics": {
+                "decision_rows_before_lineage_filter": 2,
+                "decision_rows_after_lineage_filter": 2,
+                "execution_rows_before_lineage_filter": 0,
+                "execution_rows_after_lineage_filter": 0,
+                "runtime_ledger_source_bucket_count": 0,
+                "runtime_ledger_source_bucket_profit_proof_count": 0,
+            },
+            "source_activity_diagnostic_blockers": [
+                "execution_rows_missing_for_matched_decisions",
+                "runtime_ledger_source_bucket_missing",
+            ],
+            "runtime_observation": {
+                "authoritative": False,
+                "authority_reason": "runtime_without_runtime_ledger_profit_proof",
+                "promotion_authority": "blocked",
+                "runtime_ledger_profit_proof_present": False,
+            },
+        }
+        proof_blockers = renewal._runtime_window_import_payload_proof_blockers(
+            payload=payload,
+            target=target,
+            candidate_id="cand-paper-route",
+            window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+        )
+
+        ladder = renewal._runtime_window_import_blocker_ladder(
+            payload=payload,
+            target=target,
+            candidate_id="cand-paper-route",
+            window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+            proof_blockers=proof_blockers,
+        )
+        next_blocker = renewal._runtime_window_import_next_blocker(ladder)
+
+        self.assertEqual(
+            [(item["step"], item["status"]) for item in ladder[:3]],
+            [
+                ("source_activity_present", "pass"),
+                ("decisions_present", "pass"),
+                ("executions_present", "blocked"),
+            ],
+        )
+        self.assertEqual(next_blocker["step"], "executions_present")
+        self.assertEqual(
+            next_blocker["blocker_codes"],
+            ["execution_rows_missing_for_matched_decisions"],
+        )
+
+    def test_runtime_window_import_blocker_ladder_passes_runtime_authority(
+        self,
+    ) -> None:
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref="manifest.json",
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+        payload = {
+            "promotion_allowed": True,
+            "decision_count": 2,
+            "execution_count": 2,
+            "order_count": 4,
+            "tca_row_count": 2,
+            "runtime_observation": {
+                "authoritative": True,
+                "authority_reason": "runtime_ledger_profit_proof",
+                "promotion_authority": "runtime_ledger",
+                "runtime_ledger_profit_proof_present": True,
+                "runtime_ledger_source_bucket_count": 1,
+                "runtime_ledger_source_execution_materialized_bucket_count": 1,
+                "runtime_ledger_tca_profit_proof_count": 1,
+            },
+        }
+
+        ladder = renewal._runtime_window_import_blocker_ladder(
+            payload=payload,
+            target=target,
+            candidate_id="cand-paper-route",
+            window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+            proof_blockers=[],
+        )
+
+        self.assertTrue(all(item["status"] == "pass" for item in ladder))
+        self.assertIsNone(renewal._runtime_window_import_next_blocker(ladder))
+
     def test_runtime_window_import_payload_deduplicates_fallback_blockers(
         self,
     ) -> None:

@@ -437,6 +437,13 @@ def _as_text_list(value: Any) -> list[str]:
     return [text for item in value if (text := str(item).strip())]
 
 
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(int(str(value or "0")), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _runtime_version_ref() -> str:
     digest = _as_text(os.getenv("TORGHUT_IMAGE_DIGEST")) or _as_text(
         os.getenv("BUILD_IMAGE_DIGEST")
@@ -2790,6 +2797,300 @@ def _runtime_window_import_payload_proof_blockers(
     return blockers
 
 
+def _runtime_window_import_ladder_step(
+    step: str,
+    *,
+    blockers: Sequence[str],
+    step_blockers: frozenset[str],
+    present: bool,
+    observed: Mapping[str, Any],
+    next_action: str,
+) -> dict[str, Any]:
+    blocker_codes = sorted(
+        dict.fromkeys(blocker for blocker in blockers if blocker in step_blockers)
+    )
+    if blocker_codes:
+        status = "blocked"
+    elif present:
+        status = "pass"
+    else:
+        status = "missing"
+    return {
+        "step": step,
+        "status": status,
+        "observed": dict(observed),
+        "blocker_codes": blocker_codes,
+        "next_action": next_action if status != "pass" else None,
+    }
+
+
+def _runtime_window_import_next_blocker(
+    ladder: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    for step in ladder:
+        if step.get("status") != "pass":
+            return {
+                "step": step.get("step"),
+                "status": step.get("status"),
+                "blocker_codes": list(_as_sequence(step.get("blocker_codes"))),
+                "next_action": step.get("next_action"),
+            }
+    return None
+
+
+def _runtime_window_import_blocker_ladder(
+    *,
+    payload: Mapping[str, Any],
+    target: RuntimeWindowImportTarget,
+    candidate_id: str,
+    window_start: datetime,
+    window_end: datetime,
+    proof_blockers: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    runtime_observation = _as_dict(payload.get("runtime_observation"))
+    diagnostics = _as_dict(payload.get("source_activity_diagnostics"))
+    if not diagnostics and runtime_observation:
+        diagnostics = _as_dict(runtime_observation.get("source_activity_diagnostics"))
+    materialization = _as_dict(payload.get("runtime_ledger_materialization"))
+    if not materialization and runtime_observation:
+        materialization = _as_dict(runtime_observation)
+    blocker_codes = [
+        text
+        for blocker in proof_blockers
+        if isinstance(blocker, Mapping)
+        if (text := _as_text(blocker.get("blocker"))) is not None
+    ]
+    for key in (
+        "source_activity_diagnostic_blockers",
+        "evidence_blocking_reasons",
+        "promotion_blocking_reasons",
+    ):
+        blocker_codes.extend(_as_text_list(payload.get(key)))
+        blocker_codes.extend(_as_text_list(runtime_observation.get(key)))
+    for key in (
+        "runtime_ledger_materialization_blockers",
+        "runtime_ledger_profit_proof_blockers",
+        "runtime_ledger_target_metadata_blockers",
+    ):
+        blocker_codes.extend(_as_text_list(payload.get(key)))
+        blocker_codes.extend(_as_text_list(runtime_observation.get(key)))
+        blocker_codes.extend(_as_text_list(materialization.get(key)))
+    blocker_codes = list(dict.fromkeys(blocker_codes))
+
+    decision_count = max(
+        _nonnegative_int(payload.get("decision_count")),
+        _nonnegative_int(diagnostics.get("decision_rows_after_lineage_filter")),
+        _nonnegative_int(diagnostics.get("decision_rows_before_lineage_filter")),
+    )
+    execution_count = max(
+        _nonnegative_int(payload.get("execution_count")),
+        _nonnegative_int(payload.get("trade_count")),
+        _nonnegative_int(diagnostics.get("execution_rows_after_lineage_filter")),
+        _nonnegative_int(diagnostics.get("execution_rows_before_lineage_filter")),
+    )
+    order_event_count = max(
+        _nonnegative_int(payload.get("order_count")),
+        _nonnegative_int(diagnostics.get("order_lifecycle_rows_after_lineage_filter")),
+        _nonnegative_int(diagnostics.get("order_lifecycle_rows_before_lineage_filter")),
+        _nonnegative_int(diagnostics.get("order_feed_fill_lifecycle_count")),
+        _nonnegative_int(diagnostics.get("fill_lifecycle_event_count")),
+    )
+    tca_row_count = max(
+        _nonnegative_int(payload.get("tca_row_count")),
+        _nonnegative_int(diagnostics.get("execution_tca_rows_after_lineage_filter")),
+        _nonnegative_int(materialization.get("runtime_ledger_tca_row_count")),
+        _nonnegative_int(runtime_observation.get("runtime_ledger_tca_row_count")),
+        _nonnegative_int(diagnostics.get("runtime_ledger_source_bucket_tca_row_count")),
+    )
+    source_bucket_count = max(
+        _nonnegative_int(diagnostics.get("runtime_ledger_source_bucket_count")),
+        _nonnegative_int(runtime_observation.get("runtime_ledger_source_bucket_count")),
+        _nonnegative_int(
+            materialization.get("runtime_ledger_tca_runtime_bucket_row_count")
+        ),
+        _nonnegative_int(
+            materialization.get(
+                "runtime_ledger_source_execution_materialized_bucket_count"
+            )
+        ),
+    )
+    source_materialized_count = max(
+        _nonnegative_int(
+            runtime_observation.get(
+                "runtime_ledger_source_execution_materialized_bucket_count"
+            )
+        ),
+        _nonnegative_int(
+            materialization.get(
+                "runtime_ledger_source_execution_materialized_bucket_count"
+            )
+        ),
+    )
+    source_profit_proof_count = max(
+        _nonnegative_int(
+            diagnostics.get("runtime_ledger_source_bucket_profit_proof_count")
+        ),
+        _nonnegative_int(
+            runtime_observation.get("runtime_ledger_tca_profit_proof_count")
+        ),
+        _nonnegative_int(runtime_observation.get("runtime_ledger_profit_proof_count")),
+        _nonnegative_int(materialization.get("runtime_ledger_tca_profit_proof_count")),
+    )
+    runtime_profit_proof_present = (
+        runtime_observation.get("runtime_ledger_profit_proof_present") is True
+        or source_profit_proof_count > 0
+    )
+    source_activity_present = (
+        decision_count > 0
+        or execution_count > 0
+        or order_event_count > 0
+        or source_bucket_count > 0
+        or tca_row_count > 0
+    )
+    common_observed = {
+        "hypothesis_id": target.hypothesis_id,
+        "candidate_id": candidate_id,
+        "observed_stage": target.observed_stage,
+        "source_kind": target.source_kind,
+        "account_label": target.account_label,
+        "source_account_label": target.source_account_label or target.account_label,
+        "window_start": _utc_iso(window_start),
+        "window_end": _utc_iso(window_end),
+    }
+    return [
+        _runtime_window_import_ladder_step(
+            "source_activity_present",
+            blockers=blocker_codes,
+            step_blockers=frozenset(
+                (
+                    "runtime_window_source_activity_missing",
+                    "strategy_account_symbol_window_source_activity_missing",
+                    "source_lineage_filter_excluded_activity",
+                )
+            ),
+            present=source_activity_present,
+            observed={
+                **common_observed,
+                "decision_count": decision_count,
+                "execution_count": execution_count,
+                "order_event_count": order_event_count,
+                "tca_row_count": tca_row_count,
+                "runtime_ledger_source_bucket_count": source_bucket_count,
+            },
+            next_action="collect source decisions, executions, order events, TCA, or source-backed runtime-ledger buckets for this target window",
+        ),
+        _runtime_window_import_ladder_step(
+            "decisions_present",
+            blockers=blocker_codes,
+            step_blockers=frozenset(
+                (
+                    "source_decisions_missing",
+                    "runtime_ledger_trade_decision_refs_missing",
+                )
+            ),
+            present=decision_count > 0,
+            observed={**common_observed, "decision_count": decision_count},
+            next_action="route the target through paper/live decision generation until durable TradeDecision refs exist",
+        ),
+        _runtime_window_import_ladder_step(
+            "executions_present",
+            blockers=blocker_codes,
+            step_blockers=frozenset(
+                (
+                    "source_executions_missing",
+                    "execution_rows_missing_for_matched_decisions",
+                    "runtime_ledger_execution_refs_missing",
+                )
+            ),
+            present=execution_count > 0,
+            observed={**common_observed, "execution_count": execution_count},
+            next_action="submit or repair paper/live orders until execution rows are linked to the target decisions",
+        ),
+        _runtime_window_import_ladder_step(
+            "order_event_refs_present",
+            blockers=blocker_codes,
+            step_blockers=frozenset(
+                (
+                    "order_feed_fill_lifecycle_missing",
+                    "runtime_ledger_execution_order_event_refs_missing",
+                    "order_feed_unlinked_fill_lifecycle_present",
+                )
+            ),
+            present=order_event_count > 0,
+            observed={**common_observed, "order_event_count": order_event_count},
+            next_action="repair order-feed lifecycle rows and link fill events to executions before import authority review",
+        ),
+        _runtime_window_import_ladder_step(
+            "tca_costs_present",
+            blockers=blocker_codes,
+            step_blockers=frozenset(
+                (
+                    "source_tca_missing",
+                    "execution_tca_rows_missing",
+                    "runtime_ledger_execution_tca_refs_missing",
+                    "runtime_ledger_explicit_costs_missing",
+                )
+            ),
+            present=tca_row_count > 0,
+            observed={**common_observed, "tca_row_count": tca_row_count},
+            next_action="record execution TCA and explicit broker cost rows before post-cost profitability proof",
+        ),
+        _runtime_window_import_ladder_step(
+            "runtime_ledger_source_materialization_present",
+            blockers=blocker_codes,
+            step_blockers=frozenset(
+                (
+                    "runtime_ledger_source_bucket_missing",
+                    "runtime_ledger_source_materialization_missing",
+                    "runtime_ledger_source_refs_missing",
+                    "runtime_ledger_source_window_missing",
+                    "runtime_ledger_source_window_ids_missing",
+                    "runtime_ledger_source_offsets_missing",
+                    "runtime_ledger_authority_class_missing",
+                )
+            ),
+            present=source_bucket_count > 0 and source_materialized_count > 0,
+            observed={
+                **common_observed,
+                "runtime_ledger_source_bucket_count": source_bucket_count,
+                "runtime_ledger_source_materialized_bucket_count": (
+                    source_materialized_count
+                ),
+                "runtime_ledger_materialization_blockers": _as_text_list(
+                    materialization.get("runtime_ledger_materialization_blockers")
+                ),
+            },
+            next_action="materialize source refs, source windows, offsets, order-event refs, and authority class into runtime-ledger buckets",
+        ),
+        _runtime_window_import_ladder_step(
+            "runtime_ledger_profit_proof_present",
+            blockers=blocker_codes,
+            step_blockers=frozenset(
+                (
+                    "runtime_ledger_source_bucket_profit_proof_missing",
+                    "runtime_ledger_pnl_basis_missing",
+                    "runtime_without_runtime_ledger_profit_proof",
+                    "runtime_observation_not_authoritative",
+                    "runtime_window_import_not_promotion_allowed",
+                )
+            ),
+            present=runtime_profit_proof_present
+            and runtime_observation.get("authoritative") is True,
+            observed={
+                **common_observed,
+                "runtime_ledger_profit_proof_present": runtime_profit_proof_present,
+                "runtime_ledger_source_bucket_profit_proof_count": (
+                    source_profit_proof_count
+                ),
+                "authoritative": runtime_observation.get("authoritative"),
+                "authority_reason": runtime_observation.get("authority_reason"),
+                "promotion_authority": runtime_observation.get("promotion_authority"),
+            },
+            next_action="rerun import only after source-backed runtime-ledger buckets satisfy post-cost proof authority",
+        ),
+    ]
+
+
 def _runtime_window_import_health_gate_args(
     *,
     target: RuntimeWindowImportTarget,
@@ -3179,6 +3480,15 @@ def _run_runtime_window_import_target(
                 ),
             }
         )
+    blocker_ladder = _runtime_window_import_blocker_ladder(
+        payload=payload,
+        target=target,
+        candidate_id=candidate_id,
+        window_start=window_start,
+        window_end=window_end,
+        proof_blockers=proof_blockers,
+    )
+    next_blocker = _runtime_window_import_next_blocker(blocker_ladder)
     return {
         "status": "audit_only" if audit_only else "ok",
         "command": " ".join(command[:2] + ["..."]),
@@ -3200,6 +3510,8 @@ def _run_runtime_window_import_target(
         "source_activity_diagnostic_blockers": source_activity_diagnostic_blockers,
         "proof_status": "blocked" if proof_blockers else "ok",
         "proof_blockers": proof_blockers,
+        "blocker_ladder": blocker_ladder,
+        "next_blocker": next_blocker,
         "summary": payload,
     }
 
