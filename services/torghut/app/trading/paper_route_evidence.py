@@ -4187,12 +4187,24 @@ def _source_activity_lifecycle_summary(
         )
     net_filled_qty_by_symbol: dict[str, Decimal] = {}
     fill_event_rows = [row for row in order_event_rows if _order_event_is_fill(row)]
+    filled_execution_rows = [
+        row for row in execution_rows if _safe_decimal(row.filled_qty) > 0
+    ]
     execution_side_by_id: dict[object, str] = {
         row.id: (_safe_text(row.side) or "")
         for row in execution_rows
         if _safe_text(row.side) is not None
     }
-    if fill_event_rows:
+    if filled_execution_rows:
+        for row in filled_execution_rows:
+            symbol = (_safe_text(row.symbol) or "missing").upper()
+            qty = _safe_decimal(row.filled_qty)
+            side = (_safe_text(row.side) or "").lower()
+            signed_qty = -qty if side in {"sell", "short"} else qty
+            net_filled_qty_by_symbol[symbol] = (
+                net_filled_qty_by_symbol.get(symbol, Decimal("0")) + signed_qty
+            )
+    elif fill_event_rows:
         for row in fill_event_rows:
             symbol = (_safe_text(row.symbol) or "missing").upper()
             signed_qty = _order_event_signed_filled_qty(
@@ -4203,17 +4215,6 @@ def _source_activity_lifecycle_summary(
                 net_filled_qty_by_symbol[symbol] = (
                     net_filled_qty_by_symbol.get(symbol, Decimal("0")) + signed_qty
                 )
-    else:
-        for row in execution_rows:
-            qty = _safe_decimal(row.filled_qty)
-            if qty <= 0:
-                continue
-            symbol = (_safe_text(row.symbol) or "missing").upper()
-            side = (_safe_text(row.side) or "").lower()
-            signed_qty = -qty if side in {"sell", "short"} else qty
-            net_filled_qty_by_symbol[symbol] = (
-                net_filled_qty_by_symbol.get(symbol, Decimal("0")) + signed_qty
-            )
     open_symbols = sorted(
         symbol
         for symbol, qty in net_filled_qty_by_symbol.items()
