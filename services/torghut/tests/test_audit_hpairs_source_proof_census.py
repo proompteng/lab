@@ -1303,7 +1303,7 @@ def test_dsn_loader_opens_session_and_delegates(monkeypatch) -> None:  # type: i
         def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
             return None
 
-    monkeypatch.setattr(census, "create_engine", lambda dsn: f"engine:{dsn}")
+    monkeypatch.setattr(census, "create_engine", lambda dsn, **kwargs: f"engine:{dsn}")
     monkeypatch.setattr(census, "sessionmaker", lambda bind: lambda: FakeSession())
     monkeypatch.setattr(census, "_load_session_rows", lambda *args, **kwargs: expected)
 
@@ -1312,6 +1312,57 @@ def test_dsn_loader_opens_session_and_delegates(monkeypatch) -> None:  # type: i
     )
 
     assert rows is expected
+
+
+def test_dsn_loader_sqlalchemy_dsn_uses_installed_psycopg_driver(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    identity = census.CensusIdentity(
+        hypothesis_id=DEFAULT_HPAIRS_HYPOTHESIS_ID,
+        candidate_id=DEFAULT_HPAIRS_CANDIDATE_ID,
+        runtime_strategy_name=DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+        account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        observed_stage="paper",
+    )
+    captured: dict[str, object] = {}
+
+    class FakeSession:
+        def __enter__(self) -> "FakeSession":
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    def fake_create_engine(dsn: str, **kwargs: object) -> str:
+        captured["dsn"] = dsn
+        captured["kwargs"] = kwargs
+        return f"engine:{dsn}"
+
+    monkeypatch.setattr(census, "create_engine", fake_create_engine)
+    monkeypatch.setattr(census, "sessionmaker", lambda bind: lambda: FakeSession())
+    monkeypatch.setattr(
+        census, "_load_session_rows", lambda *args, **kwargs: census.CensusSourceRows()
+    )
+
+    census.load_dsn_rows(
+        "postgresql://user:pass@postgres/torghut",
+        identity=identity,
+        started_at=None,
+        ended_at=None,
+    )
+
+    assert captured["dsn"] == "postgresql+psycopg://user:pass@postgres/torghut"
+    assert captured["kwargs"] == {"pool_pre_ping": True, "future": True}
+    assert (
+        census._sqlalchemy_dsn("postgres://user:pass@postgres/torghut")
+        == "postgresql+psycopg://user:pass@postgres/torghut"
+    )
+    assert (
+        census._sqlalchemy_dsn("postgresql+psycopg://user:pass@postgres/torghut")
+        == "postgresql+psycopg://user:pass@postgres/torghut"
+    )
+    assert (
+        census._sqlalchemy_dsn("sqlite+pysqlite:///:memory:")
+        == "sqlite+pysqlite:///:memory:"
+    )
 
 
 def test_main_reports_read_errors_as_json(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
