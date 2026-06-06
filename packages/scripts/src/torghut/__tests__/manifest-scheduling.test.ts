@@ -68,6 +68,9 @@ const getAtPath = (root: unknown, selectorPath: Array<string | number>): JsonRec
 
 const parseManifest = (path: string): JsonRecord => YAML.parse(readFileSync(join(repoRoot, path), 'utf8')) as JsonRecord
 
+const parseManifestDocuments = (path: string): JsonRecord[] =>
+  YAML.parseAllDocuments(readFileSync(join(repoRoot, path), 'utf8')).map((document) => document.toJSON() as JsonRecord)
+
 const parameterValue = (manifest: JsonRecord, name: string): string => {
   const parameters = getAtPath(manifest, ['spec', 'arguments']).parameters
   if (!Array.isArray(parameters)) {
@@ -91,6 +94,37 @@ describe('Torghut manifest scheduling', () => {
         'kubernetes.io/arch': 'arm64',
       })
     }
+  })
+
+  it('prevents Torghut scheduled failures from lingering in Argo app health', () => {
+    const cronJobPaths = [
+      'argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml',
+      'argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml',
+      'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml',
+      'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml',
+      'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml',
+      'argocd/applications/torghut/paper-account-flatten-cronjob.yaml',
+      'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml',
+    ]
+
+    let checkedCronJobs = 0
+    for (const path of cronJobPaths) {
+      for (const manifest of parseManifestDocuments(path)) {
+        expect(manifest.kind, path).toBe('CronJob')
+        const spec = getAtPath(manifest, ['spec'])
+        const jobSpec = getAtPath(manifest, ['spec', 'jobTemplate', 'spec'])
+        expect(spec.failedJobsHistoryLimit, path).toBe(0)
+        expect(jobSpec.ttlSecondsAfterFinished, path).toBe(1800)
+        checkedCronJobs += 1
+      }
+    }
+    expect(checkedCronJobs).toBe(8)
+
+    const replayCronWorkflow = parseManifest(
+      'argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml',
+    )
+    expect(replayCronWorkflow.kind).toBe('CronWorkflow')
+    expect(getAtPath(replayCronWorkflow, ['spec']).failedJobsHistoryLimit).toBe(0)
   })
 
   it('keeps whitepaper autoresearch off the serving pod resource envelope', () => {

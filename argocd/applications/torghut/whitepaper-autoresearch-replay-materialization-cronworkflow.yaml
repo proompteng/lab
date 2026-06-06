@@ -12,7 +12,7 @@ spec:
     - "5 5 * * 2-6"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 0
   startingDeadlineSeconds: 900
   workflowSpec:
     workflowTemplateRef:
