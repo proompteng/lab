@@ -2932,11 +2932,14 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 {
                     "status": "ok",
                     "apply": True,
-                    "source_window_only": True,
+                    "source_window_only": False,
+                    "backfill_execution_events": True,
+                    "execution_event_backfill_enabled": True,
                     "selected": 2,
                     "source_windows_created": 1,
                     "source_windows_reused": 1,
                     "events_linked": 2,
+                    "execution_event_backfill_events_created": 1,
                 }
             )
         )
@@ -2971,7 +2974,8 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         import_command = run_mock.call_args_list[1].args[0]
         self.assertIn("scripts/repair_order_feed_source_windows.py", repair_command)
         self.assertIn("--apply", repair_command)
-        self.assertIn("--source-window-only", repair_command)
+        self.assertIn("--backfill-execution-events", repair_command)
+        self.assertNotIn("--source-window-only", repair_command)
         self.assertIn("--window-start", repair_command)
         self.assertEqual(
             repair_command[repair_command.index("--window-start") + 1],
@@ -2995,7 +2999,11 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             "TORGHUT_PAPER",
         )
         self.assertEqual(payload["source_window_repair"]["events_linked"], 2)
-        self.assertTrue(payload["source_window_repair"]["source_window_only"])
+        self.assertFalse(payload["source_window_repair"]["source_window_only"])
+        self.assertTrue(payload["source_window_repair"]["backfill_execution_events"])
+        self.assertTrue(
+            payload["source_window_repair"]["execution_event_backfill_enabled"]
+        )
         self.assertEqual(payload["summary"]["source_window_repair"]["events_linked"], 2)
 
     def test_runtime_window_import_audit_only_dry_runs_source_window_repair(
@@ -3049,7 +3057,9 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 {
                     "status": "ok",
                     "apply": False,
-                    "source_window_only": True,
+                    "source_window_only": False,
+                    "backfill_execution_events": True,
+                    "execution_event_backfill_enabled": True,
                     "selected": 2,
                     "source_windows_created": 1,
                     "source_windows_reused": 1,
@@ -3087,13 +3097,15 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(run_mock.call_count, 2)
         repair_command = run_mock.call_args_list[0].args[0]
         import_command = run_mock.call_args_list[1].args[0]
-        self.assertIn("--source-window-only", repair_command)
+        self.assertIn("--backfill-execution-events", repair_command)
+        self.assertNotIn("--source-window-only", repair_command)
         self.assertNotIn("--apply", repair_command)
         self.assertIn("--audit-only", import_command)
         self.assertEqual(payload["status"], "audit_only")
         self.assertEqual(payload["proof_status"], "blocked")
         self.assertFalse(payload["source_window_repair"]["apply"])
-        self.assertTrue(payload["source_window_repair"]["source_window_only"])
+        self.assertFalse(payload["source_window_repair"]["source_window_only"])
+        self.assertTrue(payload["source_window_repair"]["backfill_execution_events"])
         blocker_codes = [item["blocker"] for item in payload["proof_blockers"]]
         self.assertIn("runtime_window_import_audit_only_no_persistence", blocker_codes)
 

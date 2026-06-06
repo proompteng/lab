@@ -311,6 +311,8 @@ def main() -> int:
                     session,
                     account_label=args.account_label,
                     canonical_account_label=args.canonical_account_label,
+                    window_start=window_start,
+                    window_end=window_end,
                     limit=batch_size,
                 )
             )
@@ -323,6 +325,8 @@ def main() -> int:
                 else repair_order_feed_execution_states(
                     session,
                     account_label=execution_state_account_label,
+                    window_start=window_start,
+                    window_end=window_end,
                     limit=batch_size,
                 )
             )
@@ -330,6 +334,8 @@ def main() -> int:
                 backfill_order_feed_events_from_executions(
                     session,
                     account_label=args.account_label,
+                    window_start=window_start,
+                    window_end=window_end,
                     limit=batch_size,
                 )
                 if execution_event_backfill_enabled and not args.source_window_only
@@ -341,6 +347,8 @@ def main() -> int:
                 else repair_order_feed_fill_deltas(
                     session,
                     account_label=args.account_label,
+                    window_start=window_start,
+                    window_end=window_end,
                     limit=batch_size,
                 )
             )

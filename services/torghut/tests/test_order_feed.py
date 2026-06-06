@@ -3377,6 +3377,194 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
 
+    def test_order_feed_repair_helpers_filter_to_runtime_window(self) -> None:
+        window_start = datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc)
+        window_end = datetime(2026, 2, 1, 10, 30, tzinfo=timezone.utc)
+        inside_ts = datetime(2026, 2, 1, 10, 5, tzinfo=timezone.utc)
+        outside_ts = datetime(2026, 2, 1, 11, 5, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            inside_link_execution = self._seed_execution(
+                session,
+                account_label="PA3SX7FYNUTF",
+                order_id="inside-link-order",
+                client_order_id="inside-link-client",
+            )
+            outside_link_execution = self._seed_execution(
+                session,
+                account_label="PA3SX7FYNUTF",
+                order_id="outside-link-order",
+                client_order_id="outside-link-client",
+            )
+            inside_state_execution = self._seed_execution(
+                session,
+                account_label="PA3SX7FYNUTF",
+                order_id="inside-state-order",
+                client_order_id="inside-state-client",
+            )
+            outside_state_execution = self._seed_execution(
+                session,
+                account_label="PA3SX7FYNUTF",
+                order_id="outside-state-order",
+                client_order_id="outside-state-client",
+            )
+            inside_backfill_execution = self._seed_execution(
+                session,
+                account_label="PA3SX7FYNUTF",
+                order_id="inside-backfill-order",
+                client_order_id="inside-backfill-client",
+            )
+            outside_backfill_execution = self._seed_execution(
+                session,
+                account_label="PA3SX7FYNUTF",
+                order_id="outside-backfill-order",
+                client_order_id="outside-backfill-client",
+            )
+            for execution, ts in (
+                (inside_link_execution, inside_ts),
+                (inside_state_execution, inside_ts),
+                (inside_backfill_execution, inside_ts),
+                (outside_link_execution, outside_ts),
+                (outside_state_execution, outside_ts),
+                (outside_backfill_execution, outside_ts),
+            ):
+                execution.last_update_at = ts
+                execution.status = "filled"
+                execution.filled_qty = Decimal("1")
+                execution.avg_fill_price = Decimal("191.25")
+                execution.raw_order = {
+                    "status": "filled",
+                    "id": execution.alpaca_order_id,
+                }
+                session.add(execution)
+            session.add_all(
+                [
+                    ExecutionOrderEvent(
+                        event_fingerprint="inside-link-event",
+                        source_topic="torghut.trade-updates.v2",
+                        source_partition=0,
+                        source_offset=201,
+                        alpaca_account_label="PA3SX7FYNUTF",
+                        event_ts=inside_ts,
+                        symbol="AAPL",
+                        alpaca_order_id="inside-link-order",
+                        client_order_id="inside-link-client",
+                        event_type="fill",
+                        status="filled",
+                        filled_qty=Decimal("1"),
+                        avg_fill_price=Decimal("191.25"),
+                        raw_event={"event": "fill"},
+                    ),
+                    ExecutionOrderEvent(
+                        event_fingerprint="outside-link-event",
+                        source_topic="torghut.trade-updates.v2",
+                        source_partition=0,
+                        source_offset=202,
+                        alpaca_account_label="PA3SX7FYNUTF",
+                        event_ts=outside_ts,
+                        symbol="AAPL",
+                        alpaca_order_id="outside-link-order",
+                        client_order_id="outside-link-client",
+                        event_type="fill",
+                        status="filled",
+                        filled_qty=Decimal("1"),
+                        avg_fill_price=Decimal("191.25"),
+                        raw_event={"event": "fill"},
+                    ),
+                    ExecutionOrderEvent(
+                        event_fingerprint="inside-state-event",
+                        source_topic="torghut.trade-updates.v2",
+                        source_partition=0,
+                        source_offset=203,
+                        alpaca_account_label="PA3SX7FYNUTF",
+                        event_ts=inside_ts,
+                        symbol="AAPL",
+                        alpaca_order_id="inside-state-order",
+                        client_order_id="inside-state-client",
+                        event_type="fill",
+                        status="filled",
+                        filled_qty=Decimal("1"),
+                        avg_fill_price=Decimal("191.25"),
+                        raw_event={"event": "fill"},
+                        execution_id=inside_state_execution.id,
+                        trade_decision_id=inside_state_execution.trade_decision_id,
+                    ),
+                    ExecutionOrderEvent(
+                        event_fingerprint="outside-state-event",
+                        source_topic="torghut.trade-updates.v2",
+                        source_partition=0,
+                        source_offset=204,
+                        alpaca_account_label="PA3SX7FYNUTF",
+                        event_ts=outside_ts,
+                        symbol="AAPL",
+                        alpaca_order_id="outside-state-order",
+                        client_order_id="outside-state-client",
+                        event_type="fill",
+                        status="filled",
+                        filled_qty=Decimal("1"),
+                        avg_fill_price=Decimal("191.25"),
+                        raw_event={"event": "fill"},
+                        execution_id=outside_state_execution.id,
+                        trade_decision_id=outside_state_execution.trade_decision_id,
+                    ),
+                ]
+            )
+            session.commit()
+
+            link_result = repair_order_feed_execution_links(
+                session,
+                account_label="PA3SX7FYNUTF",
+                window_start=window_start,
+                window_end=window_end,
+                limit=10,
+            )
+            session.commit()
+            state_result = repair_order_feed_execution_states(
+                session,
+                account_label="PA3SX7FYNUTF",
+                window_start=window_start,
+                window_end=window_end,
+                limit=10,
+            )
+            session.commit()
+            delta_result = repair_order_feed_fill_deltas(
+                session,
+                account_label="PA3SX7FYNUTF",
+                window_start=window_start,
+                window_end=window_end,
+                limit=10,
+            )
+            session.commit()
+            backfill_result = backfill_order_feed_events_from_executions(
+                session,
+                account_label="PA3SX7FYNUTF",
+                window_start=window_start,
+                window_end=window_end,
+                limit=10,
+            )
+            session.commit()
+            outside_link_event = session.scalar(
+                select(ExecutionOrderEvent).where(
+                    ExecutionOrderEvent.event_fingerprint == "outside-link-event"
+                )
+            )
+            outside_backfill_event_count = session.scalar(
+                select(func.count(ExecutionOrderEvent.id)).where(
+                    ExecutionOrderEvent.alpaca_order_id == "outside-backfill-order"
+                )
+            )
+
+        self.assertEqual(link_result["selected"], 1)
+        self.assertEqual(link_result["events_linked"], 1)
+        self.assertEqual(state_result["selected"], 2)
+        self.assertEqual(delta_result["selected"], 2)
+        self.assertEqual(backfill_result["selected"], 1)
+        self.assertEqual(backfill_result["events_created"], 1)
+        self.assertIsNotNone(outside_link_event)
+        assert outside_link_event is not None
+        self.assertIsNone(outside_link_event.execution_id)
+        self.assertEqual(outside_backfill_event_count, 0)
+
     def test_execution_event_backfill_filters_existing_order_feed_lifecycle(
         self,
     ) -> None:

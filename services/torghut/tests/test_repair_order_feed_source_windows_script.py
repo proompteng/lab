@@ -203,17 +203,23 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             fake_session,
             account_label=None,
             canonical_account_label=None,
+            window_start=None,
+            window_end=None,
             limit=5000,
         )
         backfill_execution_events.assert_not_called()
         repair_states.assert_called_once_with(
             fake_session,
             account_label=None,
+            window_start=None,
+            window_end=None,
             limit=5000,
         )
         repair_deltas.assert_called_once_with(
             fake_session,
             account_label=None,
+            window_start=None,
+            window_end=None,
             limit=5000,
         )
 
@@ -470,12 +476,36 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(repair_links.call_count, 1)
         self.assertEqual(repair_links.call_args.kwargs["account_label"], "TORGHUT_SIM")
         self.assertIsNone(repair_links.call_args.kwargs["canonical_account_label"])
+        self.assertEqual(
+            repair_links.call_args.kwargs["window_start"].isoformat(),
+            "2026-05-13T17:00:00+00:00",
+        )
+        self.assertEqual(
+            repair_links.call_args.kwargs["window_end"].isoformat(),
+            "2026-05-13T17:30:00+00:00",
+        )
         self.assertEqual(repair_links.call_args.kwargs["limit"], 1000)
         self.assertEqual(repair_states.call_count, 1)
         self.assertEqual(repair_states.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            repair_states.call_args.kwargs["window_start"].isoformat(),
+            "2026-05-13T17:00:00+00:00",
+        )
+        self.assertEqual(
+            repair_states.call_args.kwargs["window_end"].isoformat(),
+            "2026-05-13T17:30:00+00:00",
+        )
         self.assertEqual(repair_states.call_args.kwargs["limit"], 1000)
         self.assertEqual(repair_deltas.call_count, 1)
         self.assertEqual(repair_deltas.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            repair_deltas.call_args.kwargs["window_start"].isoformat(),
+            "2026-05-13T17:00:00+00:00",
+        )
+        self.assertEqual(
+            repair_deltas.call_args.kwargs["window_end"].isoformat(),
+            "2026-05-13T17:30:00+00:00",
+        )
         self.assertEqual(repair_deltas.call_args.kwargs["limit"], 1000)
 
     def test_main_source_window_only_skips_broader_repairs(self) -> None:
@@ -570,6 +600,10 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
                     "LIVE_DSN",
                     "--account-label",
                     "PA3SX7FYNUTF",
+                    "--window-start",
+                    "2026-05-13T17:00:00Z",
+                    "--window-end",
+                    "2026-05-13T17:30:00Z",
                     "--batch-size",
                     "100",
                     "--max-batches",
@@ -650,6 +684,8 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_event_backfill_enabled"], True)
         self.assertIsNone(payload["execution_event_backfill_skip_reason"])
         self.assertEqual(payload["account_label"], "PA3SX7FYNUTF")
+        self.assertEqual(payload["window_start"], "2026-05-13T17:00:00+00:00")
+        self.assertEqual(payload["window_end"], "2026-05-13T17:30:00+00:00")
         self.assertEqual(payload["execution_state_candidates"], 0)
         self.assertEqual(payload["execution_state_executions_updated"], 0)
         self.assertEqual(payload["execution_event_backfill_candidates"], 7)
@@ -662,16 +698,22 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         backfill_execution_events.assert_called_once_with(
             fake_session,
             account_label="PA3SX7FYNUTF",
+            window_start=script._parse_optional_dt("2026-05-13T17:00:00Z"),
+            window_end=script._parse_optional_dt("2026-05-13T17:30:00Z"),
             limit=100,
         )
         repair_states.assert_called_once_with(
             fake_session,
             account_label="PA3SX7FYNUTF",
+            window_start=script._parse_optional_dt("2026-05-13T17:00:00Z"),
+            window_end=script._parse_optional_dt("2026-05-13T17:30:00Z"),
             limit=100,
         )
         repair_deltas.assert_called_once_with(
             fake_session,
             account_label="PA3SX7FYNUTF",
+            window_start=script._parse_optional_dt("2026-05-13T17:00:00Z"),
+            window_end=script._parse_optional_dt("2026-05-13T17:30:00Z"),
             limit=100,
         )
 
@@ -778,6 +820,8 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         repair_states.assert_called_once_with(
             fake_session,
             account_label="TORGHUT_SIM",
+            window_start=None,
+            window_end=None,
             limit=100,
         )
 
