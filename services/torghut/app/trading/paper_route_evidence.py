@@ -9910,13 +9910,29 @@ def _next_paper_route_target_summaries(
     targets: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
     summaries: list[dict[str, object]] = []
-    for target in targets:
+    for item in targets:
+        nested_target = _as_mapping(item.get("target"))
+        target = nested_target if nested_target else item
         strategy_name = _safe_text(target.get("strategy_name"))
         runtime_strategy_name = _safe_text(target.get("runtime_strategy_name"))
         source_decision_readiness = _as_mapping(target.get("source_decision_readiness"))
         execution_readiness = _as_mapping(
             target.get("paper_route_execution_readiness_contract")
         )
+        symbol_actions = dict(
+            _as_mapping(target.get("paper_route_probe_symbol_actions"))
+        )
+        symbols = _unique_text_items(target.get("paper_route_probe_symbols"))
+        if not symbols:
+            symbols = sorted(str(symbol) for symbol in symbol_actions if str(symbol))
+        bounded_notional = _target_capacity_notional(target)
+        symbol_quantities = _paper_route_probe_symbol_quantities(target, symbols)
+        symbol_quantity_source = _safe_text(
+            target.get("paper_route_probe_symbol_quantity_source")
+        )
+        if not symbol_quantities and bounded_notional > 0 and symbols:
+            symbol_quantities = {symbol: "1" for symbol in symbols}
+            symbol_quantity_source = "target_notional_runtime_sizing_seed"
         summaries.append(
             {
                 "hypothesis_id": _safe_text(target.get("hypothesis_id")),
@@ -9927,10 +9943,10 @@ def _next_paper_route_target_summaries(
                 "runtime_strategy_id": runtime_strategy_name or strategy_name,
                 "account_label": _safe_text(target.get("account_label")),
                 "source_kind": _safe_text(target.get("source_kind")),
-                "symbols": _unique_text_items(target.get("paper_route_probe_symbols")),
-                "symbol_actions": dict(
-                    _as_mapping(target.get("paper_route_probe_symbol_actions"))
-                ),
+                "symbols": symbols,
+                "symbol_actions": symbol_actions,
+                "symbol_quantities": symbol_quantities,
+                "symbol_quantity_source": symbol_quantity_source,
                 "pair_balance_required": bool(
                     target.get("paper_route_probe_pair_balance_required")
                 ),
@@ -9943,6 +9959,10 @@ def _next_paper_route_target_summaries(
                 "next_session_max_notional": _safe_text(
                     target.get("paper_route_probe_next_session_max_notional")
                 )
+                or "0",
+                "target_notional": _safe_text(target.get("target_notional")) or "0",
+                "bounded_paper_collection_notional": _decimal_text(bounded_notional),
+                "capital_promotion_max_notional": _safe_text(target.get("max_notional"))
                 or "0",
                 "bounded_evidence_collection_authorized": bool(
                     target.get("bounded_evidence_collection_authorized")
