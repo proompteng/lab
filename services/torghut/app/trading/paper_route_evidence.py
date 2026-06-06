@@ -258,6 +258,8 @@ _HPAIRS_EXPECTED_MARKET_CLOSED_DRIFT_CHECK_BYPASS_REASONS = frozenset(
 )
 PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS = frozenset(
     {
+        "paper_route_account_window_start_snapshot_missing",
+        "paper_route_account_window_start_snapshot_stale",
         "paper_route_account_window_start_not_flat",
         "paper_route_account_window_start_positions_present",
         "paper_route_account_window_start_target_positions_present",
@@ -9748,24 +9750,41 @@ def _target_audits_have_source_backed_runtime_window_import_evidence(
     )
 
 
-def _target_audit_runtime_window_discard_blockers(
+def _target_audit_runtime_window_contamination_discard_blockers(
     audit: Mapping[str, object],
 ) -> list[str]:
     evidence_window_contract = _as_mapping(audit.get("evidence_window_contract"))
     account_contamination = _as_mapping(audit.get("account_contamination"))
-    account_state = _as_mapping(audit.get("account_state"))
     contract_state = _safe_text(evidence_window_contract.get("state"))
     contamination_blockers = _unique_text_items(account_contamination.get("blockers"))
-    account_state_discard_blockers = [
+    if contract_state == "contaminated_window_discarded":
+        return contamination_blockers or [contract_state]
+    return contamination_blockers
+
+
+def _target_audit_runtime_window_account_state_discard_blockers(
+    audit: Mapping[str, object],
+) -> list[str]:
+    account_state = _as_mapping(audit.get("account_state"))
+    return [
         blocker
         for blocker in _unique_text_items(account_state.get("blockers"))
         if blocker in PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS
     ]
+
+
+def _target_audit_runtime_window_discard_blockers(
+    audit: Mapping[str, object],
+) -> list[str]:
+    contamination_blockers = (
+        _target_audit_runtime_window_contamination_discard_blockers(audit)
+    )
+    account_state_discard_blockers = (
+        _target_audit_runtime_window_account_state_discard_blockers(audit)
+    )
     blockers = _unique_text_items(
         [*contamination_blockers, *account_state_discard_blockers]
     )
-    if contract_state == "contaminated_window_discarded":
-        return blockers or [contract_state]
     if contamination_blockers or account_state_discard_blockers:
         return blockers
     return blockers
@@ -9791,6 +9810,28 @@ def _runtime_window_import_candidate_discard_blockers(
     )
 
 
+def _runtime_window_import_candidate_followup_discard_blockers(
+    target_audits: Sequence[Mapping[str, object]],
+) -> list[str]:
+    contamination_blockers = {
+        blocker
+        for audit in target_audits
+        for blocker in _target_audit_runtime_window_contamination_discard_blockers(
+            audit
+        )
+    }
+    account_state_blockers: set[str] = set()
+    if _target_audits_have_source_backed_runtime_window_import_evidence(target_audits):
+        account_state_blockers = {
+            blocker
+            for audit in target_audits
+            for blocker in _target_audit_runtime_window_account_state_discard_blockers(
+                audit
+            )
+        }
+    return sorted(contamination_blockers | account_state_blockers)
+
+
 def _runtime_window_import_candidate_selection(
     *,
     latest_closed_targets: Mapping[str, object],
@@ -9800,7 +9841,7 @@ def _runtime_window_import_candidate_selection(
     source_backed = _target_audits_have_source_backed_runtime_window_import_evidence(
         latest_closed_target_audits
     )
-    discard_blockers = _runtime_window_import_candidate_discard_blockers(
+    discard_blockers = _runtime_window_import_candidate_followup_discard_blockers(
         latest_closed_target_audits
     )
     clean_importable = source_backed and not discard_blockers
@@ -11762,7 +11803,7 @@ def build_paper_route_target_plan_payload(
             )
             if latest_closed_importable:
                 runtime_window_import_plan = latest_closed_targets
-            elif _runtime_window_import_candidate_discard_blockers(
+            elif _runtime_window_import_candidate_followup_discard_blockers(
                 latest_closed_runtime_window_import_target_audits
             ):
                 followup_window_start, followup_window_end = (
@@ -12265,7 +12306,7 @@ def build_paper_route_evidence_audit(
             if latest_closed_importable:
                 runtime_window_import_plan = latest_closed_targets
                 runtime_window_import_target_audits = latest_closed_target_audits
-            elif _runtime_window_import_candidate_discard_blockers(
+            elif _runtime_window_import_candidate_followup_discard_blockers(
                 latest_closed_target_audits
             ):
                 if closed_window_end is None:

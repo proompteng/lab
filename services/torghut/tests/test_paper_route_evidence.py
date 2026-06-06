@@ -13859,6 +13859,216 @@ class TestPaperRouteEvidenceAudit(TestCase):
             import_audit["session_window"]["start"], "2026-05-27T13:30:00+00:00"
         )
 
+    def test_stale_account_window_start_snapshot_schedules_next_clean_import(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 21, 5, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="account-state-stale-proof-strategy",
+                description="paper account stale state fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "sell",
+                    "qty": "1",
+                    "candidate_id": "candidate-account-state-stale",
+                    "hypothesis_id": "H-ACCOUNT-STATE-STALE",
+                },
+                rationale="paper route stale account state fixture",
+                status="executed",
+                created_at=window_start + timedelta(minutes=10),
+                executed_at=window_start + timedelta(minutes=11),
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="torghut-account-state-stale-order",
+                client_order_id="torghut-account-state-stale-client",
+                symbol="AAPL",
+                side="sell",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=window_start + timedelta(minutes=12),
+                updated_at=window_start + timedelta(minutes=12),
+                last_update_at=window_start + timedelta(minutes=12),
+            )
+            session.add(execution)
+            session.flush()
+            session.add_all(
+                [
+                    PositionSnapshot(
+                        alpaca_account_label="TORGHUT_SIM",
+                        as_of=window_start - timedelta(minutes=16),
+                        equity=Decimal("100000"),
+                        cash=Decimal("100000"),
+                        buying_power=Decimal("200000"),
+                        positions=[],
+                    ),
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        side="sell",
+                        arrival_price=Decimal("101"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("-1"),
+                        slippage_bps=Decimal("5"),
+                        shortfall_notional=Decimal("1"),
+                        realized_shortfall_bps=Decimal("5"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=window_start + timedelta(minutes=13),
+                        created_at=window_start + timedelta(minutes=13),
+                        updated_at=window_start + timedelta(minutes=13),
+                    ),
+                    StrategyPromotionDecision(
+                        run_id="paper-route-account-state-stale-run",
+                        candidate_id="candidate-account-state-stale",
+                        hypothesis_id="H-ACCOUNT-STATE-STALE",
+                        promotion_target="paper",
+                        state="allowed",
+                        allowed=True,
+                        reason_summary="paper_evidence_collecting",
+                        created_at=now,
+                        updated_at=now,
+                    ),
+                ]
+            )
+            self._add_flat_account_close_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_end=window_end,
+            )
+            session.commit()
+
+            live_submission_gate = {
+                "allowed": False,
+                "reason": "paper_route_probe_only",
+                "blocked_reasons": [],
+                "runtime_ledger_paper_probation_import_plan": {
+                    "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                    "target_count": "1",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-ACCOUNT-STATE-STALE",
+                            "candidate_id": "candidate-account-state-stale",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "account-state-stale-proof-strategy",
+                            "strategy_id": "account_state_stale_proof_strategy@research",
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "source_manifest_ref": "config/trading/hypotheses/h-account-state-stale.json",
+                            "window_start": window_start.isoformat(),
+                            "window_end": window_end.isoformat(),
+                            "paper_probation_authorized": True,
+                            "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                        }
+                    ],
+                },
+            }
+            route_reacquisition_book = {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "summary": {
+                    "paper_route_probe_eligible_symbols": ["AAPL"],
+                    "paper_route_probe_active_symbols": ["AAPL"],
+                },
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": True,
+                    "effective_max_notional": 25,
+                    "next_session_max_notional": 25,
+                },
+            }
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate=live_submission_gate,
+                route_reacquisition_book=route_reacquisition_book,
+                generated_at=now,
+            )
+            target_plan_payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate=live_submission_gate,
+                route_reacquisition_book=route_reacquisition_book,
+                generated_at=now,
+            )
+
+        audit = payload["next_runtime_window_target_audits"][0]
+        account_state = audit["account_state"]
+        self.assertEqual(account_state["state"], "blocked")
+        self.assertFalse(account_state["flat"])
+        self.assertEqual(account_state["snapshot_offset_seconds"], -960)
+        self.assertIn(
+            "paper_route_account_window_start_snapshot_stale",
+            audit["readiness"]["blockers"],
+        )
+        self.assertEqual(audit["account_close_state"]["state"], "clean")
+        latest_closed_selection = payload[
+            "latest_closed_runtime_window_import_selection"
+        ]
+        self.assertFalse(latest_closed_selection["selected"])
+        self.assertEqual(
+            latest_closed_selection["state"],
+            "rejected_contaminated_or_unclean",
+        )
+        self.assertTrue(latest_closed_selection["source_backed_evidence_present"])
+        self.assertFalse(latest_closed_selection["clean_window_importable"])
+        self.assertEqual(
+            latest_closed_selection["discard_blockers"],
+            ["paper_route_account_window_start_snapshot_stale"],
+        )
+        followup_plan = payload[
+            "next_clean_paper_route_runtime_window_targets_after_discard"
+        ]
+        self.assertEqual(
+            followup_plan["purpose"],
+            "next_clean_session_paper_route_runtime_window_collection_after_discard",
+        )
+        self.assertEqual(
+            followup_plan["session_window"]["start"],
+            "2026-05-27T13:30:00+00:00",
+        )
+        self.assertEqual(
+            payload["runtime_window_import_plan"]["purpose"],
+            "next_clean_session_paper_route_runtime_window_collection_after_discard",
+        )
+        self.assertEqual(
+            target_plan_payload["runtime_window_import_plan"]["purpose"],
+            "next_clean_session_paper_route_runtime_window_collection_after_discard",
+        )
+        self.assertEqual(
+            target_plan_payload["targets"][0]["paper_route_probe_window_start"],
+            "2026-05-27T13:30:00+00:00",
+        )
+
     def test_paper_route_source_activity_requires_candidate_lineage(self) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
