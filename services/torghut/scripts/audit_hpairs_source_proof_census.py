@@ -319,7 +319,7 @@ def load_dsn_rows(
 ) -> CensusSourceRows:
     """Read only the bounded H-PAIRS source rows needed for the census."""
 
-    engine = create_engine(dsn)
+    engine = create_engine(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
     session_factory = sessionmaker(bind=engine)
     with session_factory() as session:
         return _load_session_rows(
@@ -328,6 +328,17 @@ def load_dsn_rows(
             started_at=started_at,
             ended_at=ended_at,
         )
+
+
+def _sqlalchemy_dsn(dsn: str) -> str:
+    text = dsn.strip()
+    if text.startswith("postgresql+psycopg://"):
+        return text
+    if text.startswith("postgres://"):
+        return text.replace("postgres://", "postgresql+psycopg://", 1)
+    if text.startswith("postgresql://"):
+        return text.replace("postgresql://", "postgresql+psycopg://", 1)
+    return text
 
 
 def _load_session_rows(
