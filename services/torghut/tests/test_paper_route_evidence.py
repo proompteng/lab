@@ -6809,13 +6809,38 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 {"execution_order_events": "2"}
             )
         )
+        self.assertFalse(
+            paper_route_evidence._positive_mapping_count(
+                {"strategy_runtime_ledger_buckets": "2"},
+                allowed_keys=paper_route_evidence.MATERIALIZABLE_SOURCE_ROW_COUNT_KEYS,
+            )
+        )
+        aggregate_only_target = {
+            **base_target,
+            "source_row_counts": {"strategy_runtime_ledger_buckets": 1},
+            "runtime_ledger_source_row_counts": {"strategy_runtime_ledger_buckets": 1},
+            "source_refs": ["postgres:strategy_runtime_ledger_buckets:bucket-1"],
+            "source_ref": "postgres:strategy_runtime_ledger_buckets:bucket-1",
+        }
+        self.assertFalse(
+            paper_route_evidence._source_collection_target_has_materializable_lineage(
+                aggregate_only_target
+            )
+        )
+        self.assertFalse(
+            paper_route_evidence._source_collection_import_target_allowed(
+                aggregate_only_target
+            )
+        )
 
         for lineage in (
             {"source_window_ids": ["window-1"]},
             {"source_materialization": "execution_order_events"},
             {"authority_class": "event_sourced_runtime_ledger_profit_proof"},
             {"source_row_counts": {"execution_order_events": 2}},
+            {"runtime_ledger_source_row_counts": {"execution_order_events": 2}},
             {"source_refs": ["postgres:execution_order_events:event-1"]},
+            {"source_ref": "postgres:execution_order_events:event-1"},
         ):
             target = {**base_target, **lineage}
 
