@@ -29,6 +29,7 @@ const defaultEmpiricalPromotionRenewalManifestPath =
 const defaultExecutionTcaRefreshManifestPath = 'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml'
 const defaultOrderFeedSourceWindowRepairManifestPath =
   'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml'
+const defaultZeroNotionalDriftRepairManifestPath = 'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml'
 const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
 const defaultBoundedPaperRouteTargetMaterializationManifestPath =
   'argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml'
@@ -62,6 +63,7 @@ type UpdateManifestsOptions = {
   empiricalPromotionRenewalManifestPath?: string
   executionTcaRefreshManifestPath?: string
   orderFeedSourceWindowRepairManifestPath?: string
+  zeroNotionalDriftRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
   boundedPaperRouteTargetMaterializationManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
@@ -94,6 +96,7 @@ type CliOptions = {
   empiricalPromotionRenewalManifestPath?: string
   executionTcaRefreshManifestPath?: string
   orderFeedSourceWindowRepairManifestPath?: string
+  zeroNotionalDriftRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
   boundedPaperRouteTargetMaterializationManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
@@ -353,6 +356,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.orderFeedSourceWindowRepairManifestPath ?? defaultOrderFeedSourceWindowRepairManifestPath,
     'torghut-order-feed-source-window-repair image reference',
   )
+  const zeroNotionalDriftRepair = updateImageOnlyManifest(
+    options,
+    options.zeroNotionalDriftRepairManifestPath ?? defaultZeroNotionalDriftRepairManifestPath,
+    'torghut-zero-notional-drift-repair image reference',
+  )
   const paperAccountFlatten = updateImageOnlyManifest(
     options,
     options.paperAccountFlattenManifestPath ?? defaultPaperAccountFlattenManifestPath,
@@ -414,6 +422,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     empiricalPromotionRenewal,
     executionTcaRefresh,
     orderFeedSourceWindowRepair,
+    zeroNotionalDriftRepair,
     paperAccountFlatten,
     boundedPaperRouteTargetMaterialization,
     whitepaperSemanticBackfill,
@@ -460,6 +469,7 @@ Options:
   --empirical-promotion-renewal-manifest-path <path>
   --execution-tca-refresh-manifest-path <path>
   --order-feed-source-window-repair-manifest-path <path>
+  --zero-notional-drift-repair-manifest-path <path>
   --paper-account-flatten-manifest-path <path>
   --bounded-paper-route-target-materialization-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
@@ -553,6 +563,9 @@ Options:
       case '--order-feed-source-window-repair-manifest-path':
         options.orderFeedSourceWindowRepairManifestPath = value
         break
+      case '--zero-notional-drift-repair-manifest-path':
+        options.zeroNotionalDriftRepairManifestPath = value
+        break
       case '--paper-account-flatten-manifest-path':
         options.paperAccountFlattenManifestPath = value
         break
@@ -637,6 +650,8 @@ const main = (cliOptions?: CliOptions) => {
     orderFeedSourceWindowRepairManifestPath:
       parsed.orderFeedSourceWindowRepairManifestPath ??
       process.env.TORGHUT_ORDER_FEED_SOURCE_WINDOW_REPAIR_MANIFEST_PATH,
+    zeroNotionalDriftRepairManifestPath:
+      parsed.zeroNotionalDriftRepairManifestPath ?? process.env.TORGHUT_ZERO_NOTIONAL_DRIFT_REPAIR_MANIFEST_PATH,
     paperAccountFlattenManifestPath:
       parsed.paperAccountFlattenManifestPath ?? process.env.TORGHUT_PAPER_ACCOUNT_FLATTEN_MANIFEST_PATH,
     whitepaperSemanticBackfillManifestPath:
