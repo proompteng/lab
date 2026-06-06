@@ -926,7 +926,7 @@ class TestFlattenPaperAccountPositions(TestCase):
 
         self.assertEqual(payload["status"], "submitted")
         self.assertEqual(payload["position_count"], 8)
-        self.assertEqual(payload["max_gross_market_value"], "100000")
+        self.assertEqual(payload["max_gross_market_value"], "1000000")
         self.assertTrue(client.cancelled)
         self.assertEqual(payload["submitted_order_count"], 8)
         self.assertEqual(client.submitted[0]["symbol"], "AAPL")

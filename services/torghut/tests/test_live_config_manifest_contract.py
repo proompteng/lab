@@ -30,6 +30,9 @@ _QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE = ("AAPL", "AMZN", "INTC", "NVDA")
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL = "1000000"
+_HPAIRS_PAPER_ACCOUNT_FLATTEN_MAX_GROSS_MARKET_VALUE = (
+    _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL
+)
 
 
 def _repo_root() -> Path:
@@ -1317,7 +1320,12 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--trading-mode paper", args)
         self.assertIn("--paper-base-url https://paper-api.alpaca.markets", args)
         self.assertIn("--database-dsn-env SIM_DB_DSN", args)
-        self.assertIn("--max-gross-market-value 100000", args)
+        self.assertIn(
+            "--max-gross-market-value "
+            f"{_HPAIRS_PAPER_ACCOUNT_FLATTEN_MAX_GROSS_MARKET_VALUE}",
+            args,
+        )
+        self.assertNotIn("--max-gross-market-value 100000 \\", args)
         self.assertNotIn("--max-gross-market-value 2500", args)
         self.assertIn("--max-position-count 25", args)
         self.assertIn("--extended-hours-limit", args)
@@ -1609,6 +1617,21 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn(
             f"--confirm-max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}",
             args,
+        )
+        _, flatten_container = _load_cronjob_container(
+            "argocd/applications/torghut/paper-account-flatten-cronjob.yaml"
+        )
+        flatten_args = "\n".join(
+            str(item) for item in flatten_container.get("args", [])
+        )
+        self.assertIn(
+            "--max-gross-market-value "
+            f"{_HPAIRS_PAPER_ACCOUNT_FLATTEN_MAX_GROSS_MARKET_VALUE}",
+            flatten_args,
+        )
+        self.assertEqual(
+            _HPAIRS_PAPER_ACCOUNT_FLATTEN_MAX_GROSS_MARKET_VALUE,
+            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
         )
         self.assertEqual(
             _strategy_decimal(hpairs, "max_notional_per_trade"),
