@@ -2847,7 +2847,7 @@ def _run_runtime_window_source_window_repair(
         "5000",
         "--max-batches",
         "2",
-        "--source-window-only",
+        "--backfill-execution-events",
         "--json",
     ]
     if (

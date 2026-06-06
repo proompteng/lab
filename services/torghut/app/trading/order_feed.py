@@ -1933,6 +1933,8 @@ def repair_order_feed_execution_links(
     *,
     account_label: str | None = None,
     canonical_account_label: str | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
     limit: int = 1000,
 ) -> dict[str, int]:
     """Attach unlinked order-feed lifecycle rows to matching executions.
@@ -1985,6 +1987,16 @@ def repair_order_feed_execution_links(
     )
     if account_label:
         stmt = stmt.where(ExecutionOrderEvent.alpaca_account_label == account_label)
+    if window_start is not None:
+        stmt = stmt.where(
+            func.coalesce(ExecutionOrderEvent.event_ts, ExecutionOrderEvent.created_at)
+            >= _ensure_aware_utc(window_start)
+        )
+    if window_end is not None:
+        stmt = stmt.where(
+            func.coalesce(ExecutionOrderEvent.event_ts, ExecutionOrderEvent.created_at)
+            < _ensure_aware_utc(window_end)
+        )
 
     events = session.execute(stmt).scalars().all()
     processed_execution_ids: set[tuple[object, str]] = set()
@@ -2148,6 +2160,8 @@ def repair_order_feed_execution_states(
     session: Session,
     *,
     account_label: str | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
     limit: int = 1000,
 ) -> dict[str, int]:
     """Reapply linked order-feed lifecycle rows to durable executions.
@@ -2175,6 +2189,11 @@ def repair_order_feed_execution_states(
     )
     if account_label:
         stmt = stmt.where(Execution.alpaca_account_label == account_label)
+    activity_ts = _execution_activity_timestamp()
+    if window_start is not None:
+        stmt = stmt.where(activity_ts >= _ensure_aware_utc(window_start))
+    if window_end is not None:
+        stmt = stmt.where(activity_ts < _ensure_aware_utc(window_end))
 
     executions = session.execute(stmt).scalars().all()
     counters = {
@@ -2205,6 +2224,8 @@ def repair_order_feed_fill_deltas(
     session: Session,
     *,
     account_label: str | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
     limit: int = 1000,
 ) -> dict[str, int]:
     """Backfill fill-delta proof fields for already-persisted cumulative fills.
@@ -2242,6 +2263,16 @@ def repair_order_feed_fill_deltas(
     )
     if account_label:
         stmt = stmt.where(ExecutionOrderEvent.alpaca_account_label == account_label)
+    if window_start is not None:
+        stmt = stmt.where(
+            func.coalesce(ExecutionOrderEvent.event_ts, ExecutionOrderEvent.created_at)
+            >= _ensure_aware_utc(window_start)
+        )
+    if window_end is not None:
+        stmt = stmt.where(
+            func.coalesce(ExecutionOrderEvent.event_ts, ExecutionOrderEvent.created_at)
+            < _ensure_aware_utc(window_end)
+        )
 
     events = session.execute(stmt).scalars().all()
     counters = {
@@ -2363,6 +2394,8 @@ def backfill_order_feed_events_from_executions(
     session: Session,
     *,
     account_label: str | None = None,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
     limit: int = 1000,
 ) -> dict[str, int]:
     """Materialize bounded order-feed lifecycle rows from durable executions.
@@ -2392,6 +2425,11 @@ def backfill_order_feed_events_from_executions(
     )
     if account_label:
         stmt = stmt.where(Execution.alpaca_account_label == account_label)
+    activity_ts = _execution_activity_timestamp()
+    if window_start is not None:
+        stmt = stmt.where(activity_ts >= _ensure_aware_utc(window_start))
+    if window_end is not None:
+        stmt = stmt.where(activity_ts < _ensure_aware_utc(window_end))
 
     executions = session.execute(stmt).scalars().all()
     counters = {
