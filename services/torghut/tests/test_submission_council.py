@@ -30,6 +30,7 @@ from app.models import (
     TradeDecision,
 )
 from app.trading.hypotheses import JangarDependencyQuorumStatus
+from app.trading.paper_route_evidence import _next_paper_route_target_summaries
 from app.trading.paper_route_target_plan import (
     materialize_bounded_paper_route_target_plan,
 )
@@ -616,6 +617,56 @@ class TestSubmissionCouncil(TestCase):
                 payload["target_plan_identity"]["target_symbol_quantities"],
                 {"AAPL": "0.10", "AMZN": "0.10"},
             )
+
+    def test_hpairs_target_summary_reads_audit_target_and_bounded_notional(
+        self,
+    ) -> None:
+        target = cast(dict[str, Any], self._hpairs_clean_target_plan()["targets"][0])
+        target = {
+            **target,
+            "target_notional": "1000000",
+            "bounded_evidence_collection_max_notional": "1000000",
+            "paper_route_probe_next_session_max_notional": "1000000",
+            "paper_route_probe_effective_max_notional": "1000000",
+            "paper_route_probe_symbol_quantities": {},
+            "paper_route_probe_symbol_quantity_source": (
+                "target_notional_runtime_sizing"
+            ),
+            "max_notional": "0",
+        }
+
+        summaries = _next_paper_route_target_summaries(
+            [
+                {
+                    "target": target,
+                    "readiness": {"state": "paper_evidence_collecting"},
+                }
+            ]
+        )
+
+        self.assertEqual(len(summaries), 1)
+        summary = summaries[0]
+        self.assertEqual(summary["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(summary["candidate_id"], "c88421d619759b2cfaa6f4d0")
+        self.assertEqual(summary["symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            summary["symbol_actions"],
+            {"AAPL": "buy", "AMZN": "sell"},
+        )
+        self.assertEqual(
+            summary["symbol_quantities"],
+            {"AAPL": "1", "AMZN": "1"},
+        )
+        self.assertEqual(
+            summary["symbol_quantity_source"],
+            "target_notional_runtime_sizing_seed",
+        )
+        self.assertEqual(summary["target_notional"], "1000000")
+        self.assertEqual(summary["bounded_paper_collection_notional"], "1000000")
+        self.assertEqual(summary["bounded_evidence_collection_max_notional"], "1000000")
+        self.assertEqual(summary["next_session_max_notional"], "1000000")
+        self.assertEqual(summary["capital_promotion_max_notional"], "0")
+        self.assertFalse(summary["final_promotion_allowed"])
 
     def test_hpairs_target_plan_materialization_blocks_dirty_incomplete_or_unbounded_targets(
         self,
