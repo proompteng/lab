@@ -4321,6 +4321,45 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "runtime_ledger_ready_for_gate_review",
         )
 
+    def test_profitability_lifecycle_clears_completed_lineage_blockers_when_account_window_dirty(
+        self,
+    ) -> None:
+        stale_lineage_blockers = {
+            "paper_route_runtime_ledger_import_pending",
+            "runtime_ledger_source_materialization_missing",
+            "runtime_ledger_source_refs_missing",
+            "runtime_ledger_source_window_ids_missing",
+            "runtime_ledger_source_window_missing",
+            "runtime_ledger_source_offsets_missing",
+            "runtime_ledger_trade_decision_refs_missing",
+            "runtime_ledger_execution_refs_missing",
+            "runtime_ledger_execution_order_event_refs_missing",
+            "runtime_ledger_authority_class_missing",
+            "runtime_ledger_bucket_missing",
+            "runtime_ledger_evidence_grade_bucket_missing",
+        }
+        blockers = paper_route_evidence._profitability_lifecycle_authority_blockers(
+            blockers=[
+                *sorted(stale_lineage_blockers),
+                "live_runtime_ledger_required",
+                "paper_route_account_window_start_snapshot_stale",
+                "simple_submit_disabled",
+            ],
+            collection_status="complete",
+            clean_window_status="blocked",
+            source_decision_status="complete",
+            source_activity_status="complete",
+            runtime_import_status="complete",
+            runtime_import_state="import_due_account_state_not_clean",
+            runtime_import_blockers=["paper_route_account_window_start_snapshot_stale"],
+            runtime_ledger_status="complete",
+        )
+
+        self.assertFalse(stale_lineage_blockers & set(blockers))
+        self.assertIn("paper_route_account_window_start_snapshot_stale", blockers)
+        self.assertIn("live_runtime_ledger_required", blockers)
+        self.assertIn("simple_submit_disabled", blockers)
+
     def test_source_runtime_window_import_plan_keeps_next_session_window(
         self,
     ) -> None:
