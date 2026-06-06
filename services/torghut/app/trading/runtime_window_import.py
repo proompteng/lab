@@ -1282,11 +1282,30 @@ def build_observed_runtime_buckets(
             )
         )
 
-    def row_computed_at_is_in_import_window(row: _NormalizedTcaRow) -> bool:
+    def time_is_in_import_window(value: datetime) -> bool:
         return any(
-            bucket_start <= row.computed_at < bucket_end
+            bucket_start <= value < bucket_end
             for bucket_start, bucket_end, _ in bucket_ranges
         )
+
+    def row_import_bucketed_at(row: _NormalizedTcaRow) -> datetime:
+        if time_is_in_import_window(row.computed_at):
+            return row.computed_at
+        if time_is_in_import_window(row.bucketed_at):
+            return row.bucketed_at
+        interval = _runtime_ledger_payload_interval(row.runtime_ledger_bucket)
+        if interval is None:
+            return row.bucketed_at
+        interval_start, interval_end = interval
+        overlapping_ranges = [
+            (bucket_start, bucket_end)
+            for bucket_start, bucket_end, _ in bucket_ranges
+            if interval_start < bucket_end and interval_end > bucket_start
+        ]
+        if not overlapping_ranges:
+            return row.bucketed_at
+        last_start, last_end = overlapping_ranges[-1]
+        return max(last_start, last_end - timedelta(microseconds=1))
 
     buckets: list[ObservedRuntimeBucket] = []
     for bucket_start, bucket_end, market_session_count in bucket_ranges:
@@ -1299,11 +1318,7 @@ def build_observed_runtime_buckets(
         bucket_tca = [
             row
             for row in normalized_tca_rows
-            if (
-                bucket_start <= row.computed_at < bucket_end
-                if row_computed_at_is_in_import_window(row)
-                else bucket_start <= row.bucketed_at < bucket_end
-            )
+            if bucket_start <= row_import_bucketed_at(row) < bucket_end
         ]
         runtime_ledger_decision_count = sum(
             _observation_int(row.runtime_ledger_bucket.get("decision_count"))
