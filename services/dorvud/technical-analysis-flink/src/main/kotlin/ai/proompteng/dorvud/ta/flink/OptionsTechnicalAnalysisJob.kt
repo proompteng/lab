@@ -302,9 +302,9 @@ private fun optionsStatusSink(
     KafkaSink
       .builder<Envelope<OptionsTaStatusPayload>>()
       .setBootstrapServers(config.bootstrapServers)
-      .setDeliveryGuarantee(config.deliveryGuarantee)
+      .setDeliveryGuarantee(config.statusDeliveryGuarantee)
 
-  if (config.deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
+  if (config.statusDeliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
     builder.setTransactionalIdPrefix("${config.clientId}-options-status")
     builder.setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
   }
