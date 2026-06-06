@@ -626,6 +626,7 @@ def _target_materialization_blockers(
     blockers.extend(_hpairs_materialization_blockers(identity))
     blockers.extend(_clean_window_baseline_blockers(target))
     blockers.extend(_source_decision_readiness_blockers(target))
+    blockers.extend(paper_route_target_execution_capacity_blockers(target))
     if not bool(target.get("evidence_collection_ok")):
         blockers.append("paper_route_evidence_collection_gate_not_passed")
     if not bool(target.get("bounded_evidence_collection_authorized")):
@@ -647,10 +648,41 @@ def _target_materialization_blockers(
     return sorted(dict.fromkeys(blockers))
 
 
+def paper_route_target_execution_capacity_blockers(
+    target: Mapping[str, Any],
+) -> list[str]:
+    contract = _to_str_map(target.get("paper_route_execution_capacity_contract"))
+    target_notional = _target_notional(target)
+    explicit_quantities = _target_symbol_quantities(target)
+    if target_notional > 0 and not explicit_quantities and not contract:
+        return ["paper_route_execution_capacity_contract_missing"]
+    if not contract:
+        return []
+
+    blockers: list[str] = []
+    raw_blockers = contract.get("blockers")
+    if isinstance(raw_blockers, Sequence) and not isinstance(
+        raw_blockers, (str, bytes, bytearray)
+    ):
+        blockers.extend(
+            item_text
+            for item in cast(Sequence[object], raw_blockers)
+            if (item_text := _safe_text(item))
+        )
+    state = _safe_text(contract.get("state"))
+    if state != "capacity_ready":
+        blockers.append("paper_route_execution_capacity_not_ready")
+    return sorted({item for item in blockers if item})
+
+
 def _blocked_target_readiness(blockers: Sequence[str]) -> dict[str, Any]:
     blocker_set = {blocker for blocker in blockers if blocker}
     if "paper_route_target_notional_exceeds_bounded_collection_limit" in blocker_set:
         next_action = "reduce_notional"
+    elif any(
+        blocker.startswith("paper_route_execution_capacity") for blocker in blocker_set
+    ):
+        next_action = "repair_execution_capacity_contract"
     elif (
         "paper_route_target_symbol_actions_missing" in blocker_set
         or "paper_route_target_symbol_quantities_missing" in blocker_set
@@ -1174,6 +1206,7 @@ __all__ = [
     "fetch_paper_route_target_plan_url",
     "materialize_bounded_paper_route_target_plan",
     "mapping_items",
+    "paper_route_target_execution_capacity_blockers",
     "paper_route_target_plan_from_payload",
     "paper_route_target_plan_probe_symbols",
     "paper_route_target_plan_targets",

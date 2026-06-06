@@ -141,6 +141,14 @@ def test_materializer_accepts_notional_authoritative_target_without_quantities(
         symbol_quantities={},
         target_quantity="",
         target_notional="20",
+        paper_route_execution_capacity_contract={
+            "schema_version": "torghut.paper-route-execution-capacity-contract.v1",
+            "state": "capacity_ready",
+            "target_notional": "20",
+            "effective_collection_notional_cap": "20",
+            "capacity_ratio_to_target": "1",
+            "blockers": [],
+        },
     )
 
     result = materialize_bounded_paper_route_target_plan(
@@ -167,6 +175,75 @@ def test_materializer_accepts_notional_authoritative_target_without_quantities(
             "target_notional_runtime_sizing_seed"
         )
         assert metadata["target_notional_sizing_required"] is True
+
+
+def test_materializer_rejects_notional_authoritative_target_without_capacity_contract(
+    db_session: Session,
+) -> None:
+    target = _hpairs_target(
+        paper_route_probe_symbol_quantities={},
+        target_symbol_quantities={},
+        symbol_quantities={},
+        target_quantity="",
+        target_notional="20",
+    )
+
+    result = materialize_bounded_paper_route_target_plan(
+        db_session,
+        _plan(target),
+        generated_at=datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+        bounded_notional_limit=Decimal("20"),
+    )
+    decisions = db_session.execute(select(TradeDecision)).scalars().all()
+
+    assert result["materialized_decision_count"] == 0
+    assert result["blocked_target_count"] == 1
+    assert decisions == []
+    assert result["blocked_targets"][0]["blockers"] == [
+        "paper_route_execution_capacity_contract_missing"
+    ]
+    assert (
+        result["blocked_targets"][0]["readiness"]["next_operator_action"]
+        == "repair_execution_capacity_contract"
+    )
+
+
+def test_materializer_rejects_notional_authoritative_target_when_capacity_not_ready(
+    db_session: Session,
+) -> None:
+    target = _hpairs_target(
+        paper_route_probe_symbol_quantities={},
+        target_symbol_quantities={},
+        symbol_quantities={},
+        target_quantity="",
+        target_notional="20",
+        paper_route_execution_capacity_contract={
+            "schema_version": "torghut.paper-route-execution-capacity-contract.v1",
+            "state": "blocked",
+            "target_notional": "20",
+            "effective_collection_notional_cap": "10",
+            "capacity_ratio_to_target": "0.5",
+            "blockers": ["paper_route_execution_capacity_below_target_notional"],
+        },
+    )
+
+    result = materialize_bounded_paper_route_target_plan(
+        db_session,
+        _plan(target),
+        generated_at=datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+        bounded_notional_limit=Decimal("20"),
+    )
+
+    assert result["materialized_decision_count"] == 0
+    assert result["blocked_target_count"] == 1
+    assert result["blocked_targets"][0]["blockers"] == [
+        "paper_route_execution_capacity_below_target_notional",
+        "paper_route_execution_capacity_not_ready",
+    ]
+    assert (
+        result["blocked_targets"][0]["readiness"]["next_operator_action"]
+        == "repair_execution_capacity_contract"
+    )
 
 
 def test_materializer_preserves_explicit_quantities_without_runtime_sizing(
