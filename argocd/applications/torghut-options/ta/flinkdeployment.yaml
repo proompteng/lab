@@ -8,7 +8,7 @@ metadata:
 spec:
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:aa891e7d9e056a9a269644c593d960e7933a5f934e86e68a0313d90a7b93651e
   imagePullPolicy: IfNotPresent
-  restartNonce: 11
+  restartNonce: 12
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:
@@ -42,7 +42,7 @@ spec:
                 name: torghut-options-ta-config
           env:
             - name: TA_KAFKA_DELIVERY_GUARANTEE
-              value: EXACTLY_ONCE
+              value: AT_LEAST_ONCE
             - name: OPTIONS_TA_STATUS_KAFKA_DELIVERY_GUARANTEE
               value: AT_LEAST_ONCE
             - name: TA_KAFKA_USERNAME
