@@ -41,7 +41,8 @@ spec:
                   cd /app
                   RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json
                   PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json
-                  mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")"
+                  HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT=/tmp/torghut-empirical-renewal/hpairs-source-proof-census.json
+                  mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")" "$(dirname "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}")"
                   /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
@@ -66,9 +67,19 @@ spec:
                     --max-batches 5 \
                     --apply \
                     --json
+                  /opt/venv/bin/python scripts/audit_hpairs_source_proof_census.py \
+                    --dsn "${SIM_DB_DSN}" \
+                    --hypothesis-id H-PAIRS-01 \
+                    --candidate-id c88421d619759b2cfaa6f4d0 \
+                    --runtime-strategy-name microbar-cross-sectional-pairs-v1 \
+                    --account-label TORGHUT_SIM \
+                    --source-account-label TORGHUT_SIM \
+                    --observed-stage paper \
+                    > "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}"
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
+                    --hpairs-source-proof-census-file "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}" \
                     --runtime-window-import \
                     --runtime-window-target-plan-url 'http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5' \
                     --runtime-window-target-plan-url-timeout-seconds 45 \
@@ -96,6 +107,7 @@ spec:
                     --timeout-seconds 30 \
                     --proof-mode authority \
                     --runtime-window-import-file "${RENEWAL_OUTPUT}" \
+                    --hpairs-source-proof-census-file "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}" \
                     --min-runtime-ledger-net-pnl 10000 \
                     --min-runtime-ledger-daily-net-pnl 500 \
                     --min-runtime-ledger-trading-days 20 \

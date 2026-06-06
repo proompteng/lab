@@ -2005,7 +2005,19 @@ class TestLiveConfigManifestContract(TestCase):
             args,
         )
         self.assertIn(
-            'mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")"',
+            "HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT=/tmp/torghut-empirical-renewal/hpairs-source-proof-census.json",
+            args,
+        )
+        self.assertIn(
+            'mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")" "$(dirname "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}")"',
+            args,
+        )
+        self.assertIn("scripts/audit_hpairs_source_proof_census.py", args)
+        self.assertIn('--dsn "${SIM_DB_DSN}"', args)
+        self.assertIn("--source-account-label TORGHUT_SIM", args)
+        self.assertIn('> "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}"', args)
+        self.assertIn(
+            '--hpairs-source-proof-census-file "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}"',
             args,
         )
         self.assertIn("scripts/assemble_runtime_ledger_proof_packet.py", args)
