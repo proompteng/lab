@@ -4153,7 +4153,29 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 live_submission_gate={
                     "allowed": False,
                     "reason": "paper_route_probe_only",
-                    "blocked_reasons": [],
+                    "blocked_reasons": [
+                        "runtime_ledger_source_collection_pending",
+                        "runtime_ledger_profit_target_source_collection_pending",
+                        "paper_route_session_window_not_open",
+                        "paper_route_clean_window_baseline_snapshot_pending",
+                        "paper_route_runtime_ledger_import_pending",
+                        "runtime_ledger_source_materialization_missing",
+                        "runtime_ledger_source_refs_missing",
+                        "runtime_ledger_source_window_ids_missing",
+                        "runtime_ledger_source_window_missing",
+                        "runtime_ledger_source_offsets_missing",
+                        "runtime_ledger_trade_decision_refs_missing",
+                        "runtime_ledger_execution_refs_missing",
+                        "runtime_ledger_execution_order_event_refs_missing",
+                        "runtime_ledger_authority_class_missing",
+                        "source_decisions_missing",
+                        "source_executions_missing",
+                        "source_tca_missing",
+                        "runtime_ledger_bucket_missing",
+                        "runtime_ledger_evidence_grade_bucket_missing",
+                        "live_runtime_ledger_required",
+                        "simple_submit_disabled",
+                    ],
                     "promotion_eligible_total": 1,
                     "runtime_ledger_paper_probation_import_plan": {
                         "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
@@ -4258,9 +4280,41 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(lifecycle["state"], "runtime_ledger_ready_for_gate_review")
         self.assertEqual(lifecycle["next_action"], "review_runtime_ledger_profit_gates")
         stages = {stage["name"]: stage for stage in lifecycle["stages"]}
+        self.assertEqual(
+            stages["bounded_live_paper_collection"]["evidence"]["session_window"],
+            import_plan["session_window"],
+        )
         self.assertEqual(stages["runtime_window_import"]["status"], "complete")
         self.assertEqual(stages["runtime_ledger_authority"]["status"], "complete")
         self.assertEqual(stages["promotion_profit_authority"]["status"], "blocked")
+        stale_lifecycle_blockers = {
+            "runtime_ledger_source_collection_pending",
+            "runtime_ledger_profit_target_source_collection_pending",
+            "paper_route_session_window_not_open",
+            "paper_route_clean_window_baseline_snapshot_pending",
+            "paper_route_runtime_ledger_import_pending",
+            "runtime_ledger_source_materialization_missing",
+            "runtime_ledger_source_refs_missing",
+            "runtime_ledger_source_window_ids_missing",
+            "runtime_ledger_source_window_missing",
+            "runtime_ledger_source_offsets_missing",
+            "runtime_ledger_trade_decision_refs_missing",
+            "runtime_ledger_execution_refs_missing",
+            "runtime_ledger_execution_order_event_refs_missing",
+            "runtime_ledger_authority_class_missing",
+            "source_decisions_missing",
+            "source_executions_missing",
+            "source_tca_missing",
+            "runtime_ledger_bucket_missing",
+            "runtime_ledger_evidence_grade_bucket_missing",
+        }
+        self.assertFalse(stale_lifecycle_blockers & set(lifecycle["blockers"]))
+        self.assertFalse(
+            stale_lifecycle_blockers
+            & set(stages["promotion_profit_authority"]["blockers"])
+        )
+        self.assertIn("live_runtime_ledger_required", lifecycle["blockers"])
+        self.assertIn("simple_submit_disabled", lifecycle["blockers"])
         self.assertFalse(lifecycle["promotion_authority_allowed"])
         self.assertEqual(
             payload["summary"]["profitability_proof_lifecycle_state"],
