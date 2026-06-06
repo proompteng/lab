@@ -171,6 +171,50 @@ SOURCE_BACKED_POSITIVE_PNL_SATISFIED_BLOCKERS = frozenset(
         "runtime_ledger_post_cost_pnl_non_positive",
     }
 )
+PROFITABILITY_LIFECYCLE_COLLECTION_SATISFIED_BLOCKERS = frozenset(
+    {
+        "paper_route_clean_window_baseline_snapshot_pending",
+        "paper_route_session_window_closed",
+        "paper_route_session_window_not_closed",
+        "paper_route_session_window_not_open",
+        "runtime_ledger_source_collection_pending",
+        "runtime_ledger_profit_target_source_collection_pending",
+    }
+)
+PROFITABILITY_LIFECYCLE_SOURCE_DECISION_SATISFIED_BLOCKERS = frozenset(
+    {
+        "runtime_ledger_source_decisions_missing",
+        "source_decisions_missing",
+    }
+)
+PROFITABILITY_LIFECYCLE_SOURCE_ACTIVITY_SATISFIED_BLOCKERS = frozenset(
+    {
+        "paper_route_source_activity_missing",
+        "source_executions_missing",
+        "source_tca_missing",
+    }
+)
+PROFITABILITY_LIFECYCLE_RUNTIME_IMPORT_SATISFIED_BLOCKERS = frozenset(
+    {
+        "paper_route_runtime_ledger_import_pending",
+        "runtime_ledger_authority_class_missing",
+        "runtime_ledger_execution_order_event_refs_missing",
+        "runtime_ledger_execution_refs_missing",
+        "runtime_ledger_source_materialization_missing",
+        "runtime_ledger_source_offsets_missing",
+        "runtime_ledger_source_refs_missing",
+        "runtime_ledger_source_window_evidence_pending",
+        "runtime_ledger_source_window_ids_missing",
+        "runtime_ledger_source_window_missing",
+        "runtime_ledger_trade_decision_refs_missing",
+    }
+)
+PROFITABILITY_LIFECYCLE_RUNTIME_LEDGER_SATISFIED_BLOCKERS = frozenset(
+    {
+        "runtime_ledger_bucket_missing",
+        "runtime_ledger_evidence_grade_bucket_missing",
+    }
+)
 CLEAN_WINDOW_BASELINE_SCHEMA_VERSION = "torghut.paper-route-clean-window-baseline.v1"
 SOURCE_LINEAGE_CANDIDATE_KEYS = (
     "candidate_id",
@@ -10122,6 +10166,40 @@ def _readiness_stage_status(
     return "pending"
 
 
+def _profitability_lifecycle_authority_blockers(
+    *,
+    blockers: Sequence[object],
+    collection_status: str,
+    clean_window_status: str,
+    source_decision_status: str,
+    source_activity_status: str,
+    runtime_import_status: str,
+    runtime_import_state: str,
+    runtime_import_blockers: Sequence[object],
+    runtime_ledger_status: str,
+) -> list[str]:
+    satisfied: set[str] = set()
+    if collection_status == "complete":
+        satisfied.update(PROFITABILITY_LIFECYCLE_COLLECTION_SATISFIED_BLOCKERS)
+    if clean_window_status == "complete":
+        satisfied.add("paper_route_clean_window_baseline_snapshot_pending")
+    if source_decision_status == "complete":
+        satisfied.update(PROFITABILITY_LIFECYCLE_SOURCE_DECISION_SATISFIED_BLOCKERS)
+    if source_activity_status == "complete":
+        satisfied.update(PROFITABILITY_LIFECYCLE_SOURCE_ACTIVITY_SATISFIED_BLOCKERS)
+    if (
+        runtime_import_status == "complete"
+        and runtime_import_state == "runtime_ledger_ready_for_gate_review"
+        and not _unique_text_items(runtime_import_blockers)
+    ):
+        satisfied.update(PROFITABILITY_LIFECYCLE_RUNTIME_IMPORT_SATISFIED_BLOCKERS)
+    if runtime_ledger_status == "complete":
+        satisfied.update(PROFITABILITY_LIFECYCLE_RUNTIME_LEDGER_SATISFIED_BLOCKERS)
+    return sorted(
+        blocker for blocker in _unique_text_items(blockers) if blocker not in satisfied
+    )
+
+
 def _profitability_proof_lifecycle(
     *,
     live_submission_gate: Mapping[str, Any],
@@ -10210,15 +10288,9 @@ def _profitability_proof_lifecycle(
     runtime_import_blockers = _unique_text_items(
         runtime_window_import_audit.get("blockers")
     )
-    authority_blockers = sorted(
-        dict.fromkeys(
-            [
-                *live_gate_blockers,
-                *runtime_import_blockers,
-                *_unique_text_items(summary_blockers),
-            ]
-        )
-    )
+    selected_session_window = _as_mapping(
+        runtime_window_import_plan.get("session_window")
+    ) or _as_mapping(next_targets.get("session_window"))
     target_status = (
         "complete" if max(source_target_count, next_target_count) > 0 else "blocked"
     )
@@ -10291,6 +10363,33 @@ def _profitability_proof_lifecycle(
         if runtime_import_status == "pending"
         else "blocked"
     )
+    clean_window_status = _readiness_stage_status(
+        target_count=next_target_count,
+        state=clean_window_state,
+        blockers=_unique_text_items(clean_window_baseline.get("blockers")),
+        pending_states={
+            "unknown",
+            "no_targets",
+            "clean_window_required",
+            "pending_until_pre_session",
+        },
+        complete_states={"clean"},
+    )
+    authority_blockers = _profitability_lifecycle_authority_blockers(
+        blockers=[
+            *live_gate_blockers,
+            *runtime_import_blockers,
+            *_unique_text_items(summary_blockers),
+        ],
+        collection_status=collection_status,
+        clean_window_status=clean_window_status,
+        source_decision_status=source_decision_status,
+        source_activity_status=source_activity_status,
+        runtime_import_status=runtime_import_status,
+        runtime_import_state=runtime_import_state,
+        runtime_import_blockers=runtime_import_blockers,
+        runtime_ledger_status=runtime_ledger_status,
+    )
     promotion_status = "blocked"
     lifecycle_state = runtime_import_state
     if target_status == "blocked":
@@ -10334,18 +10433,7 @@ def _profitability_proof_lifecycle(
         ),
         _profitability_proof_lifecycle_stage(
             name="clean_account_window",
-            status=_readiness_stage_status(
-                target_count=next_target_count,
-                state=clean_window_state,
-                blockers=_unique_text_items(clean_window_baseline.get("blockers")),
-                pending_states={
-                    "unknown",
-                    "no_targets",
-                    "clean_window_required",
-                    "pending_until_pre_session",
-                },
-                complete_states={"clean"},
-            ),
+            status=clean_window_status,
             blockers=_unique_text_items(clean_window_baseline.get("blockers")),
             next_action="capture_clean_window_account_baseline",
             evidence={
@@ -10370,7 +10458,7 @@ def _profitability_proof_lifecycle(
             ),
             evidence={
                 "session_state": session_state,
-                "session_window": _as_mapping(next_targets.get("session_window")),
+                "session_window": selected_session_window,
                 "collection_readiness_state": _safe_text(
                     collection_readiness.get("state")
                 ),
