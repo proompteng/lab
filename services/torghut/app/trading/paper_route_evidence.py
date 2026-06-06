@@ -1006,6 +1006,26 @@ def _following_regular_equities_session_window(
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
+def _auto_runtime_import_audit_may_select_latest_closed(
+    *,
+    generated_at: datetime,
+    next_targets: Mapping[str, object],
+) -> bool:
+    """Keep same-day pre-open evidence reads cheap while allowing stale backlog review."""
+
+    session_window = _as_mapping(next_targets.get("session_window"))
+    next_window_start = _parse_datetime(session_window.get("start"))
+    if next_window_start is None:
+        return True
+    zone = ZoneInfo(US_EQUITIES_TIMEZONE)
+    local_generated_at = generated_at.astimezone(zone)
+    local_next_start = next_window_start.astimezone(zone)
+    return not (
+        local_generated_at.date() == local_next_start.date()
+        and local_generated_at < local_next_start
+    )
+
+
 def _seconds_until(*, generated_at: datetime, target: datetime) -> int:
     return max(0, int((target - generated_at).total_seconds()))
 
@@ -10137,18 +10157,24 @@ def _profitability_proof_lifecycle(
     )
     next_counts = _runtime_window_target_counts(next_target_audits)
     import_counts = _runtime_window_target_counts(runtime_window_import_target_audits)
-    session_readiness = _as_mapping(next_targets.get("session_readiness"))
-    collection_readiness = _as_mapping(next_targets.get("collection_session_readiness"))
-    account_pre_session = _as_mapping(next_targets.get("account_pre_session_readiness"))
+    session_readiness = _as_mapping(
+        runtime_window_import_plan.get("session_readiness")
+    ) or _as_mapping(next_targets.get("session_readiness"))
+    collection_readiness = _as_mapping(
+        runtime_window_import_plan.get("collection_session_readiness")
+    ) or _as_mapping(next_targets.get("collection_session_readiness"))
+    account_pre_session = _as_mapping(
+        runtime_window_import_plan.get("account_pre_session_readiness")
+    ) or _as_mapping(next_targets.get("account_pre_session_readiness"))
     clean_window_baseline = _as_mapping(
-        next_targets.get("clean_window_baseline_readiness")
-    )
+        runtime_window_import_plan.get("clean_window_baseline_readiness")
+    ) or _as_mapping(next_targets.get("clean_window_baseline_readiness"))
     account_contamination = _as_mapping(
         runtime_window_import_plan.get("account_contamination_readiness")
     ) or _as_mapping(next_targets.get("account_contamination_readiness"))
     source_decision_readiness = _as_mapping(
-        next_targets.get("source_decision_readiness")
-    )
+        runtime_window_import_plan.get("source_decision_readiness")
+    ) or _as_mapping(next_targets.get("source_decision_readiness"))
     runtime_import_state = (
         _safe_text(runtime_window_import_audit.get("state")) or "unknown"
     )
@@ -10204,8 +10230,20 @@ def _profitability_proof_lifecycle(
         if source_decision_blockers
         else "pending"
     )
+    import_source_activity_seen = (
+        import_counts["source_activity"] > 0
+        or import_counts["rejected_signal_activity"] > 0
+    )
+    source_activity_seen = (
+        import_source_activity_seen
+        or next_counts["source_activity"] > 0
+        or next_counts["rejected_signal_activity"] > 0
+    )
+    runtime_import_ready = bool(runtime_window_import_audit.get("import_ready"))
     collection_status = (
-        "active"
+        "complete"
+        if runtime_import_ready and import_source_activity_seen
+        else "active"
         if session_state == "collecting_session_evidence" and not collection_blockers
         else "pending"
         if session_state
@@ -10216,12 +10254,6 @@ def _profitability_proof_lifecycle(
         else "blocked"
         if collection_blockers
         else "pending"
-    )
-    source_activity_seen = (
-        import_counts["source_activity"] > 0
-        or import_counts["rejected_signal_activity"] > 0
-        or next_counts["source_activity"] > 0
-        or next_counts["rejected_signal_activity"] > 0
     )
     source_activity_status = (
         "complete"
@@ -10235,7 +10267,6 @@ def _profitability_proof_lifecycle(
         }
         else "blocked"
     )
-    runtime_import_ready = bool(runtime_window_import_audit.get("import_ready"))
     runtime_import_status = (
         "complete"
         if runtime_import_state == "runtime_ledger_ready_for_gate_review"
@@ -10265,6 +10296,9 @@ def _profitability_proof_lifecycle(
     if target_status == "blocked":
         lifecycle_state = "target_plan_missing"
         recommended_next_action = "repair_runtime_ledger_paper_probation_import_plan"
+    elif runtime_import_status == "complete" and runtime_ledger_status == "complete":
+        lifecycle_state = runtime_import_state
+        recommended_next_action = runtime_import_next_action
     elif source_collection_next_actions:
         lifecycle_state = "source_collection_materialization_pending"
     elif session_state == "collecting_session_evidence":
@@ -10326,9 +10360,11 @@ def _profitability_proof_lifecycle(
         _profitability_proof_lifecycle_stage(
             name="bounded_live_paper_collection",
             status=collection_status,
-            blockers=collection_blockers,
+            blockers=[] if collection_status == "complete" else collection_blockers,
             next_action=(
-                "collect_paper_route_activity_until_close"
+                None
+                if collection_status == "complete"
+                else "collect_paper_route_activity_until_close"
                 if collection_status == "active"
                 else "wait_for_regular_session_open"
             ),
@@ -12017,14 +12053,49 @@ def build_paper_route_evidence_audit(
             generated_at=resolved_generated_at,
             target_account_audit_available=target_account_audit_available,
         )
-    next_import_readiness = _as_mapping(next_targets.get("session_readiness"))
-    next_import_handoff = _as_mapping(next_targets.get("runtime_window_import_handoff"))
-    next_import_ready = bool(
-        next_import_readiness.get("import_ready")
-        or next_import_handoff.get("import_ready")
+    latest_closed_targets: Mapping[str, Any] = {}
+    next_clean_after_discard_targets: Mapping[str, Any] = {}
+    closed_window_end: datetime | None = None
+    may_select_latest_closed = (
+        include_runtime_window_import_audit is True
+        or include_runtime_window_import_audit is None
+        and _auto_runtime_import_audit_may_select_latest_closed(
+            generated_at=resolved_generated_at,
+            next_targets=next_targets,
+        )
+    )
+    if may_select_latest_closed:
+        closed_window_start, closed_window_end = (
+            _latest_closed_regular_equities_session_window(resolved_generated_at)
+        )
+        latest_closed_targets = _next_paper_route_runtime_window_targets(
+            session=session,
+            targets=targets,
+            probe=probe,
+            live_submission_gate=live_submission_gate,
+            generated_at=resolved_generated_at,
+            require_clean_pre_session=False,
+            window_start=closed_window_start,
+            window_end=closed_window_end,
+            purpose="latest_closed_session_paper_route_runtime_window_import",
+            target_account_audit_available=target_account_audit_available,
+        )
+    auto_runtime_window_import_plan = _runtime_window_import_plan_for_audit(
+        latest_closed_targets=latest_closed_targets,
+        next_targets=next_targets,
+    )
+    auto_import_readiness = _as_mapping(
+        auto_runtime_window_import_plan.get("session_readiness")
+    )
+    auto_import_handoff = _as_mapping(
+        auto_runtime_window_import_plan.get("runtime_window_import_handoff")
+    )
+    auto_import_ready = bool(
+        auto_import_readiness.get("import_ready")
+        or auto_import_handoff.get("import_ready")
     )
     run_full_runtime_import_audit = (
-        next_import_ready
+        auto_import_ready
         if include_runtime_window_import_audit is None
         else include_runtime_window_import_audit
     )
@@ -12061,8 +12132,6 @@ def build_paper_route_evidence_audit(
     runtime_window_import_target_audits = next_target_audits
     source_targets: Mapping[str, Any] = source_collection_import_plan
     observed_strategy_source_targets: Mapping[str, Any] = {}
-    latest_closed_targets: Mapping[str, Any] = {}
-    next_clean_after_discard_targets: Mapping[str, Any] = {}
     latest_closed_runtime_window_import_selection = (
         _runtime_window_import_candidate_selection(
             latest_closed_targets=latest_closed_targets,
@@ -12072,21 +12141,6 @@ def build_paper_route_evidence_audit(
     )
 
     if run_full_runtime_import_audit:
-        closed_window_start, closed_window_end = (
-            _latest_closed_regular_equities_session_window(resolved_generated_at)
-        )
-        latest_closed_targets = _next_paper_route_runtime_window_targets(
-            session=session,
-            targets=targets,
-            probe=probe,
-            live_submission_gate=live_submission_gate,
-            generated_at=resolved_generated_at,
-            require_clean_pre_session=False,
-            window_start=closed_window_start,
-            window_end=closed_window_end,
-            purpose="latest_closed_session_paper_route_runtime_window_import",
-            target_account_audit_available=target_account_audit_available,
-        )
         latest_closed_runtime_window_import_selection = (
             _runtime_window_import_candidate_selection(
                 latest_closed_targets=latest_closed_targets,
@@ -12124,6 +12178,12 @@ def build_paper_route_evidence_audit(
             elif _runtime_window_import_candidate_discard_blockers(
                 latest_closed_target_audits
             ):
+                if closed_window_end is None:
+                    _closed_window_start, closed_window_end = (
+                        _latest_closed_regular_equities_session_window(
+                            resolved_generated_at
+                        )
+                    )
                 followup_window_start, followup_window_end = (
                     _following_regular_equities_session_window(closed_window_end)
                 )

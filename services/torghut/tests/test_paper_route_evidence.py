@@ -3969,11 +3969,144 @@ class TestPaperRouteEvidenceAudit(TestCase):
     def test_evidence_import_audit_uses_latest_closed_window_before_next_open(
         self,
     ) -> None:
-        generated_at = datetime(2026, 6, 1, 5, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 5, 31, 23, tzinfo=timezone.utc)
         closed_start = datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc)
         closed_end = datetime(2026, 5, 29, 20, tzinfo=timezone.utc)
         strategy_name = "closed-window-paper-route"
+        event_at = closed_start + timedelta(minutes=45)
         with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="closed window paper-route source strategy",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=closed_start,
+                updated_at=closed_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "candidate_id": "candidate-closed-window",
+                    "hypothesis_id": "H-CLOSED-WINDOW",
+                    "params": {
+                        "paper_route_probe": {
+                            "source_candidate_ids": ["candidate-closed-window"],
+                            "source_hypothesis_ids": ["H-CLOSED-WINDOW"],
+                        }
+                    },
+                },
+                rationale="closed-window source-linked paper-route fixture",
+                status="executed",
+                created_at=event_at,
+                executed_at=event_at,
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="closed-window-order",
+                client_order_id="closed-window-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at,
+                updated_at=event_at,
+                last_update_at=event_at,
+                order_feed_last_event_ts=event_at,
+            )
+            session.add(execution)
+            session.flush()
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed",
+                source_topic="trade_updates",
+                source_partition=0,
+                alpaca_account_label="TORGHUT_SIM",
+                assignment_mode="group",
+                collector_identity="test-order-feed",
+                source_revision="alpaca_trade_updates_v1",
+                window_started_at=event_at,
+                window_ended_at=event_at,
+                start_offset=901,
+                end_offset=901,
+                consumed_count=1,
+                inserted_count=1,
+                status="inserted",
+                status_reason="linked_execution_and_decision",
+                payload_json={
+                    "source_ref": {
+                        "topic": "trade_updates",
+                        "partition": 0,
+                        "offset": 901,
+                    },
+                    "source_coverage_complete": True,
+                    "promotion_authority_eligible": False,
+                },
+            )
+            session.add(source_window)
+            session.flush()
+            session.add_all(
+                [
+                    ExecutionOrderEvent(
+                        event_fingerprint="closed-window-fill",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=901,
+                        alpaca_account_label="TORGHUT_SIM",
+                        feed_seq=901,
+                        event_ts=event_at,
+                        symbol="AAPL",
+                        alpaca_order_id="closed-window-order",
+                        client_order_id="closed-window-client",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        filled_qty_delta=Decimal("1"),
+                        filled_notional_delta=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        raw_event={"event": "fill", "side": "buy"},
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        source_window_id=source_window.id,
+                        created_at=event_at,
+                    ),
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        side="buy",
+                        arrival_price=Decimal("99"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("1"),
+                        slippage_bps=Decimal("5"),
+                        shortfall_notional=Decimal("1"),
+                        realized_shortfall_bps=Decimal("5"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=event_at,
+                        created_at=event_at,
+                        updated_at=event_at,
+                    ),
+                ]
+            )
             session.add(
                 StrategyRuntimeLedgerBucket(
                     run_id="closed-window-paper-route-run",
@@ -4007,6 +4140,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         suffix="closed-window",
                     ),
                 )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=closed_start,
             )
             session.commit()
 
@@ -4055,6 +4193,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     },
                 },
                 generated_at=generated_at,
+                include_runtime_window_import_audit=None,
             )
 
         next_plan = payload["next_paper_route_runtime_window_targets"]
@@ -4077,9 +4216,20 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "end": "2026-05-29T20:00:00+00:00",
             },
         )
+        self.assertEqual(payload["runtime_window_import_audit_mode"], "full")
+        latest_closed_selection = payload[
+            "latest_closed_runtime_window_import_selection"
+        ]
+        self.assertTrue(latest_closed_selection["selected"])
+        self.assertEqual(latest_closed_selection["state"], "selected")
+        self.assertTrue(latest_closed_selection["source_backed_evidence_present"])
+        self.assertTrue(latest_closed_selection["clean_window_importable"])
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(import_audit["session_window"], import_plan["session_window"])
         self.assertTrue(import_audit["import_ready"])
+        self.assertEqual(
+            import_audit["next_action"], "review_runtime_ledger_profit_gates"
+        )
         self.assertEqual(import_audit["counts"]["targets_with_runtime_ledger"], 1)
         self.assertEqual(
             import_audit["counts"]["targets_with_evidence_grade_runtime_ledger"],
@@ -4104,6 +4254,18 @@ class TestPaperRouteEvidenceAudit(TestCase):
         runtime_import_audit = payload["runtime_window_import_target_audits"][0]
         self.assertEqual(runtime_import_audit["window"], import_plan["session_window"])
         self.assertEqual(runtime_import_audit["runtime_ledger"]["bucket_count"], 1)
+        lifecycle = payload["profitability_proof_lifecycle"]
+        self.assertEqual(lifecycle["state"], "runtime_ledger_ready_for_gate_review")
+        self.assertEqual(lifecycle["next_action"], "review_runtime_ledger_profit_gates")
+        stages = {stage["name"]: stage for stage in lifecycle["stages"]}
+        self.assertEqual(stages["runtime_window_import"]["status"], "complete")
+        self.assertEqual(stages["runtime_ledger_authority"]["status"], "complete")
+        self.assertEqual(stages["promotion_profit_authority"]["status"], "blocked")
+        self.assertFalse(lifecycle["promotion_authority_allowed"])
+        self.assertEqual(
+            payload["summary"]["profitability_proof_lifecycle_state"],
+            "runtime_ledger_ready_for_gate_review",
+        )
 
     def test_source_runtime_window_import_plan_keeps_next_session_window(
         self,
