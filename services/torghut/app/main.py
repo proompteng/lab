@@ -9350,35 +9350,6 @@ def _build_repair_outcome_dividend_ledger_payload(
 
 
 
-        or dependency_quorum.get("reasons")
-        or []
-    )
-    reason_items: Sequence[object] = (
-        cast(Sequence[object], raw_reasons)
-        if isinstance(raw_reasons, Sequence)
-        and not isinstance(raw_reasons, (str, bytes, bytearray))
-        else ()
-    )
-    reasons = [str(item).strip() for item in reason_items if str(item).strip()]
-    ref_suffix = decision if not reasons else f"{decision}:{','.join(sorted(reasons))}"
-    return {
-        "settlement_ref": settlement.get("ledger_id")
-        or settlement.get("settlement_ref")
-        or f"internal-reliability-settlement:dependency-quorum:{ref_suffix}",
-        "ledger_id": settlement.get("ledger_id"),
-        "decision": decision,
-        "state": state,
-        "reason_codes": reasons,
-        "source": "reliability_settlement_ledger"
-        if settlement.get("ledger_id") or settlement.get("settlement_ref")
-        else "dependency_quorum_proxy",
-        "generated_at": settlement.get("generated_at")
-        or dependency_quorum.get("generated_at"),
-        "fresh_until": settlement.get("fresh_until")
-        or dependency_quorum.get("fresh_until"),
-        "action_classes": ["torghut_observe", "paper_canary"],
-    }
-
 
 def _build_torghut_routeability_admission_ref(
     dependency_quorum: Mapping[str, Any],

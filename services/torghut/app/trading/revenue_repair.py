@@ -1308,7 +1308,7 @@ def _build_topline_contract(
             "evidence_clock_custody_status": top_line["evidence_clock_custody_status"],
             "route_warrant_state": top_line["route_warrant_state"],
             "material_evidence_settlement_ref": top_line[
-                "jangar_material_evidence_settlement_ref"
+                "material_evidence_settlement_ref"
             ],
         }
     )
@@ -1555,7 +1555,7 @@ def build_revenue_repair_digest(
     )
     dependency_quorum = _mapping(status_payload.get("dependency_quorum"))
     controller_ingestion_carry = {}
-    jangar_controller_ingestion_carry = controller_ingestion_carry
+    controller_ingestion_carry = controller_ingestion_carry
         generated_at=generated,
         dependency_quorum=dependency_quorum,
         controller_ingestion_settlement=cast(
@@ -1565,7 +1565,7 @@ def build_revenue_repair_digest(
         verify_trust_foreclosure_board=cast(
             Mapping[str, Any] | None,
             status_payload.get("verify_trust_foreclosure_board")
-            or status_payload.get("jangar_verification_carry"),
+            or status_payload.get("verification_carry"),
         ),
         repair_slot_escrow=cast(
             Mapping[str, Any] | None,
@@ -1586,12 +1586,12 @@ def build_revenue_repair_digest(
         alpha_readiness_settlement_conveyor=alpha_readiness_settlement_conveyor,
         alpha_repair_dividend_ledger=alpha_repair_dividend_ledger,
         repair_bid_settlement_ledger=repair_bid_settlement,
-        jangar_verification_carry=cast(
+        verification_carry=cast(
             Mapping[str, Any] | None,
             status_payload.get("verify_trust_foreclosure_board")
-            or status_payload.get("jangar_verification_carry"),
+            or status_payload.get("verification_carry"),
         ),
-        jangar_controller_ingestion_carry=jangar_controller_ingestion_carry,
+        controller_ingestion_carry=controller_ingestion_carry,
     )
     topline_contract = _build_topline_contract(
         status_payload=status_payload,
@@ -1619,7 +1619,7 @@ def build_revenue_repair_digest(
         "alpha_evidence_foundry": alpha_evidence_foundry,
         "alpha_readiness_settlement_conveyor": alpha_readiness_settlement_conveyor,
         "alpha_repair_dividend_ledger": alpha_repair_dividend_ledger,
-        "jangar_controller_ingestion_carry": jangar_controller_ingestion_carry,
+        "controller_ingestion_carry": controller_ingestion_carry,
         "no_delta_repair_reentry_auction": no_delta_repair_reentry_auction,
         "business_state": business_state,
         "revenue_ready": revenue_ready,

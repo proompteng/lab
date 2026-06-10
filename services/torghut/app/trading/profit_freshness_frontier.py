@@ -1037,7 +1037,7 @@ def _repair_lot(
     dimension: Mapping[str, Any],
     routeability_ledger: Mapping[str, Any],
     quality_adjusted_profit_frontier: Mapping[str, Any],
-    jangar_reliability_settlement_ref: Mapping[str, Any],
+    reliability_settlement_ref: Mapping[str, Any],
     route_reacquisition_board: Mapping[str, Any],
     empirical_jobs_status: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -1083,7 +1083,7 @@ def _repair_lot(
         expected_profit
         * _confidence_for_state(state)
         * _routeability_confidence(routeability_ledger)
-        * _jangar_confidence(jangar_reliability_settlement_ref)
+        * _internal_confidence(reliability_settlement_ref)
         - _REPAIR_COST_PENALTY.get(repair_cost_class, Decimal("5"))
         + priority_bonus
     )
@@ -1152,7 +1152,7 @@ def build_profit_freshness_frontier(
     market_context_status: Mapping[str, Any],
     empirical_jobs_status: Mapping[str, Any],
     hypothesis_payload: Mapping[str, Any],
-    jangar_reliability_settlement_ref: Mapping[str, Any],
+    reliability_settlement_ref: Mapping[str, Any],
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Build an observe-only frontier that ranks zero-notional proof repairs."""
@@ -1203,7 +1203,7 @@ def build_profit_freshness_frontier(
             proof_floor_receipt=proof_floor_receipt,
             generated_at=observed_at,
         ),
-        _jangar_dimension(
+        _internal_dimension(
             reliability_settlement_ref=reliability_settlement_ref,
             generated_at=observed_at,
         ),
@@ -1265,7 +1265,7 @@ def build_profit_freshness_frontier(
     )
     frontier_state = "ready" if all_dimensions_current else "repair_only"
     if any(
-        _text(dimension.get("dimension")) == "jangar_settlement"
+        _text(dimension.get("dimension")) == "internal_settlement"
         for dimension in dimensions
         if _text(dimension.get("state")) != "current"
     ):
@@ -1296,7 +1296,7 @@ def build_profit_freshness_frontier(
         "trading_mode": trading_mode,
         "proof_window": proof_window,
         "torghut_revision": torghut_revision,
-        "jangar_reliability_settlement_ref": dict(jangar_reliability_settlement_ref),
+        "reliability_settlement_ref": dict(reliability_settlement_ref),
         "generated_at": generated_at,
         "fresh_until": (
             observed_at + timedelta(seconds=_FRESHNESS_SECONDS)

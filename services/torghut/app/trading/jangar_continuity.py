@@ -1,4 +1,4 @@
-"""Jangar continuity packet loading for Torghut route repair admission."""
+"""Internal continuity packet loading for Torghut route repair admission."""
 
 from __future__ import annotations
 
@@ -154,7 +154,7 @@ def build_jangar_route_continuity_packet(
     action_class: str = "paper_canary",
     now: datetime | None = None,
 ) -> dict[str, object]:
-    """Extract the Jangar packet that should guard Torghut route repair capital."""
+    """Extract the Internal packet that should guard Torghut route repair capital."""
 
     ledger = _mapping(status_payload.get("continuity_witness_ledger"))
     if ledger:
@@ -246,7 +246,7 @@ def load_jangar_route_continuity_packet(
     except Exception as exc:
         return _error_packet(
             "internal_continuity_status_fetch_failed",
-            f"Jangar continuity status fetch failed: {exc}",
+            f"Internal continuity status fetch failed: {exc}",
         )
     if not payload:
         return _error_packet("internal_continuity_status_payload_invalid")

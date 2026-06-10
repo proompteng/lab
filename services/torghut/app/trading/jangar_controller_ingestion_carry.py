@@ -1,4 +1,4 @@
-"""Jangar controller-ingestion carry import for Torghut no-delta repair."""
+"""Internal controller-ingestion carry import for Torghut no-delta repair."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
-JANGAR_CONTROLLER_INGESTION_CARRY_SCHEMA_VERSION = (
+INTERNAL_CONTROLLER_INGESTION_CARRY_SCHEMA_VERSION = (
     "torghut.internal-controller-ingestion-carry.v1"
 )
-JANGAR_CONTROLLER_INGESTION_CARRY_REF_SCHEMA_VERSION = (
+INTERNAL_CONTROLLER_INGESTION_CARRY_REF_SCHEMA_VERSION = (
     "torghut.internal-controller-ingestion-carry-ref.v1"
 )
 
@@ -21,11 +21,11 @@ _DESIGN_REF = (
 )
 _COMPANION_JANGAR_DESIGN_REF = (
     "docs/agents/designs/"
-    "205-jangar-controller-ingestion-settlement-and-verification-carry-cutover-2026-05-14.md"
+    "205-internal-controller-ingestion-settlement-and-verification-carry-cutover-2026-05-14.md"
 )
 _DEFAULT_FRESHNESS_SECONDS = 15 * 60
 _ROLLBACK_TARGET = (
-    "stop emitting jangar_controller_ingestion_carry, keep the existing "
+    "stop emitting controller_ingestion_carry, keep the existing "
     "no-delta auction and alpha-readiness conveyor behavior, and keep "
     "Torghut max_notional=0"
 )
@@ -173,7 +173,7 @@ def _extract_foreclosure_board(
         _mapping(verify_trust_foreclosure_board)
         or _mapping(dependency_payload.get("verify_trust_foreclosure_board"))
         or _mapping(dependency_payload.get("verifyTrustForeclosureBoard"))
-        or _mapping(dependency_payload.get("jangar_verification_carry"))
+        or _mapping(dependency_payload.get("internal_verification_carry"))
     )
 
 
@@ -346,13 +346,13 @@ def _repairable_ticket_present(
         settlement.get("requiredOutputReceipt"),
     )
     return (
-        ticket_class == "jangar_verify_carry"
-        or release_condition == "jangar_controller_ingestion_current"
-        or receipt == "jangar.verify-trust-foreclosure-ticket.v1"
+        ticket_class == "internal_verify_carry"
+        or release_condition == "internal_controller_ingestion_current"
+        or receipt == "internal.verify-trust-foreclosure-ticket.v1"
     )
 
 
-def build_jangar_controller_ingestion_carry(
+def build_internal_controller_ingestion_carry(
     *,
     generated_at: datetime,
     dependency_quorum: Mapping[str, Any] | None = None,
@@ -361,7 +361,7 @@ def build_jangar_controller_ingestion_carry(
     repair_slot_escrow: Mapping[str, Any] | None = None,
     foreclosure_carry_rollout_witness: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
-    """Classify Jangar carry imported into Torghut's no-delta repair auction."""
+    """Classify Internal carry imported into Torghut's no-delta repair auction."""
 
     if generated_at.tzinfo is None:
         raise ValueError("generated_at_missing_timezone")
@@ -448,12 +448,12 @@ def build_jangar_controller_ingestion_carry(
     if stale:
         carry_state = "stale"
         reason_codes = _append_unique(
-            reason_codes, "jangar_controller_ingestion_settlement_stale"
+            reason_codes, "internal_controller_ingestion_settlement_stale"
         )
     elif decision == "allow" and (ingestion_current is not True or not board_ref):
         carry_state = "contradicted"
         reason_codes = _append_unique(
-            reason_codes, "jangar_allow_without_required_carry_fields"
+            reason_codes, "internal_allow_without_required_carry_fields"
         )
     elif decision == "allow" and ingestion_current is True and board_ref:
         carry_state = "current"
@@ -463,10 +463,10 @@ def build_jangar_controller_ingestion_carry(
     ):
         carry_state = "repairable"
         reason_codes = _append_unique(
-            reason_codes, "jangar_controller_ingestion_repairable"
+            reason_codes, "internal_controller_ingestion_repairable"
         )
         if not selected_ticket_class:
-            selected_ticket_class = "jangar_verify_carry"
+            selected_ticket_class = "internal_verify_carry"
     elif (
         decision in {"hold", "block"}
         and settlement
@@ -475,27 +475,27 @@ def build_jangar_controller_ingestion_carry(
         carry_state = "lagging"
         reason_codes = _append_unique(
             reason_codes,
-            f"jangar_controller_ingestion_{decision}",
-            "jangar_controller_ingestion_lagging",
+            f"internal_controller_ingestion_{decision}",
+            "internal_controller_ingestion_lagging",
         )
     elif source_claim and (not board_ref or ingestion_current is not True):
         carry_state = "lagging"
         reason_codes = _append_unique(
-            reason_codes, "jangar_controller_ingestion_lagging"
+            reason_codes, "internal_controller_ingestion_lagging"
         )
     else:
         carry_state = "unavailable"
         if not settlement:
             reason_codes = _append_unique(
-                reason_codes, "jangar_controller_ingestion_settlement_missing"
+                reason_codes, "internal_controller_ingestion_settlement_missing"
             )
         if not board_ref:
             reason_codes = _append_unique(
-                reason_codes, "jangar_verify_foreclosure_board_missing"
+                reason_codes, "internal_verify_foreclosure_board_missing"
             )
 
     if carry_state not in {"current", "repairable"} and not reason_codes:
-        reason_codes = ["jangar_controller_ingestion_carry_unavailable"]
+        reason_codes = ["internal_controller_ingestion_carry_unavailable"]
 
     validation_commands = _string_list(
         repair_slot.get("validation_commands")
@@ -512,8 +512,8 @@ def build_jangar_controller_ingestion_carry(
         or _parse_datetime(witness.get("fresh_until"))
         or default_fresh_until
     )
-    carry_id = "jangar-controller-ingestion-carry:" + _stable_hash(
-        "jangar-controller-ingestion-carry",
+    carry_id = "internal-controller-ingestion-carry:" + _stable_hash(
+        "internal-controller-ingestion-carry",
         {
             "settlement_ref": settlement_ref,
             "board_ref": board_ref,
@@ -531,14 +531,14 @@ def build_jangar_controller_ingestion_carry(
         "generated_at": generated.isoformat(),
         "fresh_until": fresh_until.isoformat(),
         "governing_design_ref": _DESIGN_REF,
-        "companion_jangar_design_ref": _COMPANION_JANGAR_DESIGN_REF,
-        "source_jangar_settlement_ref": settlement_ref or None,
-        "jangar_settlement_decision": decision,
-        "jangar_controller_ingestion_current": ingestion_current,
-        "jangar_verify_foreclosure_board_ref": board_ref or None,
-        "jangar_repair_slot_escrow_ref": repair_slot_ref or None,
+        "companion_internal_design_ref": _COMPANION_JANGAR_DESIGN_REF,
+        "source_internal_settlement_ref": settlement_ref or None,
+        "internal_settlement_decision": decision,
+        "internal_controller_ingestion_current": ingestion_current,
+        "internal_verify_foreclosure_board_ref": board_ref or None,
+        "internal_repair_slot_escrow_ref": repair_slot_ref or None,
         "carry_state": carry_state,
-        "selected_release_condition": "jangar_controller_ingestion_current",
+        "selected_release_condition": "internal_controller_ingestion_current",
         "selected_ticket_class": selected_ticket_class or "none",
         "selected_ticket_id": selected_ticket_id or None,
         "max_notional": "0",
@@ -548,17 +548,17 @@ def build_jangar_controller_ingestion_carry(
     }
 
 
-def compact_jangar_controller_ingestion_carry(
+def compact_internal_controller_ingestion_carry(
     carry: Mapping[str, Any] | None,
 ) -> dict[str, object]:
-    """Return a compact Jangar-facing controller-ingestion carry ref."""
+    """Return a compact Internal-facing controller-ingestion carry ref."""
 
     payload = _mapping(carry)
     if not payload:
         return {
             "schema_version": JANGAR_CONTROLLER_INGESTION_CARRY_REF_SCHEMA_VERSION,
             "status": "missing",
-            "reason_codes": ["jangar_controller_ingestion_carry_missing"],
+            "reason_codes": ["internal_controller_ingestion_carry_missing"],
         }
     validation_commands = _string_list(payload.get("validation_commands"))
     return {
@@ -568,15 +568,15 @@ def compact_jangar_controller_ingestion_carry(
         "generated_at": payload.get("generated_at"),
         "fresh_until": payload.get("fresh_until"),
         "carry_state": payload.get("carry_state"),
-        "source_jangar_settlement_ref": payload.get("source_jangar_settlement_ref"),
-        "jangar_settlement_decision": payload.get("jangar_settlement_decision"),
-        "jangar_controller_ingestion_current": payload.get(
-            "jangar_controller_ingestion_current"
+        "source_internal_settlement_ref": payload.get("source_internal_settlement_ref"),
+        "internal_settlement_decision": payload.get("internal_settlement_decision"),
+        "internal_controller_ingestion_current": payload.get(
+            "internal_controller_ingestion_current"
         ),
-        "jangar_verify_foreclosure_board_ref": payload.get(
-            "jangar_verify_foreclosure_board_ref"
+        "internal_verify_foreclosure_board_ref": payload.get(
+            "internal_verify_foreclosure_board_ref"
         ),
-        "jangar_repair_slot_escrow_ref": payload.get("jangar_repair_slot_escrow_ref"),
+        "internal_repair_slot_escrow_ref": payload.get("internal_repair_slot_escrow_ref"),
         "selected_release_condition": payload.get("selected_release_condition"),
         "selected_ticket_class": payload.get("selected_ticket_class"),
         "selected_ticket_id": payload.get("selected_ticket_id"),
@@ -590,6 +590,6 @@ def compact_jangar_controller_ingestion_carry(
 __all__ = [
     "JANGAR_CONTROLLER_INGESTION_CARRY_REF_SCHEMA_VERSION",
     "JANGAR_CONTROLLER_INGESTION_CARRY_SCHEMA_VERSION",
-    "build_jangar_controller_ingestion_carry",
-    "compact_jangar_controller_ingestion_carry",
+    "build_internal_controller_ingestion_carry",
+    "compact_internal_controller_ingestion_carry",
 ]
