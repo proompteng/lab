@@ -29,11 +29,11 @@ _DESIGN_REF = (
     "docs/torghut/design-system/v6/"
     "204-torghut-alpha-repair-dividend-ledger-and-custody-flight-recorder-2026-05-14.md"
 )
-_COMPANION_JANGAR_DESIGN_REF = (
-    "docs/agents/designs/"
-    "199-jangar-material-action-custody-flight-recorder-and-merge-reentry-slo-2026-05-14.md"
+_COMPANION_DESIGN_REF = (
+    "docs/torghut/design-system/v6/"
+    "204-torghut-alpha-repair-dividend-ledger-and-custody-flight-recorder-2026-05-14.md"
 )
-_JANGAR_RECORDER_SCHEMA = "jangar.material-action-custody-flight-recorder.v1"
+_RECORDER_SCHEMA = "torghut.alpha-repair-dividend-ledger.v1"
 _DEFAULT_FRESHNESS_SECONDS = 15 * 60
 _ZERO_NOTIONAL_VALUES = {"0", "0.0", "0.00", "0.0000"}
 _ROLLBACK_TARGET = (
@@ -220,7 +220,7 @@ def build_alpha_repair_dividend_ledger(
     alpha_repair_closure_board: Mapping[str, Any],
     alpha_readiness_settlement_conveyor: Mapping[str, Any],
 ) -> dict[str, object]:
-    """Build observe-mode alpha repair dividend accounting for Jangar custody."""
+    """Build observe-mode alpha repair dividend accounting (standalone internal)."""
 
     if generated_at.tzinfo is None:
         raise ValueError("generated_at_missing_timezone")
@@ -386,7 +386,7 @@ def build_alpha_repair_dividend_ledger(
         "generated_at": generated.isoformat(),
         "fresh_until": fresh_until.isoformat(),
         "governing_design_ref": _DESIGN_REF,
-        "companion_jangar_design_ref": _COMPANION_JANGAR_DESIGN_REF,
+        "companion_design_ref": _COMPANION_DESIGN_REF,
         "enforcement_mode": "observe",
         "source_revenue_repair_ref": source_revenue_repair_ref,
         "source_repair_bid_refs": _string_list(
@@ -459,8 +459,8 @@ def build_alpha_repair_dividend_ledger(
         )
         or alpha_readiness_settlement_conveyor.get("fresh_until"),
         "hypothesis_dividends": hypothesis_dividends,
-        "jangar_custody": {
-            "required_recorder_schema": _JANGAR_RECORDER_SCHEMA,
+        "internal_custody": {
+            "required_recorder_schema": _RECORDER_SCHEMA,
             "enforcement_mode": "observe",
             "allowed_action_class": "dispatch_repair"
             if launch_decision == "allow"
@@ -488,7 +488,7 @@ def build_alpha_repair_dividend_ledger(
 def compact_alpha_repair_dividend_ledger(
     ledger: Mapping[str, Any] | None,
 ) -> dict[str, object]:
-    """Return the compact Jangar-facing alpha repair dividend ledger ref."""
+    """Return the compact alpha repair dividend ledger ref (standalone internal)."""
 
     payload = _mapping(ledger)
     if not payload:
@@ -498,7 +498,7 @@ def compact_alpha_repair_dividend_ledger(
             "reason_codes": ["alpha_repair_dividend_ledger_missing"],
         }
     validation_commands = _string_list(payload.get("validation_commands"))
-    jangar_custody = _mapping(payload.get("jangar_custody"))
+    internal_custody = _mapping(payload.get("internal_custody"))
     return {
         "schema_version": ALPHA_REPAIR_DIVIDEND_LEDGER_REF_SCHEMA_VERSION,
         "ledger_schema_version": payload.get("schema_version"),
@@ -518,8 +518,8 @@ def compact_alpha_repair_dividend_ledger(
         ),
         "measured_delta": payload.get("measured_delta"),
         "no_delta_release_key": payload.get("no_delta_release_key"),
-        "launch_decision": jangar_custody.get("launch_decision"),
-        "required_recorder_schema": jangar_custody.get("required_recorder_schema"),
+        "launch_decision": internal_custody.get("launch_decision"),
+        "required_recorder_schema": internal_custody.get("required_recorder_schema"),
         "validation_command": validation_commands[0] if validation_commands else None,
         "enforcement_mode": payload.get("enforcement_mode"),
         "max_notional": payload.get("max_notional"),

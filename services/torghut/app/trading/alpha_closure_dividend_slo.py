@@ -1,4 +1,4 @@
-"""Compact alpha closure dividend SLO for Jangar consumer evidence."""
+"""Compact alpha closure dividend SLO (standalone internal)."""
 
 from __future__ import annotations
 
@@ -172,7 +172,7 @@ def build_alpha_closure_dividend_slo(
     alpha_repair_closure_board: Mapping[str, Any] | None,
     alpha_repair_dividend_ledger: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
-    """Build the compact dividend SLO that Jangar can enforce in observe mode."""
+    """Build the compact dividend SLO (standalone internal)."""
 
     if generated_at.tzinfo is None:
         raise ValueError("generated_at_missing_timezone")

@@ -1757,7 +1757,7 @@ class WhitepaperWorkflowService:
         phase = str(status.get("phase") or "queued").strip().lower() or "queued"
 
         if not agentrun_name:
-            raise RuntimeError("jangar_response_missing_agentrun_name")
+            raise RuntimeError("response_missing_agentrun_name")
 
         step = WhitepaperAnalysisStep(
             analysis_run_id=run.id,
@@ -1865,7 +1865,7 @@ class WhitepaperWorkflowService:
         run_id: str,
         approved_by: str,
         approval_reason: str,
-        approval_source: str = "jangar_ui",
+        approval_source: str = "manual",
         target_scope: str | None = None,
         repository: str | None = None,
         base: str | None = None,
@@ -1892,7 +1892,7 @@ class WhitepaperWorkflowService:
             manual_approval=ManualApprovalPayload(
                 approved_by=approver,
                 approval_reason=reason,
-                approval_source=self._optional_text(approval_source) or "jangar_ui",
+                approval_source=self._optional_text(approval_source) or "manual",
                 target_scope=target_scope,
                 repository=repository,
                 base=base,
@@ -4646,7 +4646,7 @@ class WhitepaperWorkflowService:
         submit_url = _str_env("WHITEPAPER_AGENTRUN_SUBMIT_URL")
         if not submit_url:
             agents_base_url = _str_env("AGENTS_BASE_URL") or _str_env(
-                "JANGAR_BASE_URL", "http://agents.agents.svc.cluster.local"
+                "AGENTS_BASE_URL", "http://agents.agents.svc.cluster.local"
             )
             if not agents_base_url:
                 raise RuntimeError("agents_endpoint_not_configured")
@@ -4655,7 +4655,7 @@ class WhitepaperWorkflowService:
         auth_token = (
             _str_env("WHITEPAPER_AGENTRUN_API_TOKEN")
             or _str_env("AGENTS_API_KEY")
-            or _str_env("JANGAR_API_KEY")
+            or _str_env("AGENTS_API_KEY")
         )
         timeout = _int_env("WHITEPAPER_AGENTRUN_TIMEOUT_SECONDS", 20)
         status, _, raw_bytes = _http_request_bytes(

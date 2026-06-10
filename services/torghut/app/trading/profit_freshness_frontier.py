@@ -89,7 +89,7 @@ _ROUTEABILITY_ONLY_TCA_REASON_CODES = {
     "route_tca_passed_but_dependency_receipts_block_capital",
 }
 _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = ("capital_state_", "proof_floor_")
-_NONBLOCKING_JANGAR_RELIABILITY_REASONS = set()
+_NONBLOCKING_RELIABILITY_REASONS = set()
 _NONBLOCKING_QUANT_HEALTH_REASONS = {
     "quant_health_not_configured",
 }
@@ -770,36 +770,36 @@ def _schema_dimension(
     )
 
 
-def _jangar_dimension(
+def _internal_dimension(
     *,
-    jangar_reliability_settlement_ref: Mapping[str, Any],
+    reliability_settlement_ref: Mapping[str, Any],
     generated_at: datetime,
 ) -> dict[str, object]:
     decision = _text(
-        jangar_reliability_settlement_ref.get("decision")
-        or jangar_reliability_settlement_ref.get("state")
-        or jangar_reliability_settlement_ref.get("status"),
+        reliability_settlement_ref.get("decision")
+        or reliability_settlement_ref.get("state")
+        or reliability_settlement_ref.get("status"),
         "missing",
     ).lower()
     state = _text(
-        jangar_reliability_settlement_ref.get("state") or decision, "missing"
+        reliability_settlement_ref.get("state") or decision, "missing"
     ).lower()
     raw_reasons = [
-        *_strings(jangar_reliability_settlement_ref.get("reason_codes")),
-        *_strings(jangar_reliability_settlement_ref.get("blocking_reasons")),
-        *_strings(jangar_reliability_settlement_ref.get("reasons")),
+        *_strings(reliability_settlement_ref.get("reason_codes")),
+        *_strings(reliability_settlement_ref.get("blocking_reasons")),
+        *_strings(reliability_settlement_ref.get("reasons")),
     ]
     reasons = [
         reason
         for reason in raw_reasons
-        if reason not in _NONBLOCKING_JANGAR_RELIABILITY_REASONS
+        if reason not in _NONBLOCKING_RELIABILITY_REASONS
     ]
     if decision not in _CURRENT_STATES:
-        reasons.append(f"jangar_reliability_settlement_{decision}")
+        reasons.append(f"reliability_settlement_{decision}")
     if state in _BAD_STATES and state != decision:
-        reasons.append(f"jangar_reliability_settlement_{state}")
+        reasons.append(f"reliability_settlement_{state}")
     return _dimension(
-        name="jangar_settlement",
+        name="internal_settlement",
         state="current"
         if not reasons
         else _state_from_reasons(reasons, missing=decision == "missing", blocked=True),
@@ -807,21 +807,21 @@ def _jangar_dimension(
         reason_codes=reasons,
         evidence_refs=[
             _text(
-                jangar_reliability_settlement_ref.get("ledger_id")
-                or jangar_reliability_settlement_ref.get("settlement_ref"),
-                "jangar_reliability_settlement",
+                reliability_settlement_ref.get("ledger_id")
+                or reliability_settlement_ref.get("settlement_ref"),
+                "reliability_settlement",
             )
         ],
-        observed_at=jangar_reliability_settlement_ref.get("generated_at"),
-        fresh_until=jangar_reliability_settlement_ref.get("fresh_until"),
+        observed_at=reliability_settlement_ref.get("generated_at"),
+        fresh_until=reliability_settlement_ref.get("fresh_until"),
         details={
             "decision": decision,
             "state": state,
-            "source": jangar_reliability_settlement_ref.get("source"),
+            "source": reliability_settlement_ref.get("source"),
             "informational_reason_codes": [
                 reason
                 for reason in raw_reasons
-                if reason in _NONBLOCKING_JANGAR_RELIABILITY_REASONS
+                if reason in _NONBLOCKING_RELIABILITY_REASONS
             ],
         },
     )
@@ -850,10 +850,10 @@ def _routeability_confidence(routeability_ledger: Mapping[str, Any]) -> Decimal:
     return Decimal("0.55")
 
 
-def _jangar_confidence(jangar_reliability_settlement_ref: Mapping[str, Any]) -> Decimal:
+def _internal_confidence(reliability_settlement_ref: Mapping[str, Any]) -> Decimal:
     decision = _text(
-        jangar_reliability_settlement_ref.get("decision")
-        or jangar_reliability_settlement_ref.get("state"),
+        reliability_settlement_ref.get("decision")
+        or reliability_settlement_ref.get("state"),
         "missing",
     ).lower()
     if decision in _CURRENT_STATES:
@@ -1204,7 +1204,7 @@ def build_profit_freshness_frontier(
             generated_at=observed_at,
         ),
         _jangar_dimension(
-            jangar_reliability_settlement_ref=jangar_reliability_settlement_ref,
+            reliability_settlement_ref=reliability_settlement_ref,
             generated_at=observed_at,
         ),
     ]
@@ -1220,7 +1220,7 @@ def build_profit_freshness_frontier(
             dimension=dimension,
             routeability_ledger=routeability_repair_acceptance_ledger,
             quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
-            jangar_reliability_settlement_ref=jangar_reliability_settlement_ref,
+            reliability_settlement_ref=reliability_settlement_ref,
             route_reacquisition_board=route_reacquisition_board,
             empirical_jobs_status=empirical_jobs_status,
         )

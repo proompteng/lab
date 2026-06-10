@@ -59,7 +59,7 @@ def _error_packet(reason: str, message: str | None = None) -> dict[str, object]:
         "decision": "missing",
         "fresh_until": None,
         "blocking_reasons": [reason],
-        "source": "jangar_control_plane_status",
+        "source": "internal",
     }
     if message:
         packet["message"] = message
@@ -76,13 +76,13 @@ def _normalize_packet(
     if fresh_until is not None and fresh_until <= (now or datetime.now(timezone.utc)):
         packet["state"] = "stale"
         packet["decision"] = "hold"
-        if "jangar_continuity_epoch_stale" not in reasons:
-            reasons.append("jangar_continuity_epoch_stale")
+        if "internal_continuity_epoch_stale" not in reasons:
+            reasons.append("internal_continuity_epoch_stale")
     if (
         not _text(packet.get("epoch_id"))
-        and "jangar_continuity_epoch_missing" not in reasons
+        and "internal_continuity_epoch_missing" not in reasons
     ):
-        reasons.append("jangar_continuity_epoch_missing")
+        reasons.append("internal_continuity_epoch_missing")
     packet["blocking_reasons"] = reasons
     return packet
 
@@ -94,16 +94,16 @@ def _quality_ref_fields(
 ) -> dict[str, object]:
     fallback_payload = _mapping(fallback)
     quality_ref = (
-        _text(source.get("jangar_evidence_quality_ref"))
+        _text(source.get("internal_evidence_quality_ref"))
         or _text(source.get("evidence_quality_ref"))
         or _text(source.get("quality_ledger_ref"))
-        or _text(fallback_payload.get("jangar_evidence_quality_ref"))
+        or _text(fallback_payload.get("internal_evidence_quality_ref"))
         or _text(fallback_payload.get("evidence_quality_ref"))
         or _text(fallback_payload.get("quality_ledger_ref"))
     )
     payload: dict[str, object] = {}
     if quality_ref:
-        payload["jangar_evidence_quality_ref"] = quality_ref
+        payload["internal_evidence_quality_ref"] = quality_ref
     quality_state = (
         _text(source.get("quality_state"))
         or _text(source.get("evidence_quality_state"))
@@ -122,7 +122,7 @@ def _quality_ref_fields(
 
 
 def _status_payload_from_url(url: str) -> Mapping[str, Any] | None:
-    ttl_seconds = max(0, int(settings.trading_jangar_control_plane_cache_ttl_seconds))
+    ttl_seconds = 0
     now = datetime.now(timezone.utc)
     if ttl_seconds > 0:
         with _CACHE_LOCK:
@@ -136,10 +136,10 @@ def _status_payload_from_url(url: str) -> Mapping[str, Any] | None:
                     return _mapping(cached.get("payload"))
     request = Request(url, method="GET", headers={"accept": "application/json"})
     with urlopen(
-        request, timeout=settings.trading_jangar_control_plane_timeout_seconds
+        request, timeout=30.0
     ) as response:
         if response.status < 200 or response.status >= 300:
-            raise RuntimeError(f"jangar_status_http_{response.status}")
+            raise RuntimeError(f"internal_status_http_{response.status}")
         decoded = json.loads(response.read().decode("utf-8"))
     payload = _mapping(decoded)
     if ttl_seconds > 0:
@@ -225,10 +225,10 @@ def build_jangar_route_continuity_packet(
             "state": "missing",
             "decision": "missing",
             "fresh_until": truth_exchange.get("fresh_until"),
-            "blocking_reasons": [f"jangar_{action_class}_receipt_missing"],
+            "blocking_reasons": [f"internal_{action_class}_receipt_missing"],
             "source": "source_rollout_truth_exchange"
             if truth_exchange
-            else "jangar_control_plane_status",
+            else "internal_control_plane_status",
             "action_class": action_class,
         },
         now=now,
@@ -238,19 +238,19 @@ def build_jangar_route_continuity_packet(
 def load_jangar_route_continuity_packet(
     *, action_class: str = "paper_canary"
 ) -> dict[str, object]:
-    status_url = (settings.trading_jangar_control_plane_status_url or "").strip()
+    status_url = ""
     if not status_url:
-        return _error_packet("jangar_control_plane_status_url_missing")
+        return _error_packet("internal_control_plane_status_url_missing")
     try:
         payload = _status_payload_from_url(status_url)
     except Exception as exc:
         return _error_packet(
-            "jangar_continuity_status_fetch_failed",
+            "internal_continuity_status_fetch_failed",
             f"Jangar continuity status fetch failed: {exc}",
         )
     if not payload:
-        return _error_packet("jangar_continuity_status_payload_invalid")
-    return build_jangar_route_continuity_packet(payload, action_class=action_class)
+        return _error_packet("internal_continuity_status_payload_invalid")
+    return build_internal_route_continuity_packet(payload, action_class=action_class)
 
 
 __all__ = [

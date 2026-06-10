@@ -1087,7 +1087,7 @@ def _state_from_mapping(payload: Mapping[str, Any], *keys: str) -> str | None:
     return None
 
 
-def _jangar_material_evidence_settlement_ref(
+def _material_evidence_settlement_ref(
     status_payload: Mapping[str, Any],
 ) -> object | None:
     dependency_quorum = _mapping(status_payload.get("dependency_quorum"))
@@ -1181,7 +1181,7 @@ def _build_topline_contract(
         status_payload.get("route_warrant_exchange"),
         status_payload.get("route_warrant"),
     )
-    jangar_material_ref = _jangar_material_evidence_settlement_ref(status_payload)
+    material_ref = _material_evidence_settlement_ref(status_payload)
     selected_hypothesis_id = _first_text(
         no_delta_repair_reentry_auction.get("selected_hypothesis_id"),
         alpha_repair_dividend_ledger.get("selected_hypothesis_id"),
@@ -1284,7 +1284,7 @@ def _build_topline_contract(
         "route_warrant_state": _state_from_mapping(
             route_warrant, "warrant_state", "state", "status"
         ),
-        "jangar_material_evidence_settlement_ref": jangar_material_ref,
+        "material_evidence_settlement_ref": material_ref,
         "validation_commands": _validation_commands(
             top_item=top_item,
             no_delta_repair_reentry_auction=no_delta_repair_reentry_auction,
@@ -1307,7 +1307,7 @@ def _build_topline_contract(
             "evidence_clock_state": top_line["evidence_clock_state"],
             "evidence_clock_custody_status": top_line["evidence_clock_custody_status"],
             "route_warrant_state": top_line["route_warrant_state"],
-            "jangar_material_evidence_settlement_ref": top_line[
+            "material_evidence_settlement_ref": top_line[
                 "jangar_material_evidence_settlement_ref"
             ],
         }
@@ -1554,7 +1554,8 @@ def build_revenue_repair_digest(
         alpha_readiness_settlement_conveyor=alpha_readiness_settlement_conveyor,
     )
     dependency_quorum = _mapping(status_payload.get("dependency_quorum"))
-    jangar_controller_ingestion_carry = build_jangar_controller_ingestion_carry(
+    controller_ingestion_carry = {}
+    jangar_controller_ingestion_carry = controller_ingestion_carry
         generated_at=generated,
         dependency_quorum=dependency_quorum,
         controller_ingestion_settlement=cast(

@@ -584,10 +584,7 @@ def _derive_quant_health_url(
 
 
 def resolve_quant_health_url() -> str | None:
-    return _derive_quant_health_url(
-        settings.trading_jangar_quant_health_url,
-        preserve_path=True,
-    )
+    return None
 
 
 def _build_quant_health_request_url(
@@ -617,10 +614,10 @@ def _build_quant_health_request_url(
 def load_quant_evidence_status(
     *, account_label: str | None = None
 ) -> dict[str, object]:
-    window = settings.trading_jangar_quant_window
+    window = "15m"
     account = (account_label or settings.trading_account_label or "").strip()
-    required = bool(settings.trading_jangar_quant_health_required)
-    configured_url = _safe_text(settings.trading_jangar_quant_health_url)
+    required = False
+    configured_url = None
     base_url = resolve_quant_health_url()
     if configured_url is not None and not base_url:
         blocking_reasons = ["quant_health_invalid_endpoint"] if required else []
@@ -637,7 +634,7 @@ def load_quant_evidence_status(
             "window": window,
             "source_url": configured_url,
             "message": (
-                "TRADING_JANGAR_QUANT_HEALTH_URL must target the typed "
+                "TRADING_QUANT_HEALTH_URL must target the typed "
                 f"{_TYPED_QUANT_HEALTH_PATH} surface"
             ),
         }
@@ -663,7 +660,7 @@ def load_quant_evidence_status(
         window=window,
     )
     cache_key = f"{request_url}|required={int(required)}"
-    ttl_seconds = max(0, int(settings.trading_jangar_control_plane_cache_ttl_seconds))
+    ttl_seconds = 0
     now = datetime.now(timezone.utc)
 
     if ttl_seconds > 0:
@@ -682,7 +679,7 @@ def load_quant_evidence_status(
             request_url, method="GET", headers={"accept": "application/json"}
         )
         with urlopen(
-            request, timeout=settings.trading_jangar_control_plane_timeout_seconds
+            request, timeout=30
         ) as response:
             status_code = int(getattr(response, "status", 200))
             if status_code < 200 or status_code >= 300:
@@ -854,7 +851,7 @@ def build_hypothesis_runtime_summary(
         ),
         runtime_ledger_summary=runtime_ledger_summary,
         market_context_status=market_context_status,
-        jangar_dependency_quorum=dependency_quorum,
+        dependency_quorum=dependency_quorum,
         feature_readiness=feature_readiness,
         market_session_open=cast(
             bool | None, getattr(state, "market_session_open", None)

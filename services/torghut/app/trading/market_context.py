@@ -1,4 +1,4 @@
-"""Market-context client (standalone: external/Jangar fetch is optional and falls back to local allow)."""
+"""Market-context client (standalone: external fetch optional, falls back to local allow)."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ def urlopen(request: _HttpRequest, timeout: int) -> _HttpResponseHandle:
 
 
 class MarketContextClient:
-    """HTTP client to fetch market-context bundles (optional; legacy external/Jangar provider).
+    """HTTP client to fetch market-context bundles (optional; external provider).
 
     In standalone mode (no TRADING_MARKET_CONTEXT_URL) callers should treat missing
     context as "allow" (or apply other local gates). External fetch is best-effort only.

@@ -184,7 +184,7 @@ class UniverseResolver:
         - Empty payload behaves like fetch failure and follows the same policy.
         """
         now = trading_now()
-        url = settings.trading_jangar_symbols_url
+        url = None
         if not url:
             return self._fallback_from_cache(
                 now=now,

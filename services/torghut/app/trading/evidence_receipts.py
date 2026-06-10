@@ -170,42 +170,6 @@ def _receipt(
     )
 
 
-def build_jangar_authority_receipt(
-    *,
-    quorum_payload: Mapping[str, object],
-    observed_at: datetime | None = None,
-    ttl_seconds: int = _DEFAULT_TTL_SECONDS,
-) -> EvidenceReceipt:
-    observed = observed_at or datetime.now(timezone.utc)
-    decision = _string(quorum_payload.get("decision")) or "unknown"
-    reasons = list(_string_list(quorum_payload.get("reasons")))
-    if decision == "allow":
-        state: ReceiptState = "pass"
-        reasons.append("jangar_dependency_quorum_allow")
-    elif decision == "delay":
-        state = "fail"
-        reasons.append("jangar_dependency_quorum_delay")
-    elif decision == "block":
-        state = "fail"
-        reasons.append("jangar_dependency_quorum_block")
-    else:
-        state = "missing"
-        reasons.append("jangar_dependency_quorum_missing")
-
-    return _receipt(
-        receipt_type="jangar_authority",
-        producer="jangar-control-plane",
-        subject_ref="dependency_quorum",
-        state=state,
-        observed_at=observed,
-        reason_codes=reasons,
-        decision=decision,
-        payload=dict(quorum_payload),
-        ttl_seconds=ttl_seconds,
-        consumer_refs=("research", "paper", "canary", "live", "scale"),
-    )
-
-
 def build_service_health_receipt(
     *,
     role: str,
@@ -533,7 +497,7 @@ __all__ = [
     "build_artifact_parity_receipt",
     "build_data_freshness_receipt",
     "build_empirical_jobs_receipt",
-    "build_jangar_authority_receipt",
+
     "build_portfolio_proof_receipt",
     "build_schema_receipt",
     "build_service_health_receipt",

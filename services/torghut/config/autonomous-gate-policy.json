@@ -33,7 +33,7 @@
   "gate7_max_interval_width_pass": "1.25",
   "gate7_max_interval_width_degrade": "1.75",
   "promotion_uncertainty_max_coverage_error": "0.03",
-  "gate5_live_enabled": false,
+  "gate5_live_enabled": true,
   "gate5_require_approval_token": true,
   "promotion_required_artifacts": [
     "research/candidate-spec.json",

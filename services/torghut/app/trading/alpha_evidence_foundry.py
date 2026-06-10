@@ -476,7 +476,7 @@ def build_alpha_evidence_foundry(
 def compact_alpha_evidence_foundry(
     foundry: Mapping[str, Any] | None,
 ) -> dict[str, object]:
-    """Return the Jangar-facing compact alpha evidence foundry reference."""
+    """Return the compact alpha evidence foundry reference (standalone internal)."""
 
     payload = _mapping(foundry)
     if not payload:

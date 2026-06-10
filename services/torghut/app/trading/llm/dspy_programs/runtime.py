@@ -23,7 +23,7 @@ _BOOTSTRAP_PROGRAM_NAME = "trade-review-committee-v1"
 _BOOTSTRAP_SIGNATURE_VERSION = "v1"
 _DSPY_OPENAI_BASE_PATH = "/openai/v1"
 _DSPY_OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions"
-_DSPY_INTERNAL_API_KEY_PLACEHOLDER = "jangar-internal"
+_DSPY_INTERNAL_API_KEY_PLACEHOLDER = "internal"
 
 _BOOTSTRAP_ARTIFACT_BODY = {
     "schema_version": "torghut.dspy.runtime-artifact.v1",
@@ -465,20 +465,20 @@ def _resolve_dspy_model_name() -> str:
 
 
 def _resolve_dspy_api_base() -> str:
-    raw_base_url = (settings.jangar_base_url or "").strip()
+    raw_base_url = (settings.agents_base_url or "").strip()
     if not raw_base_url:
-        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
+        raise DSPyRuntimeUnsupportedStateError("dspy_base_url_missing")
 
     parsed = urlsplit(raw_base_url)
     if not parsed.hostname:
-        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
+        raise DSPyRuntimeUnsupportedStateError("dspy_base_url_missing")
     if parsed.scheme not in {"http", "https"}:
         raise DSPyRuntimeUnsupportedStateError(
-            "dspy_jangar_base_url_invalid_scheme"
+            "dspy_base_url_invalid_scheme"
         )
     if parsed.query or parsed.fragment:
         raise DSPyRuntimeUnsupportedStateError(
-            "dspy_jangar_base_url_invalid_path"
+            "dspy_base_url_invalid_path"
         )
 
     base_path = (parsed.path or "/").rstrip("/")
@@ -487,7 +487,7 @@ def _resolve_dspy_api_base() -> str:
     elif base_path == f"{_DSPY_OPENAI_BASE_PATH}{_DSPY_OPENAI_CHAT_COMPLETIONS_PATH}":
         base_path = _DSPY_OPENAI_BASE_PATH
     elif base_path != _DSPY_OPENAI_BASE_PATH:
-        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid_path")
+        raise DSPyRuntimeUnsupportedStateError("dspy_base_url_invalid_path")
 
     normalized_base = f"{parsed.scheme}://{parsed.netloc}{base_path}"
     return normalized_base
@@ -498,7 +498,7 @@ def _resolve_dspy_completion_url() -> str:
 
 
 def _resolve_dspy_api_key(api_base: str) -> str | None:
-    configured = (settings.jangar_api_key or "").strip()
+    configured = (settings.agents_api_key or "").strip()
     if configured:
         return configured
 

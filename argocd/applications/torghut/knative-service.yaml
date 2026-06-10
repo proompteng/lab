@@ -247,8 +247,6 @@ spec:
               value: "10"
             - name: TRADING_UNIVERSE_SOURCE
               value: static
-            - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR
-              value: "false"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "false"
             - name: TRADING_STATIC_SYMBOLS

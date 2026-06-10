@@ -9,10 +9,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 JANGAR_CONTROLLER_INGESTION_CARRY_SCHEMA_VERSION = (
-    "torghut.jangar-controller-ingestion-carry.v1"
+    "torghut.internal-controller-ingestion-carry.v1"
 )
 JANGAR_CONTROLLER_INGESTION_CARRY_REF_SCHEMA_VERSION = (
-    "torghut.jangar-controller-ingestion-carry-ref.v1"
+    "torghut.internal-controller-ingestion-carry-ref.v1"
 )
 
 _DESIGN_REF = (

@@ -26,7 +26,7 @@ EvidenceEpochDecision = Literal[
 ]
 
 _BASE_REQUIRED_RECEIPTS = (
-    "jangar_authority",
+    "internal_authority",
     "service_health",
     "schema",
     "data_freshness",

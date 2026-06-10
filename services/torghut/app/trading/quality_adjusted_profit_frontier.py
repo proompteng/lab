@@ -149,7 +149,7 @@ def _quality_ref(source: Mapping[str, Any] | None) -> dict[str, object]:
     ref = (
         _first(
             payload,
-            "jangar_evidence_quality_ref",
+            "internal_evidence_quality_ref",
             "evidence_quality_ref",
             "quality_ledger_ref",
             "quality_ref",
@@ -170,13 +170,13 @@ def _quality_ref(source: Mapping[str, Any] | None) -> dict[str, object]:
     ).lower()
     blockers = set(_strings(payload.get("blocking_reasons")))
     if ref is None:
-        blockers.add("jangar_quality_ledger_missing")
+        blockers.add("quality_ledger_missing")
     elif state not in _READY_STATES:
-        blockers.add("jangar_quality_not_clean")
+        blockers.add("quality_not_clean")
     if ref is not None and decision != "unknown" and decision not in _ALLOW_DECISIONS:
-        blockers.add(f"jangar_quality_{decision}")
+        blockers.add(f"quality_{decision}")
     if _truthy(payload.get("non_promoting_receipt")):
-        blockers.add("jangar_quality_non_promoting_receipt")
+        blockers.add("quality_non_promoting_receipt")
     return {
         "ref": ref,
         "quality_state": state,
@@ -501,12 +501,12 @@ def _packet(
         "target_notional_ranking": dict(target_sizing or {}),
         **discounts,
         "quality_adjusted_edge": adjusted_edge,
-        "jangar_evidence_quality_ref": quality.get("ref"),
+        "internal_evidence_quality_ref": quality.get("ref"),
         "decision": decision,
         "missing_receipts": [
             receipt
             for receipt in (
-                "jangar_quality" if quality.get("ref") is None else "",
+                "quality" if quality.get("ref") is None else "",
                 "route" if row is None and repair_class in {"route", "tca"} else "",
                 "simulation"
                 if "simulation_cache_missing" in simulation_receipts
@@ -708,7 +708,7 @@ def _escrow(
         "missing_receipts": [
             receipt
             for receipt in (
-                "jangar_quality" if quality.get("ref") is None else "",
+                "quality" if quality.get("ref") is None else "",
                 "simulation"
                 if "simulation_cache_missing" in simulation_receipts
                 else "",
@@ -731,7 +731,7 @@ def build_quality_adjusted_profit_frontier(
     quant_evidence: Mapping[str, Any],
     market_context_status: Mapping[str, Any],
     simulation_cache_status: Mapping[str, Any] | None = None,
-    jangar_evidence_quality: Mapping[str, Any] | None = None,
+    internal_evidence_quality: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     simulation_max_age_seconds: int = 7 * 24 * 60 * 60,
 ) -> dict[str, object]:
@@ -740,7 +740,7 @@ def build_quality_adjusted_profit_frontier(
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     generated_at = observed_at.isoformat()
     simulation = _mapping(simulation_cache_status)
-    quality = _quality_ref(jangar_evidence_quality)
+    quality = _quality_ref(internal_evidence_quality)
     quant_receipts = _quant_receipts(quant_evidence)
     market_receipts = _market_receipts(market_context_status)
     simulation_receipts = _simulation_receipts(
@@ -886,7 +886,7 @@ def build_quality_adjusted_profit_frontier(
         "capital_state": "paper_shadow_candidate" if capital_ready else "zero_notional",
         "paper_probe_notional_limit": "configured_by_risk" if capital_ready else "0",
         "live_notional_limit": "configured_by_risk" if capital_ready else "0",
-        "jangar_evidence_quality_ref": quality,
+        "internal_evidence_quality_ref": quality,
         "packets": packets,
         "paper_probation_shortlist": paper_probation_shortlist,
         "hypothesis_escrows": escrows,

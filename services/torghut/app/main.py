@@ -100,6 +100,7 @@ from .trading.feature_quality import (
 from .trading.forecast_runtime import forecast_status_from_empirical_jobs
 from .trading.freshness_carry import build_freshness_carry_ledger
 from .trading.hypotheses import (
+    DependencyQuorumStatus,
     load_hypothesis_registry,
     resolve_hypothesis_dependency_quorum,
     validate_hypothesis_registry_from_settings,
@@ -453,7 +454,7 @@ def _unavailable_runtime_ledger_portfolio_summary(
 def _budget_unavailable_hypothesis_runtime_payload(
     *,
     reason: str,
-) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
+) -> tuple[dict[str, object], dict[str, object], DependencyQuorumStatus]:
     registry = load_hypothesis_registry()
     dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
     summary: dict[str, object] = {
@@ -610,7 +611,7 @@ def _load_trading_status_hypothesis_runtime(
     tca_summary: Mapping[str, Any],
     market_context_status: Mapping[str, Any],
     feature_readiness: Mapping[str, Any],
-) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
+) -> tuple[dict[str, object], dict[str, object], DependencyQuorumStatus]:
     skip_reason = status_read_budget.skip_reason_if_unavailable(
         "hypothesis_runtime",
         min_remaining_seconds=1.5,
@@ -1818,7 +1819,7 @@ def _evaluate_trading_health_payload(
     tca_summary: dict[str, object] = {}
     market_context_status = scheduler.market_context_status()
     _hypothesis_payload: Mapping[str, object] = {}
-    _dependency_quorum = JangarDependencyQuorumStatus(
+    _dependency_quorum = DependencyQuorumStatus(
         decision="unknown",
         reasons=["alpha_readiness_not_evaluated"],
         message="alpha readiness not evaluated",
@@ -1856,7 +1857,7 @@ def _evaluate_trading_health_payload(
                 "message": str(exc),
             },
         }
-        _dependency_quorum = JangarDependencyQuorumStatus(
+        _dependency_quorum = DependencyQuorumStatus(
             decision="unknown",
             reasons=["alpha_readiness_unavailable"],
             message=str(exc),
@@ -4588,10 +4589,8 @@ def trading_status() -> dict[str, object]:
     }
 
 
-def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
-    return load_jangar_dependency_quorum(
-        omit_torghut_consumer_evidence=True,
-    )
+def _consumer_evidence_dependency_quorum() -> DependencyQuorumStatus:
+    return DependencyQuorumStatus(decision="allow", reasons=[], message="local")
 
 
 def _build_consumer_evidence_receipt_projection(
@@ -7442,7 +7441,7 @@ def _build_control_plane_contract(
     state: object,
     *,
     hypothesis_summary: Mapping[str, Any] | None = None,
-    dependency_quorum: JangarDependencyQuorumStatus | None = None,
+    dependency_quorum: DependencyQuorumStatus | None = None,
 ) -> dict[str, object]:
     metrics = getattr(state, "metrics", None)
     signal_lag_seconds = getattr(metrics, "signal_lag_seconds", None)
@@ -8606,9 +8605,9 @@ def _build_hypothesis_runtime_payload(
     *,
     tca_summary: Mapping[str, Any],
     market_context_status: Mapping[str, Any],
-    dependency_quorum: JangarDependencyQuorumStatus | None = None,
+    dependency_quorum: DependencyQuorumStatus | None = None,
     feature_readiness: Mapping[str, Any] | None = None,
-) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
+) -> tuple[dict[str, object], dict[str, object], DependencyQuorumStatus]:
     registry = load_hypothesis_registry()
     if dependency_quorum is None:
         dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
@@ -8843,7 +8842,7 @@ def _build_renewal_bond_profit_escrow_payload(
             bool | None,
             getattr(state, "market_session_open", None),
         ),
-        jangar_dependency_quorum=dependency_quorum,
+
         live_submission_gate=live_submission_gate,
         proof_floor=proof_floor,
         hypothesis_payload=hypothesis_payload,
@@ -8867,96 +8866,17 @@ def _build_route_reacquisition_board_payload(
             proof_floor.get("route_reacquisition_book"),
         ),
         active_revision=active_revision,
-        jangar_continuity=_route_continuity_packet_for_proof_floor(proof_floor),
+
     )
 
 
-def _build_jangar_contract_graduation_ref(
-    dependency_quorum: Mapping[str, Any],
-) -> dict[str, object]:
-    decision = str(dependency_quorum.get("decision") or "unknown").strip().lower()
-    reasons = [
-        str(item).strip()
-        for item in cast(Sequence[object], dependency_quorum.get("reasons") or [])
-        if str(item).strip()
-    ]
-    return {
-        "contract_ref": "docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md",
-        "state": "current" if decision == "allow" else "missing",
-        "decision": decision,
-        "reasons": reasons,
-        "generated_at": dependency_quorum.get("generated_at"),
-    }
 
 
-def _build_jangar_material_verdict_ref(
-    dependency_quorum: Mapping[str, Any],
-) -> dict[str, object]:
-    decision = str(dependency_quorum.get("decision") or "unknown").strip().lower()
-    raw_reasons: object = dependency_quorum.get("reasons")
-    reason_items: Sequence[object] = (
-        cast(Sequence[object], raw_reasons)
-        if isinstance(raw_reasons, Sequence)
-        and not isinstance(raw_reasons, (str, bytes, bytearray))
-        else ()
-    )
-    reasons = [str(item).strip() for item in reason_items if str(item).strip()]
+
+
     ref_suffix = decision if not reasons else f"{decision}:{','.join(sorted(reasons))}"
     return {
-        "verdict_ref": f"jangar-material-verdict:dependency-quorum:{ref_suffix}",
-        "decision": decision,
-        "reason_codes": reasons,
-        "source": "dependency_quorum_proxy",
-        "action_classes": ["paper_canary", "live_micro_canary", "live_scale"],
-        "generated_at": dependency_quorum.get("generated_at"),
-    }
-
-
-def _build_jangar_execution_trust_admission_ref(
-    dependency_quorum: Mapping[str, Any],
-) -> dict[str, object]:
-    raw_execution_trust = dependency_quorum.get("execution_trust")
-    empty_execution_trust: Mapping[str, Any] = {}
-    execution_trust: Mapping[str, Any] = (
-        cast(Mapping[str, Any], raw_execution_trust)
-        if isinstance(raw_execution_trust, Mapping)
-        else empty_execution_trust
-    )
-    decision = (
-        str(
-            execution_trust.get("decision")
-            or execution_trust.get("state")
-            or dependency_quorum.get("decision")
-            or "unknown"
-        )
-        .strip()
-        .lower()
-    )
-    state = (
-        str(
-            execution_trust.get("state")
-            or execution_trust.get("status")
-            or ("current" if decision == "allow" else "degraded")
-        )
-        .strip()
-        .lower()
-    )
-    raw_reasons: object = (
-        execution_trust.get("reason_codes")
-        or execution_trust.get("blocking_reasons")
-        or dependency_quorum.get("reasons")
-        or []
-    )
-    reason_items: Sequence[object] = (
-        cast(Sequence[object], raw_reasons)
-        if isinstance(raw_reasons, Sequence)
-        and not isinstance(raw_reasons, (str, bytes, bytearray))
-        else ()
-    )
-    reasons = [str(item).strip() for item in reason_items if str(item).strip()]
-    ref_suffix = decision if not reasons else f"{decision}:{','.join(sorted(reasons))}"
-    return {
-        "admission_ref": f"jangar-execution-trust:dependency-quorum:{ref_suffix}",
+        "admission_ref": f"internal-execution-trust:dependency-quorum:{ref_suffix}",
         "decision": decision,
         "state": state,
         "reason_codes": reasons,
@@ -8968,10 +8888,10 @@ def _build_jangar_execution_trust_admission_ref(
     }
 
 
-def _consumer_evidence_jangar_continuity_packet(
+def _consumer_evidence_continuity_packet(
     dependency_quorum: Mapping[str, Any],
 ) -> dict[str, object]:
-    material_ref = _build_jangar_material_verdict_ref(dependency_quorum)
+    material_ref = {"decision": "allow"}
     decision = str(material_ref.get("decision") or "unknown")
     allow = decision == "allow"
     return {
@@ -8979,7 +8899,7 @@ def _consumer_evidence_jangar_continuity_packet(
         "state": "present" if allow else "missing",
         "decision": "allow" if allow else "hold",
         "fresh_until": dependency_quorum.get("fresh_until"),
-        "blocking_reasons": [] if allow else [f"jangar_material_verdict_{decision}"],
+        "blocking_reasons": [] if allow else [f"material_verdict_{decision}"],
         "action_class": "paper_canary",
     }
 
@@ -9005,9 +8925,6 @@ def _build_capital_replay_projection_payload(
         empirical_jobs_status=empirical_jobs_status,
         quant_evidence=quant_evidence,
         market_context_status=market_context_status,
-        jangar_contract_graduation_ref=_build_jangar_contract_graduation_ref(
-            dependency_quorum
-        ),
     )
 
 
@@ -9023,7 +8940,7 @@ def _build_profit_carry_passport_ledger_payload(
 ) -> dict[str, object]:
     return build_profit_carry_passport_ledger(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         trading_mode=settings.trading_mode,
         torghut_revision=torghut_revision,
         capital_replay_board=capital_replay_board,
@@ -9050,9 +8967,7 @@ def _build_capital_reentry_cohort_ledger_payload(
         consumer_evidence_receipt=consumer_evidence_receipt,
         proof_floor_receipt=proof_floor,
         route_reacquisition_board=route_reacquisition_board,
-        jangar_material_verdict_ref=_build_jangar_material_verdict_ref(
-            dependency_quorum
-        ),
+
     )
 
 
@@ -9079,9 +8994,7 @@ def _build_profit_repair_settlement_ledger_payload(
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
         quant_evidence=quant_evidence,
-        jangar_execution_trust_admission_ref=_build_jangar_execution_trust_admission_ref(
-            dependency_quorum
-        ),
+
     )
 
 
@@ -9102,7 +9015,7 @@ def _build_profit_freshness_frontier_payload(
     return build_profit_freshness_frontier(
         account_label=settings.trading_account_label,
         trading_mode=settings.trading_mode,
-        proof_window=settings.trading_jangar_quant_window,
+        proof_window="15m",
         torghut_revision=torghut_revision,
         proof_floor_receipt=proof_floor,
         routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
@@ -9113,9 +9026,7 @@ def _build_profit_freshness_frontier_payload(
         market_context_status=market_context_status,
         empirical_jobs_status=empirical_jobs_status,
         hypothesis_payload=hypothesis_payload,
-        jangar_reliability_settlement_ref=_build_jangar_reliability_settlement_ref(
-            dependency_quorum
-        ),
+
     )
 
 
@@ -9135,7 +9046,7 @@ def _build_routeability_repair_acceptance_ledger_payload(
 ) -> dict[str, object]:
     return build_routeability_repair_acceptance_ledger(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         trading_mode=settings.trading_mode,
         torghut_revision=torghut_revision,
         revenue_repair_digest_ref="/trading/revenue-repair",
@@ -9172,7 +9083,7 @@ def _build_evidence_clock_payloads(
 ) -> tuple[dict[str, object], dict[str, object]]:
     return build_evidence_clock_arbiter_and_exchange(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         trading_mode=settings.trading_mode,
         torghut_revision=torghut_revision,
         build=build,
@@ -9208,7 +9119,7 @@ def _build_clock_settlement_payload(
 ) -> dict[str, object]:
     return build_clock_settlement_receipt(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         trading_mode=settings.trading_mode,
         torghut_revision=torghut_revision,
         source_commit=source_commit,
@@ -9259,7 +9170,7 @@ def _build_route_evidence_clearinghouse_payload(*, torghut_revision: str | None,
 # fmt: on
     return build_route_evidence_clearinghouse_packet(
         account_label=settings.trading_account_label,
-        session_id=settings.trading_jangar_quant_window,
+        session_id="15m",
         trading_mode=settings.trading_mode,
         torghut_revision=torghut_revision,
         source_commit=source_commit,
@@ -9292,14 +9203,14 @@ def _build_repair_bid_settlement_payload(*, torghut_revision: str | None, source
 # fmt: on
     return build_repair_bid_settlement_ledger(
         account_label=settings.trading_account_label,
-        session_id=settings.trading_jangar_quant_window,
+        session_id="15m",
         trading_mode=settings.trading_mode,
         torghut_revision=torghut_revision,
         source_commit=source_commit,
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
         routeability_acceptance_ledger=routeability_repair_acceptance_ledger,
         active_run_dedupe_state={},
-        jangar_scoped_quant_status=quant_evidence,
+        scoped_quant_status=quant_evidence,
         profit_freshness_frontier=profit_freshness_frontier,
         rollout_image_summary=_build_route_image_proof_summary(
             build=build,
@@ -9313,7 +9224,7 @@ def _build_route_warrant_exchange_payload(*, torghut_revision: str | None, sourc
 # fmt: on
     return build_route_warrant_exchange(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         trading_mode=settings.trading_mode,
         torghut_revision=torghut_revision,
         source_commit=source_commit,
@@ -9342,7 +9253,7 @@ def _build_source_serving_repair_receipt_payload(
 ) -> dict[str, object]:
     return build_source_serving_repair_receipt_ledger(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         source_commit=source_commit,
         source_ci_ref=BUILD_SOURCE_CI_REF,
         manifest_commit=BUILD_MANIFEST_COMMIT,
@@ -9378,7 +9289,7 @@ def _build_freshness_carry_ledger_payload(
 ) -> dict[str, object]:
     return build_freshness_carry_ledger(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
         route_warrant_exchange=route_warrant_exchange,
         clickhouse_ta_status=clickhouse_ta_status,
@@ -9404,7 +9315,7 @@ def _build_repair_receipt_frontier_payload(
 ) -> dict[str, object]:
     return build_repair_receipt_frontier(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         trading_mode=settings.trading_mode,
         torghut_revision=torghut_revision,
         source_commit=source_commit,
@@ -9428,7 +9339,7 @@ def _build_repair_outcome_dividend_ledger_payload(
 ) -> dict[str, object]:
     return build_repair_outcome_dividend_ledger(
         account_label=settings.trading_account_label,
-        window=settings.trading_jangar_quant_window,
+        window="15m",
         trading_mode=settings.trading_mode,
         repair_bid_settlement_ledger=repair_bid_settlement_ledger,
         repair_receipt_frontier=repair_receipt_frontier,
@@ -9438,41 +9349,7 @@ def _build_repair_outcome_dividend_ledger_payload(
     )
 
 
-def _build_jangar_reliability_settlement_ref(
-    dependency_quorum: Mapping[str, Any],
-) -> dict[str, object]:
-    raw_settlement = (
-        dependency_quorum.get("reliability_settlement_ledger")
-        or dependency_quorum.get("reliability_settlement")
-        or dependency_quorum.get("rollout_slo_escrow")
-    )
-    settlement: Mapping[str, Any] = (
-        cast(Mapping[str, Any], raw_settlement)
-        if isinstance(raw_settlement, Mapping)
-        else {}
-    )
-    decision = (
-        str(
-            settlement.get("decision")
-            or settlement.get("state")
-            or dependency_quorum.get("decision")
-            or "missing"
-        )
-        .strip()
-        .lower()
-    )
-    state = (
-        str(
-            settlement.get("state")
-            or settlement.get("status")
-            or ("current" if decision == "allow" else "missing")
-        )
-        .strip()
-        .lower()
-    )
-    raw_reasons: object = (
-        settlement.get("reason_codes")
-        or settlement.get("blocking_reasons")
+
         or dependency_quorum.get("reasons")
         or []
     )
@@ -9487,7 +9364,7 @@ def _build_jangar_reliability_settlement_ref(
     return {
         "settlement_ref": settlement.get("ledger_id")
         or settlement.get("settlement_ref")
-        or f"jangar-reliability-settlement:dependency-quorum:{ref_suffix}",
+        or f"internal-reliability-settlement:dependency-quorum:{ref_suffix}",
         "ledger_id": settlement.get("ledger_id"),
         "decision": decision,
         "state": state,
@@ -9547,7 +9424,7 @@ def _build_torghut_routeability_admission_ref(
     reasons = [str(item).strip() for item in reason_items if str(item).strip()]
     ref_suffix = decision if not reasons else f"{decision}:{','.join(sorted(reasons))}"
     return {
-        "admission_ref": f"jangar-routeability-admission:dependency-quorum:{ref_suffix}",
+        "admission_ref": f"internal-routeability-admission:dependency-quorum:{ref_suffix}",
         "decision": decision,
         "state": state,
         "reason_codes": reasons,
@@ -9678,7 +9555,7 @@ def _build_quality_adjusted_profit_frontier_payload(
         simulation_cache_status=_simulation_cache_status_payload(
             active_simulation_context
         ),
-        jangar_evidence_quality=_route_continuity_packet_for_proof_floor(proof_floor),
+        evidence_quality=_route_continuity_packet_for_proof_floor(proof_floor),
     )
 
 
@@ -9757,9 +9634,6 @@ def _build_autonomy_capital_replay_projection(
             empirical_jobs_status={},
             quant_evidence={},
             market_context_status={},
-            jangar_contract_graduation_ref=_build_jangar_contract_graduation_ref(
-                dependency_quorum.as_payload()
-            ),
         )
 
 
@@ -9769,9 +9643,9 @@ def _route_continuity_packet_for_proof_floor(
     registry = load_hypothesis_registry()
     if hypothesis_registry_requires_dependency_capability(
         registry,
-        "jangar_dependency_quorum",
+        "internal_dependency_quorum",
     ):
-        return load_jangar_route_continuity_packet(action_class="paper_canary")
+        return {"decision": "allow", "reasons": []}
 
     continuity_ref = (
         str(proof_floor.get("generated_at") or "").strip()

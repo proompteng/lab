@@ -15,7 +15,7 @@ data:
   # Full market-data mode (quotes enabled) must stay within account subscription constraints.
   # Keep universe size capped at 12 to preserve headroom and avoid 405 symbol-limit failures.
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars,updatedBars"
-  # Static executable universe; the live trading loop must not depend on Jangar.
+  # Static executable universe; the live trading loop uses internal sources only.
   SYMBOLS: "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC"
   SYMBOLS_ALLOWLIST: "NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC"
   SYMBOLS_POLL_INTERVAL_MS: "30000"

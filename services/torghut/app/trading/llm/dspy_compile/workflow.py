@@ -1,4 +1,4 @@
-"""DSPy compile/eval/promotion workflow helpers with Jangar-compatible contracts."""
+"""DSPy compile/eval/promotion workflow helpers (standalone)."""
 
 from __future__ import annotations
 
@@ -584,7 +584,7 @@ def _extract_submitted_agentrun_id(submit_response: Mapping[str, Any]) -> str:
     run_id = str(agent_run.get("id") or "").strip()
     if run_id:
         return run_id
-    raise RuntimeError("jangar_submit_missing_agent_run_id")
+    raise RuntimeError("submit_missing_agent_run_id")
 
 
 def _lane_overrides_with_defaults(

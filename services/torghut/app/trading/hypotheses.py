@@ -30,7 +30,6 @@ CapitalStage = Literal[
 DependencyQuorumDecision = Literal["allow", "delay", "block", "unknown"]
 
 _KNOWN_DEPENDENCY_CAPABILITIES = {
-    # "jangar_dependency_quorum" removed (standalone)
     "signal_continuity",
     "drift_governance",
     "feature_coverage",
@@ -38,10 +37,8 @@ _KNOWN_DEPENDENCY_CAPABILITIES = {
     "evidence_continuity",
 }
 
-# Jangar dependency quorum removed for standalone Torghut.
-# Readiness now based purely on local empirical jobs, runtime ledger source, signal continuity, etc.
-_JANGAR_QUORUM_CACHE_LOCK = Lock()
-_JANGAR_QUORUM_CACHE: dict[str, object] = {}
+_DEPENDENCY_QUORUM_CACHE_LOCK = Lock()
+_DEPENDENCY_QUORUM_CACHE: dict[str, object] = {}
 
 
 def _stable_string_list(values: Sequence[str]) -> list[str]:
@@ -274,8 +271,8 @@ _EDGE_OR_COST_REASONS = {
 _DEPENDENCY_REASONS = {
     "dependency_quorum_block",
     "dependency_quorum_delay",
-    "jangar_dependency_block",
-    "jangar_dependency_delay",
+    "dependency_block",
+    "dependency_delay",
     "signal_continuity_alert_active",
 }
 
@@ -460,7 +457,7 @@ def hypothesis_registry_requires_dependency_capability(
 
 def resolve_hypothesis_dependency_quorum(
     registry: HypothesisRegistryLoadResult,
-) -> JangarDependencyQuorumStatus:
+) -> DependencyQuorumStatus:
     """Fetch Jangar quorum only when the active hypothesis registry requires it."""
 
     if hypothesis_registry_requires_dependency_capability(
@@ -468,7 +465,7 @@ def resolve_hypothesis_dependency_quorum(
         "jangar_dependency_quorum",
     ):
         return load_jangar_dependency_quorum()
-    return JangarDependencyQuorumStatus(
+    return DependencyQuorumStatus(
         decision="allow",
         reasons=["torghut_dependency_quorum_not_required"],
         message="Torghut hypothesis registry is self-governed for dependency quorum.",
@@ -599,7 +596,7 @@ def _empty_payload_dict_list() -> list[dict[str, object]]:
 
 
 @dataclass(frozen=True)
-class JangarDependencyQuorumStatus:
+class DependencyQuorumStatus:
     decision: DependencyQuorumDecision
     reasons: list[str]
     message: str
@@ -1672,7 +1669,7 @@ def validate_hypothesis_registry_from_settings() -> None:
 
 def _fallback_quorum_from_legacy_status(
     payload: Mapping[str, Any],
-) -> JangarDependencyQuorumStatus:
+) -> DependencyQuorumStatus:
     workflows = payload.get("workflows")
     if isinstance(workflows, Mapping):
         workflows_map = cast(Mapping[str, Any], workflows)
@@ -1681,7 +1678,7 @@ def _fallback_quorum_from_legacy_status(
             0, _optional_int(workflows_map.get("backoff_limit_exceeded_jobs")) or 0
         )
         if confidence == "unknown":
-            return JangarDependencyQuorumStatus(
+            return DependencyQuorumStatus(
                 decision="block",
                 reasons=["workflows_data_unknown"],
                 message="Torghut workflow reliability is unavailable.",
@@ -1704,7 +1701,7 @@ def _fallback_quorum_from_legacy_status(
                 ),
             )
         if backoff_jobs > 0 or confidence == "degraded":
-            return JangarDependencyQuorumStatus(
+            return DependencyQuorumStatus(
                 decision="delay",
                 reasons=["workflows_degraded"],
                 message="Torghut workflow reliability is degraded.",
@@ -1735,7 +1732,7 @@ def _fallback_quorum_from_legacy_status(
                 continue
             item = cast(Mapping[str, Any], raw_item)
             if str(item.get("status") or "").strip() == "degraded":
-                return JangarDependencyQuorumStatus(
+                return DependencyQuorumStatus(
                     decision="delay",
                     reasons=["jangar_namespace_degraded"],
                     message="Torghut namespace health is degraded.",
@@ -1757,10 +1754,10 @@ def _fallback_quorum_from_legacy_status(
                         {},
                     ),
                 )
-    return JangarDependencyQuorumStatus(
+    return DependencyQuorumStatus(
         decision="unknown",
-        reasons=["jangar_dependency_quorum_missing"],
-        message="Torghut control-plane status did not include dependency_quorum.",
+        reasons=["dependency_quorum_missing"],
+        message="control plane status did not include dependency_quorum.",
         controller_ingestion_settlement=_extract_controller_ingestion_settlement(
             payload,
             {},
@@ -1781,20 +1778,11 @@ def _fallback_quorum_from_legacy_status(
 def load_jangar_dependency_quorum(
     *,
     omit_torghut_consumer_evidence: bool = False,
-) -> JangarDependencyQuorumStatus:
-    """Standalone local quorum (Jangar external removed).
-
-    All dependency decisions are now made locally inside Torghut using
-    empirical jobs, runtime ledger, signal/evidence continuity, etc.
-    External Jangar control plane is no longer required or consulted.
-    """
-    return JangarDependencyQuorumStatus(
+) -> DependencyQuorumStatus:
+    return DependencyQuorumStatus(
         decision="allow",
         reasons=[],
-        raw={"standalone": True},
-        fetched_at=None,
-        source="standalone_local",
-        message="Jangar dependency removed; Torghut is standalone.",
+        message="local",
     )
 
 
@@ -1805,7 +1793,7 @@ def compile_hypothesis_runtime_statuses(
     tca_summary: Mapping[str, Any],
     runtime_ledger_summary: Mapping[str, Any] | None = None,
     market_context_status: Mapping[str, Any],
-    jangar_dependency_quorum: JangarDependencyQuorumStatus,
+    jangar_dependency_quorum: DependencyQuorumStatus,
     feature_readiness: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     market_session_open: bool | None = None,
@@ -2035,21 +2023,21 @@ def compile_hypothesis_runtime_statuses(
                 reasons.append("market_context_stale")
         if (
             _is_dependency_required(
-                required_dependency_capabilities, "jangar_dependency_quorum"
+                required_dependency_capabilities, "dependency_quorum"
             )
             and requirements.required_dependency_quorum == "allow"
         ):
             if jangar_dependency_quorum.decision == "delay":
-                reasons.append("jangar_dependency_delay")
+                reasons.append("dependency_delay")
             elif jangar_dependency_quorum.decision in {"block", "unknown"}:
-                reasons.append("jangar_dependency_block")
+                reasons.append("dependency_block")
         elif (
             _is_dependency_required(
-                required_dependency_capabilities, "jangar_dependency_quorum"
+                required_dependency_capabilities, "dependency_quorum"
             )
             and jangar_dependency_quorum.decision == "block"
         ):
-            reasons.append("jangar_dependency_block")
+            reasons.append("dependency_block")
 
         if unknown_dependency_capabilities:
             reasons.extend(
@@ -2084,8 +2072,8 @@ def compile_hypothesis_runtime_statuses(
         promotion_eligible = False
         rollback_required = bool(
             {
-                "jangar_dependency_delay",
-                "jangar_dependency_block",
+                "dependency_delay",
+                "dependency_block",
                 "signal_continuity_alert_active",
                 "tca_evidence_stale",
             }
@@ -2381,7 +2369,7 @@ def summarize_hypothesis_runtime_statuses(
     statuses: Sequence[Mapping[str, Any]],
     *,
     registry: HypothesisRegistryLoadResult,
-    dependency_quorum: JangarDependencyQuorumStatus,
+    dependency_quorum: DependencyQuorumStatus,
 ) -> dict[str, object]:
     state_totals = Counter(str(item.get("state") or "unknown") for item in statuses)
     reason_totals = Counter(
@@ -2440,7 +2428,7 @@ def summarize_hypothesis_runtime_statuses(
 __all__ = [
     "HypothesisManifest",
     "HypothesisRegistryLoadResult",
-    "JangarDependencyQuorumStatus",
+    "DependencyQuorumStatus",
     "compile_hypothesis_runtime_statuses",
     "hypothesis_registry_requires_dependency_capability",
     "load_hypothesis_registry",
