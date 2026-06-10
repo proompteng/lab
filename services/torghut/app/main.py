@@ -67,10 +67,6 @@ from .trading.autonomy import (
 from .trading.autoresearch_routes import router as autoresearch_router
 from .trading.capital_reentry_cohorts import build_capital_reentry_cohort_ledger
 from .trading.completion import build_doc29_completion_status
-from .trading.consumer_evidence import (
-    build_route_proven_profit_receipt,
-    build_torghut_consumer_evidence_receipt,
-)
 from .trading.clock_settlement import build_clock_settlement_receipt
 from .trading.empirical_jobs import build_empirical_jobs_status
 from .trading.evidence_clock_arbiter import (
@@ -88,7 +84,7 @@ from .trading.evidence_receipts import (
     build_artifact_parity_receipt,
     build_data_freshness_receipt,
     build_empirical_jobs_receipt,
-    build_jangar_authority_receipt,
+    # build_jangar_authority_receipt removed (Jangar dep eliminated for standalone)
     build_portfolio_proof_receipt,
     build_schema_receipt,
     build_service_health_receipt,
@@ -104,16 +100,9 @@ from .trading.feature_quality import (
 from .trading.forecast_runtime import forecast_status_from_empirical_jobs
 from .trading.freshness_carry import build_freshness_carry_ledger
 from .trading.hypotheses import (
-    JangarDependencyQuorumStatus,
-    hypothesis_registry_requires_dependency_capability,
-    load_jangar_dependency_quorum,
     load_hypothesis_registry,
     resolve_hypothesis_dependency_quorum,
     validate_hypothesis_registry_from_settings,
-)
-from .trading.jangar_continuity import load_jangar_route_continuity_packet
-from .trading.jangar_controller_ingestion_carry import (
-    compact_jangar_controller_ingestion_carry,
 )
 from .trading.lean_lanes import LeanLaneManager
 from .trading.lean_runtime import lean_authority_status
@@ -150,7 +139,6 @@ from .trading.quality_adjusted_profit_frontier import (
     build_quality_adjusted_profit_frontier,
 )
 from .trading.renewal_bond_profit_escrow import build_renewal_bond_profit_escrow
-from .trading.revenue_repair import build_revenue_repair_digest
 from .trading.repair_bid_settlement import build_repair_bid_settlement_ledger
 from .trading.repair_outcome_dividend import (
     build_repair_outcome_dividend_ledger,

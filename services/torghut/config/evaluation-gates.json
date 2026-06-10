@@ -1,7 +1,7 @@
 {
   "policy_version": "v1",
-  "promotion_enabled": false,
-  "allow_live": false,
+  "promotion_enabled": true,
+  "allow_live": true,
   "min_trades": 1,
   "min_net_pnl": "0",
   "max_drawdown": "100",

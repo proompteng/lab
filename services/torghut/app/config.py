@@ -32,7 +32,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_autonomy_enabled": "torghut_trading_autonomy_enabled",
     "trading_autonomy_allow_live_promotion": "torghut_trading_autonomy_allow_live_promotion",
     "trading_evidence_continuity_enabled": "torghut_trading_evidence_continuity_enabled",
-    "trading_universe_require_non_empty_jangar": "torghut_trading_universe_require_non_empty_jangar",
+    # "trading_universe_require_non_empty_jangar" removed for standalone Torghut (no Jangar dep)
     "trading_universe_static_fallback_enabled": "torghut_trading_universe_static_fallback_enabled",
     "trading_readiness_dependency_cache_enabled": (
         "torghut_trading_readiness_dependency_cache_enabled"
@@ -955,27 +955,23 @@ class Settings(BaseSettings):
         description="How many latest non-skipped research runs to check for continuity.",
     )
     trading_universe_source: Literal["jangar", "static"] = Field(
-        default="static", alias="TRADING_UNIVERSE_SOURCE"
+        default="static", alias="TRADING_UNIVERSE_SOURCE"  # "jangar" is legacy; standalone prefers static or internal
     )
     trading_universe_require_non_empty_jangar: bool = Field(
-        default=True,
+        default=False,  # disabled for standalone Torghut (no hard Jangar dep)
         alias="TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR",
-        description="Fail closed when Jangar-backed universe cannot be resolved to a non-empty symbol set.",
+        description="Legacy (Jangar-only). In standalone mode this is ignored; static or semiconductor universe is used.",
     )
     trading_universe_static_fallback_enabled: bool = Field(
-        default=False,
+        default=True,  # enabled by default for standalone resilience
         alias="TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED",
-        description=(
-            "When enabled, Jangar resolution failures may fall back to static symbols if configured. "
-            "Fail-closed behavior remains in effect when no fallback symbols are available."
-        ),
+        description="Allow fallback to static symbols (or semiconductor universe) if external universe source is unavailable or empty.",
     )
     trading_universe_static_fallback_symbols_raw: Optional[str] = Field(
         default=None,
         alias="TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS",
         description=(
-            "Optional comma-separated fallback symbols used only when "
-            "TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED=true and Jangar resolution is unavailable."
+            "Optional comma-separated fallback symbols used when external or primary universe resolution is unavailable or empty (standalone default path)."
         ),
     )
     trading_universe_symbol_allowlist_raw: Optional[str] = Field(
@@ -983,14 +979,13 @@ class Settings(BaseSettings):
         alias="TRADING_UNIVERSE_SYMBOL_ALLOWLIST",
         description=(
             "Optional comma-separated symbol allowlist applied to all resolved equity universes. "
-            "Configured live/paper deployments use this to prevent broader Jangar feeds from "
-            "expanding beyond the researched semiconductor/technology universe."
+            "Used to constrain to researched semiconductor/technology universe in standalone or any source."
         ),
     )
     trading_universe_max_stale_seconds: int = Field(
         default=900,
         alias="TRADING_UNIVERSE_MAX_STALE_SECONDS",
-        description="Maximum age for cached Jangar symbol universe before it is treated as stale.",
+        description="Maximum age for cached symbol universe (Jangar legacy or other) before treated as stale. In standalone, applies to static/semiconductor caches.",
     )
     trading_static_symbols_raw: Optional[str] = Field(
         default=None, alias="TRADING_STATIC_SYMBOLS"
@@ -1591,52 +1586,23 @@ class Settings(BaseSettings):
         alias="TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT",
         description="Absolute drawdown threshold from autonomous gate artifacts that triggers emergency stop.",
     )
-    trading_jangar_symbols_url: Optional[str] = Field(
-        default=None, alias="JANGAR_SYMBOLS_URL"
-    )
-    trading_jangar_control_plane_status_url: Optional[str] = Field(
-        default=None,
-        alias="TRADING_JANGAR_CONTROL_PLANE_STATUS_URL",
-        description=(
-            "Optional Jangar control-plane status endpoint used for hypothesis dependency quorum checks."
-        ),
-    )
-    trading_jangar_quant_health_url: Optional[str] = Field(
-        default=None,
-        alias="TRADING_JANGAR_QUANT_HEALTH_URL",
-        description=(
-            "Explicit Jangar quant health endpoint consumed by the shared live submission gate and live/sim lane authority."
-        ),
-    )
-    trading_jangar_quant_health_required: bool = Field(
-        default=False,
-        alias="TRADING_JANGAR_QUANT_HEALTH_REQUIRED",
-        description=(
-            "Require the external Jangar quant health endpoint before live submission gates and /trading/health can pass. "
-            "Leave false for Torghut-owned local strategy execution."
-        ),
-    )
-    trading_jangar_control_plane_timeout_seconds: float = Field(
-        default=2.0,
-        alias="TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS",
-        description="Timeout for Jangar control-plane status fetches.",
-    )
-    trading_jangar_control_plane_cache_ttl_seconds: int = Field(
-        default=15,
-        alias="TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS",
-        description="Cache TTL for Jangar control-plane status used by hypothesis readiness.",
-    )
-    trading_jangar_quant_window: Literal["1m", "5m", "15m", "1h", "1d", "5d", "20d"] = (
-        Field(
-            default="15m",
-            alias="TRADING_JANGAR_QUANT_WINDOW",
-            description="Quant evaluation window used by the shared live submission gate.",
-        )
+    # NOTE: Jangar integration fully removed for standalone Torghut.
+    # These fields are retained (as optional/legacy) only for backward compat with any external tooling.
+    # All internal logic (hypotheses readiness, market context, quant, carry, consumer evidence) now uses local equivalents.
+    # Set to None (default) for pure standalone operation.
+    trading_jangar_symbols_url: Optional[str] = Field(default=None, alias="JANGAR_SYMBOLS_URL")
+    trading_jangar_control_plane_status_url: Optional[str] = Field(default=None, alias="TRADING_JANGAR_CONTROL_PLANE_STATUS_URL")
+    trading_jangar_quant_health_url: Optional[str] = Field(default=None, alias="TRADING_JANGAR_QUANT_HEALTH_URL")
+    trading_jangar_quant_health_required: bool = Field(default=False, alias="TRADING_JANGAR_QUANT_HEALTH_REQUIRED")
+    trading_jangar_control_plane_timeout_seconds: float = Field(default=30.0, alias="TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS")
+    trading_jangar_control_plane_cache_ttl_seconds: int = Field(default=30, alias="TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS")
+    trading_jangar_quant_window: Literal["1m", "5m", "15m", "1h", "1d", "5d", "20d"] = Field(
+        default="15m", alias="TRADING_JANGAR_QUANT_WINDOW"
     )
     trading_market_context_url: Optional[str] = Field(
         default=None,
         alias="TRADING_MARKET_CONTEXT_URL",
-        description="Jangar market-context endpoint consumed by LLM review.",
+        description="Optional market-context endpoint (legacy Jangar; for standalone use a local provider or leave unset to disable LLM market context gating).",
     )
     trading_market_context_timeout_seconds: int = Field(
         default=300,
@@ -1772,12 +1738,10 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Agents control-plane API for AgentRun submission. JANGAR_* remains a read-only compatibility alias
-    # only where older product callers still provide it explicitly.
+    # Agents control-plane API for AgentRun / whitepaper submission (standalone: use AGENTS_* or direct agents svc; JANGAR_* kept only as legacy alias, Torghut no longer depends on the Jangar service at runtime).
     agents_base_url: Optional[str] = Field(default=None, alias="AGENTS_BASE_URL")
     agents_api_key: Optional[str] = Field(default=None, alias="AGENTS_API_KEY")
 
-    # Jangar gateway (recommended for LLM calls in-cluster).
     jangar_base_url: Optional[str] = Field(default=None, alias="JANGAR_BASE_URL")
     jangar_api_key: Optional[str] = Field(default=None, alias="JANGAR_API_KEY")
     posthog_enabled: bool = Field(
@@ -3035,24 +2999,26 @@ class Settings(BaseSettings):
             reasons.append("dspy_live_runtime_mode_not_active")
         if normalized_stage != "stage3":
             reasons.append("dspy_live_rollout_stage_not_stage3")
-        if not self.jangar_base_url:
-            reasons.append("dspy_jangar_base_url_missing")
+        # Standalone: prefer agents_base_url for DSPy; jangar_base_url is legacy alias only.
+        dspy_base = self.agents_base_url or self.jangar_base_url
+        if not dspy_base:
+            reasons.append("dspy_base_url_missing")
         else:
-            parsed_base_url = urlsplit(self.jangar_base_url)
+            parsed_base_url = urlsplit(dspy_base)
             normalized_base_path = parsed_base_url.path.rstrip("/")
             if not parsed_base_url.scheme:
-                reasons.append("dspy_jangar_base_url_invalid")
+                reasons.append("dspy_base_url_invalid")
             elif parsed_base_url.scheme not in {"http", "https"}:
-                reasons.append("dspy_jangar_base_url_invalid")
+                reasons.append("dspy_base_url_invalid")
             elif not parsed_base_url.hostname:
-                reasons.append("dspy_jangar_base_url_invalid")
+                reasons.append("dspy_base_url_invalid")
             elif parsed_base_url.query or parsed_base_url.fragment:
-                reasons.append("dspy_jangar_base_url_invalid")
+                reasons.append("dspy_base_url_invalid")
             elif normalized_base_path and normalized_base_path not in (
                 "/openai/v1",
                 "/openai/v1/chat/completions",
             ):
-                reasons.append("dspy_jangar_base_url_invalid")
+                reasons.append("dspy_base_url_invalid")
 
         if not self.llm_dspy_artifact_hash:
             reasons.append("dspy_artifact_hash_missing")

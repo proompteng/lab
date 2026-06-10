@@ -504,7 +504,7 @@ def _configure_replay_settings(
     )
     config.settings.trading_kill_switch_enabled = False
     config.settings.trading_emergency_stop_enabled = False
-    config.settings.trading_universe_source = "jangar"
+    config.settings.trading_universe_source = "static"
     config.settings.trading_universe_static_fallback_enabled = True
     config.settings.trading_universe_static_fallback_symbols_raw = ",".join(symbols)
     config.settings.trading_allow_shorts = allow_shorts

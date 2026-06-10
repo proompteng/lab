@@ -30,7 +30,7 @@ CapitalStage = Literal[
 DependencyQuorumDecision = Literal["allow", "delay", "block", "unknown"]
 
 _KNOWN_DEPENDENCY_CAPABILITIES = {
-    "jangar_dependency_quorum",
+    # "jangar_dependency_quorum" removed (standalone)
     "signal_continuity",
     "drift_governance",
     "feature_coverage",
@@ -38,6 +38,8 @@ _KNOWN_DEPENDENCY_CAPABILITIES = {
     "evidence_continuity",
 }
 
+# Jangar dependency quorum removed for standalone Torghut.
+# Readiness now based purely on local empirical jobs, runtime ledger source, signal continuity, etc.
 _JANGAR_QUORUM_CACHE_LOCK = Lock()
 _JANGAR_QUORUM_CACHE: dict[str, object] = {}
 
@@ -1780,114 +1782,20 @@ def load_jangar_dependency_quorum(
     *,
     omit_torghut_consumer_evidence: bool = False,
 ) -> JangarDependencyQuorumStatus:
-    status_url = (settings.trading_jangar_control_plane_status_url or "").strip()
-    if not status_url:
-        return JangarDependencyQuorumStatus(
-            decision="unknown",
-            reasons=["jangar_control_plane_status_url_missing"],
-            message="TRADING_JANGAR_CONTROL_PLANE_STATUS_URL is not configured.",
-        )
-    cache_key = (
-        f"{status_url}#omit_torghut_consumer_evidence="
-        f"{str(omit_torghut_consumer_evidence).lower()}"
+    """Standalone local quorum (Jangar external removed).
+
+    All dependency decisions are now made locally inside Torghut using
+    empirical jobs, runtime ledger, signal/evidence continuity, etc.
+    External Jangar control plane is no longer required or consulted.
+    """
+    return JangarDependencyQuorumStatus(
+        decision="allow",
+        reasons=[],
+        raw={"standalone": True},
+        fetched_at=None,
+        source="standalone_local",
+        message="Jangar dependency removed; Torghut is standalone.",
     )
-
-    ttl_seconds = max(0, int(settings.trading_jangar_control_plane_cache_ttl_seconds))
-    if ttl_seconds > 0:
-        now = datetime.now(timezone.utc)
-        with _JANGAR_QUORUM_CACHE_LOCK:
-            cached = cast(dict[str, Any] | None, _JANGAR_QUORUM_CACHE.get(cache_key))
-            if cached is not None:
-                checked_at = cast(datetime | None, cached.get("checked_at"))
-                if checked_at is not None and now - checked_at <= timedelta(
-                    seconds=ttl_seconds
-                ):
-                    return cast(JangarDependencyQuorumStatus, cached["status"])
-
-    decoded: Any = None
-    try:
-        headers = {"accept": "application/json"}
-        if omit_torghut_consumer_evidence:
-            headers["x-torghut-consumer-evidence-mode"] = "omit"
-        request = Request(status_url, method="GET", headers=headers)
-        with urlopen(
-            request, timeout=settings.trading_jangar_control_plane_timeout_seconds
-        ) as response:
-            if response.status < 200 or response.status >= 300:
-                return JangarDependencyQuorumStatus(
-                    decision="unknown",
-                    reasons=[f"jangar_status_http_{response.status}"],
-                    message=f"Torghut control-plane status returned HTTP {response.status}.",
-                )
-            decoded = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        return JangarDependencyQuorumStatus(
-            decision="unknown",
-            reasons=["jangar_status_fetch_failed"],
-            message=f"Torghut control-plane status fetch failed: {exc}",
-        )
-
-    if not isinstance(decoded, Mapping):
-        return JangarDependencyQuorumStatus(
-            decision="unknown",
-            reasons=["jangar_status_payload_invalid"],
-            message="Torghut control-plane status payload was invalid.",
-        )
-    payload = cast(Mapping[str, Any], decoded)
-    raw_quorum = payload.get("dependency_quorum")
-    if isinstance(raw_quorum, Mapping):
-        quorum = cast(Mapping[str, Any], raw_quorum)
-        decision = str(quorum.get("decision") or "").strip()
-        if decision in {"allow", "delay", "block", "unknown"}:
-            reasons = [
-                str(item).strip()
-                for item in cast(Sequence[object], quorum.get("reasons") or [])
-                if str(item).strip()
-            ]
-            status = JangarDependencyQuorumStatus(
-                decision=cast(DependencyQuorumDecision, decision),
-                reasons=reasons,
-                message=str(quorum.get("message") or "").strip(),
-                stage_trust=_extract_stage_trust(payload, quorum),
-                stage_renewal_bonds=_extract_stage_renewal_bonds(payload, quorum),
-                controller_ingestion_settlement=_extract_controller_ingestion_settlement(
-                    payload,
-                    quorum,
-                ),
-                verify_trust_foreclosure_board=_extract_verify_trust_foreclosure_board(
-                    payload,
-                    quorum,
-                ),
-                repair_slot_escrow=_extract_repair_slot_escrow(payload, quorum),
-                stage_debt_repair_admission=_extract_stage_debt_repair_admission(
-                    payload,
-                    quorum,
-                ),
-                foreclosure_carry_rollout_witness=_extract_foreclosure_carry_rollout_witness(
-                    payload,
-                    quorum,
-                ),
-                generated_at=str(
-                    payload.get("generated_at")
-                    or payload.get("generatedAt")
-                    or quorum.get("generated_at")
-                    or quorum.get("generatedAt")
-                    or ""
-                ).strip()
-                or None,
-            )
-        else:
-            status = _fallback_quorum_from_legacy_status(payload)
-    else:
-        status = _fallback_quorum_from_legacy_status(payload)
-
-    if ttl_seconds > 0:
-        with _JANGAR_QUORUM_CACHE_LOCK:
-            _JANGAR_QUORUM_CACHE[cache_key] = {
-                "checked_at": datetime.now(timezone.utc),
-                "status": status,
-            }
-    return status
 
 
 def compile_hypothesis_runtime_statuses(

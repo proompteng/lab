@@ -6,7 +6,6 @@ from hashlib import sha256
 import json
 from typing import Any, Mapping, Sequence, cast
 
-
 CONSUMER_EVIDENCE_SCHEMA_VERSION = "torghut.consumer-evidence-receipt.v1"
 CONSUMER_EVIDENCE_STATUS_SCHEMA_VERSION = "torghut.consumer-evidence-status.v1"
 CONSUMER_EVIDENCE_CANARY_SCHEMA_VERSION = "torghut.consumer-evidence-canary.v1"
