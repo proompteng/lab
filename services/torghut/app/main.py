@@ -84,7 +84,7 @@ from .trading.evidence_receipts import (
     build_artifact_parity_receipt,
     build_data_freshness_receipt,
     build_empirical_jobs_receipt,
-    # build_jangar_authority_receipt removed (Jangar dep eliminated for standalone)
+
     build_portfolio_proof_receipt,
     build_schema_receipt,
     build_service_health_receipt,
@@ -203,7 +203,7 @@ RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE = (
-    "Jangar dependency quorum is evaluated by the calling control plane; "
+
     "Torghut omits the recursive control-plane status fetch for consumer evidence."
 )
 LEAN_LANE_MANAGER = LeanLaneManager()
@@ -640,7 +640,7 @@ def _require_whitepaper_control_token(request: Request) -> None:
         os.getenv("WHITEPAPER_WORKFLOW_API_TOKEN", "").strip()
         or os.getenv("WHITEPAPER_AGENTRUN_API_TOKEN", "").strip()
         or os.getenv("AGENTS_API_KEY", "").strip()
-        or os.getenv("JANGAR_API_KEY", "").strip()
+        or os.getenv("AGENTS_API_KEY", "").strip()
     )
     if not expected_token:
         return
@@ -2328,12 +2328,6 @@ def _evaluate_trading_health_payload(
                 revenue_repair_digest.get("alpha_repair_dividend_ledger"),
             ),
         ),
-        "jangar_controller_ingestion_carry": compact_jangar_controller_ingestion_carry(
-            cast(
-                Mapping[str, Any],
-                revenue_repair_digest.get("jangar_controller_ingestion_carry"),
-            )
-        ),
         "no_delta_repair_reentry_auction": compact_no_delta_repair_reentry_auction(
             cast(
                 Mapping[str, Any],
@@ -2361,7 +2355,7 @@ def _evaluate_universe_dependency(
 ) -> dict[str, object]:
     require_non_empty = (
         settings.trading_universe_source == "static"
-        or settings.trading_universe_require_non_empty_jangar
+        or False
     )
     if scheduler is None:
         return {
@@ -2431,9 +2425,9 @@ def _evaluate_universe_dependency(
         }
 
     if universe_status == "degraded":
-        degraded_detail = "jangar stale cache in use"
+        degraded_detail = "stale cache in use"
         if isinstance(universe_reason, str) and "static_fallback" in universe_reason:
-            degraded_detail = "jangar static fallback in use"
+            degraded_detail = "static fallback in use"
         return {
             "ok": not universe_fail_safe_blocked,
             "detail": degraded_detail,
@@ -2478,7 +2472,7 @@ def _evaluate_universe_dependency(
     if universe_fail_safe_blocked:
         return {
             "ok": False,
-            "detail": f"jangar universe blocked: {universe_reason}",
+            "detail": f"universe blocked: {universe_reason}",
             "source": settings.trading_universe_source,
             "status": universe_status,
             "reason": universe_reason,
@@ -2516,7 +2510,7 @@ def _refresh_universe_state_for_readiness(
         setattr(
             state,
             "universe_source_reason",
-            f"jangar_readiness_probe_failed:{type(exc).__name__}",
+            f"readiness_probe_failed:{type(exc).__name__}",
         )
         setattr(state, "universe_symbols_count", 0)
         setattr(state, "universe_cache_age_seconds", None)
@@ -2524,7 +2518,7 @@ def _refresh_universe_state_for_readiness(
         setattr(
             state,
             "universe_fail_safe_block_reason",
-            f"jangar_readiness_probe_failed:{type(exc).__name__}",
+            f"readiness_probe_failed:{type(exc).__name__}",
         )
         return
 
@@ -2533,13 +2527,7 @@ def _refresh_universe_state_for_readiness(
     setattr(state, "universe_source_reason", resolution.reason)
     setattr(state, "universe_symbols_count", symbols_count)
     setattr(state, "universe_cache_age_seconds", resolution.cache_age_seconds)
-    fail_safe_blocked = symbols_count == 0 and (
-        settings.trading_universe_source == "static"
-        or (
-            settings.trading_universe_source == "jangar"
-            and settings.trading_universe_require_non_empty_jangar
-        )
-    )
+    fail_safe_blocked = symbols_count == 0 and settings.trading_universe_source == "static"
     setattr(state, "universe_fail_safe_blocked", fail_safe_blocked)
     setattr(
         state,
@@ -3032,60 +3020,21 @@ def readyz() -> JSONResponse:
     )
 
 
-def _load_jangar_dependency_quorum_payload() -> dict[str, object]:
-    """Fetch cached Jangar dependency carry for revenue-repair reentry only."""
-
-    dependency_quorum = load_jangar_dependency_quorum()
-    return dependency_quorum.as_payload()
 
 
-def _load_jangar_verify_trust_foreclosure_board(
-    dependency_quorum_payload: Mapping[str, object] | None = None,
-) -> dict[str, object] | None:
-    """Fetch cached Jangar verify-trust board for legacy revenue-repair callers."""
 
-    payload = dependency_quorum_payload or _load_jangar_dependency_quorum_payload()
-    board = payload.get("verify_trust_foreclosure_board")
-    if not isinstance(board, Mapping):
-        return None
-    return dict(cast(Mapping[str, object], board))
+
 
 
 @app.get("/trading/revenue-repair")
 def trading_revenue_repair() -> dict[str, object]:
-    """Return business-state and repair-priority evidence for revenue readiness."""
+    """Return business-state and repair-priority evidence for revenue readiness (standalone local version)."""
 
     readyz_payload, _status_code = _evaluate_trading_health_payload(
         include_database_contract=True,
         allow_stale_dependency_cache=True,
     )
     status_payload = trading_status()
-    dependency_quorum_payload = _load_jangar_dependency_quorum_payload()
-    verify_trust_foreclosure_board = _load_jangar_verify_trust_foreclosure_board(
-        dependency_quorum_payload
-    )
-    if dependency_quorum_payload:
-        status_payload = {
-            **status_payload,
-            "dependency_quorum": dependency_quorum_payload,
-            "controller_ingestion_settlement": dependency_quorum_payload.get(
-                "controller_ingestion_settlement"
-            ),
-            "verify_trust_foreclosure_board": verify_trust_foreclosure_board
-            or dependency_quorum_payload.get("verify_trust_foreclosure_board"),
-            "repair_slot_escrow": dependency_quorum_payload.get("repair_slot_escrow"),
-            "stage_debt_repair_admission": dependency_quorum_payload.get(
-                "stage_debt_repair_admission"
-            ),
-            "foreclosure_carry_rollout_witness": dependency_quorum_payload.get(
-                "foreclosure_carry_rollout_witness"
-            ),
-        }
-    elif verify_trust_foreclosure_board is not None:
-        status_payload = {
-            **status_payload,
-            "verify_trust_foreclosure_board": verify_trust_foreclosure_board,
-        }
     return cast(
         dict[str, object],
         jsonable_encoder(
@@ -3110,7 +3059,7 @@ def trading_profit_freshness_zero_notional_repair(
     repair_lot_dispatch_ticket: dict[str, Any] | None = Body(
         default=None,
         description=(
-            "Jangar repair_lot_dispatch_ticket authorizing runner-required "
+
             "zero-notional repair execution."
         ),
     ),
@@ -3688,7 +3637,7 @@ def whitepaper_status() -> dict[str, object]:
         os.getenv("WHITEPAPER_WORKFLOW_API_TOKEN", "").strip()
         or os.getenv("WHITEPAPER_AGENTRUN_API_TOKEN", "").strip()
         or os.getenv("AGENTS_API_KEY", "").strip()
-        or os.getenv("JANGAR_API_KEY", "").strip()
+        or os.getenv("AGENTS_API_KEY", "").strip()
     )
     return {
         "workflow_enabled": whitepaper_workflow_enabled(),
@@ -3840,7 +3789,7 @@ def approve_whitepaper_for_engineering(
         payload.get("approval_reason") or payload.get("approvalReason") or ""
     ).strip()
     approval_source = str(
-        payload.get("approval_source") or payload.get("approvalSource") or "jangar_ui"
+        payload.get("approval_source") or payload.get("approvalSource") or "manual"
     ).strip()
     target_scope = (
         str(payload.get("target_scope") or payload.get("targetScope") or "").strip()
@@ -3862,7 +3811,7 @@ def approve_whitepaper_for_engineering(
             run_id=run_id,
             approved_by=approved_by,
             approval_reason=approval_reason,
-            approval_source=approval_source or "jangar_ui",
+            approval_source=approval_source or "manual",
             target_scope=target_scope,
             repository=repository,
             base=base,
@@ -4640,16 +4589,8 @@ def trading_status() -> dict[str, object]:
 
 
 def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
-    dependency_quorum = load_jangar_dependency_quorum(
+    return load_jangar_dependency_quorum(
         omit_torghut_consumer_evidence=True,
-    )
-    if dependency_quorum.reasons != ["jangar_control_plane_status_url_missing"]:
-        return dependency_quorum
-
-    return JangarDependencyQuorumStatus(
-        decision="allow",
-        reasons=[],
-        message=CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE,
     )
 
 
@@ -4678,7 +4619,7 @@ def _build_consumer_evidence_receipt_projection(
 
 
 def _consumer_evidence_summary_view(view: str | None) -> bool:
-    return (view or "").strip().lower() in {"compact", "summary", "jangar"}
+    return (view or "").strip().lower() in {"compact", "summary"}
 
 
 def _revenue_repair_topline_fields(
@@ -4792,7 +4733,7 @@ def _build_trading_consumer_evidence_payload(
         "caller_evaluated"
         if dependency_quorum.message
         == CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE
-        else "jangar_status_non_recursive"
+        else "local_status"
     )
     if summary:
         return {
@@ -4824,9 +4765,7 @@ def _build_trading_consumer_evidence_payload(
             proof_floor.get("route_reacquisition_book"),
         ),
         active_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        jangar_continuity=_consumer_evidence_jangar_continuity_packet(
-            dependency_quorum.as_payload()
-        ),
+
     )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
@@ -5153,12 +5092,6 @@ def _build_trading_consumer_evidence_payload(
                 revenue_repair_digest.get("alpha_repair_dividend_ledger"),
             ),
         ),
-        "jangar_controller_ingestion_carry": compact_jangar_controller_ingestion_carry(
-            cast(
-                Mapping[str, Any],
-                revenue_repair_digest.get("jangar_controller_ingestion_carry"),
-            )
-        ),
         "no_delta_repair_reentry_auction": compact_no_delta_repair_reentry_auction(
             cast(
                 Mapping[str, Any],
@@ -5178,7 +5111,7 @@ def _build_trading_consumer_evidence_payload(
 def trading_consumer_evidence(
     view: str | None = Query(default=None),
 ) -> dict[str, object]:
-    """Return Jangar-facing Torghut evidence without recursive Jangar status fetches."""
+    """Return Torghut evidence (standalone local version)."""
 
     return _build_trading_consumer_evidence_payload(
         summary=_consumer_evidence_summary_view(view)
@@ -5651,14 +5584,7 @@ def _build_current_evidence_epoch(
         schema_reasons = [f"database_contract_unavailable:{type(exc).__name__}"]
         schema_head_signature = None
 
-    receipts.append(
-        build_jangar_authority_receipt(
-            quorum_payload=resolve_hypothesis_dependency_quorum(
-                load_hypothesis_registry()
-            ).as_payload(),
-            observed_at=observed_at,
-        )
-    )
+
     receipts.append(
         build_service_health_receipt(
             role="torghut-live",

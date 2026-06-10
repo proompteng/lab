@@ -29,7 +29,6 @@ _DIMENSION_EXPECTED_BPS: Mapping[str, Decimal] = {
     "feature_coverage": Decimal("16"),
     "drift_checks": Decimal("12"),
     "schema_migration_state": Decimal("10"),
-    "jangar_settlement": Decimal("8"),
 }
 _DIMENSION_REPAIR_COST: Mapping[str, str] = {
     "empirical_proof": "medium",
@@ -39,7 +38,6 @@ _DIMENSION_REPAIR_COST: Mapping[str, str] = {
     "feature_coverage": "medium",
     "drift_checks": "low",
     "schema_migration_state": "low",
-    "jangar_settlement": "low",
 }
 _REPAIR_COST_PENALTY: Mapping[str, Decimal] = {
     "low": Decimal("2"),
@@ -54,7 +52,6 @@ _DIMENSION_ACTION: Mapping[str, str] = {
     "tca_fill_quality": "recompute_route_tca_and_fill_quality",
     "route_readiness": "settle_routeability_acceptance_lots",
     "schema_migration_state": "refresh_schema_and_migration_lineage_receipts",
-    "jangar_settlement": "refresh_jangar_reliability_settlement",
 }
 _DIMENSION_REPAIR_CLASSES: Mapping[str, tuple[str, ...]] = {
     "signal_ingestion": ("quant", "scoped_quant", "signal", "signal_ingestion"),
@@ -64,7 +61,6 @@ _DIMENSION_REPAIR_CLASSES: Mapping[str, tuple[str, ...]] = {
     "tca_fill_quality": ("fill_quality", "route_tca", "tca"),
     "route_readiness": ("route", "routeability", "route_readiness"),
     "schema_migration_state": ("migration", "schema", "schema_migration"),
-    "jangar_settlement": ("jangar", "jangar_settlement", "reliability_settlement"),
 }
 _DAILY_NET_PNL_UNLOCK_KEYS = (
     "expected_daily_net_pnl_unlock",
@@ -85,7 +81,6 @@ _DIMENSION_SUCCESS: Mapping[str, str] = {
     "tca_fill_quality": "route TCA rows are fresh and inside fill-quality guardrails",
     "route_readiness": "routeability acceptance ledger is accepted with settled receipt refs",
     "schema_migration_state": "schema and migration lineage blockers are absent",
-    "jangar_settlement": "Jangar reliability settlement allows paper canary consideration",
 }
 _REPAIRABLE_DIMENSIONS = frozenset(_DIMENSION_ACTION)
 _ROUTEABILITY_ONLY_TCA_REASON_CODES = {
@@ -94,9 +89,7 @@ _ROUTEABILITY_ONLY_TCA_REASON_CODES = {
     "route_tca_passed_but_dependency_receipts_block_capital",
 }
 _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = ("capital_state_", "proof_floor_")
-_NONBLOCKING_JANGAR_RELIABILITY_REASONS = {
-    "torghut_dependency_quorum_not_required",
-}
+_NONBLOCKING_JANGAR_RELIABILITY_REASONS = set()
 _NONBLOCKING_QUANT_HEALTH_REASONS = {
     "quant_health_not_configured",
 }
