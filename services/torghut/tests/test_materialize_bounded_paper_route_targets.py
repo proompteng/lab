@@ -863,6 +863,72 @@ def test_url_payload_prefers_nested_hpairs_materialization_plan(
     assert _count_decisions(sqlite_dsn) == 0
 
 
+def test_url_payload_accepts_trading_proofs_materialization_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "schema_version": "torghut.proofs.v1",
+        "proofs": [
+            {
+                "identity": {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "account_label": "TORGHUT_SIM",
+                    "source_account_label": "TORGHUT_SIM",
+                    "source_kind": "runtime_window",
+                    "source_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
+                    "target_notional": "20",
+                    "target_symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
+                    "target_symbol_quantities": {"AAPL": "1", "AMZN": "1"},
+                },
+                "window": {
+                    "start": "2026-06-01T13:30:00+00:00",
+                    "end": "2026-06-01T20:00:00+00:00",
+                },
+                "symbols": ["AAPL", "AMZN"],
+                "state": "waiting_for_session",
+            }
+        ],
+        "summary": {"target_count": 1},
+        "promotion_authority": {
+            "allowed": False,
+            "final_promotion_allowed": False,
+        },
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
+            "--max-notional",
+            "25",
+            "--confirm-selected-plan-source",
+            "trading_proofs",
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["plan_source"] == {
+        "kind": "url",
+        "url": "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
+        "selected_plan": "trading_proofs",
+        "fetch_attempts": None,
+    }
+    assert report["hypothesis_ids"] == ["H-PAIRS-01"]
+    assert report["candidate_ids"] == ["c88421d619759b2cfaa6f4d0"]
+    assert report["materialized_decision_count"] == 2
+    assert report["route_submission_count"] == 2
+    assert report["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 0
+
+
 def test_url_payload_prefers_bounded_plan_over_larger_source_collection_plan(
     monkeypatch: pytest.MonkeyPatch,
     sqlite_dsn: str,

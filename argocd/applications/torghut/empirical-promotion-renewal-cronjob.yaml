@@ -82,7 +82,7 @@ spec:
                     --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
                     --hpairs-source-proof-census-file "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}" \
                     --runtime-window-import \
-                    --runtime-window-target-plan-url 'http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5' \
+                    --runtime-window-target-plan-url 'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true&limit=5' \
                     --runtime-window-target-plan-url-timeout-seconds 45 \
                     --runtime-window-target-plan-url-attempts 3 \
                     --runtime-window-target-plan-url-retry-backoff-seconds 5 \

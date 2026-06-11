@@ -1,5 +1,4 @@
 """Trading scheduler runtime entrypoint and async loop."""
-# pyright: reportUnusedImport=false, reportPrivateUsage=false
 
 from __future__ import annotations
 
@@ -41,7 +40,7 @@ from ..universe import UniverseResolver
 from .governance import TradingSchedulerGovernanceMixin
 from .pipeline import TradingPipeline
 from .simple_pipeline import SimpleTradingPipeline
-from .pipeline_helpers import _build_llm_policy_resolution
+from .pipeline_helpers import build_llm_policy_resolution
 from .state import TradingState
 
 logger = logging.getLogger(__name__)
@@ -111,7 +110,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         if llm_review_engine:
             circuit_snapshot = llm_review_engine.circuit_breaker.snapshot()
         guardrails = evaluate_llm_guardrails()
-        policy_resolution = _build_llm_policy_resolution(
+        policy_resolution = build_llm_policy_resolution(
             rollout_stage=guardrails.rollout_stage,
             effective_fail_mode=guardrails.effective_fail_mode,
             guardrail_reasons=guardrails.reasons,
@@ -131,7 +130,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
                 dspy_runtime_status["live_ready"] = live_ready
                 dspy_runtime_status["readiness_reasons"] = list(readiness_reasons)
                 if live_ready:
-                    manifest = dspy_runtime._resolve_artifact_manifest()
+                    manifest = dspy_runtime.resolve_artifact_manifest()
                     dspy_runtime_status["executor"] = manifest.executor
                     dspy_runtime_status["artifact_source"] = manifest.source
             except DSPyRuntimeUnsupportedStateError as exc:

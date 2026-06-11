@@ -55,7 +55,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('python3 -m json.tool "${output_path}"')
     expect(workflow).toContain('not usable JSON yet; retrying')
     expect(workflow).toContain('fetch_json_2xx')
-    expect(workflow).toContain('Torghut sim /trading/paper-route-evidence')
+    expect(workflow).toContain('Torghut sim /trading/proofs')
     expect(workflow).not.toContain('curl -fsS http://torghut.torghut.svc.cluster.local/trading/status')
   })
 
@@ -67,8 +67,8 @@ describe('torghut post-deploy verifier workflow', () => {
 
   it('verifies torghut-sim paper-route target mirroring after deploy', () => {
     expect(workflow).toContain('Knative Service torghut-sim is not Ready')
-    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence')
-    expect(workflow).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence')
+    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/proofs')
+    expect(workflow).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/proofs')
     expect(workflow).toContain('TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
   })
 

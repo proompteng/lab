@@ -25,6 +25,7 @@ from app.trading.paper_route_target_plan import (
     PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID,
     materialize_bounded_paper_route_target_plan,
     paper_route_target_execution_capacity_blockers,
+    paper_route_target_plan_from_payload,
     paper_route_target_plan_targets,
 )
 
@@ -35,6 +36,7 @@ DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE = (
 )
 DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCES = (
     DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+    "trading_proofs",
     "runtime_ledger_paper_probation_import_plan",
     "latest_closed_paper_route_runtime_window_targets",
     "next_paper_route_runtime_window_targets",
@@ -279,6 +281,12 @@ def _candidate_materialization_plans(
     payload: Mapping[str, Any],
 ) -> list[tuple[str, dict[str, Any]]]:
     return [
+        (
+            "trading_proofs",
+            paper_route_target_plan_from_payload(payload)
+            if str(payload.get("schema_version") or "").strip() == "torghut.proofs.v1"
+            else {},
+        ),
         (
             "live_submission_gate.runtime_ledger_paper_probation_import_plan",
             _nested_mapping(

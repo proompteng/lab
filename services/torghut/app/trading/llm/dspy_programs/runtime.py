@@ -131,8 +131,7 @@ class DSPyReviewRuntime:
             self.mode in {"shadow", "active"}
             and bool(self.artifact_hash)
             and not (
-                self.mode == "active"
-                and self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH
+                self.mode == "active" and self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH
             )
         )
 
@@ -179,16 +178,15 @@ class DSPyReviewRuntime:
             self._require_live_runtime_gate()
         if self.artifact_hash is None:
             raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_missing")
-        if (
-            self.mode == "active"
-            and self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH
-        ):
+        if self.mode == "active" and self.artifact_hash == _BOOTSTRAP_ARTIFACT_HASH:
             raise DSPyRuntimeUnsupportedStateError("dspy_bootstrap_artifact_forbidden")
 
         if self.mode == "active":
             live_ready, live_reasons = self.evaluate_live_readiness()
             if not live_ready:
-                reason = live_reasons[0] if live_reasons else "dspy_live_runtime_not_ready"
+                reason = (
+                    live_reasons[0] if live_reasons else "dspy_live_runtime_not_ready"
+                )
                 raise DSPyRuntimeUnsupportedStateError(reason)
 
         manifest = self._resolve_artifact_manifest()
@@ -238,6 +236,9 @@ class DSPyReviewRuntime:
             latency_ms=int(elapsed * 1000),
         )
         return response, metadata
+
+    def resolve_artifact_manifest(self) -> DSPyArtifactManifest:
+        return self._resolve_artifact_manifest()
 
     def _resolve_artifact_manifest(self) -> DSPyArtifactManifest:
         if self.artifact_hash is None:
@@ -473,13 +474,9 @@ def _resolve_dspy_api_base() -> str:
     if not parsed.hostname:
         raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_missing")
     if parsed.scheme not in {"http", "https"}:
-        raise DSPyRuntimeUnsupportedStateError(
-            "dspy_jangar_base_url_invalid_scheme"
-        )
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid_scheme")
     if parsed.query or parsed.fragment:
-        raise DSPyRuntimeUnsupportedStateError(
-            "dspy_jangar_base_url_invalid_path"
-        )
+        raise DSPyRuntimeUnsupportedStateError("dspy_jangar_base_url_invalid_path")
 
     base_path = (parsed.path or "/").rstrip("/")
     if base_path in ("", "/"):

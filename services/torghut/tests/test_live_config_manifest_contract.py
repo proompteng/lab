@@ -698,7 +698,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS"),
@@ -1415,7 +1415,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--target-plan-readback-url", args)
         self.assertIn(
             "http://torghut-sim.torghut.svc.cluster.local/trading/"
-            "paper-route-target-plan?runtime_window_import_audit=deferred",
+            "proofs?kind=runtime_window&window=next&limit=20",
             args,
         )
         self.assertIn("--target-plan-readback-timeout-seconds 10", args)
@@ -1615,7 +1615,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertIn(
             "--plan-url "
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20'",
             args,
         )
         self.assertIn("--plan-url-timeout-seconds 45", args)
@@ -1637,6 +1637,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertIn(
             "--confirm-selected-plan-source "
+            "trading_proofs,"
             "live_submission_gate.runtime_ledger_paper_probation_import_plan,"
             "runtime_ledger_paper_probation_import_plan,"
             "next_paper_route_runtime_window_targets,"
@@ -2118,7 +2119,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "
-            "'http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
+            "'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true&limit=5'",
             args,
         )
         self.assertNotIn(

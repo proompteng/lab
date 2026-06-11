@@ -135,9 +135,9 @@ from .trading.paper_route_evidence import (
     MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
     MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
     PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
-    build_paper_route_evidence_audit,
-    build_paper_route_target_plan_payload,
 )
+from .trading.proofs.service import build_proofs_payload
+from .trading.proofs.schemas import ProofKind, ProofWindowSelector
 from .trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
 )
@@ -6188,35 +6188,46 @@ def trading_runtime_profitability(
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
-@app.get("/trading/paper-route-evidence")
-def trading_paper_route_evidence(
-    lookback_hours: int = Query(
-        DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-        ge=1,
-        le=MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-        description="Bounded fallback lookback window for targets without explicit windows.",
-    ),
-    target_limit: int = Query(
-        DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-        ge=1,
-        le=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-        description="Maximum number of paper-route targets to audit.",
-    ),
-    full_audit: bool = Query(
-        False,
-        description=(
-            "Force full source/runtime-ledger audits before the runtime window "
-            "is import-ready."
-        ),
-    ),
-) -> JSONResponse:
-    """Return target-by-target paper-route evidence collection status."""
+def _paper_route_target_plan_audit_mode_value(mode: str) -> bool | None:
+    normalized = mode.strip().lower()
+    if normalized == "deferred":
+        return False
+    if normalized == "full":
+        return True
+    return None
 
+
+def _proof_kind_value(kind: str) -> ProofKind:
+    if kind.strip() != "runtime_window":
+        raise HTTPException(status_code=400, detail="unsupported proof kind")
+    return "runtime_window"
+
+
+def _proof_window_value(window: str) -> ProofWindowSelector:
+    normalized = window.strip().lower()
+    if normalized == "next":
+        return "next"
+    if normalized == "latest_closed":
+        return "latest_closed"
+    return "auto"
+
+
+def _trading_scheduler_for_proofs() -> TradingScheduler:
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
     if scheduler is None:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
+    return scheduler
 
+
+def _build_trading_proofs_payload(
+    *,
+    kind: ProofKind,
+    limit: int,
+    window: ProofWindowSelector,
+    full_audit: bool,
+) -> dict[str, object]:
+    scheduler = _trading_scheduler_for_proofs()
     empirical_jobs = _empirical_jobs_status()
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
@@ -6274,27 +6285,89 @@ def trading_paper_route_evidence(
             proof_floor.get("route_reacquisition_book") or {},
         )
     with SessionLocal() as session:
-        payload = build_paper_route_evidence_audit(
-            session,
-            live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
-            route_reacquisition_book=route_reacquisition_book,
-            lookback_hours=lookback_hours,
-            target_limit=target_limit,
-            include_runtime_window_import_audit=True if full_audit else None,
-            target_account_audit_available=_paper_route_target_account_audit_available(
-                cast(Mapping[str, Any], live_submission_gate)
-            ),
+        return dict(
+            build_proofs_payload(
+                session,
+                live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
+                route_reacquisition_book=route_reacquisition_book,
+                kind=kind,
+                limit=limit,
+                window=window,
+                full_audit=full_audit,
+                target_account_audit_available=(
+                    _paper_route_target_account_audit_available(
+                        cast(Mapping[str, Any], live_submission_gate)
+                    )
+                ),
+            )
         )
+
+
+@app.get("/trading/proofs")
+def trading_proofs(
+    kind: str = Query(
+        "runtime_window",
+        pattern="^runtime_window$",
+        description="Proof family to return.",
+    ),
+    limit: int = Query(
+        DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        ge=1,
+        le=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        description="Maximum number of proof targets to return.",
+    ),
+    window: str = Query(
+        "auto",
+        pattern="^(next|latest_closed|auto)$",
+        description="Runtime window selection.",
+    ),
+    full_audit: bool = Query(
+        False,
+        description="Run full closed-window source, ledger, and account checks.",
+    ),
+) -> JSONResponse:
+    """Return canonical runtime-window proofs."""
+
+    payload = _build_trading_proofs_payload(
+        kind=_proof_kind_value(kind),
+        limit=limit,
+        window=_proof_window_value(window),
+        full_audit=full_audit,
+    )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
-def _paper_route_target_plan_audit_mode_value(mode: str) -> bool | None:
-    normalized = mode.strip().lower()
-    if normalized == "deferred":
-        return False
-    if normalized == "full":
-        return True
-    return None
+@app.get("/trading/paper-route-evidence")
+def trading_paper_route_evidence(
+    lookback_hours: int = Query(
+        DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        ge=1,
+        le=MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        description="Deprecated; use /trading/proofs limit/window instead.",
+    ),
+    target_limit: int = Query(
+        DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        ge=1,
+        le=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        description="Deprecated alias for /trading/proofs limit.",
+    ),
+    full_audit: bool = Query(
+        False,
+        description="Deprecated alias for /trading/proofs full_audit.",
+    ),
+) -> JSONResponse:
+    """Deprecated adapter for the canonical proof payload."""
+
+    del lookback_hours
+    payload = _build_trading_proofs_payload(
+        kind="runtime_window",
+        limit=target_limit,
+        window="auto",
+        full_audit=full_audit,
+    )
+    payload["deprecated_endpoint"] = True
+    payload["replacement_endpoint"] = "/trading/proofs"
+    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
 @app.get("/trading/paper-route-target-plan")
@@ -6302,120 +6375,20 @@ def trading_paper_route_target_plan(
     runtime_window_import_audit: str = Query(
         "auto",
         pattern="^(auto|deferred|full)$",
-        description=(
-            "Runtime-window import audit mode. Use deferred for low-latency "
-            "clean-window readback; auto runs full proof audit only when import-ready."
-        ),
+        description="Deprecated; use /trading/proofs?window=next.",
     ),
 ) -> JSONResponse:
-    """Return the lightweight next-window paper-route target plan."""
+    """Deprecated adapter for the canonical proof payload."""
 
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
-
-    empirical_jobs: dict[str, object] | None = None
-    quant_evidence: Mapping[str, Any] | None = None
-    tca_summary: Mapping[str, Any] | None = None
-    market_context_status: Mapping[str, Any] | None = None
-    hypothesis_payload: Mapping[str, Any] | None = None
-
-    live_submission_gate = _paper_route_cached_live_submission_gate(
-        scheduler,
-        require_bounded_sim_targets=settings.trading_mode == "live",
+    audit_mode = _paper_route_target_plan_audit_mode_value(runtime_window_import_audit)
+    payload = _build_trading_proofs_payload(
+        kind="runtime_window",
+        limit=DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        window="next",
+        full_audit=audit_mode is True,
     )
-    loaded_full_live_gate = False
-    if live_submission_gate is None:
-        empirical_jobs = _empirical_jobs_status()
-        quant_evidence = load_quant_evidence_status(
-            account_label=settings.trading_account_label,
-        )
-        gate_hypothesis_payload = (
-            _deferred_hypothesis_payload_for_live_submission_gate()
-        )
-        with SessionLocal() as session:
-            live_submission_gate = _build_live_submission_gate_payload(
-                scheduler.state,
-                session=session,
-                hypothesis_summary=gate_hypothesis_payload,
-                empirical_jobs_status=empirical_jobs,
-                dspy_runtime_status=cast(
-                    dict[str, object],
-                    scheduler.llm_status().get("dspy_runtime", {}),
-                ),
-                quant_health_status=quant_evidence,
-            )
-        if not bool(live_submission_gate.get("read_model_unavailable")):
-            setattr(scheduler, "_last_live_submission_gate", dict(live_submission_gate))
-        loaded_full_live_gate = True
-    live_submission_gate = _merge_external_paper_route_target_plan(
-        cast(Mapping[str, Any], live_submission_gate)
-    )
-    simple_lane_status = _build_simple_lane_status_payload()
-    with SessionLocal() as session:
-        route_reacquisition_book = _paper_route_probe_book_from_target_plan(
-            live_submission_gate,
-            simple_lane_status=simple_lane_status,
-            state=scheduler.state,
-            session=session,
-        )
-    if (
-        settings.trading_mode == "live"
-        and loaded_full_live_gate
-        and route_reacquisition_book is None
-    ):
-        assert empirical_jobs is not None
-        assert quant_evidence is not None
-        with SessionLocal() as session:
-            tca_summary = _load_tca_summary(session, scheduler=scheduler)
-        market_context_status = scheduler.market_context_status()
-        hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
-            _build_hypothesis_runtime_payload(
-                scheduler,
-                tca_summary=tca_summary,
-                market_context_status=market_context_status,
-            )
-        )
-        proof_floor = _build_profitability_proof_floor_payload(
-            state=scheduler.state,
-            torghut_revision=BUILD_VERSION,
-            live_submission_gate=live_submission_gate,
-            hypothesis_payload=hypothesis_payload,
-            empirical_jobs_status=empirical_jobs,
-            quant_evidence=quant_evidence,
-            market_context_status=market_context_status,
-            tca_summary=tca_summary,
-            simple_lane_status=simple_lane_status,
-        )
-        proof_floor_route_book = cast(
-            Mapping[str, Any],
-            proof_floor.get("route_reacquisition_book") or {},
-        )
-        if proof_floor_route_book:
-            if route_reacquisition_book is None:
-                route_reacquisition_book = proof_floor_route_book
-            else:
-                route_reacquisition_book = _merge_paper_route_probe_blocking_reasons(
-                    route_reacquisition_book,
-                    fallback_route_reacquisition_book=proof_floor_route_book,
-                )
-    if route_reacquisition_book is None:
-        route_reacquisition_book = cast(Mapping[str, Any], {})
-    with SessionLocal() as session:
-        payload = build_paper_route_target_plan_payload(
-            session,
-            live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
-            route_reacquisition_book=route_reacquisition_book,
-            # Keep this provider endpoint bounded; proof-grade runtime import
-            # audits run only after the runtime window is import-ready.
-            include_runtime_window_import_audit=_paper_route_target_plan_audit_mode_value(
-                runtime_window_import_audit,
-            ),
-            target_account_audit_available=_paper_route_target_account_audit_available(
-                cast(Mapping[str, Any], live_submission_gate)
-            ),
-        )
+    payload["deprecated_endpoint"] = True
+    payload["replacement_endpoint"] = "/trading/proofs"
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
@@ -6618,26 +6591,6 @@ def _paper_route_target_plan_cache_safe_for_live(
     return True
 
 
-def _paper_route_cached_live_submission_gate(
-    scheduler: object,
-    *,
-    require_bounded_sim_targets: bool = False,
-) -> dict[str, object] | None:
-    cached_gate = getattr(scheduler, "_last_live_submission_gate", None)
-    if not isinstance(cached_gate, Mapping):
-        return None
-    gate = dict(cast(Mapping[str, object], cached_gate))
-    plan = _paper_route_target_plan_from_payload(gate)
-    if not _paper_route_target_plan_targets(plan):
-        return None
-    if require_bounded_sim_targets and not _paper_route_target_plan_cache_safe_for_live(
-        plan
-    ):
-        return None
-    gate.setdefault("paper_route_target_plan_source", "cached_live_submission_gate")
-    return gate
-
-
 def _paper_route_target_strategy_lookup_names(
     target: Mapping[str, Any],
 ) -> list[str]:
@@ -6774,55 +6727,6 @@ def _paper_route_probe_book_from_target_plan(
     }
 
 
-def _paper_route_probe_blocking_reasons_from_book(
-    route_reacquisition_book: Mapping[str, Any],
-) -> list[str]:
-    raw_probe = route_reacquisition_book.get("paper_route_probe")
-    if not isinstance(raw_probe, Mapping):
-        return []
-    probe = cast(Mapping[str, Any], raw_probe)
-    raw_reasons = probe.get("blocking_reasons")
-    if not isinstance(raw_reasons, Sequence) or isinstance(
-        raw_reasons,
-        (str, bytes, bytearray),
-    ):
-        return []
-    reason_values = cast(Sequence[object], raw_reasons)
-    reasons: list[str] = []
-    for raw_reason in reason_values:
-        reason = str(raw_reason).strip()
-        if reason and reason not in reasons:
-            reasons.append(reason)
-    return reasons
-
-
-def _merge_paper_route_probe_blocking_reasons(
-    route_reacquisition_book: Mapping[str, Any],
-    *,
-    fallback_route_reacquisition_book: Mapping[str, Any],
-) -> Mapping[str, Any]:
-    fallback_reasons = _paper_route_probe_blocking_reasons_from_book(
-        fallback_route_reacquisition_book
-    )
-    if not fallback_reasons:
-        return route_reacquisition_book
-
-    merged = deepcopy(dict(route_reacquisition_book))
-    raw_probe = merged.get("paper_route_probe")
-    probe: dict[str, Any] = (
-        dict(cast(Mapping[str, Any], raw_probe))
-        if isinstance(raw_probe, Mapping)
-        else {}
-    )
-    reasons = _paper_route_probe_blocking_reasons_from_book(route_reacquisition_book)
-    for reason in fallback_reasons:
-        if reason not in reasons:
-            reasons.append(reason)
-    probe["blocking_reasons"] = reasons
-    merged["paper_route_probe"] = probe
-    return merged
-
-
 def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
     return _mapping_items(plan.get("targets"))
 
@@ -6929,7 +6833,7 @@ def _fetch_paper_route_target_plan_url(
 
 def _paper_route_target_plan_url_points_to_self(parsed: Any) -> bool:
     path = str(getattr(parsed, "path", "") or "").rstrip("/")
-    if path != "/trading/paper-route-target-plan":
+    if path not in {"/trading/paper-route-target-plan", "/trading/proofs"}:
         return False
     hostname = str(getattr(parsed, "hostname", "") or "").strip().lower()
     if not hostname:

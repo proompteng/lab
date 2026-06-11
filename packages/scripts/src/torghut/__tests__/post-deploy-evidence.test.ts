@@ -65,6 +65,35 @@ const buildPaperRouteEvidence = (targets: Array<Record<string, unknown>>) => ({
   },
 })
 
+const buildProofs = (targets: Array<Record<string, unknown>>) => ({
+  schema_version: 'torghut.proofs.v1',
+  promotion_authority: {
+    allowed: false,
+    final_promotion_allowed: false,
+  },
+  proofs: targets.map((target) => ({
+    identity: {
+      hypothesis_id: target.hypothesis_id,
+      candidate_id: target.candidate_id,
+      runtime_strategy_name: target.strategy_name,
+      account_label: 'TORGHUT_SIM',
+      source_kind: 'runtime_window',
+      target_notional: target.paper_route_probe_next_session_max_notional,
+    },
+    window: {
+      start: target.window_start,
+      end: target.window_end,
+    },
+    symbols: target.paper_route_probe_symbols,
+    health: {
+      dependency_quorum_ok: false,
+      continuity_ok: false,
+      drift_ok: false,
+      blockers: ['runtime_window_import_health_gate_pending'],
+    },
+  })),
+})
+
 const baseDigest = {
   business_state: 'repair_only',
   revenue_ready: false,
@@ -155,14 +184,14 @@ describe('validatePostDeployEvidence', () => {
     ).toThrow('max_notional=0')
   })
 
-  it('accepts matching live and sim paper-route target plans', () => {
+  it('accepts matching live and sim proof target plans', () => {
     const result = validatePostDeployEvidence({
       readyzHttpStatus: '200',
       readyz: { status: 'ok' },
       revenueRepairDigest: { ...baseDigest, repair_queue: [] },
       tradingStatus: baseTradingStatus,
-      paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-      simPaperRouteEvidence: buildPaperRouteEvidence([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
+      paperRouteEvidence: buildProofs([paperRouteTarget]),
+      simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
     })
 
     expect(result.summaryLines.join('\n')).toContain('Torghut Paper Route Target Mirror')

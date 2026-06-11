@@ -583,8 +583,8 @@ def test_cli_uses_only_get_readback_requests(
     payload_by_path = {
         "/readyz": _readyz(),
         "/trading/status": _status(),
-        "/trading/paper-route-target-plan": _target_plan(),
-        "/trading/paper-route-evidence": _paper_route_evidence(),
+        "/trading/proofs?kind=runtime_window&window=next&limit=20": _target_plan(),
+        "/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true&limit=20": _paper_route_evidence(),
     }
 
     def fake_urlopen(request: Request, timeout: float) -> _FakeResponse:
@@ -622,8 +622,8 @@ def test_cli_uses_only_get_readback_requests(
     assert [request.full_url for request in requests] == [
         "http://torghut.example/readyz",
         "http://torghut.example/trading/status",
-        "http://torghut.example/trading/paper-route-target-plan",
-        "http://torghut.example/trading/paper-route-evidence",
+        "http://torghut.example/trading/proofs?kind=runtime_window&window=next&limit=20",
+        "http://torghut.example/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true&limit=20",
     ]
 
 

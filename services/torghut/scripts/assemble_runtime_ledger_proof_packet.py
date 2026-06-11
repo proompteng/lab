@@ -40,7 +40,9 @@ RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER = (
     "runtime_ledger_proof_mode_not_authority"
 )
 STATUS_ENDPOINT = "/trading/status"
-PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
+PAPER_ROUTE_EVIDENCE_ENDPOINT = (
+    "/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true"
+)
 COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
 ARTIFACT_SCHEMA_VERSION = "torghut.runtime-ledger-proof-packet-artifact.v1"
 HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION = (
@@ -787,6 +789,9 @@ def _paper_route_target_plan(
     paper_route_evidence: Mapping[str, Any] | None,
 ) -> Mapping[str, Any]:
     evidence = paper_route_evidence or {}
+    proofs_plan = _proofs_target_plan(evidence)
+    if proofs_plan:
+        return proofs_plan
     for key in (
         "runtime_window_import_plan",
         "latest_closed_paper_route_runtime_window_targets",
@@ -796,6 +801,113 @@ def _paper_route_target_plan(
         if _paper_route_targets(plan):
             return plan
     return _mapping(evidence.get("runtime_window_import_plan"))
+
+
+def _proofs_target_plan(evidence: Mapping[str, Any]) -> Mapping[str, Any]:
+    if _text(evidence.get("schema_version")) != "torghut.proofs.v1":
+        return {}
+    proofs = [_mapping(item) for item in _sequence(evidence.get("proofs"))]
+    targets: list[dict[str, Any]] = []
+    import_blockers: list[str] = []
+    for proof in proofs:
+        target = _proof_identity_target(proof)
+        if not target:
+            continue
+        target_blockers = _text_list(proof.get("blockers"))
+        _extend_unique(import_blockers, target_blockers)
+        target.setdefault("promotion_allowed", False)
+        target.setdefault("final_promotion_allowed", False)
+        target.setdefault("final_promotion_authorized", False)
+        target["runtime_window_import_health_gate"] = _proof_health_gate(proof)
+        target["paper_route_session_import_ready"] = _text(proof.get("state")) in {
+            "import_due",
+            "proof_ready",
+        }
+        target["paper_route_session_import_blockers"] = target_blockers
+        targets.append(target)
+    if not targets:
+        return {}
+    import_ready = any(
+        bool(target.get("paper_route_session_import_ready")) for target in targets
+    )
+    if import_ready:
+        import_blockers = [
+            blocker
+            for blocker in import_blockers
+            if blocker != "runtime_ledger_materialization_missing"
+        ]
+    return {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "source": "trading_proofs_endpoint",
+        "purpose": "runtime_window_proof_target_materialization",
+        "target_count": len(targets),
+        "targets": targets,
+        "session_readiness": {
+            "import_ready": import_ready and not import_blockers,
+            "import_blockers": import_blockers,
+        },
+        "runtime_window_import_handoff": {
+            "import_ready": import_ready and not import_blockers,
+            "import_blockers": import_blockers,
+        },
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+    }
+
+
+def _proof_identity_target(proof: Mapping[str, Any]) -> dict[str, Any]:
+    identity = _mapping(proof.get("identity"))
+    window = _mapping(proof.get("window"))
+    symbols = [
+        _text(symbol).upper()
+        for symbol in _sequence(proof.get("symbols"))
+        if _text(symbol)
+    ]
+    return {
+        "hypothesis_id": identity.get("hypothesis_id"),
+        "candidate_id": identity.get("candidate_id"),
+        "strategy_family": identity.get("strategy_family"),
+        "strategy_name": identity.get("strategy_name")
+        or identity.get("runtime_strategy_name"),
+        "runtime_strategy_name": identity.get("runtime_strategy_name")
+        or identity.get("strategy_name"),
+        "account_label": identity.get("account_label"),
+        "source_account_label": identity.get("source_account_label"),
+        "source_kind": identity.get("source_kind"),
+        "source_plan_ref": identity.get("source_plan_ref"),
+        "target_notional": identity.get("target_notional"),
+        "window_start": window.get("start"),
+        "window_end": window.get("end"),
+        "paper_route_probe_symbols": symbols,
+        "symbols": symbols,
+        "paper_route_probe_symbol_actions": dict(
+            _mapping(identity.get("target_symbol_actions"))
+        ),
+        "paper_route_probe_symbol_quantities": dict(
+            _mapping(identity.get("target_symbol_quantities"))
+        ),
+    }
+
+
+def _proof_health_gate(proof: Mapping[str, Any]) -> dict[str, Any]:
+    health = _mapping(proof.get("health"))
+    blockers = _text_list(health.get("blockers"))
+    ready = (
+        _bool(health.get("dependency_quorum_ok"))
+        and _bool(health.get("continuity_ok"))
+        and _bool(health.get("drift_ok"))
+        and not blockers
+    )
+    return {
+        "ready": ready,
+        "dependency_quorum_decision": "allow"
+        if _bool(health.get("dependency_quorum_ok"))
+        else "block",
+        "continuity_ok": _bool(health.get("continuity_ok")),
+        "drift_ok": _bool(health.get("drift_ok")),
+        "blockers": blockers,
+        "promotion_blockers": blockers,
+    }
 
 
 def _paper_route_import_blockers(plan: Mapping[str, Any]) -> list[str]:
@@ -818,7 +930,61 @@ def _paper_route_targets(plan: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 def _paper_route_runtime_window_import_audit(
     paper_route_evidence: Mapping[str, Any] | None,
 ) -> Mapping[str, Any]:
-    return _mapping((paper_route_evidence or {}).get("runtime_window_import_audit"))
+    evidence = paper_route_evidence or {}
+    if _text(evidence.get("schema_version")) == "torghut.proofs.v1":
+        return _proofs_runtime_window_import_audit(evidence)
+    return _mapping(evidence.get("runtime_window_import_audit"))
+
+
+def _proofs_runtime_window_import_audit(
+    evidence: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    proofs = [_mapping(item) for item in _sequence(evidence.get("proofs"))]
+    target_blockers: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    targets_with_source_activity = 0
+    for proof in proofs:
+        proof_blockers = _text_list(proof.get("blockers"))
+        _extend_unique(blockers, proof_blockers)
+        if proof_blockers:
+            identity = _mapping(proof.get("identity"))
+            target_blockers.append(
+                {
+                    "hypothesis_id": _text(identity.get("hypothesis_id")),
+                    "candidate_id": _text(identity.get("candidate_id")),
+                    "strategy_name": _text(
+                        identity.get("runtime_strategy_name")
+                        or identity.get("strategy_name")
+                    ),
+                    "blockers": proof_blockers,
+                }
+            )
+        counts = _mapping(proof.get("source_counts"))
+        if _int(counts.get("rejected_signal_events")) > 0 or (
+            _int(counts.get("decisions")) > 0
+            and _int(counts.get("executions")) > 0
+            and _int(counts.get("execution_tca_metrics")) > 0
+        ):
+            targets_with_source_activity += 1
+    state = "ready" if proofs and not blockers else "blocked"
+    if any(_text(proof.get("state")) == "import_due" for proof in proofs):
+        state = "import_due"
+    return {
+        "state": state,
+        "import_ready": any(
+            _text(proof.get("state")) in {"import_due", "proof_ready"}
+            for proof in proofs
+        ),
+        "next_action": "run_runtime_ledger_materialization"
+        if state == "import_due"
+        else "repair_blockers",
+        "blockers": blockers,
+        "target_blockers": target_blockers,
+        "counts": {
+            "source_plan_target_count": len(proofs),
+            "targets_with_source_activity": targets_with_source_activity,
+        },
+    }
 
 
 def _paper_route_runtime_window_import_audit_counts(
@@ -3497,7 +3663,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--paper-route-service-base-url",
-        help="Base Torghut paper/sim service URL used to fetch /trading/paper-route-evidence.",
+        help="Base Torghut paper/sim service URL used to fetch /trading/proofs.",
     )
     parser.add_argument(
         "--completion-service-base-url",
@@ -3512,11 +3678,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--paper-route-evidence-file",
         type=Path,
-        help="Path to a /trading/paper-route-evidence JSON payload.",
+        help="Path to a /trading/proofs JSON payload.",
     )
     parser.add_argument(
         "--paper-route-evidence-url",
-        help="URL returning a /trading/paper-route-evidence JSON payload.",
+        help="URL returning a /trading/proofs JSON payload.",
     )
     parser.add_argument(
         "--runtime-window-import-file",

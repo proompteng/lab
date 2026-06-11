@@ -3977,7 +3977,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             self.assertEqual(timeout, packet.DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS)
             payloads = {
                 "http://torghut.local/trading/status": _status(),
-                "http://torghut.local/trading/paper-route-evidence": (
+                f"http://torghut.local{packet.PAPER_ROUTE_EVIDENCE_ENDPOINT}": (
                     _paper_route_evidence()
                 ),
                 "http://torghut.local/trading/completion/doc29": _completion(),
@@ -4012,7 +4012,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 {
                     "status_url": "http://torghut.local/trading/status",
                     "paper_route_evidence_url": (
-                        "http://torghut.local/trading/paper-route-evidence"
+                        f"http://torghut.local{packet.PAPER_ROUTE_EVIDENCE_ENDPOINT}"
                     ),
                     "completion_url": ("http://torghut.local/trading/completion/doc29"),
                 },
@@ -4041,7 +4041,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             self.assertEqual(timeout, packet.DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS)
             payloads = {
                 "http://torghut-live.local/trading/status": _status(),
-                "http://torghut-sim.local/trading/paper-route-evidence": (
+                f"http://torghut-sim.local{packet.PAPER_ROUTE_EVIDENCE_ENDPOINT}": (
                     _paper_route_evidence()
                 ),
                 "http://torghut-live.local/trading/completion/doc29": _completion(),
@@ -4088,7 +4088,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 {
                     "status_url": "http://torghut-live.local/trading/status",
                     "paper_route_evidence_url": (
-                        "http://torghut-sim.local/trading/paper-route-evidence"
+                        f"http://torghut-sim.local{packet.PAPER_ROUTE_EVIDENCE_ENDPOINT}"
                     ),
                     "completion_url": (
                         "http://torghut-live.local/trading/completion/doc29"
@@ -4114,7 +4114,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             self.assertEqual(timeout, packet.DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS)
             if url == "http://torghut-live.local/trading/status":
                 return _Response(_status())
-            if url == "http://torghut-sim.local/trading/paper-route-evidence":
+            if url == f"http://torghut-sim.local{packet.PAPER_ROUTE_EVIDENCE_ENDPOINT}":
                 raise HTTPError(
                     url=url,
                     code=503,

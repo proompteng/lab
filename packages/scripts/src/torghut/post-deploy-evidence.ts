@@ -4,6 +4,7 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import process from 'node:process'
 
 const ROUTE_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
+const PROOFS_SCHEMA_VERSION = 'torghut.proofs.v1'
 const PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = 'torghut.paper-route-evidence.v1'
 const PAPER_ROUTE_TARGETS_SCHEMA_VERSION = 'torghut.next-paper-route-runtime-window-targets.v1'
 const RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SCHEMA_VERSION = 'torghut.runtime-window-import-health-gate.v1'
@@ -267,8 +268,13 @@ const parsePaperRouteTargets = (
 ): { targetCount: number; targetsByIdentity: Map<string, PaperRouteTargetEnvelope> } => {
   const payload = requireObject(evidence, `${label} payload`)
   const schemaVersion = formatScalar(payload.schema_version, 'missing')
+  if (schemaVersion === PROOFS_SCHEMA_VERSION) {
+    return parseProofTargets(payload, label)
+  }
   if (schemaVersion !== PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION) {
-    throw new Error(`${label} schema mismatch: expected ${PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION}, got ${schemaVersion}`)
+    throw new Error(
+      `${label} schema mismatch: expected ${PROOFS_SCHEMA_VERSION} or ${PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION}, got ${schemaVersion}`,
+    )
   }
   const plan = selectPaperRouteMirrorPlan(payload, label)
   const planSchemaVersion = formatScalar(plan.schema_version, 'missing')
@@ -330,6 +336,56 @@ const parsePaperRouteTargets = (
     targetsByIdentity.set(envelope.identity, envelope)
   })
   return { targetCount, targetsByIdentity }
+}
+
+const proofTargetEnvelope = (proof: unknown, label: string): PaperRouteTargetEnvelope => {
+  const proofObject = requireObject(proof, label)
+  const identity = requireObject(proofObject.identity, `${label} identity`)
+  const window = requireObject(proofObject.window, `${label} window`)
+  const health = requireObject(proofObject.health, `${label} health`)
+  const hypothesisId = formatScalar(identity.hypothesis_id, '')
+  const candidateId = formatScalar(identity.candidate_id, '')
+  const strategyName = formatScalar(identity.runtime_strategy_name ?? identity.strategy_name, '')
+  const windowStart = formatScalar(window.start, '')
+  const windowEnd = formatScalar(window.end, '')
+  if (!hypothesisId || !candidateId || !strategyName || !windowStart || !windowEnd) {
+    throw new Error(`${label} missing proof identity fields`)
+  }
+  for (const key of ['dependency_quorum_ok', 'continuity_ok', 'drift_ok']) {
+    if (typeof health[key] !== 'boolean') {
+      throw new Error(`${label} health.${key} must be boolean`)
+    }
+  }
+  const probeSymbols = uniqueSortedSymbols(proofObject.symbols, `${label} symbols`)
+  if (probeSymbols.length === 0) {
+    throw new Error(`${label} symbols must not be empty`)
+  }
+  return {
+    identity: [hypothesisId, candidateId, strategyName, windowStart, windowEnd].join('|'),
+    probeSymbols,
+    maxNotional: formatScalar(identity.target_notional, '0'),
+    scopeAuthority: '',
+    strategyScopeApplied: false,
+  }
+}
+
+const parseProofTargets = (
+  payload: JsonObject,
+  label: string,
+): { targetCount: number; targetsByIdentity: Map<string, PaperRouteTargetEnvelope> } => {
+  const promotionAuthority = requireObject(payload.promotion_authority, `${label} promotion_authority`)
+  requireNotTrue(promotionAuthority.allowed, `${label} promotion_authority.allowed`)
+  requireNotTrue(promotionAuthority.final_promotion_allowed, `${label} promotion_authority.final_promotion_allowed`)
+  const proofs = requireArray(payload.proofs, `${label} proofs`)
+  const targetsByIdentity = new Map<string, PaperRouteTargetEnvelope>()
+  for (const [index, proof] of proofs.entries()) {
+    const envelope = proofTargetEnvelope(proof, `${label} proofs[${index}]`)
+    targetsByIdentity.set(envelope.identity, envelope)
+  }
+  return {
+    targetCount: proofs.length,
+    targetsByIdentity,
+  }
 }
 
 const requireSameList = (left: string[], right: string[], label: string) => {

@@ -163,7 +163,7 @@ def _parse_args() -> argparse.Namespace:
         "--target-plan-readback-url",
         default="",
         help=(
-            "Optional /trading/paper-route-target-plan URL to read after snapshot "
+            "Optional /trading/proofs URL to read after snapshot "
             "persistence so the job output proves whether the clean-window baseline "
             "gate sees the snapshot."
         ),
@@ -250,6 +250,10 @@ def _target_plan_readback_plans(
     payload: Mapping[str, Any],
 ) -> list[tuple[str, Mapping[str, Any]]]:
     plans: list[tuple[str, Mapping[str, Any]]] = [("top_level", payload)]
+    if payload.get("schema_version") == "torghut.proofs.v1":
+        proof_targets = _target_plan_targets_from_proofs(payload)
+        if proof_targets:
+            plans.append(("proofs", {"targets": proof_targets}))
     for key in (
         "next_paper_route_runtime_window_targets",
         "runtime_window_import_plan",
@@ -259,6 +263,64 @@ def _target_plan_readback_plans(
         if plan:
             plans.append((key, plan))
     return plans
+
+
+def _target_plan_targets_from_proofs(
+    payload: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    targets: list[Mapping[str, Any]] = []
+    for raw_proof in _as_sequence(payload.get("proofs")):
+        proof = _as_mapping(raw_proof)
+        identity = _as_mapping(proof.get("identity"))
+        window = _as_mapping(proof.get("window"))
+        account_state = _as_mapping(proof.get("account_state"))
+        account_blockers = [
+            _safe_text(blocker)
+            for blocker in _as_sequence(account_state.get("blockers"))
+            if _safe_text(blocker)
+        ]
+        baseline_clean = (
+            account_state.get("clean_baseline") is not False and not account_blockers
+        )
+        target = {
+            "hypothesis_id": identity.get("hypothesis_id"),
+            "candidate_id": identity.get("candidate_id"),
+            "strategy_family": identity.get("strategy_family"),
+            "strategy_name": identity.get("strategy_name")
+            or identity.get("runtime_strategy_name"),
+            "runtime_strategy_name": identity.get("runtime_strategy_name")
+            or identity.get("strategy_name"),
+            "account_label": identity.get("account_label"),
+            "source_account_label": identity.get("source_account_label"),
+            "source_kind": identity.get("source_kind"),
+            "source_plan_ref": identity.get("source_plan_ref"),
+            "source_decision_mode": identity.get("source_decision_mode"),
+            "target_notional": identity.get("target_notional"),
+            "window_start": window.get("start"),
+            "window_end": window.get("end"),
+            "paper_route_clean_window_state": "clean_window_collection_ready"
+            if baseline_clean
+            else "blocked",
+            "paper_route_clean_window_baseline_state": {
+                "state": "clean" if baseline_clean else "blocked",
+                "blockers": account_blockers,
+            },
+            "paper_route_clean_window_baseline_blockers": account_blockers,
+            "paper_route_probe_symbols": [
+                _safe_text(symbol).upper()
+                for symbol in _as_sequence(proof.get("symbols"))
+                if _safe_text(symbol)
+            ],
+            "paper_route_probe_symbol_actions": _as_mapping(
+                identity.get("target_symbol_actions")
+            ),
+            "paper_route_probe_symbol_quantities": _as_mapping(
+                identity.get("target_symbol_quantities")
+            ),
+        }
+        if target:
+            targets.append(target)
+    return targets
 
 
 def _target_plan_readback_targets(
