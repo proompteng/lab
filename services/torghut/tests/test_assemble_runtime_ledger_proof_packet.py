@@ -206,6 +206,53 @@ def _paper_route_evidence(
     return payload
 
 
+def _proofs_payload(
+    *,
+    state: str = "import_due",
+    blockers: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.proofs.v1",
+        "proofs": [
+            {
+                "identity": {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "strategy_name": "microbar-pairs-vwap-cap-safe",
+                    "runtime_strategy_name": "microbar-pairs-vwap-cap-safe",
+                    "account_label": "TORGHUT_SIM",
+                    "source_account_label": "TORGHUT_SIM",
+                    "source_kind": "runtime_window",
+                    "source_plan_ref": "proof-plan:c88421d619759b2cfaa6f4d0",
+                    "target_notional": "25",
+                    "target_symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
+                    "target_symbol_quantities": {"AAPL": "1", "AMZN": "1"},
+                },
+                "window": {
+                    "start": "2026-05-26T13:30:00+00:00",
+                    "end": "2026-05-26T20:00:00+00:00",
+                },
+                "symbols": ["AAPL", "AMZN"],
+                "health": {
+                    "dependency_quorum_ok": True,
+                    "continuity_ok": True,
+                    "drift_ok": True,
+                    "blockers": [],
+                },
+                "source_counts": {
+                    "decisions": 1,
+                    "executions": 1,
+                    "execution_tca_metrics": 1,
+                    "rejected_signal_events": 0,
+                },
+                "state": state,
+                "blockers": blockers or ["runtime_ledger_materialization_missing"],
+            }
+        ],
+    }
+
+
 def _runtime_import(
     *,
     proof_status: str = "ok",
@@ -1146,6 +1193,28 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(
             result["candidate"]["candidate_id"],
             "c88421d619759b2cfaa6f4d0",
+        )
+
+    def test_proofs_payload_builds_target_plan_and_import_audit(self) -> None:
+        proofs = _proofs_payload()
+
+        plan = packet._paper_route_target_plan(proofs)  # noqa: SLF001
+        audit = packet._paper_route_runtime_window_import_audit(proofs)  # noqa: SLF001
+
+        self.assertEqual(plan["source"], "trading_proofs_endpoint")
+        self.assertEqual(plan["target_count"], 1)
+        self.assertTrue(plan["session_readiness"]["import_ready"])
+        self.assertEqual(
+            plan["targets"][0]["paper_route_probe_symbol_actions"],
+            {"AAPL": "buy", "AMZN": "sell"},
+        )
+        self.assertEqual(audit["state"], "import_due")
+        self.assertTrue(audit["import_ready"])
+        self.assertEqual(audit["next_action"], "run_runtime_ledger_materialization")
+        self.assertEqual(audit["counts"]["targets_with_source_activity"], 1)
+        self.assertEqual(
+            audit["target_blockers"][0]["blockers"],
+            ["runtime_ledger_materialization_missing"],
         )
 
     def test_packet_preserves_selected_import_plan_health_gate_readback(

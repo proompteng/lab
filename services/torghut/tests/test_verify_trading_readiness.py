@@ -279,6 +279,64 @@ def _paper_route_evidence(
     }
 
 
+def _proofs_evidence(
+    *,
+    state: str = "import_due",
+    blockers: list[str] | None = None,
+    account_blockers: list[str] | None = None,
+    health_blockers: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.proofs.v1",
+        "window": {
+            "selector": "latest_closed",
+            "start": "2026-05-26T13:30:00+00:00",
+            "end": "2026-05-26T20:00:00+00:00",
+            "closed": True,
+        },
+        "proofs": [
+            {
+                "identity": {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "strategy_name": "microbar-pairs-vwap-cap-safe",
+                    "runtime_strategy_name": "microbar-pairs-vwap-cap-safe",
+                    "account_label": "TORGHUT_SIM",
+                    "source_account_label": "TORGHUT_SIM",
+                    "source_kind": "runtime_window",
+                    "source_plan_ref": "proof-plan:c88421d619759b2cfaa6f4d0",
+                    "target_notional": "25",
+                },
+                "window": {
+                    "start": "2026-05-26T13:30:00+00:00",
+                    "end": "2026-05-26T20:00:00+00:00",
+                    "closed": True,
+                },
+                "symbols": ["AAPL", "AMZN"],
+                "account_state": {
+                    "clean_baseline": not account_blockers,
+                    "blockers": account_blockers or [],
+                },
+                "health": {
+                    "dependency_quorum_ok": not health_blockers,
+                    "continuity_ok": not health_blockers,
+                    "drift_ok": not health_blockers,
+                    "blockers": health_blockers or [],
+                },
+                "source_counts": {
+                    "decisions": 1,
+                    "executions": 1,
+                    "execution_tca_metrics": 1,
+                    "rejected_signal_events": 0,
+                },
+                "state": state,
+                "blockers": blockers or ["runtime_ledger_materialization_missing"],
+            }
+        ],
+    }
+
+
 def _runtime_ledger_proof_packet(
     *,
     allowed: bool = True,
@@ -1473,6 +1531,33 @@ class TestVerifyTradingReadiness(TestCase):
         preopen_summary = result["paper_route_preopen_evidence_collection"]
         self.assertFalse(preopen_summary["ready"])
         self.assertFalse(preopen_summary["conditions"]["target_plan_account_clean"])
+
+    def test_proofs_payload_summarizes_target_plan_readiness(self) -> None:
+        summary = verifier._paper_route_target_plan_summary(  # noqa: SLF001
+            _proofs_evidence(
+                state="proof_ready",
+                blockers=[],
+                account_blockers=["account_not_flat_after_window"],
+                health_blockers=["dependency_quorum_blocked"],
+            )
+        )
+
+        self.assertTrue(summary["present"])
+        self.assertEqual(summary["schema_version"], "torghut.proofs.v1")
+        self.assertEqual(summary["target_count"], 1)
+        self.assertEqual(summary["probe_contract_count"], 1)
+        self.assertEqual(summary["missing_identity_count"], 0)
+        self.assertTrue(summary["import_ready"])
+        self.assertEqual(
+            summary["account_clean_blockers"], ["account_not_flat_after_window"]
+        )
+        self.assertEqual(
+            summary["runtime_window_import_health_gate"]["blockers"],
+            ["dependency_quorum_blocked"],
+        )
+        self.assertEqual(
+            summary["targets"][0]["paper_route_probe_symbols"], ["AAPL", "AMZN"]
+        )
 
     def test_paper_route_target_plan_fails_closed_on_missing_handoff_or_identity(
         self,
