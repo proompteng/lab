@@ -1,57 +1,34 @@
-"""Deprecated paper-route evidence adapters.
-
-The canonical runtime-window proof contract is ``/trading/proofs`` with
-``schema_version=torghut.proofs.v1``. These helpers remain only so older routes
-can delegate to the new proof service for one release.
-"""
+"""Deprecated adapters that delegate paper-route endpoints to proofs."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from typing import Any, cast
 
 from sqlalchemy.orm import Session
 
-from .proofs.schemas import (
-    DEFAULT_PROOFS_LIMIT,
-    DEFAULT_PROOFS_LOOKBACK_HOURS,
-    MAX_PROOFS_LIMIT,
-    MAX_PROOFS_LOOKBACK_HOURS,
-    PROOFS_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS,
-    PROOFS_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
-    PROOFS_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
-    PROOFS_RUNTIME_ACCOUNT_LABEL,
-)
+from .proofs import schemas as proof_schemas
 from .proofs.service import build_proofs_payload
-from .proofs.targets import (
-    next_regular_equities_session_window,
-    text_value,
-)
+from .proofs.targets import next_regular_equities_session_window, text_value
 
-PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.proofs.v1"
-PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION = "torghut.proofs.v1"
-DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = DEFAULT_PROOFS_LOOKBACK_HOURS
-DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = DEFAULT_PROOFS_LIMIT
-MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = MAX_PROOFS_LOOKBACK_HOURS
-MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = MAX_PROOFS_LIMIT
-PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = PROOFS_RUNTIME_ACCOUNT_LABEL
+DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = (
+    proof_schemas.DEFAULT_PROOFS_LOOKBACK_HOURS
+)
+DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = proof_schemas.DEFAULT_PROOFS_LIMIT
+MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = proof_schemas.MAX_PROOFS_LOOKBACK_HOURS
+MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = proof_schemas.MAX_PROOFS_LIMIT
+PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = proof_schemas.PROOFS_RUNTIME_ACCOUNT_LABEL
 PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS = (
-    PROOFS_ACCOUNT_PRE_SESSION_READINESS_SECONDS
+    proof_schemas.PROOFS_ACCOUNT_PRE_SESSION_READINESS_SECONDS
 )
 PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = (
-    PROOFS_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
+    proof_schemas.PROOFS_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
 )
 PAPER_ROUTE_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS = (
-    PROOFS_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS
+    proof_schemas.PROOFS_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS
 )
-PAPER_ROUTE_TARGET_PLAN_ENDPOINT = "/trading/proofs"
-PAPER_ROUTE_EXECUTION_CAPACITY_CONTRACT_SCHEMA_VERSION = (
-    "torghut.proofs-execution-capacity.v1"
-)
-
-
-def _next_regular_equities_session_window(generated_at: Any) -> tuple[Any, Any]:
-    return next_regular_equities_session_window(generated_at)
+_next_regular_equities_session_window = next_regular_equities_session_window
 
 
 def build_paper_route_evidence_audit(
@@ -111,7 +88,7 @@ def _deprecated_payload(payload: Mapping[str, object]) -> dict[str, object]:
     return result
 
 
-def _next_paper_route_target_summaries(
+def paper_route_target_summaries(
     targets: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
     summaries: list[dict[str, object]] = []
@@ -120,6 +97,14 @@ def _next_paper_route_target_summaries(
         symbol_actions = _string_mapping(target.get("paper_route_probe_symbol_actions"))
         symbols = _symbols(target, symbol_actions)
         target_notional = text_value(target.get("target_notional")) or "0"
+        bounded_notional = _target_capacity_notional(target)
+        symbol_quantities = _symbol_quantities(target)
+        symbol_quantity_source = text_value(
+            target.get("paper_route_probe_symbol_quantity_source")
+        )
+        if not symbol_quantities and bounded_notional > 0 and symbols:
+            symbol_quantities = {symbol: "1" for symbol in symbols}
+            symbol_quantity_source = "target_notional_runtime_sizing_seed"
         summaries.append(
             {
                 "hypothesis_id": text_value(target.get("hypothesis_id")),
@@ -135,16 +120,36 @@ def _next_paper_route_target_summaries(
                 "source_kind": text_value(target.get("source_kind")),
                 "symbols": symbols,
                 "symbol_actions": symbol_actions,
-                "symbol_quantities": _string_mapping(
-                    target.get("paper_route_probe_symbol_quantities")
+                "symbol_quantities": symbol_quantities,
+                "symbol_quantity_source": symbol_quantity_source,
+                "pair_balance_required": bool(
+                    target.get("paper_route_probe_pair_balance_required")
                 ),
-                "symbol_quantity_source": text_value(
-                    target.get("paper_route_probe_symbol_quantity_source")
-                ),
+                "pair_balance_state": text_value(
+                    target.get("paper_route_probe_pair_balance_state")
+                )
+                or "not_required",
                 "session_start": text_value(target.get("window_start")),
                 "session_end": text_value(target.get("window_end")),
+                "next_session_max_notional": text_value(
+                    target.get("paper_route_probe_next_session_max_notional")
+                )
+                or "0",
                 "target_notional": target_notional,
-                "bounded_paper_collection_notional": target_notional,
+                "bounded_paper_collection_notional": _decimal_text(bounded_notional),
+                "capital_promotion_max_notional": text_value(target.get("max_notional"))
+                or "0",
+                "bounded_evidence_collection_authorized": bool(
+                    target.get("bounded_evidence_collection_authorized")
+                ),
+                "evidence_collection_ok": bool(target.get("evidence_collection_ok")),
+                "canary_collection_authorized": bool(
+                    target.get("canary_collection_authorized")
+                ),
+                "bounded_evidence_collection_max_notional": text_value(
+                    target.get("bounded_evidence_collection_max_notional")
+                )
+                or "0",
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
                 "promotion_blocked": True,
@@ -190,6 +195,41 @@ def _string_mapping(value: object) -> dict[str, str]:
     }
 
 
+def _symbol_quantities(target: Mapping[str, object]) -> dict[str, str]:
+    for key in (
+        "paper_route_probe_symbol_quantities",
+        "target_symbol_quantities",
+        "symbol_quantities",
+    ):
+        quantities = _string_mapping(target.get(key))
+        if quantities:
+            return quantities
+    return {}
+
+
+def _target_capacity_notional(target: Mapping[str, object]) -> Decimal:
+    for key in (
+        "target_notional",
+        "paper_route_probe_target_notional",
+        "paper_route_probe_effective_max_notional",
+        "bounded_evidence_collection_max_notional",
+        "paper_route_probe_next_session_max_notional",
+        "max_notional",
+    ):
+        try:
+            amount = Decimal(str(target.get(key) or "0"))
+        except Exception:
+            continue
+        if amount > 0:
+            return amount
+    return Decimal("0")
+
+
+def _decimal_text(value: Decimal) -> str:
+    normalized = value.normalize()
+    return format(normalized, "f")
+
+
 def _symbols(target: Mapping[str, object], actions: Mapping[str, str]) -> list[str]:
     symbols: set[str] = set(actions)
     for key in ("paper_route_probe_symbols", "symbols", "target_symbols"):
@@ -199,24 +239,11 @@ def _symbols(target: Mapping[str, object], actions: Mapping[str, str]) -> list[s
         elif isinstance(raw, Sequence) and not isinstance(raw, (bytes, bytearray)):
             values = cast(Sequence[object], raw)
         else:
-            values = ()
+            continue
         symbols.update(
             str(item).strip().upper() for item in values if str(item).strip()
         )
     return sorted(symbols)
 
 
-__all__ = [
-    "DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
-    "DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
-    "MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
-    "MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
-    "PAPER_ROUTE_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS",
-    "PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS",
-    "PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS",
-    "PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL",
-    "_next_paper_route_target_summaries",
-    "_next_regular_equities_session_window",
-    "build_paper_route_evidence_audit",
-    "build_paper_route_target_plan_payload",
-]
+_next_paper_route_target_summaries = paper_route_target_summaries
