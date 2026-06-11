@@ -1019,7 +1019,7 @@ class ForwarderApp(
       is AlpacaTrade -> {
         val dedupKey =
           if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
-            "${msg.symbol}:${msg.timestamp}:${msg.price}:${msg.size}:${msg.id}"
+            "${msg.symbol}:${msg.timestamp}:${msg.price}:${msg.size}:${msg.exchange}:${msg.conditions.orEmpty().joinToString("|")}"
           } else {
             msg.id.toString()
           }

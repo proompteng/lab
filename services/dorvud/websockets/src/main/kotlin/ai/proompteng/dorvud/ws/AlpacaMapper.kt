@@ -91,7 +91,7 @@ object AlpacaMapper {
         put("price", message.price)
         put("size", message.size)
         put("exchange", message.exchange)
-        put("trade_id", message.id.toString())
+        message.id?.let { put("trade_id", it.toString()) }
         putJsonArray("conditions") {
           message.conditions.orEmpty().forEach { add(JsonPrimitive(it)) }
         }
