@@ -91,8 +91,10 @@ class AlpacaMapperTest {
   @Test
   fun `maps options quote to normalized payload`() {
     val msg =
-      """{"T":"q","S":"AAPL260320C00100000","bp":2.1,"bs":10,"ap":2.2,"as":8,"bx":"A","ax":"B","c":["R"],"t":"2026-03-08T18:00:01Z"}"""
+      """{"T":"q","S":"AAPL260320C00100000","bp":2.1,"bs":10,"ap":2.2,"as":8,"bx":"A","ax":"B","c":"R","t":"2026-03-08T18:00:01Z"}"""
     val decoded = AlpacaMapper.decode(msg)
+    assertTrue(decoded is AlpacaQuote)
+    assertEquals(listOf("R"), decoded.conditions)
     val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.OPTIONS, "opra") { 1 }
     assertNotNull(env)
     assertEquals("quote", env.channel)
@@ -102,5 +104,24 @@ class AlpacaMapperTest {
     assertEquals("AAPL", payload["underlying_symbol"]?.toString()?.trim('"'))
     assertEquals("2.1", payload["bid_price"]?.toString())
     assertEquals("2.2", payload["ask_price"]?.toString())
+    assertEquals("R", payload["quote_condition"]?.toString()?.trim('"'))
+  }
+
+  @Test
+  fun `maps options trade with scalar condition to normalized payload`() {
+    val msg =
+      """{"T":"t","S":"AAPL240315C00172500","t":"2024-03-11T13:35:35.133122560Z","p":2.84,"s":1,"x":"N","c":"S"}"""
+    val decoded = AlpacaMapper.decode(msg)
+    assertTrue(decoded is AlpacaTrade)
+    assertEquals(listOf("S"), decoded.conditions)
+
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.OPTIONS, "indicative") { 1 }
+    assertNotNull(env)
+    assertEquals("trade", env.channel)
+    assertEquals("AAPL240315C00172500", env.symbol)
+    val payload = env.payload.jsonObject
+    assertEquals("AAPL", payload["underlying_symbol"]?.toString()?.trim('"'))
+    assertEquals("2.84", payload["price"]?.toString())
+    assertEquals("1.0", payload["size"]?.toString())
   }
 }

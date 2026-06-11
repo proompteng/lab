@@ -47,7 +47,7 @@ data class AlpacaSubscription(
 data class AlpacaTrade(
   @SerialName("T") override val type: String = "t",
   @SerialName("S") val symbol: String,
-  @SerialName("i") val id: Long,
+  @SerialName("i") val id: Long? = null,
   @SerialName("x") val exchange: String? = null,
   @SerialName("p") val price: Double,
   @SerialName("s") val size: Double,

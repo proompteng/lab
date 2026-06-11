@@ -6,8 +6,12 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.descriptors.buildClassSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /** Polymorphic dispatch on Alpaca market data field `T`. */
@@ -27,8 +31,8 @@ object AlpacaMessageSerializer : KSerializer<AlpacaMessage> {
       obj["T"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
         ?: return AlpacaUnknownMessage("missing_T", obj)
     return when (type) {
-      "t" -> input.json.decodeFromJsonElement(AlpacaTrade.serializer(), obj)
-      "q" -> input.json.decodeFromJsonElement(AlpacaQuote.serializer(), obj)
+      "t" -> input.json.decodeFromJsonElement(AlpacaTrade.serializer(), normalizeConditions(obj))
+      "q" -> input.json.decodeFromJsonElement(AlpacaQuote.serializer(), normalizeConditions(obj))
       "b" -> input.json.decodeFromJsonElement(AlpacaBar.serializer(), obj)
       "u" -> input.json.decodeFromJsonElement(AlpacaUpdatedBar.serializer(), obj)
       "s" -> input.json.decodeFromJsonElement(AlpacaStatus.serializer(), obj)
@@ -37,5 +41,12 @@ object AlpacaMessageSerializer : KSerializer<AlpacaMessage> {
       "error" -> input.json.decodeFromJsonElement(AlpacaError.serializer(), obj)
       else -> AlpacaUnknownMessage(type, obj)
     }
+  }
+
+  private fun normalizeConditions(obj: JsonObject): JsonObject {
+    val condition = obj["c"] ?: return obj
+    if (condition is JsonArray) return obj
+    val scalar = runCatching { condition.jsonPrimitive.contentOrNull }.getOrNull() ?: return obj
+    return JsonObject(obj + ("c" to buildJsonArray { add(JsonPrimitive(scalar)) }))
   }
 }
