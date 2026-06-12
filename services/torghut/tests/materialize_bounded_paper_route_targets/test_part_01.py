@@ -337,6 +337,66 @@ def test_paper_route_target_plan_json_and_scalar_helpers_preserve_report_encodin
     assert cli._truthy(0) is False
 
 
+def test_paper_route_target_plan_dynamic_target_index_filter_accepts_confirmation_alias() -> (
+    None
+):
+    summaries = [
+        {
+            "target_index": 3,
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "candidate-a",
+            "runtime_strategy_name": "runtime-a",
+            "runtime_strategy_confirmation_names": ["alias-a"],
+        },
+        {
+            "target_index": 4,
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "candidate-b",
+            "runtime_strategy_name": "runtime-b",
+            "runtime_strategy_confirmation_names": ["alias-b"],
+        },
+    ]
+
+    assert cli._confirmed_dynamic_target_indexes(
+        summaries,
+        {
+            "hypothesis_id": "H-PAIRS-01",
+            "runtime_strategy_name": "alias-a",
+        },
+    ) == [3]
+
+
+def test_paper_route_target_plan_dynamic_target_index_filter_ignores_string_alias_list() -> (
+    None
+):
+    summaries = [
+        {
+            "target_index": 5,
+            "hypothesis_id": "H-PAIRS-01",
+            "runtime_strategy_name": "runtime-a",
+            "runtime_strategy_confirmation_names": "alias-a",
+        }
+    ]
+
+    assert (
+        cli._confirmed_dynamic_target_indexes(
+            summaries,
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "runtime_strategy_name": "alias-a",
+            },
+        )
+        == []
+    )
+    assert cli._confirmed_dynamic_target_indexes(
+        summaries,
+        {
+            "hypothesis_id": "H-PAIRS-01",
+            "runtime_strategy_name": "runtime-a",
+        },
+    ) == [5]
+
+
 def test_paper_route_target_plan_sqlalchemy_dsn_uses_installed_psycopg_driver() -> None:
     assert (
         cli._sqlalchemy_dsn("postgres://user:pass@postgres/torghut")
