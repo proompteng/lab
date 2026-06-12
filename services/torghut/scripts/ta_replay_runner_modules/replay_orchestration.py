@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Execute the standardized Torghut TA replay rollout workflow."""
 
@@ -7,19 +6,37 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
-import subprocess
-from base64 import b64encode
-from dataclasses import dataclass
 from typing import Any, Mapping
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
-import yaml
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_20 import *
+from .replay_core import (
+    APPLY_CONFIRMATION_PHRASE,
+    CLICKHOUSE_TA_TTL_DAYS,
+    DERIVED_TA_TOPIC_ROLES,
+    FAILED_RUN_STATES,
+    RAW_REPLAY_SOURCE_TOPIC_ROLES,
+    TA_CONFIGMAP,
+    TA_DEPLOYMENT,
+    ReplayState,
+    _build_plan_report,
+    _kafka_topic_config,
+    _kafka_topic_items_by_name,
+    _kafka_topic_ready_status,
+    _kubectl_get_kafka_topics_json,
+    _kubectl_merge_patch,
+    _load_clickhouse_coverage,
+    _load_state,
+    _parse_kafka_retention_topic_overrides,
+    _parse_retention_ms,
+    _plan_command,
+    _print_plan_text,
+    _required_calendar_days_from_trading_days,
+    _require_kubectl,
+    _require_supported_namespace,
+    _retention_days,
+    _topic_role_has_blocker,
+    _validate_apply_preconditions,
+    _validate_plan_args,
+)
 
 
 def _load_kafka_retention(args: argparse.Namespace) -> dict[str, Any] | None:
@@ -707,6 +724,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

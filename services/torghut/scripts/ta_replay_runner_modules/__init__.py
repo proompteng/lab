@@ -1,47 +1,151 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
+from importlib import import_module
+import sys
+import types
 
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
+from .replay_core import (
+    APPLY_CONFIRMATION_PHRASE,
+    CLICKHOUSE_TA_TTL_DAYS,
+    DEFAULT_KAFKA_RETENTION_TOPICS,
+    DERIVED_TA_TOPIC_ROLES,
+    FAILED_RUN_STATES,
+    MILLISECONDS_PER_DAY,
+    RAW_REPLAY_SOURCE_TOPIC_ROLES,
+    SUPPORTED_NAMESPACE,
+    TA_CONFIGMAP,
+    TA_DEPLOYMENT,
+    ReplayState,
+    _build_plan_report,
+    _clickhouse_basic_auth,
+    _clickhouse_query,
+    _day_gap_query,
+    _kafka_topic_config,
+    _kafka_topic_items_by_name,
+    _kafka_topic_ready_status,
+    _kubectl_binary,
+    _kubectl_get_kafka_topics_json,
+    _kubectl_get_ta_config_json,
+    _kubectl_get_ta_deployment_json,
+    _kubectl_merge_patch,
+    _load_clickhouse_coverage,
+    _load_state,
+    _parse_int,
+    _parse_int_field,
+    _parse_kafka_retention_topic_overrides,
+    _parse_retention_ms,
+    _parse_tsv_with_names,
+    _plan_command,
+    _print_plan_text,
+    _required_calendar_days_from_trading_days,
+    _require_kubectl,
+    _require_supported_namespace,
+    _retention_days,
+    _run_kubectl,
+    _table_coverage_query,
+    _topic_role_has_blocker,
+    _validate_apply_preconditions,
+    _validate_plan_args,
+)
+from .replay_orchestration import (
+    _apply_plan,
+    _build_replay_feasibility,
+    _final_status,
+    _handle_apply_mode,
+    _handle_plan_mode,
+    _handle_verify_mode,
+    _load_kafka_retention,
+    _role_blockers,
+    _string_list,
+    _summary_int,
+    _verify_state,
+    main,
+    parse_args,
+)
+
+_IMPLEMENTATION_MODULES = [
+    import_module(f"{__name__}.replay_core"),
+    import_module(f"{__name__}.replay_orchestration"),
+]
 
 
-class __CompatModule__(__compat_types__.ModuleType):
+class _CompatModule(types.ModuleType):
     def __setattr__(self, name: str, value: object) -> None:
         super().__setattr__(name, value)
-        for module in __compat_part_modules__:
+        for module in _IMPLEMENTATION_MODULES:
             module.__dict__[name] = value
 
 
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
+def _export_module(module: types.ModuleType) -> None:
     for name, value in module.__dict__.items():
         if name.startswith("__"):
             continue
         globals()[name] = value
 
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_20")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
+for _module in _IMPLEMENTATION_MODULES:
+    _export_module(_module)
+
+for _module in _IMPLEMENTATION_MODULES:
+    _module.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_load_kafka_retention")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+sys.modules[__name__].__class__ = _CompatModule
 
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
-del __compat_module__
+__all__ = (
+    "APPLY_CONFIRMATION_PHRASE",
+    "CLICKHOUSE_TA_TTL_DAYS",
+    "DEFAULT_KAFKA_RETENTION_TOPICS",
+    "DERIVED_TA_TOPIC_ROLES",
+    "FAILED_RUN_STATES",
+    "MILLISECONDS_PER_DAY",
+    "RAW_REPLAY_SOURCE_TOPIC_ROLES",
+    "ReplayState",
+    "SUPPORTED_NAMESPACE",
+    "TA_CONFIGMAP",
+    "TA_DEPLOYMENT",
+    "_apply_plan",
+    "_build_plan_report",
+    "_build_replay_feasibility",
+    "_clickhouse_basic_auth",
+    "_clickhouse_query",
+    "_day_gap_query",
+    "_final_status",
+    "_handle_apply_mode",
+    "_handle_plan_mode",
+    "_handle_verify_mode",
+    "_kafka_topic_config",
+    "_kafka_topic_items_by_name",
+    "_kafka_topic_ready_status",
+    "_kubectl_binary",
+    "_kubectl_get_kafka_topics_json",
+    "_kubectl_get_ta_config_json",
+    "_kubectl_get_ta_deployment_json",
+    "_kubectl_merge_patch",
+    "_load_clickhouse_coverage",
+    "_load_kafka_retention",
+    "_load_state",
+    "_parse_int",
+    "_parse_int_field",
+    "_parse_kafka_retention_topic_overrides",
+    "_parse_retention_ms",
+    "_parse_tsv_with_names",
+    "_plan_command",
+    "_print_plan_text",
+    "_required_calendar_days_from_trading_days",
+    "_require_kubectl",
+    "_require_supported_namespace",
+    "_retention_days",
+    "_role_blockers",
+    "_run_kubectl",
+    "_string_list",
+    "_summary_int",
+    "_table_coverage_query",
+    "_topic_role_has_blocker",
+    "_validate_apply_preconditions",
+    "_validate_plan_args",
+    "_verify_state",
+    "main",
+    "parse_args",
+)

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Execute the standardized Torghut TA replay rollout workflow."""
 
@@ -16,8 +15,6 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 import yaml
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 TA_CONFIGMAP = "torghut-ta-config"
@@ -647,6 +644,3 @@ def _topic_role_has_blocker(blocker: str, role: str) -> bool:
         or blocker.startswith(f"kafka_topic_missing:{role}:")
         or blocker.startswith(f"kafka_topic_not_ready:{role}:")
     )
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
