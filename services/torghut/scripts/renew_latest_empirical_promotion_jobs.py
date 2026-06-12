@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 import psycopg
 import yaml
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.models import AutoresearchEpoch, VNextEmpiricalJobRun
@@ -2250,6 +2251,30 @@ def _latest_authoritative_rows(
     return latest
 
 
+def _load_latest_empirical_job_rows(session: Session) -> list[VNextEmpiricalJobRun]:
+    """Load only the latest row for each empirical job type.
+
+    The renewal job only needs the most recent row per job type; reading the
+    full empirical job history can materialize years of JSON payloads in the
+    CronJob container.
+    """
+
+    rows: list[VNextEmpiricalJobRun] = []
+    for job_type in EMPIRICAL_JOB_TYPES:
+        row = session.scalars(
+            select(VNextEmpiricalJobRun)
+            .where(VNextEmpiricalJobRun.job_type == job_type)
+            .order_by(
+                VNextEmpiricalJobRun.created_at.desc(),
+                VNextEmpiricalJobRun.id.desc(),
+            )
+            .limit(1)
+        ).first()
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
 def build_renewal_manifest(
     *,
     latest: Mapping[str, VNextEmpiricalJobRun],
@@ -3543,17 +3568,8 @@ def main() -> int:
     )
 
     with SessionLocal() as session:
-        rows = (
-            session.execute(
-                select(VNextEmpiricalJobRun).order_by(
-                    VNextEmpiricalJobRun.created_at.desc()
-                )
-            )
-            .scalars()
-            .all()
-        )
         manifest = build_renewal_manifest(
-            latest=_latest_authoritative_rows(rows),
+            latest=_latest_authoritative_rows(_load_latest_empirical_job_rows(session)),
             run_id=run_id,
             strategy_spec_ref=args.strategy_spec_ref,
             runtime_version_ref=_runtime_version_ref(),
