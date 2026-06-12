@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
 
 from importlib import import_module as __compat_import_module__
@@ -39,9 +38,4 @@ for __compat_loaded_module__ in __compat_part_modules__:
     )
 
 __compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
 del __compat_module__
