@@ -4,7 +4,7 @@ from __future__ import annotations
 from tests.flatten_paper_account_positions.support import *
 
 
-class TestFlattenPaperAccountPositionsPart1(_TestFlattenPaperAccountPositionsBase):
+class TestFlattenPaperAccountFlattenOrders(_TestFlattenPaperAccountPositionsBase):
     def test_dry_run_reports_close_orders_without_mutating(self) -> None:
         client = FakeFlattenClient(
             [
