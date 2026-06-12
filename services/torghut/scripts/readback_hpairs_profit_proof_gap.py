@@ -58,8 +58,8 @@ BlockerStage = Literal[
 READ_ONLY_ENDPOINTS: Mapping[EndpointName, str | None] = {
     "readyz": "/readyz",
     "trading_status": "/trading/status",
-    "paper_route_target_plan": "/trading/paper-route-target-plan",
-    "paper_route_evidence": "/trading/paper-route-evidence",
+    "paper_route_target_plan": "/trading/proofs?kind=runtime_window&window=next&limit=20",
+    "paper_route_evidence": "/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true&limit=20",
     "proof_packet": None,
     "source_proof_census": None,
     "runtime_ledger_daily_summary": None,
@@ -242,7 +242,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--service-base-url",
-        help="Base URL used to read /readyz, /trading/status, /trading/paper-route-target-plan, and /trading/paper-route-evidence.",
+        help="Base URL used to read /readyz, /trading/status, and /trading/proofs.",
     )
     parser.add_argument("--readyz", help="URL or JSON file path for /readyz.")
     parser.add_argument(
@@ -250,11 +250,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--paper-route-target-plan",
-        help="URL or JSON file path for /trading/paper-route-target-plan.",
+        help="URL or JSON file path for /trading/proofs?window=next.",
     )
     parser.add_argument(
         "--paper-route-evidence",
-        help="URL or JSON file path for /trading/paper-route-evidence.",
+        help="URL or JSON file path for /trading/proofs?window=latest_closed.",
     )
     parser.add_argument(
         "--proof-packet-json",
@@ -451,12 +451,12 @@ def load_sources(args: argparse.Namespace) -> dict[EndpointName, LoadedSource]:
         "paper_route_target_plan": _explicit_or_base(
             args.paper_route_target_plan,
             args.service_base_url,
-            "/trading/paper-route-target-plan",
+            READ_ONLY_ENDPOINTS["paper_route_target_plan"],
         ),
         "paper_route_evidence": _explicit_or_base(
             args.paper_route_evidence,
             args.service_base_url,
-            "/trading/paper-route-evidence",
+            READ_ONLY_ENDPOINTS["paper_route_evidence"],
         ),
         "proof_packet": args.proof_packet_json,
         "source_proof_census": args.source_proof_census_json,

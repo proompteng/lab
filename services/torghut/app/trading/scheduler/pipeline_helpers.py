@@ -884,6 +884,19 @@ def _build_llm_policy_resolution(
     }
 
 
+def build_llm_policy_resolution(
+    *,
+    rollout_stage: str,
+    effective_fail_mode: str,
+    guardrail_reasons: tuple[str, ...] | list[str],
+) -> dict[str, Any]:
+    return _build_llm_policy_resolution(
+        rollout_stage=rollout_stage,
+        effective_fail_mode=effective_fail_mode,
+        guardrail_reasons=guardrail_reasons,
+    )
+
+
 def _llm_guardrail_controls_snapshot() -> dict[str, Any]:
     return {
         "min_confidence": settings.llm_min_confidence,
@@ -942,4 +955,5 @@ __all__ = [
     "_runtime_uncertainty_gate_rank",
     "_select_strictest_runtime_uncertainty_gate",
     "_uncertainty_gate_staleness_reason",
+    "build_llm_policy_resolution",
 ]

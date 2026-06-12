@@ -115,6 +115,10 @@ def _sequence(value: object) -> Sequence[object]:
     return []
 
 
+def _text_list(value: object) -> list[str]:
+    return [_text(item) for item in _sequence(value) if _text(item)]
+
+
 def _load_json_object(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):
@@ -423,6 +427,9 @@ def _paper_route_target_plan_summary(
     paper_route_evidence: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     evidence = paper_route_evidence or {}
+    if _text(evidence.get("schema_version")) == "torghut.proofs.v1":
+        return _proofs_target_plan_summary(evidence)
+
     plan = _mapping(evidence.get("next_paper_route_runtime_window_targets"))
     targets = [_mapping(target) for target in _sequence(plan.get("targets"))]
     handoff = _mapping(plan.get("runtime_window_import_handoff"))
@@ -690,6 +697,151 @@ def _paper_route_target_plan_summary(
             "promotion_blockers": health_gate_promotion_blockers,
             "continuity_reasons": health_gate_continuity_reasons,
             "drift_reasons": health_gate_drift_reasons,
+        },
+    }
+
+
+def _proofs_target_plan_summary(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    proofs = [_mapping(item) for item in _sequence(evidence.get("proofs"))]
+    target_summaries: list[dict[str, Any]] = []
+    account_blockers: list[str] = []
+    health_blockers: list[str] = []
+    health_promotion_blockers: list[str] = []
+    import_blockers: list[str] = []
+    health_ready_count = 0
+    import_ready_count = 0
+    probe_contract_count = 0
+    missing_identity_count = 0
+    for proof in proofs:
+        identity = _mapping(proof.get("identity"))
+        window = _mapping(proof.get("window"))
+        account_state = _mapping(proof.get("account_state"))
+        health = _mapping(proof.get("health"))
+        symbols = [
+            _text(symbol) for symbol in _sequence(proof.get("symbols")) if _text(symbol)
+        ]
+        target_notional = _text(identity.get("target_notional"), "0")
+        proof_blockers = _text_list(proof.get("blockers"))
+        for blocker in _text_list(account_state.get("blockers")):
+            if blocker not in account_blockers:
+                account_blockers.append(blocker)
+        for blocker in _text_list(health.get("blockers")):
+            if blocker not in health_blockers:
+                health_blockers.append(blocker)
+            if blocker not in health_promotion_blockers:
+                health_promotion_blockers.append(blocker)
+        for blocker in proof_blockers:
+            if (
+                blocker != "runtime_ledger_materialization_missing"
+                and blocker not in import_blockers
+            ):
+                import_blockers.append(blocker)
+        missing_identity = [
+            field
+            for field in (
+                "hypothesis_id",
+                "candidate_id",
+                "strategy_name",
+                "account_label",
+                "source_kind",
+            )
+            if not _text(
+                identity.get(field)
+                or (
+                    identity.get("runtime_strategy_name")
+                    if field == "strategy_name"
+                    else ""
+                )
+            )
+        ]
+        if not _text(window.get("start")) or not _text(window.get("end")):
+            missing_identity.append("window")
+        if missing_identity:
+            missing_identity_count += 1
+        health_ready = (
+            _bool(health.get("dependency_quorum_ok"))
+            and _bool(health.get("continuity_ok"))
+            and _bool(health.get("drift_ok"))
+            and not _text_list(health.get("blockers"))
+        )
+        if health_ready:
+            health_ready_count += 1
+        if _text(proof.get("state")) in {"import_due", "proof_ready"}:
+            import_ready_count += 1
+        if symbols and _decimal_positive(target_notional):
+            probe_contract_count += 1
+        target_summaries.append(
+            {
+                "hypothesis_id": _text(identity.get("hypothesis_id")),
+                "candidate_id": _text(identity.get("candidate_id")),
+                "strategy_name": _text(
+                    identity.get("runtime_strategy_name")
+                    or identity.get("strategy_name")
+                ),
+                "account_label": _text(identity.get("account_label")),
+                "source_kind": _text(identity.get("source_kind")),
+                "window_start": _text(window.get("start")),
+                "window_end": _text(window.get("end")),
+                "paper_route_probe_symbols": symbols,
+                "paper_route_probe_next_session_max_notional": target_notional,
+                "promotion_blocked": True,
+                "dependency_quorum_decision": "allow"
+                if _bool(health.get("dependency_quorum_ok"))
+                else "block",
+                "continuity_ok": _text(health.get("continuity_ok")),
+                "drift_ok": _text(health.get("drift_ok")),
+                "runtime_window_import_health_gate_blockers": _text_list(
+                    health.get("blockers")
+                ),
+                "runtime_window_import_promotion_blockers": _text_list(
+                    health.get("blockers")
+                ),
+                "paper_route_account_pre_session_blockers": _text_list(
+                    account_state.get("blockers")
+                ),
+                "missing_identity_fields": missing_identity,
+            }
+        )
+    target_count = len(proofs)
+    import_ready = target_count > 0 and import_ready_count == target_count
+    return {
+        "present": bool(proofs),
+        "schema_version": _text(evidence.get("schema_version")),
+        "target_count": target_count,
+        "actual_target_count": target_count,
+        "skipped_target_count": 0,
+        "session_window": _mapping(evidence.get("window")),
+        "session_readiness_state": "proofs",
+        "import_ready": import_ready and not import_blockers,
+        "import_blockers": import_blockers,
+        "required_flags": sorted(REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS),
+        "missing_required_flags": [],
+        "targets": target_summaries,
+        "skipped_targets": [],
+        "missing_identity_count": missing_identity_count,
+        "probe_contract_count": probe_contract_count,
+        "promotion_blocked_count": target_count,
+        "account_clean": not account_blockers,
+        "account_clean_blockers": sorted(account_blockers),
+        "quote_fillability": {
+            "present": False,
+            "state": "not_reported",
+            "blocked": False,
+            "blocking_reasons": [],
+            "repair_action": "none",
+            "targets": [],
+        },
+        "runtime_window_import_health_gate": {
+            "ready": bool(proofs)
+            and health_ready_count == target_count
+            and not health_blockers,
+            "target_count": target_count,
+            "ready_target_count": health_ready_count,
+            "blocked_target_count": max(0, target_count - health_ready_count),
+            "blockers": health_blockers,
+            "promotion_blockers": health_promotion_blockers,
+            "continuity_reasons": [],
+            "drift_reasons": [],
         },
     }
 
@@ -1942,11 +2094,11 @@ def _parser() -> argparse.ArgumentParser:
     paper_route_evidence_source.add_argument(
         "--paper-route-evidence-file",
         type=Path,
-        help="Path to a /trading/paper-route-evidence JSON payload.",
+        help="Path to a /trading/proofs JSON payload.",
     )
     paper_route_evidence_source.add_argument(
         "--paper-route-evidence-url",
-        help="URL returning a /trading/paper-route-evidence JSON payload.",
+        help="URL returning a /trading/proofs JSON payload.",
     )
     runtime_ledger_packet_source = parser.add_mutually_exclusive_group(required=False)
     runtime_ledger_packet_source.add_argument(
@@ -2000,7 +2152,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--require-paper-route-target-plan",
         action="store_true",
-        help="Require /trading/paper-route-evidence to expose a next-session runtime-window target plan.",
+        help="Require /trading/proofs to expose runtime-window targets.",
     )
     parser.add_argument(
         "--require-paper-route-import-ready",

@@ -31,6 +31,7 @@ from app.trading.empirical_manifest import (
     normalize_empirical_promotion_manifest,
     validate_empirical_promotion_manifest,
 )
+from app.trading.paper_route_target_plan import paper_route_target_plan_from_payload
 
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(9, 30)
@@ -289,8 +290,7 @@ def _parse_args() -> argparse.Namespace:
             "Repeatable URL returning either a runtime-window import plan or a "
             "/trading/status payload with live_submission_gate."
             "runtime_ledger_paper_probation_import_plan, or a "
-            "/trading/paper-route-evidence payload with "
-            "next_paper_route_runtime_window_targets."
+            "/trading/proofs payload."
         ),
     )
     parser.add_argument(
@@ -1107,6 +1107,13 @@ def _latest_closed_runtime_window_target_plan_from_payload(
 def _runtime_window_target_plan_from_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
+    proofs_plan = paper_route_target_plan_from_payload(payload)
+    if (
+        str(payload.get("schema_version") or "").strip() == "torghut.proofs.v1"
+        and proofs_plan
+    ):
+        return proofs_plan
+
     paper_route_evidence_payload = (
         str(payload.get("schema_version") or "").strip()
         == "torghut.paper-route-evidence.v1"

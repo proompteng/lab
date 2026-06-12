@@ -1128,6 +1128,52 @@ class TestFlattenPaperAccountPositions(TestCase):
         )
         snapshot_account.assert_called_once()
 
+    def test_target_plan_readback_derives_targets_from_proofs_payload(self) -> None:
+        proofs_payload = {
+            "schema_version": "torghut.proofs.v1",
+            "proofs": [
+                {
+                    "identity": {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "runtime_strategy_name": "microbar-pairs-vwap-cap-safe",
+                        "account_label": "TORGHUT_SIM",
+                        "source_kind": "runtime_window",
+                        "source_plan_ref": "proof-plan:c88421d619759b2cfaa6f4d0",
+                        "source_decision_mode": "bounded_paper_collection",
+                        "target_notional": "25",
+                        "target_symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
+                        "target_symbol_quantities": {"AAPL": "1", "AMZN": "1"},
+                    },
+                    "window": {
+                        "start": "2026-06-05T13:30:00+00:00",
+                        "end": "2026-06-05T20:00:00+00:00",
+                    },
+                    "symbols": ["AAPL", "AMZN"],
+                    "account_state": {
+                        "clean_baseline": False,
+                        "blockers": ["account_dirty_before_window"],
+                    },
+                }
+            ],
+        }
+
+        plans = flatten_script._target_plan_readback_plans(proofs_payload)  # noqa: SLF001
+        plan_name, _plan, targets = flatten_script._target_plan_readback_targets(  # noqa: SLF001
+            proofs_payload
+        )
+
+        self.assertEqual(plans[1][0], "proofs")
+        self.assertEqual(plan_name, "proofs")
+        self.assertEqual(targets[0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
+        self.assertEqual(targets[0]["paper_route_clean_window_state"], "blocked")
+        self.assertEqual(
+            targets[0]["paper_route_clean_window_baseline_blockers"],
+            ["account_dirty_before_window"],
+        )
+        self.assertEqual(targets[0]["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+
     def test_target_plan_readback_proves_clean_matching_snapshot(self) -> None:
         target_plan = {
             "schema_version": "torghut.paper-route-target-plan.v1",

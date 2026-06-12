@@ -388,7 +388,7 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
                 return_value=guardrails,
             ),
             patch(
-                "app.trading.scheduler.runtime._build_llm_policy_resolution",
+                "app.trading.scheduler.runtime.build_llm_policy_resolution",
                 return_value={"mode": "shadow"},
             ),
         ):

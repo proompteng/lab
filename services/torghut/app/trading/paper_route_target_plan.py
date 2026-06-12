@@ -58,6 +58,101 @@ def paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, A
     return mapping_items(plan.get("targets"))
 
 
+def _target_plan_from_proofs_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if str(payload.get("schema_version") or "").strip() != "torghut.proofs.v1":
+        return {}
+    targets: list[dict[str, Any]] = []
+    for proof in mapping_items(payload.get("proofs")):
+        target = _target_from_proof_identity(proof)
+        if not target:
+            continue
+        target.setdefault("promotion_allowed", False)
+        target.setdefault("final_promotion_allowed", False)
+        target.setdefault("final_promotion_authorized", False)
+        targets.append(target)
+    if not targets:
+        return {}
+    return {
+        "schema_version": "torghut.paper-route-target-plan.v1",
+        "source": "trading_proofs_endpoint",
+        "purpose": "runtime_window_proof_target_materialization",
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "target_count": len(targets),
+        "targets": targets,
+    }
+
+
+def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
+    identity = _to_str_map(proof.get("identity"))
+    window = _to_str_map(proof.get("window"))
+    if not identity:
+        return {}
+    account_state = _to_str_map(proof.get("account_state"))
+    account_blockers = _text_items(account_state.get("blockers"))
+    clean_baseline = account_state.get("clean_baseline")
+    baseline_clean = clean_baseline is not False and not account_blockers
+    raw_symbols = proof.get("symbols")
+    if isinstance(raw_symbols, str):
+        symbol_values: Sequence[object] = raw_symbols.split(",")
+    elif isinstance(raw_symbols, Sequence) and not isinstance(
+        raw_symbols, (bytes, bytearray)
+    ):
+        symbol_values = cast(Sequence[object], raw_symbols)
+    else:
+        symbol_values = ()
+    symbols = [str(item).strip().upper() for item in symbol_values if str(item).strip()]
+    actions = _to_str_map(identity.get("target_symbol_actions"))
+    quantities = _to_str_map(identity.get("target_symbol_quantities"))
+    return {
+        "hypothesis_id": identity.get("hypothesis_id"),
+        "candidate_id": identity.get("candidate_id"),
+        "strategy_family": identity.get("strategy_family"),
+        "strategy_name": identity.get("strategy_name")
+        or identity.get("runtime_strategy_name"),
+        "runtime_strategy_name": identity.get("runtime_strategy_name")
+        or identity.get("strategy_name"),
+        "account_label": identity.get("account_label"),
+        "source_account_label": identity.get("source_account_label"),
+        "source_kind": identity.get("source_kind"),
+        "source_plan_ref": identity.get("source_plan_ref"),
+        "target_notional": identity.get("target_notional"),
+        "source_decision_mode": identity.get("source_decision_mode"),
+        "proof_target_authority": "trading_proofs",
+        "bounded_collection_stage": "paper",
+        "evidence_collection_stage": "paper",
+        "bounded_evidence_collection_authorized": True,
+        "evidence_collection_ok": True,
+        "source_decision_readiness": {
+            "schema_version": "torghut.proofs-source-decision-readiness.v1",
+            "ready": True,
+            "blockers": [],
+            "strategy_lookup_names": [
+                item
+                for item in (
+                    identity.get("runtime_strategy_name"),
+                    identity.get("strategy_name"),
+                )
+                if _safe_text(item)
+            ],
+        },
+        "paper_route_clean_window_state": "clean_window_collection_ready"
+        if baseline_clean
+        else "blocked",
+        "paper_route_clean_window_baseline_state": {
+            "state": "clean" if baseline_clean else "blocked",
+            "blockers": account_blockers,
+        },
+        "paper_route_clean_window_baseline_blockers": account_blockers,
+        "window_start": window.get("start"),
+        "window_end": window.get("end"),
+        "paper_route_probe_symbols": symbols,
+        "symbols": symbols,
+        "paper_route_probe_symbol_actions": actions,
+        "paper_route_probe_symbol_quantities": quantities,
+    }
+
+
 def _probe_symbol_values_from_mapping(payload: Mapping[str, Any]) -> set[str]:
     symbols: set[str] = set()
     for field in (
@@ -215,6 +310,10 @@ def _target_plan_selection_score(
 
 
 def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    proofs_target_plan = _target_plan_from_proofs_payload(payload)
+    if proofs_target_plan:
+        return proofs_target_plan
+
     live_gate = _to_str_map(payload.get("live_submission_gate"))
     top_level_target_plan = (
         dict(payload)

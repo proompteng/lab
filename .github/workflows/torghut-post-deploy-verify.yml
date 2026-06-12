@@ -387,19 +387,19 @@ jobs:
             "${EVIDENCE_DIR}/torghut-revenue-repair-digest.json" \
             "Torghut /trading/revenue-repair"
           fetch_json_2xx \
-            http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
-            "${EVIDENCE_DIR}/torghut-paper-route-evidence.json" \
-            "Torghut /trading/paper-route-evidence"
+            'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
+            "${EVIDENCE_DIR}/torghut-proofs.json" \
+            "Torghut /trading/proofs"
           fetch_json_2xx \
-            http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
-            "${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json" \
-            "Torghut sim /trading/paper-route-evidence"
+            'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
+            "${EVIDENCE_DIR}/torghut-sim-proofs.json" \
+            "Torghut sim /trading/proofs"
           export TORGHUT_REVENUE_REPAIR_DIGEST="${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
           export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
           export TORGHUT_READYZ_HTTP_STATUS
           export TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"
-          export TORGHUT_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-paper-route-evidence.json"
-          export TORGHUT_SIM_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json"
+          export TORGHUT_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-proofs.json"
+          export TORGHUT_SIM_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-sim-proofs.json"
 
           validate_post_deploy_evidence() {
             local attempt
@@ -430,13 +430,13 @@ jobs:
 
               echo "Attempt ${attempt}: Torghut sim paper-route target mirror not materialized yet; refreshing evidence payloads" >&2
               fetch_json_2xx \
-                http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
-                "${EVIDENCE_DIR}/torghut-paper-route-evidence.json" \
-                "Torghut /trading/paper-route-evidence"
+                'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
+                "${EVIDENCE_DIR}/torghut-proofs.json" \
+                "Torghut /trading/proofs"
               fetch_json_2xx \
-                http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
-                "${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json" \
-                "Torghut sim /trading/paper-route-evidence"
+                'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
+                "${EVIDENCE_DIR}/torghut-sim-proofs.json" \
+                "Torghut sim /trading/proofs"
               sleep 10
             done
           }
