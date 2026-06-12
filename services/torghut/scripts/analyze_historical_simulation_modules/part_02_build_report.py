@@ -1,20 +1,17 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Generate a production-ready statistical report for a historical simulation run."""
 
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-from collections import Counter, defaultdict, deque
+from collections import Counter
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import psycopg
-from psycopg import rows
 
 from scripts.start_historical_simulation import (
     ClickHouseRuntimeConfig,
@@ -24,18 +21,33 @@ from scripts.start_historical_simulation import (
     _build_postgres_runtime_config,
     _build_resources,
     _default_simulation_postgres_db,
-    _http_clickhouse_query,
     _load_manifest,
-    _parse_rfc3339_timestamp,
     _resolve_window_bounds,
     _safe_float,
     _safe_int,
     _validate_window_policy,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_35 import *
+from .part_01_statements_35 import (
+    REPORT_SCHEMA_VERSION,
+    _as_decimal,
+    _build_last_price_map,
+    _collect_clickhouse_stats,
+    _csv_write,
+    _decimal_to_str,
+    _extract_run_scope_decisions,
+    _extract_signal_event_ts,
+    _fifo_trade_pnl,
+    _json_default,
+    _load_json,
+    _mean,
+    _parse_args,
+    _percentile,
+    _query_rows,
+    _render_markdown,
+    _to_list_of_strings,
+    _to_mapping,
+)
 
 
 def _build_report(args: argparse.Namespace) -> dict[str, Any]:
@@ -739,4 +751,24 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "_as_decimal",
+    "_build_last_price_map",
+    "_build_report",
+    "_collect_clickhouse_stats",
+    "_csv_write",
+    "_decimal_to_str",
+    "_extract_run_scope_decisions",
+    "_extract_signal_event_ts",
+    "_fifo_trade_pnl",
+    "_json_default",
+    "_load_json",
+    "_mean",
+    "_parse_args",
+    "_percentile",
+    "_query_rows",
+    "_render_markdown",
+    "_to_list_of_strings",
+    "_to_mapping",
+    "main",
+]

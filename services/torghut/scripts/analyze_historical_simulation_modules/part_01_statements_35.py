@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Generate a production-ready statistical report for a historical simulation run."""
 
@@ -7,7 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from collections import Counter, defaultdict, deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -21,21 +20,10 @@ from scripts.start_historical_simulation import (
     ClickHouseRuntimeConfig,
     _as_mapping,
     _as_text,
-    _build_clickhouse_runtime_config,
-    _build_postgres_runtime_config,
-    _build_resources,
-    _default_simulation_postgres_db,
     _http_clickhouse_query,
-    _load_manifest,
     _parse_rfc3339_timestamp,
-    _resolve_window_bounds,
-    _safe_float,
     _safe_int,
-    _validate_window_policy,
 )
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
 
 REPORT_SCHEMA_VERSION = "torghut.simulation-report.v1"
 
@@ -648,4 +636,43 @@ def _render_markdown(report: Mapping[str, Any]) -> str:
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "REPORT_SCHEMA_VERSION",
+    "_ExecutionFill",
+    "_FifoPnlState",
+    "_parse_args",
+    "_to_mapping",
+    "_to_list_of_strings",
+    "_as_decimal",
+    "_decimal_input_text",
+    "_decimal_to_str",
+    "_json_default",
+    "_percentile",
+    "_mean",
+    "_load_json",
+    "_parse_optional_ts",
+    "_query_rows",
+    "_extract_simulation_context",
+    "_extract_signal_event_ts",
+    "_extract_run_scope_decisions",
+    "_build_last_price_map",
+    "_last_prices_from_clickhouse",
+    "_last_prices_from_clickhouse_field",
+    "_last_prices_from_tab_separated_body",
+    "_last_prices_from_tca_rows",
+    "_last_prices_from_execution_rows",
+    "_fifo_trade_pnl",
+    "_execution_fill_from_row",
+    "_apply_fifo_fill",
+    "_close_fifo_lots",
+    "_realized_fifo_delta",
+    "_fifo_trade_row",
+    "_fifo_unrealized_total",
+    "_fifo_unrealized_lots",
+    "_unrealized_lot_delta",
+    "_fifo_pnl_payload",
+    "_realized_by_symbol_payload",
+    "_csv_write",
+    "_collect_clickhouse_stats",
+    "_render_markdown",
+]
