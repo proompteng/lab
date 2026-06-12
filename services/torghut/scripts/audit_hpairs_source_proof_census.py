@@ -351,7 +351,17 @@ def _load_session_rows(
     source_account_label = _source_account_label(identity)
     account_labels = sorted({identity.account_label, source_account_label})
     decision_stmt = (
-        select(TradeDecision, Strategy.name)
+        select(
+            TradeDecision.id.label("id"),
+            TradeDecision.strategy_id.label("strategy_id"),
+            Strategy.name.label("strategy_name"),
+            TradeDecision.alpaca_account_label.label("alpaca_account_label"),
+            TradeDecision.symbol.label("symbol"),
+            TradeDecision.status.label("status"),
+            TradeDecision.decision_hash.label("decision_hash"),
+            TradeDecision.created_at.label("created_at"),
+            TradeDecision.executed_at.label("executed_at"),
+        )
         .join(Strategy, TradeDecision.strategy_id == Strategy.id)
         .where(TradeDecision.alpaca_account_label == identity.account_label)
         .where(Strategy.name == identity.runtime_strategy_name)
@@ -361,11 +371,9 @@ def _load_session_rows(
         decision_stmt = decision_stmt.where(TradeDecision.created_at >= started_at)
     if ended_at is not None:
         decision_stmt = decision_stmt.where(TradeDecision.created_at < ended_at)
-    decision_pairs = list(session.execute(decision_stmt).all())
-    decisions = [
-        _decision_row(row, strategy_name) for row, strategy_name in decision_pairs
-    ]
-    decision_ids = {str(row.id) for row, _strategy_name in decision_pairs}
+    decision_rows = list(session.execute(decision_stmt).mappings().all())
+    decisions = [_decision_projection_row(row) for row in decision_rows]
+    decision_ids = {str(row["id"]) for row in decision_rows}
 
     execution_stmt = (
         select(Execution)
@@ -2094,6 +2102,20 @@ def _decision_row(row: TradeDecision, strategy_name: str | None) -> dict[str, ob
         "decision_hash": row.decision_hash,
         "created_at": row.created_at,
         "executed_at": row.executed_at,
+    }
+
+
+def _decision_projection_row(row: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "id": str(row["id"]),
+        "strategy_id": str(row["strategy_id"]),
+        "strategy_name": row.get("strategy_name"),
+        "alpaca_account_label": row.get("alpaca_account_label"),
+        "symbol": row.get("symbol"),
+        "status": row.get("status"),
+        "decision_hash": row.get("decision_hash"),
+        "created_at": row.get("created_at"),
+        "executed_at": row.get("executed_at"),
     }
 
 
