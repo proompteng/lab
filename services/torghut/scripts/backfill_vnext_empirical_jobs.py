@@ -24,7 +24,11 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
-    return {str(key): item for key, item in value.items()} if isinstance(value, Mapping) else {}
+    return (
+        {str(key): item for key, item in value.items()}
+        if isinstance(value, Mapping)
+        else {}
+    )
 
 
 def _as_job(
@@ -37,7 +41,9 @@ def _as_job(
     payload: Mapping[str, object],
     authority_payload: Mapping[str, object],
 ) -> None:
-    authority = "empirical" if bool(authority_payload.get("authoritative")) else "blocked"
+    authority = (
+        "empirical" if bool(authority_payload.get("authoritative")) else "blocked"
+    )
     upsert_empirical_job_run(
         session=session,
         run_id=run_id,
@@ -59,18 +65,27 @@ def main() -> int:
     inserted = 0
     with SessionLocal() as session:
         promotions = session.execute(
-            select(ResearchPromotion).order_by(ResearchPromotion.created_at.desc()).limit(max(args.limit, 1))
+            select(ResearchPromotion)
+            .order_by(ResearchPromotion.created_at.desc())
+            .limit(max(args.limit, 1))
         ).scalars()
         for promotion in promotions:
             candidate_id = str(promotion.candidate_id or "").strip()
             if not candidate_id:
                 continue
             candidate = session.execute(
-                select(ResearchCandidate).where(ResearchCandidate.candidate_id == candidate_id)
+                select(ResearchCandidate).where(
+                    ResearchCandidate.candidate_id == candidate_id
+                )
             ).scalar_one_or_none()
-            run_id = str(candidate.run_id if candidate is not None else "").strip() or f"legacy-{candidate_id}"
+            run_id = (
+                str(candidate.run_id if candidate is not None else "").strip()
+                or f"legacy-{candidate_id}"
+            )
             evidence_bundle = _as_dict(promotion.evidence_bundle)
-            promotion_authority = _as_dict(evidence_bundle.get("promotion_evidence_authority"))
+            promotion_authority = _as_dict(
+                evidence_bundle.get("promotion_evidence_authority")
+            )
             promotion_evidence = _as_dict(evidence_bundle.get("promotion_evidence"))
 
             benchmark = _as_dict(promotion_evidence.get("benchmark_parity"))
@@ -82,7 +97,9 @@ def main() -> int:
                     job_type="benchmark_parity",
                     artifact_refs=[str(benchmark.get("artifact_ref") or "").strip()],
                     payload=benchmark,
-                    authority_payload=_as_dict(promotion_authority.get("benchmark_parity")),
+                    authority_payload=_as_dict(
+                        promotion_authority.get("benchmark_parity")
+                    ),
                 )
                 inserted += 1
 
@@ -95,7 +112,9 @@ def main() -> int:
                     job_type="foundation_router_parity",
                     artifact_refs=[str(foundation.get("artifact_ref") or "").strip()],
                     payload=foundation,
-                    authority_payload=_as_dict(promotion_authority.get("foundation_router_parity")),
+                    authority_payload=_as_dict(
+                        promotion_authority.get("foundation_router_parity")
+                    ),
                 )
                 inserted += 1
 
@@ -132,7 +151,11 @@ def main() -> int:
                     inserted += 2
         session.commit()
     payload = {"status": "ok", "inserted_or_updated": inserted}
-    print(json.dumps(payload, separators=(",", ":")) if args.json else json.dumps(payload, indent=2))
+    print(
+        json.dumps(payload, separators=(",", ":"))
+        if args.json
+        else json.dumps(payload, indent=2)
+    )
     return 0
 
 

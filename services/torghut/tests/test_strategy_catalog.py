@@ -17,7 +17,9 @@ class TestStrategyCatalog(TestCase):
     def setUp(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
-        self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self.session_local = sessionmaker(
+            bind=engine, expire_on_commit=False, future=True
+        )
 
     def _write_catalog(self, payload: dict) -> Path:
         handle, path = tempfile.mkstemp(suffix=".json")
@@ -62,10 +64,14 @@ class TestStrategyCatalog(TestCase):
                 changed = catalog.refresh(session)
                 self.assertTrue(changed)
 
-                demo = session.execute(select(Strategy).where(Strategy.name == "demo")).scalar_one_or_none()
+                demo = session.execute(
+                    select(Strategy).where(Strategy.name == "demo")
+                ).scalar_one_or_none()
                 self.assertIsNotNone(demo)
 
-                legacy = session.execute(select(Strategy).where(Strategy.name == "legacy")).scalar_one_or_none()
+                legacy = session.execute(
+                    select(Strategy).where(Strategy.name == "legacy")
+                ).scalar_one_or_none()
                 self.assertIsNotNone(legacy)
                 self.assertTrue(legacy.enabled)
         finally:
@@ -104,13 +110,17 @@ class TestStrategyCatalog(TestCase):
                 changed = catalog.refresh(session)
                 self.assertTrue(changed)
 
-                legacy = session.execute(select(Strategy).where(Strategy.name == "legacy")).scalar_one_or_none()
+                legacy = session.execute(
+                    select(Strategy).where(Strategy.name == "legacy")
+                ).scalar_one_or_none()
                 self.assertIsNotNone(legacy)
                 self.assertFalse(legacy.enabled)
         finally:
             path.unlink(missing_ok=True)
 
-    def test_catalog_persists_compiled_strategy_metadata_in_description_bridge(self) -> None:
+    def test_catalog_persists_compiled_strategy_metadata_in_description_bridge(
+        self,
+    ) -> None:
         path = self._write_catalog(
             {
                 "strategies": [

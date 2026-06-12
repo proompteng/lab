@@ -81,9 +81,11 @@ def evaluate_dspy_compile_artifact(
 
     observed = _extract_observed_metrics(compile_result.metric_bundle)
     _require_observed_metrics(observed)
-    threshold_checks, threshold_snapshot, threshold_failures = _evaluate_threshold_checks(
-        policy=policy,
-        observed=observed,
+    threshold_checks, threshold_snapshot, threshold_failures = (
+        _evaluate_threshold_checks(
+            policy=policy,
+            observed=observed,
+        )
     )
     deterministic_compatibility = _evaluate_deterministic_compatibility(
         compile_result=compile_result,
@@ -370,8 +372,8 @@ def _evaluate_deterministic_compatibility(
     compile_result: DSPyCompileResult,
     policy: Mapping[str, Any],
 ) -> dict[str, Any]:
-    required_keys_raw = (
-        cast(dict[str, Any], policy.get("reproducibility") or {}).get("requiredKeys")
+    required_keys_raw = cast(dict[str, Any], policy.get("reproducibility") or {}).get(
+        "requiredKeys"
     )
     required_keys = _normalize_required_keys(required_keys_raw)
 

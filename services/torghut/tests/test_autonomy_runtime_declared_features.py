@@ -15,14 +15,14 @@ from app.trading.models import SignalEnvelope
 
 
 class _InvalidDeclaredFeaturePlugin:
-    strategy_type = 'invalid_declared_feature'
-    version = '1.0.0'
+    strategy_type = "invalid_declared_feature"
+    version = "1.0.0"
 
     def validate_params(self, params: dict[str, object]) -> None:
         _ = params
 
     def required_features(self) -> set[str]:
-        return {'price', 'this_is_not_in_featurevector_v3'}
+        return {"price", "this_is_not_in_featurevector_v3"}
 
     def warmup_bars(self) -> int:
         return 0
@@ -31,13 +31,13 @@ class _InvalidDeclaredFeaturePlugin:
         _ = fv
         _ = ctx
         return StrategyIntent(
-            strategy_id='invalid-strategy',
-            symbol='AAPL',
-            direction='long',
-            confidence=Decimal('0.50'),
-            target_qty=Decimal('1'),
-            horizon='intraday',
-            rationale=['should_not_emit'],
+            strategy_id="invalid-strategy",
+            symbol="AAPL",
+            direction="long",
+            confidence=Decimal("0.50"),
+            target_qty=Decimal("1"),
+            horizon="intraday",
+            rationale=["should_not_emit"],
         )
 
 
@@ -49,15 +49,15 @@ class TestAutonomyRuntimeDeclaredFeatures(TestCase):
 
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            symbol='AAPL',
-            timeframe='1Min',
+            symbol="AAPL",
+            timeframe="1Min",
             seq=1,
-            source='fixture',
+            source="fixture",
             payload={
-                'feature_schema_version': '3.0.0',
-                'macd': {'macd': '1', 'signal': '0.5'},
-                'rsi14': '45',
-                'price': '101',
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": "1", "signal": "0.5"},
+                "rsi14": "45",
+                "price": "101",
             },
         )
 
@@ -65,14 +65,17 @@ class TestAutonomyRuntimeDeclaredFeatures(TestCase):
             signal,
             [
                 StrategyRuntimeConfig(
-                    strategy_id='invalid-strategy',
-                    strategy_type='invalid_declared_feature',
-                    version='1.0.0',
+                    strategy_id="invalid-strategy",
+                    strategy_type="invalid_declared_feature",
+                    version="1.0.0",
                     params={},
-                    base_timeframe='1Min',
+                    base_timeframe="1Min",
                 )
             ],
         )
 
         self.assertEqual(result.decisions, [])
-        self.assertIn('declared_features_not_in_schema:invalid-strategy:this_is_not_in_featurevector_v3', result.errors)
+        self.assertIn(
+            "declared_features_not_in_schema:invalid-strategy:this_is_not_in_featurevector_v3",
+            result.errors,
+        )

@@ -25,19 +25,44 @@ def _parse_date(value: str) -> date:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backtest TSMOM baseline on Stooq daily bars.")
-    parser.add_argument("--symbols", required=True, help="Comma-separated Stooq symbols, e.g. spy.us,qqq.us")
+    parser = argparse.ArgumentParser(
+        description="Backtest TSMOM baseline on Stooq daily bars."
+    )
+    parser.add_argument(
+        "--symbols",
+        required=True,
+        help="Comma-separated Stooq symbols, e.g. spy.us,qqq.us",
+    )
     parser.add_argument("--start", default=None, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", default=None, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--lookback", type=int, default=60, help="Lookback window (days)")
-    parser.add_argument("--vol-lookback", type=int, default=20, help="Volatility lookback (days)")
-    parser.add_argument("--target-vol", type=float, default=0.01, help="Target daily volatility (fraction)")
-    parser.add_argument("--max-gross", type=float, default=1.0, help="Max gross leverage")
-    parser.add_argument("--long-only", action="store_true", help="Long-only mode (default).")
-    parser.add_argument("--allow-shorts", action="store_true", help="Allow short weights.")
-    parser.add_argument("--cost-bps", type=float, default=5.0, help="Cost in bps per unit turnover.")
+    parser.add_argument(
+        "--lookback", type=int, default=60, help="Lookback window (days)"
+    )
+    parser.add_argument(
+        "--vol-lookback", type=int, default=20, help="Volatility lookback (days)"
+    )
+    parser.add_argument(
+        "--target-vol",
+        type=float,
+        default=0.01,
+        help="Target daily volatility (fraction)",
+    )
+    parser.add_argument(
+        "--max-gross", type=float, default=1.0, help="Max gross leverage"
+    )
+    parser.add_argument(
+        "--long-only", action="store_true", help="Long-only mode (default)."
+    )
+    parser.add_argument(
+        "--allow-shorts", action="store_true", help="Allow short weights."
+    )
+    parser.add_argument(
+        "--cost-bps", type=float, default=5.0, help="Cost in bps per unit turnover."
+    )
     parser.add_argument("--json", default=None, help="Optional output JSON path.")
-    parser.add_argument("--csv", default=None, help="Optional output CSV path for equity/debug.")
+    parser.add_argument(
+        "--csv", default=None, help="Optional output CSV path for equity/debug."
+    )
     return parser.parse_args()
 
 
@@ -71,7 +96,8 @@ def main() -> int:
     summary = summarize_equity_curve(equity)
 
     config_payload = {
-        key: (value.isoformat() if isinstance(value, date) else value) for key, value in cfg.__dict__.items()
+        key: (value.isoformat() if isinstance(value, date) else value)
+        for key, value in cfg.__dict__.items()
     }
     payload = {
         "config": config_payload,

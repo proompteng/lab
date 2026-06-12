@@ -25,7 +25,10 @@ _ROUTE_REPAIR_RECOMMENDATION_FRAGMENTS: tuple[tuple[str, str], ...] = (
     ("quote_stale", ROUTE_REPAIR_RECOMMENDATIONS["stale_quote"]),
     ("missing_bid_ask", ROUTE_REPAIR_RECOMMENDATIONS["missing_bid_ask"]),
     ("bid_ask_missing", ROUTE_REPAIR_RECOMMENDATIONS["missing_bid_ask"]),
-    ("missing_executable_quote", ROUTE_REPAIR_RECOMMENDATIONS["missing_executable_quote"]),
+    (
+        "missing_executable_quote",
+        ROUTE_REPAIR_RECOMMENDATIONS["missing_executable_quote"],
+    ),
     ("missing_bid", ROUTE_REPAIR_RECOMMENDATIONS["missing_bid_ask"]),
     ("missing_ask", ROUTE_REPAIR_RECOMMENDATIONS["missing_bid_ask"]),
     ("spread_bps_exceeded", ROUTE_REPAIR_RECOMMENDATIONS["spread_bps_exceeded"]),
@@ -39,12 +42,24 @@ _ROUTE_REPAIR_RECOMMENDATION_FRAGMENTS: tuple[tuple[str, str], ...] = (
     ("blocked_submit", ROUTE_REPAIR_RECOMMENDATIONS["blocked_submit"]),
     ("simple_submit_disabled", ROUTE_REPAIR_RECOMMENDATIONS["simple_submit_disabled"]),
     ("submit", ROUTE_REPAIR_RECOMMENDATIONS["blocked_submit"]),
-    ("missing_close_flatten_handoff", ROUTE_REPAIR_RECOMMENDATIONS["missing_close_flatten_handoff"]),
-    ("close_flatten_handoff_missing", ROUTE_REPAIR_RECOMMENDATIONS["missing_close_flatten_handoff"]),
+    (
+        "missing_close_flatten_handoff",
+        ROUTE_REPAIR_RECOMMENDATIONS["missing_close_flatten_handoff"],
+    ),
+    (
+        "close_flatten_handoff_missing",
+        ROUTE_REPAIR_RECOMMENDATIONS["missing_close_flatten_handoff"],
+    ),
     ("runtime_import_pending", ROUTE_REPAIR_RECOMMENDATIONS["runtime_import_pending"]),
-    ("runtime_ledger_import_pending", ROUTE_REPAIR_RECOMMENDATIONS["runtime_import_pending"]),
+    (
+        "runtime_ledger_import_pending",
+        ROUTE_REPAIR_RECOMMENDATIONS["runtime_import_pending"],
+    ),
     ("tca_stale", "refresh_execution_tca_and_quote_samples_before_routeability_claim"),
-    ("execution_tca_stale", "refresh_execution_tca_and_quote_samples_before_routeability_claim"),
+    (
+        "execution_tca_stale",
+        "refresh_execution_tca_and_quote_samples_before_routeability_claim",
+    ),
     ("slippage", "reduce_route_slippage_and_collect_fresh_tca_receipt"),
     ("route_universe", "refresh_route_universe_and_symbol_fillability_receipts"),
 )
@@ -99,11 +114,13 @@ def resolve_order_route_metadata(
         fallback_count=fallback_count,
     )
 
-    normalized_expected, normalized_actual, normalized_reason, normalized_count = normalize_route_provenance(
-        expected_adapter=expected,
-        actual_adapter=raw_actual,
-        fallback_reason=fallback_reason,
-        fallback_count=fallback_count,
+    normalized_expected, normalized_actual, normalized_reason, normalized_count = (
+        normalize_route_provenance(
+            expected_adapter=expected,
+            actual_adapter=raw_actual,
+            fallback_reason=fallback_reason,
+            fallback_count=fallback_count,
+        )
     )
     return normalized_expected, normalized_actual, normalized_reason, normalized_count
 
@@ -118,7 +135,9 @@ def _resolve_expected_adapter(
     if expected is None and execution_client is not None:
         expected = coerce_route_text(getattr(execution_client, "name", None))
     if expected is None:
-        expected = coerce_route_text(_coerce_order_field(order_response, "_execution_route_expected"))
+        expected = coerce_route_text(
+            _coerce_order_field(order_response, "_execution_route_expected")
+        )
     return expected
 
 
@@ -128,17 +147,27 @@ def _resolve_actual_adapter(
     order_response: Mapping[str, Any] | None,
     expected: str | None,
 ) -> str | None:
-    raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_route_actual"))
+    raw_actual = coerce_route_text(
+        _coerce_order_field(order_response, "_execution_route_actual")
+    )
     if raw_actual is None:
-        raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_adapter"))
+        raw_actual = coerce_route_text(
+            _coerce_order_field(order_response, "_execution_adapter")
+        )
     if raw_actual is None:
-        raw_actual = coerce_route_text(_coerce_order_field(order_response, "execution_actual_adapter"))
+        raw_actual = coerce_route_text(
+            _coerce_order_field(order_response, "execution_actual_adapter")
+        )
     if raw_actual is None and execution_client is not None:
         raw_actual = coerce_route_text(getattr(execution_client, "last_route", None))
     if raw_actual is None:
-        raw_actual = coerce_route_text(_coerce_order_field(order_response, "_execution_route_expected"))
+        raw_actual = coerce_route_text(
+            _coerce_order_field(order_response, "_execution_route_expected")
+        )
     if raw_actual is None:
-        raw_actual = coerce_route_text(_coerce_order_field(order_response, "execution_expected_adapter"))
+        raw_actual = coerce_route_text(
+            _coerce_order_field(order_response, "execution_expected_adapter")
+        )
     if raw_actual is None:
         raw_actual = expected
     return raw_actual
@@ -153,7 +182,9 @@ def _resolve_fallback_reason(
         _coerce_order_field(order_response, "_execution_fallback_reason")
     )
     if fallback_reason is None:
-        fallback_reason = coerce_route_text(_coerce_order_field(order_response, "_fallback_reason"))
+        fallback_reason = coerce_route_text(
+            _coerce_order_field(order_response, "_fallback_reason")
+        )
     if fallback_reason is None and execution_client is not None:
         fallback_reason = coerce_route_text(
             getattr(execution_client, "last_fallback_reason", None)
@@ -170,7 +201,9 @@ def _resolve_fallback_count(
         _coerce_order_field(order_response, "_execution_fallback_count")
     )
     if fallback_count is None and execution_client is not None:
-        fallback_count = coerce_route_int(getattr(execution_client, "last_fallback_count", None))
+        fallback_count = coerce_route_int(
+            getattr(execution_client, "last_fallback_count", None)
+        )
     return fallback_count
 
 
@@ -185,7 +218,11 @@ def _normalize_fallback_fields(
         fallback_count = 1
         if fallback_reason is None:
             fallback_reason = f"fallback_from_{expected}_to_{actual}"
-    if fallback_count is not None and fallback_count <= 0 and fallback_reason is not None:
+    if (
+        fallback_count is not None
+        and fallback_count <= 0
+        and fallback_reason is not None
+    ):
         fallback_count = 1
     return fallback_reason, fallback_count
 
@@ -199,14 +236,14 @@ def normalize_route_provenance(
 ) -> tuple[str, str, str | None, int]:
     """Normalize route provenance so execution rows are always materialized with deterministic metadata."""
 
-    expected = coerce_route_text(expected_adapter) or 'unknown'
+    expected = coerce_route_text(expected_adapter) or "unknown"
     actual = coerce_route_text(actual_adapter) or expected
     count = 0 if fallback_count is None else max(0, int(fallback_count))
     reason = coerce_route_text(fallback_reason)
     if expected != actual and count <= 0:
         count = 1
     if count > 0 and reason is None:
-        reason = f'fallback_from_{expected}_to_{actual}'
+        reason = f"fallback_from_{expected}_to_{actual}"
     if count == 0:
         reason = None
     return expected, actual, reason, count

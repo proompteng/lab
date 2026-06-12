@@ -19,7 +19,9 @@ from app.trading.risk import RiskEngine
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Replay ClickHouse signals through the decision engine.")
+    parser = argparse.ArgumentParser(
+        description="Replay ClickHouse signals through the decision engine."
+    )
     parser.add_argument("--start", required=True, help="Start timestamp (ISO-8601).")
     parser.add_argument("--end", required=True, help="End timestamp (ISO-8601).")
     parser.add_argument("--symbol", default=None, help="Symbol filter (optional).")

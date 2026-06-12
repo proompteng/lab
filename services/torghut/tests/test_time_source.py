@@ -19,11 +19,21 @@ class TestTradingTimeSource(TestCase):
         }
 
     def tearDown(self) -> None:
-        config.settings.trading_simulation_enabled = self._snapshot["trading_simulation_enabled"]
-        config.settings.trading_simulation_clock_mode = self._snapshot["trading_simulation_clock_mode"]
-        config.settings.trading_simulation_window_start = self._snapshot["trading_simulation_window_start"]
-        config.settings.trading_simulation_window_end = self._snapshot["trading_simulation_window_end"]
-        config.settings.trading_simulation_clock_cache_seconds = self._snapshot["trading_simulation_clock_cache_seconds"]
+        config.settings.trading_simulation_enabled = self._snapshot[
+            "trading_simulation_enabled"
+        ]
+        config.settings.trading_simulation_clock_mode = self._snapshot[
+            "trading_simulation_clock_mode"
+        ]
+        config.settings.trading_simulation_window_start = self._snapshot[
+            "trading_simulation_window_start"
+        ]
+        config.settings.trading_simulation_window_end = self._snapshot[
+            "trading_simulation_window_end"
+        ]
+        config.settings.trading_simulation_clock_cache_seconds = self._snapshot[
+            "trading_simulation_clock_cache_seconds"
+        ]
 
     def test_snapshot_uses_cursor_time_when_available(self) -> None:
         config.settings.trading_simulation_enabled = True
@@ -78,7 +88,9 @@ class TestTradingTimeSource(TestCase):
         def _cursor_for_account(*, account_label: str) -> datetime:
             return cursor_by_account[account_label]
 
-        with patch.object(source, "_load_clickhouse_cursor", side_effect=_cursor_for_account):
+        with patch.object(
+            source, "_load_clickhouse_cursor", side_effect=_cursor_for_account
+        ):
             first_snapshot = source.snapshot(account_label="paper-a")
             second_snapshot = source.snapshot(account_label="paper-b")
             repeated_first_snapshot = source.snapshot(account_label="paper-a")
@@ -109,7 +121,9 @@ class TestTradingTimeSource(TestCase):
             def execute(_stmt) -> _Result:
                 return _Result()
 
-        with patch('app.trading.time_source.SessionLocal', return_value=_Session()):
-            cursor_at = TradingTimeSource._load_clickhouse_cursor(account_label='paper-a')
+        with patch("app.trading.time_source.SessionLocal", return_value=_Session()):
+            cursor_at = TradingTimeSource._load_clickhouse_cursor(
+                account_label="paper-a"
+            )
 
         self.assertIsNone(cursor_at)

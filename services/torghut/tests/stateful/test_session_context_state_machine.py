@@ -6,11 +6,21 @@ from decimal import Decimal
 import pytest
 from hypothesis import settings
 from hypothesis import strategies as st
-from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, rule, run_state_machine_as_test
+from hypothesis.stateful import (
+    RuleBasedStateMachine,
+    invariant,
+    precondition,
+    rule,
+    run_state_machine_as_test,
+)
 
 from app.trading.models import SignalEnvelope
 from app.trading.session_context import SessionContextTracker
-from tests.strategies.trading import non_negative_spreads, positive_prices, size_decimals
+from tests.strategies.trading import (
+    non_negative_spreads,
+    positive_prices,
+    size_decimals,
+)
 
 pytestmark = [pytest.mark.property, pytest.mark.stateful]
 
@@ -27,23 +37,23 @@ def _signal(
     bid = price - (spread / 2)
     ask = price + (spread / 2)
     if bid <= 0:
-        bid = Decimal('0.0001')
+        bid = Decimal("0.0001")
         ask = bid + spread
         price = (bid + ask) / 2
     return SignalEnvelope(
         event_ts=datetime.combine(day, event_time, tzinfo=timezone.utc),
-        symbol='META',
-        timeframe='1Sec',
+        symbol="META",
+        timeframe="1Sec",
         seq=1,
-        source='ta',
+        source="ta",
         payload={
-            'price': price,
-            'spread': ask - bid,
-            'imbalance_bid_px': bid,
-            'imbalance_ask_px': ask,
-            'imbalance_bid_sz': bid_sz,
-            'imbalance_ask_sz': ask_sz,
-            'vwap_w5m': price,
+            "price": price,
+            "spread": ask - bid,
+            "imbalance_bid_px": bid,
+            "imbalance_ask_px": ask,
+            "imbalance_bid_sz": bid_sz,
+            "imbalance_ask_sz": ask_sz,
+            "vwap_w5m": price,
         },
     )
 
@@ -60,8 +70,15 @@ class SessionContextStateMachine(RuleBasedStateMachine):
         self.last_payload: dict[str, object] | None = None
 
     @precondition(lambda self: self.opened_today and not self.closed_today)
-    @rule(price=positive_prices(), spread=non_negative_spreads(), bid_sz=size_decimals(), ask_sz=size_decimals())
-    def close_session(self, price: Decimal, spread: Decimal, bid_sz: Decimal, ask_sz: Decimal) -> None:
+    @rule(
+        price=positive_prices(),
+        spread=non_negative_spreads(),
+        bid_sz=size_decimals(),
+        ask_sz=size_decimals(),
+    )
+    def close_session(
+        self, price: Decimal, spread: Decimal, bid_sz: Decimal, ask_sz: Decimal
+    ) -> None:
         self.last_payload = self.tracker.enrich_signal_payload(
             _signal(
                 day=self.current_day,
@@ -72,7 +89,7 @@ class SessionContextStateMachine(RuleBasedStateMachine):
                 ask_sz=ask_sz,
             )
         )
-        state = self.tracker._state_by_symbol['META']
+        state = self.tracker._state_by_symbol["META"]
         self.expected_prev_close = (
             state.last_valid_quote_price
             or state.opening_window_close_price
@@ -89,9 +106,22 @@ class SessionContextStateMachine(RuleBasedStateMachine):
         self.closed_today = False
         self.last_payload = None
 
-    @precondition(lambda self: not self.opened_today and not self.closed_today and self.last_payload is None)
-    @rule(price=positive_prices(), spread=non_negative_spreads(), bid_sz=size_decimals(), ask_sz=size_decimals())
-    def premarket_tick(self, price: Decimal, spread: Decimal, bid_sz: Decimal, ask_sz: Decimal) -> None:
+    @precondition(
+        lambda self: (
+            not self.opened_today
+            and not self.closed_today
+            and self.last_payload is None
+        )
+    )
+    @rule(
+        price=positive_prices(),
+        spread=non_negative_spreads(),
+        bid_sz=size_decimals(),
+        ask_sz=size_decimals(),
+    )
+    def premarket_tick(
+        self, price: Decimal, spread: Decimal, bid_sz: Decimal, ask_sz: Decimal
+    ) -> None:
         payload = self.tracker.enrich_signal_payload(
             _signal(
                 day=self.current_day,
@@ -103,13 +133,20 @@ class SessionContextStateMachine(RuleBasedStateMachine):
             )
         )
         self.last_payload = payload
-        assert 'session_open_price' not in payload
+        assert "session_open_price" not in payload
         if self.expected_prev_close is not None:
-            assert payload['prev_session_close_price'] == self.expected_prev_close
+            assert payload["prev_session_close_price"] == self.expected_prev_close
 
     @precondition(lambda self: not self.closed_today)
-    @rule(price=positive_prices(), spread=non_negative_spreads(), bid_sz=size_decimals(), ask_sz=size_decimals())
-    def regular_open_tick(self, price: Decimal, spread: Decimal, bid_sz: Decimal, ask_sz: Decimal) -> None:
+    @rule(
+        price=positive_prices(),
+        spread=non_negative_spreads(),
+        bid_sz=size_decimals(),
+        ask_sz=size_decimals(),
+    )
+    def regular_open_tick(
+        self, price: Decimal, spread: Decimal, bid_sz: Decimal, ask_sz: Decimal
+    ) -> None:
         payload = self.tracker.enrich_signal_payload(
             _signal(
                 day=self.current_day,
@@ -121,17 +158,17 @@ class SessionContextStateMachine(RuleBasedStateMachine):
             )
         )
         self.last_payload = payload
-        if 'session_open_price' not in payload:
+        if "session_open_price" not in payload:
             assert not self.opened_today
             return
-        state = self.tracker._state_by_symbol['META']
+        state = self.tracker._state_by_symbol["META"]
         if state.last_valid_quote_price is None:
             assert not self.opened_today
             return
         if not self.opened_today:
-            self.expected_open_price = payload['session_open_price']
+            self.expected_open_price = payload["session_open_price"]
             self.opened_today = True
-        assert payload['session_open_price'] == self.expected_open_price
+        assert payload["session_open_price"] == self.expected_open_price
 
     @precondition(lambda self: not self.closed_today)
     @rule(
@@ -157,7 +194,10 @@ class SessionContextStateMachine(RuleBasedStateMachine):
         payload = self.tracker.enrich_signal_payload(
             _signal(
                 day=self.current_day,
-                event_time=(datetime(2026, 1, 1, 13, 30, tzinfo=timezone.utc) + timedelta(minutes=minute_offset)).time(),
+                event_time=(
+                    datetime(2026, 1, 1, 13, 30, tzinfo=timezone.utc)
+                    + timedelta(minutes=minute_offset)
+                ).time(),
                 price=price,
                 spread=spread,
                 bid_sz=bid_sz,
@@ -165,23 +205,27 @@ class SessionContextStateMachine(RuleBasedStateMachine):
             )
         )
         self.last_payload = payload
-        if 'session_open_price' not in payload:
+        if "session_open_price" not in payload:
             return
-        state = self.tracker._state_by_symbol['META']
+        state = self.tracker._state_by_symbol["META"]
         if state.last_valid_quote_price is None:
             assert not self.opened_today
             return
-        assert payload['session_open_price'] == self.expected_open_price
+        assert payload["session_open_price"] == self.expected_open_price
 
     @invariant()
     def payload_invariants_hold(self) -> None:
-        if self.last_payload is None or 'session_open_price' not in self.last_payload:
+        if self.last_payload is None or "session_open_price" not in self.last_payload:
             return
         payload = self.last_payload
-        assert payload['session_high_price'] >= payload['session_low_price']
-        assert payload['opening_range_high'] >= payload['opening_range_low']
-        if 'price_position_in_session_range' in payload:
-            assert Decimal('0') <= payload['price_position_in_session_range'] <= Decimal('1')
+        assert payload["session_high_price"] >= payload["session_low_price"]
+        assert payload["opening_range_high"] >= payload["opening_range_low"]
+        if "price_position_in_session_range" in payload:
+            assert (
+                Decimal("0")
+                <= payload["price_position_in_session_range"]
+                <= Decimal("1")
+            )
 
 
 def test_session_context_state_machine() -> None:

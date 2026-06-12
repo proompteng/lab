@@ -6,20 +6,20 @@ from decimal import Decimal
 from hypothesis import strategies as st
 
 JANGAR_EQUITY_SYMBOLS = (
-    'AAPL',
-    'AMAT',
-    'AMD',
-    'AVGO',
-    'GOOG',
-    'INTC',
-    'META',
-    'MSFT',
-    'MU',
-    'NVDA',
-    'PLTR',
-    'SHOP',
+    "AAPL",
+    "AMAT",
+    "AMD",
+    "AVGO",
+    "GOOG",
+    "INTC",
+    "META",
+    "MSFT",
+    "MU",
+    "NVDA",
+    "PLTR",
+    "SHOP",
 )
-CRYPTO_SYMBOLS = ('BTC/USD', 'ETH/USD')
+CRYPTO_SYMBOLS = ("BTC/USD", "ETH/USD")
 
 _UTC_MIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _UTC_MAX = datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
@@ -41,27 +41,27 @@ def quantized_decimals(
 
 
 def positive_prices() -> st.SearchStrategy[Decimal]:
-    return quantized_decimals(min_value='1.00', max_value='1000.00', places=4)
+    return quantized_decimals(min_value="1.00", max_value="1000.00", places=4)
 
 
 def non_negative_spreads() -> st.SearchStrategy[Decimal]:
-    return quantized_decimals(min_value='0.0000', max_value='5.0000', places=4)
+    return quantized_decimals(min_value="0.0000", max_value="5.0000", places=4)
 
 
 def executable_spread_bps() -> st.SearchStrategy[Decimal]:
-    return quantized_decimals(min_value='0', max_value='50', places=4)
+    return quantized_decimals(min_value="0", max_value="50", places=4)
 
 
 def positive_quantities() -> st.SearchStrategy[Decimal]:
-    return quantized_decimals(min_value='0.0001', max_value='500.0000', places=4)
+    return quantized_decimals(min_value="0.0001", max_value="500.0000", places=4)
 
 
 def position_quantities() -> st.SearchStrategy[Decimal]:
-    return quantized_decimals(min_value='-500.0000', max_value='500.0000', places=4)
+    return quantized_decimals(min_value="-500.0000", max_value="500.0000", places=4)
 
 
 def size_decimals() -> st.SearchStrategy[Decimal]:
-    return quantized_decimals(min_value='0', max_value='100000', places=0)
+    return quantized_decimals(min_value="0", max_value="100000", places=0)
 
 
 def utc_datetimes() -> st.SearchStrategy[datetime]:
@@ -74,15 +74,17 @@ def utc_datetimes() -> st.SearchStrategy[datetime]:
 
 def regular_session_datetimes() -> st.SearchStrategy[datetime]:
     return st.builds(
-        lambda base_day, minute_offset, second_offset: datetime(
-            base_day.year,
-            base_day.month,
-            base_day.day,
-            13,
-            30,
-            tzinfo=timezone.utc,
-        )
-        + timedelta(minutes=minute_offset, seconds=second_offset),
+        lambda base_day, minute_offset, second_offset: (
+            datetime(
+                base_day.year,
+                base_day.month,
+                base_day.day,
+                13,
+                30,
+                tzinfo=timezone.utc,
+            )
+            + timedelta(minutes=minute_offset, seconds=second_offset)
+        ),
         st.dates(min_value=_UTC_MIN.date(), max_value=_UTC_MAX.date()),
         st.integers(min_value=0, max_value=390),
         st.integers(min_value=0, max_value=59),
@@ -106,9 +108,9 @@ def trading_symbols(*, include_crypto: bool = True) -> st.SearchStrategy[str]:
 def strategy_ids() -> st.SearchStrategy[str]:
     return st.sampled_from(
         (
-            'intraday_tsmom_v1@prod',
-            'breakout_continuation_long_v1@paper',
-            'late_day_continuation_long_v1@paper',
-            'mean_reversion_rebound_long_v1@paper',
+            "intraday_tsmom_v1@prod",
+            "breakout_continuation_long_v1@paper",
+            "late_day_continuation_long_v1@paper",
+            "mean_reversion_rebound_long_v1@paper",
         )
     )

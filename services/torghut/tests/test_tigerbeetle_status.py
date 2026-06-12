@@ -300,7 +300,9 @@ class TestTigerBeetleStatus(TestCase):
         self.assertIsInstance(latest_reconciliation, dict)
         assert isinstance(latest_reconciliation, dict)
         self.assertTrue(latest_reconciliation["compact_status"])
-        self.assertEqual(latest_reconciliation["blockers"], ["tigerbeetle_transfer_code_mismatch"])
+        self.assertEqual(
+            latest_reconciliation["blockers"], ["tigerbeetle_transfer_code_mismatch"]
+        )
 
     def test_ref_count_failure_degrades_without_status_exception(self) -> None:
         with Session(self.engine) as session:

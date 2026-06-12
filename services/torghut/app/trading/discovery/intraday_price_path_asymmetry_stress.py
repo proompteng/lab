@@ -25,9 +25,7 @@ INTRADAY_PRICE_PATH_ASYMMETRY_STRESS_CONTRACT_SCHEMA_VERSION = (
     "torghut.intraday-price-path-asymmetry-stress-contract.v1"
 )
 INTRADAY_PRICE_PATH_ASYMMETRY_STRESS_PROOF_SEMANTICS_LABEL = "intraday_price_path_asymmetry_stress_preview_only_next_session_reversal_hypothesis_exact_replay_route_tca_runtime_ledger_required"
-INTRADAY_PRICE_PATH_ASYMMETRY_STRESS_PRIMARY_SOURCES: tuple[
-    Mapping[str, str], ...
-] = (
+INTRADAY_PRICE_PATH_ASYMMETRY_STRESS_PRIMARY_SOURCES: tuple[Mapping[str, str], ...] = (
     {
         "source_id": "ssrn-6074846",
         "url": "https://papers.ssrn.com/sol3/Delivery.cfm/6074846.pdf?abstractid=6074846&mirid=1",
@@ -147,9 +145,7 @@ class IntradayPricePathAsymmetryStressSummary:
             "warnings": list(self.warnings),
             "ranking_features": {
                 "mean_path_asymmetry": _stable_float(self.mean_path_asymmetry),
-                "mean_abs_path_asymmetry": _stable_float(
-                    self.mean_abs_path_asymmetry
-                ),
+                "mean_abs_path_asymmetry": _stable_float(self.mean_abs_path_asymmetry),
                 "contrarian_alignment_score": _stable_float(
                     self.contrarian_alignment_score
                 ),
@@ -186,8 +182,7 @@ def intraday_price_path_asymmetry_stress_contract() -> dict[str, Any]:
         ),
         "feature_schema_version": INTRADAY_PRICE_PATH_ASYMMETRY_STRESS_SCHEMA_VERSION,
         "source_papers": [
-            dict(item)
-            for item in INTRADAY_PRICE_PATH_ASYMMETRY_STRESS_PRIMARY_SOURCES
+            dict(item) for item in INTRADAY_PRICE_PATH_ASYMMETRY_STRESS_PRIMARY_SOURCES
         ],
         "stress_policy": "range_based_intraday_path_asymmetry_next_session_contrarian_screen",
         "stress_components": [
@@ -431,8 +426,7 @@ def _max_positive_numeric(
     values = [
         value
         for row in rows
-        if (value := _coalesce_numeric(row.payload, fields)) is not None
-        and value > 0.0
+        if (value := _coalesce_numeric(row.payload, fields)) is not None and value > 0.0
     ]
     return max(values) if values else None
 
@@ -443,8 +437,7 @@ def _min_positive_numeric(
     values = [
         value
         for row in rows
-        if (value := _coalesce_numeric(row.payload, fields)) is not None
-        and value > 0.0
+        if (value := _coalesce_numeric(row.payload, fields)) is not None and value > 0.0
     ]
     return min(values) if values else None
 

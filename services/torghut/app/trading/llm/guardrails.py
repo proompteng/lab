@@ -131,10 +131,14 @@ def _apply_rollout_stage_guardrail(state: _GuardrailState, rollout_stage: str) -
     if rollout_stage == "stage1":
         state.shadow_mode = True
         state.adjustment_allowed = False
-        state.effective_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage1")
+        state.effective_fail_mode = settings.llm_effective_fail_mode(
+            rollout_stage="stage1"
+        )
         return
     if rollout_stage == "stage2":
-        state.effective_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage2")
+        state.effective_fail_mode = settings.llm_effective_fail_mode(
+            rollout_stage="stage2"
+        )
 
 
 def _apply_prompt_template_guardrail(state: _GuardrailState) -> None:
@@ -162,7 +166,9 @@ def _governance_evidence_missing(rollout_stage: str) -> list[str]:
     if not settings.llm_model_version_lock:
         missing.append("llm_model_version_lock_missing")
         return missing
-    if not _matches_model_version_lock(settings.llm_model, settings.llm_model_version_lock):
+    if not _matches_model_version_lock(
+        settings.llm_model, settings.llm_model_version_lock
+    ):
         missing.append("llm_model_version_lock_mismatch")
     return missing
 
@@ -187,7 +193,11 @@ def _resolve_committee_enabled(state: _GuardrailState) -> bool:
 
 def _committee_roles_valid() -> bool:
     invalid_roles = sorted(
-        {role for role in settings.llm_committee_roles if role not in _ALLOWED_COMMITTEE_ROLES}
+        {
+            role
+            for role in settings.llm_committee_roles
+            if role not in _ALLOWED_COMMITTEE_ROLES
+        }
     )
     invalid_mandatory_roles = sorted(
         {

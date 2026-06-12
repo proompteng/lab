@@ -13,11 +13,15 @@ from .json import dump_json
 
 
 class _KafkaProducerProtocol(Protocol):
-    def send(self, topic: str, value: dict[str, object] | None = None, key: str | None = None) -> object: ...
+    def send(
+        self, topic: str, value: dict[str, object] | None = None, key: str | None = None
+    ) -> object: ...
 
     def flush(self, timeout: float | None = None) -> None: ...
 
-    def close(self, timeout: float | None = None, _null_logger: bool = False) -> None: ...
+    def close(
+        self, timeout: float | None = None, _null_logger: bool = False
+    ) -> None: ...
 
 
 def _serialize_key(key: str) -> bytes:
@@ -64,7 +68,9 @@ class OptionsKafkaProducer:
             "batch_size": batch_size,
             "request_timeout_ms": request_timeout_ms,
             "key_serializer": cast(Callable[[str], bytes], _serialize_key),
-            "value_serializer": cast(Callable[[dict[str, object]], bytes], _serialize_value),
+            "value_serializer": cast(
+                Callable[[dict[str, object]], bytes], _serialize_value
+            ),
         }
         if sasl_password:
             producer_kwargs.update(

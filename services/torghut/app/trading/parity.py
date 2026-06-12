@@ -15,7 +15,11 @@ from .evidence_contracts import (
     EvidenceMaturity,
     evidence_contract_payload,
 )
-from .features import FEATURE_VECTOR_V3_VALUE_FIELDS, FeatureNormalizationError, normalize_feature_vector_v3
+from .features import (
+    FEATURE_VECTOR_V3_VALUE_FIELDS,
+    FeatureNormalizationError,
+    normalize_feature_vector_v3,
+)
 from .models import SignalEnvelope
 
 
@@ -70,7 +74,9 @@ BENCHMARK_PARITY_REQUIRED_RUN_FIELDS: tuple[str, ...] = (
     "run_hash",
 )
 FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION = "foundation-router-parity-report-v1"
-FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION = "foundation-router-parity-contract-v1"
+FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION = (
+    "foundation-router-parity-contract-v1"
+)
 FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS: tuple[str, ...] = (
     "deterministic",
     "chronos",
@@ -139,7 +145,9 @@ def _build_benchmark_run(
     family_seed = f"{candidate_id}:{baseline_candidate_id}:{family}:{now.isoformat()}"
     output_ratio = _deterministic_ratio(f"{family_seed}:output")
     violation_ratio = _deterministic_ratio(f"{family_seed}:violations")
-    baseline_violation_ratio = _deterministic_ratio(f"{family_seed}:baseline-violations")
+    baseline_violation_ratio = _deterministic_ratio(
+        f"{family_seed}:baseline-violations"
+    )
     run_hash_seed = f"{family_seed}:run-hash"
     run_hash = hashlib.sha256(run_hash_seed.encode("utf-8")).hexdigest()
     return {
@@ -213,7 +221,8 @@ def _build_benchmark_scorecards(
     forecast_card = {
         "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "confidence_calibration_error": 0.02 + (forecast_ratio * 0.03),
-        "confidence_calibration_error_baseline": 0.018 + (baseline_forecast_ratio * 0.03),
+        "confidence_calibration_error_baseline": 0.018
+        + (baseline_forecast_ratio * 0.03),
         "risk_veto_alignment": 0.91 + (forecast_ratio * 0.08),
         "risk_veto_alignment_baseline": 0.92 + (baseline_forecast_ratio * 0.08),
         "policy_violation_rate": 0.009 + (forecast_ratio * 0.012),
@@ -277,12 +286,10 @@ def build_benchmark_parity_report(
     now: datetime | None = None,
 ) -> dict[str, object]:
     now = now or datetime.now(tz=timezone.utc)
-    decision_card, reasoning_card, forecast_card = (
-        _build_benchmark_scorecards(
-            candidate_id=candidate_id,
-            baseline_candidate_id=baseline_candidate_id,
-            now=now,
-        )
+    decision_card, reasoning_card, forecast_card = _build_benchmark_scorecards(
+        candidate_id=candidate_id,
+        baseline_candidate_id=baseline_candidate_id,
+        now=now,
     )
     benchmark_runs: list[dict[str, object]] = [
         _build_benchmark_run(
@@ -437,7 +444,9 @@ def build_foundation_router_parity_report(
         "contract": {
             "schema_version": FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,
             "required_adapters": list(FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS),
-            "required_slice_metrics": list(FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS),
+            "required_slice_metrics": list(
+                FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS
+            ),
             "hash_algorithm": "sha256",
             "generation_mode": "deterministic_foundation_router_parity_v1",
             "authority_mode": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
@@ -693,15 +702,15 @@ class FeatureParityReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            'checked_rows': self.checked_rows,
-            'missing_online_rows': self.missing_online_rows,
-            'missing_offline_rows': self.missing_offline_rows,
-            'hash_mismatches': self.hash_mismatches,
-            'drift_by_field': self.drift_by_field,
-            'top_drift_fields': self.top_drift_fields,
-            'failing_windows': self.failing_windows,
-            'accepted': self.accepted,
-            'reasons': self.reasons,
+            "checked_rows": self.checked_rows,
+            "missing_online_rows": self.missing_online_rows,
+            "missing_offline_rows": self.missing_offline_rows,
+            "hash_mismatches": self.hash_mismatches,
+            "drift_by_field": self.drift_by_field,
+            "top_drift_fields": self.top_drift_fields,
+            "failing_windows": self.failing_windows,
+            "accepted": self.accepted,
+            "reasons": self.reasons,
         }
 
 
@@ -723,7 +732,9 @@ def run_feature_parity(
     missing_online_rows = len(offline_keys - online_keys)
     missing_offline_rows = len(online_keys - offline_keys)
 
-    drift_by_field: dict[str, float] = {field: 0.0 for field in FEATURE_VECTOR_V3_VALUE_FIELDS}
+    drift_by_field: dict[str, float] = {
+        field: 0.0 for field in FEATURE_VECTOR_V3_VALUE_FIELDS
+    }
     hash_mismatches = 0
     failing_windows: list[dict[str, Any]] = []
 
@@ -745,18 +756,20 @@ def run_feature_parity(
         if drift_record:
             failing_windows.append(
                 {
-                    'event_ts': online.event_ts.isoformat(),
-                    'symbol': online.symbol,
-                    'timeframe': online.timeframe,
-                    'seq': online.seq,
-                    'source': online.source,
-                    'drift': drift_record,
+                    "event_ts": online.event_ts.isoformat(),
+                    "symbol": online.symbol,
+                    "timeframe": online.timeframe,
+                    "seq": online.seq,
+                    "source": online.source,
+                    "drift": drift_record,
                 }
             )
 
     top_drift_fields = [
-        {'field': field, 'max_abs_drift': drift}
-        for field, drift in sorted(drift_by_field.items(), key=lambda item: item[1], reverse=True)
+        {"field": field, "max_abs_drift": drift}
+        for field, drift in sorted(
+            drift_by_field.items(), key=lambda item: item[1], reverse=True
+        )
         if drift > 0
     ][:5]
 
@@ -764,11 +777,11 @@ def run_feature_parity(
     reasons: list[str] = []
     hash_mismatch_ratio = (hash_mismatches / checked_rows) if checked_rows else 0.0
     if hash_mismatch_ratio > policy.max_hash_mismatch_ratio:
-        reasons.append('hash_mismatch_ratio_exceeds_threshold')
+        reasons.append("hash_mismatch_ratio_exceeds_threshold")
     if failing_windows:
-        reasons.append('numeric_drift_exceeds_threshold')
+        reasons.append("numeric_drift_exceeds_threshold")
     if missing_online_rows > 0 or missing_offline_rows > 0:
-        reasons.append('coverage_mismatch')
+        reasons.append("coverage_mismatch")
 
     return FeatureParityReport(
         checked_rows=checked_rows,
@@ -785,11 +798,15 @@ def run_feature_parity(
 
 def write_feature_parity_report(report: FeatureParityReport, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report.to_dict(), indent=2, sort_keys=True), encoding='utf-8')
+    output_path.write_text(
+        json.dumps(report.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
+    )
     return output_path
 
 
-def _normalize_indexed(signals: list[SignalEnvelope]) -> dict[tuple[datetime, str, str, int, str], Any]:
+def _normalize_indexed(
+    signals: list[SignalEnvelope],
+) -> dict[tuple[datetime, str, str, int, str], Any]:
     indexed: dict[tuple[datetime, str, str, int, str], Any] = {}
     for signal in signals:
         try:
@@ -823,39 +840,39 @@ def _to_decimal(value: Any) -> Decimal | None:
 
 
 __all__ = [
-    'FeatureParityReport',
-    'FeatureParityThresholds',
-    'run_feature_parity',
-    'write_feature_parity_report',
-    'BENCHMARK_PARITY_SCHEMA_VERSION',
-    'BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION',
-    'BENCHMARK_PARITY_RUN_SCHEMA_VERSION',
-    'BENCHMARK_PARITY_REQUIRED_SCORECARDS',
-    'BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS',
-    'BENCHMARK_PARITY_REQUIRED_FAMILIES',
-    'BENCHMARK_PARITY_REQUIRED_RUN_FIELDS',
-    'build_benchmark_parity_report',
-    'write_benchmark_parity_report',
-    '_benchmark_report_hash',
-    'FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION',
-    'FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION',
-    'FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS',
-    'FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS',
-    'build_foundation_router_parity_report',
-    'write_foundation_router_parity_report',
-    '_foundation_router_report_hash',
-    'DEEPLOB_BDLOB_SCHEMA_VERSION',
-    'DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION',
-    'DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS',
-    'DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS',
-    'build_deeplob_bdlob_report',
-    'write_deeplob_bdlob_report',
-    '_deeplob_bdlob_report_hash',
-    'ADVISOR_FALLBACK_SLO_SCHEMA_VERSION',
-    'ADVISOR_FALLBACK_SLO_CONTRACT_SCHEMA_VERSION',
-    'ADVISOR_FALLBACK_SLO_REQUIRED_REASONS',
-    'ADVISOR_FALLBACK_SLO_REQUIRED_SUMMARY_FIELDS',
-    'build_advisor_fallback_slo_report',
-    'write_advisor_fallback_slo_report',
-    '_advisor_fallback_slo_report_hash',
+    "FeatureParityReport",
+    "FeatureParityThresholds",
+    "run_feature_parity",
+    "write_feature_parity_report",
+    "BENCHMARK_PARITY_SCHEMA_VERSION",
+    "BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION",
+    "BENCHMARK_PARITY_RUN_SCHEMA_VERSION",
+    "BENCHMARK_PARITY_REQUIRED_SCORECARDS",
+    "BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS",
+    "BENCHMARK_PARITY_REQUIRED_FAMILIES",
+    "BENCHMARK_PARITY_REQUIRED_RUN_FIELDS",
+    "build_benchmark_parity_report",
+    "write_benchmark_parity_report",
+    "_benchmark_report_hash",
+    "FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION",
+    "FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION",
+    "FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS",
+    "FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS",
+    "build_foundation_router_parity_report",
+    "write_foundation_router_parity_report",
+    "_foundation_router_report_hash",
+    "DEEPLOB_BDLOB_SCHEMA_VERSION",
+    "DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION",
+    "DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS",
+    "DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS",
+    "build_deeplob_bdlob_report",
+    "write_deeplob_bdlob_report",
+    "_deeplob_bdlob_report_hash",
+    "ADVISOR_FALLBACK_SLO_SCHEMA_VERSION",
+    "ADVISOR_FALLBACK_SLO_CONTRACT_SCHEMA_VERSION",
+    "ADVISOR_FALLBACK_SLO_REQUIRED_REASONS",
+    "ADVISOR_FALLBACK_SLO_REQUIRED_SUMMARY_FIELDS",
+    "build_advisor_fallback_slo_report",
+    "write_advisor_fallback_slo_report",
+    "_advisor_fallback_slo_report_hash",
 ]

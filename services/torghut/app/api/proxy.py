@@ -87,8 +87,12 @@ def install_main_compat_proxies(
 ) -> None:
     proxy_names = tuple(dict.fromkeys(names))
     for module in modules:
-        module_globals = vars(module)
+        part_modules = getattr(module, "__compat_part_modules__", ())
         for name in proxy_names:
             if name == "router":
                 continue
-            module_globals[name] = MainAttrProxy(name)
+            proxy = MainAttrProxy(name)
+            setattr(module, name, proxy)
+            for part_module in part_modules:
+                if isinstance(part_module, types.ModuleType):
+                    part_module.__dict__[name] = proxy

@@ -31,17 +31,19 @@ class _FakeWorkflowService:
 
 
 class _FakeKafkaConsumer:
-    def __init__(self, records: list['_FakeRecord']) -> None:
+    def __init__(self, records: list["_FakeRecord"]) -> None:
         self._records = records
         self.commit_calls = 0
 
-    def poll(self, *, timeout_ms: int, max_records: int) -> dict[tuple[str, int], list['_FakeRecord']]:
+    def poll(
+        self, *, timeout_ms: int, max_records: int
+    ) -> dict[tuple[str, int], list["_FakeRecord"]]:
         del timeout_ms
         batch = self._records[:max_records]
         self._records = self._records[max_records:]
         if not batch:
             return {}
-        return {('topic', 0): batch}
+        return {("topic", 0): batch}
 
     def commit(self) -> None:
         self.commit_calls += 1
@@ -67,18 +69,18 @@ class _FakeSession:
 class TestLoggingConfig(TestCase):
     def test_configure_logging_uses_json_in_prod_by_default(self) -> None:
         with patch.dict(
-            'os.environ',
+            "os.environ",
             {
-                'APP_ENV': 'prod',
-                'LOG_LEVEL': 'debug',
+                "APP_ENV": "prod",
+                "LOG_LEVEL": "debug",
             },
             clear=False,
         ):
             runtime_config = configure_logging(force=True)
 
         root_logger = logging.getLogger()
-        self.assertEqual(runtime_config.level, 'DEBUG')
-        self.assertEqual(runtime_config.format, 'json')
+        self.assertEqual(runtime_config.level, "DEBUG")
+        self.assertEqual(runtime_config.format, "json")
         self.assertIsInstance(root_logger.handlers[0].formatter, JsonFormatter)
         self.assertEqual(root_logger.level, logging.DEBUG)
         handler = cast(logging.StreamHandler[Any], root_logger.handlers[0])
@@ -88,23 +90,23 @@ class TestLoggingConfig(TestCase):
         formatter = JsonFormatter()
         record = logging.makeLogRecord(
             {
-                'name': 'app.test',
-                'levelno': logging.INFO,
-                'levelname': 'INFO',
-                'msg': 'hello %s',
-                'args': ('world',),
-                'created': 0,
-                'service': 'torghut',
-                'environment': 'test',
-                'run_id': 'run-123',
+                "name": "app.test",
+                "levelno": logging.INFO,
+                "levelname": "INFO",
+                "msg": "hello %s",
+                "args": ("world",),
+                "created": 0,
+                "service": "torghut",
+                "environment": "test",
+                "run_id": "run-123",
             }
         )
 
         payload = json.loads(formatter.format(record))
-        self.assertEqual(payload['message'], 'hello world')
-        self.assertEqual(payload['service'], 'torghut')
-        self.assertEqual(payload['environment'], 'test')
-        self.assertEqual(payload['extra']['run_id'], 'run-123')
+        self.assertEqual(payload["message"], "hello world")
+        self.assertEqual(payload["service"], "torghut")
+        self.assertEqual(payload["environment"], "test")
+        self.assertEqual(payload["extra"]["run_id"], "run-123")
 
     def test_whitepaper_kafka_ingest_logs_cycle_summary(self) -> None:
         ingestor = WhitepaperKafkaIssueIngestor(
@@ -115,17 +117,24 @@ class TestLoggingConfig(TestCase):
         )
         session = _FakeSession()
 
-        with patch('app.whitepapers.workflow.whitepaper_workflow_enabled', return_value=True), patch(
-            'app.whitepapers.workflow.whitepaper_kafka_enabled',
-            return_value=True,
-        ), patch('app.whitepapers.workflow.logger.info') as mock_info:
+        with (
+            patch(
+                "app.whitepapers.workflow.whitepaper_workflow_enabled",
+                return_value=True,
+            ),
+            patch(
+                "app.whitepapers.workflow.whitepaper_kafka_enabled",
+                return_value=True,
+            ),
+            patch("app.whitepapers.workflow.logger.info") as mock_info,
+        ):
             counters = ingestor.ingest_once(cast(Any, session))
 
-        self.assertEqual(counters['messages_total'], 1)
-        self.assertEqual(counters['accepted_total'], 1)
+        self.assertEqual(counters["messages_total"], 1)
+        self.assertEqual(counters["accepted_total"], 1)
         self.assertEqual(session.commit_calls, 1)
         mock_info.assert_called_once_with(
-            'Whitepaper Kafka ingest cycle messages=%s accepted=%s ignored=%s failed=%s consumer_errors=%s',
+            "Whitepaper Kafka ingest cycle messages=%s accepted=%s ignored=%s failed=%s consumer_errors=%s",
             1,
             1,
             0,

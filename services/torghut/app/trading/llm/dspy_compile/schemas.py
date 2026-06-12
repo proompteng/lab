@@ -53,9 +53,9 @@ class DSPyEvalReport(BaseModel):
     false_veto_rate: float = Field(ge=0.0, le=1.0, alias="falseVetoRate")
     latency_p95_ms: int = Field(ge=0, alias="latencyP95Ms")
     gate_compatibility: Literal["pass", "fail"] = Field(alias="gateCompatibility")
-    promotion_recommendation: Literal["hold", "paper", "shadow", "constrained_live", "scaled_live"] = Field(
-        alias="promotionRecommendation"
-    )
+    promotion_recommendation: Literal[
+        "hold", "paper", "shadow", "constrained_live", "scaled_live"
+    ] = Field(alias="promotionRecommendation")
     metric_bundle: dict[str, Any] = Field(default_factory=dict, alias="metricBundle")
     eval_hash: str = Field(alias="evalHash")
     created_at: datetime = Field(default_factory=_utcnow, alias="createdAt")
@@ -76,7 +76,9 @@ class DSPyPromotionRecord(BaseModel):
 
     artifact_hash: str = Field(alias="artifactHash")
     eval_hash: str = Field(alias="evalHash")
-    promotion_target: Literal["paper", "shadow", "constrained_live", "scaled_live"] = Field(alias="promotionTarget")
+    promotion_target: Literal["paper", "shadow", "constrained_live", "scaled_live"] = (
+        Field(alias="promotionTarget")
+    )
     approved: bool
     approval_token_ref: str | None = Field(default=None, alias="approvalTokenRef")
     promoted_by: str | None = Field(default=None, alias="promotedBy")
@@ -99,7 +101,9 @@ class DSPyArtifactBundle(BaseModel):
 
     compile_result: DSPyCompileResult = Field(alias="compileResult")
     eval_report: DSPyEvalReport = Field(alias="evalReport")
-    promotion_record: DSPyPromotionRecord | None = Field(default=None, alias="promotionRecord")
+    promotion_record: DSPyPromotionRecord | None = Field(
+        default=None, alias="promotionRecord"
+    )
     manifest_hash: str = Field(alias="manifestHash")
     artifact_hashes: dict[str, str] = Field(alias="artifactHashes")
 

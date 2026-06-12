@@ -7,7 +7,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-DSPyCommitteeRole = Literal["researcher", "risk_critic", "execution_critic", "policy_judge"]
+DSPyCommitteeRole = Literal[
+    "researcher", "risk_critic", "execution_critic", "policy_judge"
+]
 DSPyVerdict = Literal["approve", "veto", "adjust", "abstain", "escalate"]
 
 
@@ -28,9 +30,11 @@ class DSPyCommitteeMemberOutput(BaseModel):
     required_checks: list[str] = Field(default_factory=list, alias="requiredChecks")
     risk_flags: list[str] = Field(default_factory=list, alias="riskFlags")
     adjusted_qty: str | None = Field(default=None, alias="adjustedQty")
-    adjusted_order_type: Literal["market", "limit", "stop", "stop_limit"] | None = Field(
-        default=None,
-        alias="adjustedOrderType",
+    adjusted_order_type: Literal["market", "limit", "stop", "stop_limit"] | None = (
+        Field(
+            default=None,
+            alias="adjustedOrderType",
+        )
     )
     limit_price: str | None = Field(default=None, alias="limitPrice")
 
@@ -71,15 +75,23 @@ class DSPyTradeReviewOutput(BaseModel):
     required_checks: list[str] = Field(default_factory=list, alias="requiredChecks")
     risk_flags: list[str] = Field(default_factory=list, alias="riskFlags")
     adjusted_qty: str | None = Field(default=None, alias="adjustedQty")
-    adjusted_order_type: Literal["market", "limit", "stop", "stop_limit"] | None = Field(
-        default=None,
-        alias="adjustedOrderType",
+    adjusted_order_type: Literal["market", "limit", "stop", "stop_limit"] | None = (
+        Field(
+            default=None,
+            alias="adjustedOrderType",
+        )
     )
     limit_price: str | None = Field(default=None, alias="limitPrice")
     escalate_reason: str | None = Field(default=None, alias="escalateReason")
-    uncertainty_band: Literal["low", "medium", "high"] = Field(default="medium", alias="uncertaintyBand")
-    committee: list[DSPyCommitteeMemberOutput] = Field(default_factory=_committee_default)
-    calibration_metadata: dict[str, Any] = Field(default_factory=dict, alias="calibrationMetadata")
+    uncertainty_band: Literal["low", "medium", "high"] = Field(
+        default="medium", alias="uncertaintyBand"
+    )
+    committee: list[DSPyCommitteeMemberOutput] = Field(
+        default_factory=_committee_default
+    )
+    calibration_metadata: dict[str, Any] = Field(
+        default_factory=dict, alias="calibrationMetadata"
+    )
 
     @field_validator("rationale")
     @classmethod
@@ -109,7 +121,10 @@ class DSPyTradeReviewOutput(BaseModel):
             raise ValueError("adjusted_qty_required_for_adjust_verdict")
         if self.verdict == "escalate" and self.escalate_reason is None:
             raise ValueError("escalate_reason_required_for_escalate_verdict")
-        if self.adjusted_order_type in {"limit", "stop_limit"} and self.limit_price is None:
+        if (
+            self.adjusted_order_type in {"limit", "stop_limit"}
+            and self.limit_price is None
+        ):
             raise ValueError("limit_price_required_for_limit_orders")
         return self
 

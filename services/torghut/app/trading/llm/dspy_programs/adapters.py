@@ -13,7 +13,11 @@ from ..schema import (
     LLMReviewResponse,
     LLMUncertainty,
 )
-from .signatures import DSPyCommitteeMemberOutput, DSPyTradeReviewInput, DSPyTradeReviewOutput
+from .signatures import (
+    DSPyCommitteeMemberOutput,
+    DSPyTradeReviewInput,
+    DSPyTradeReviewOutput,
+)
 
 
 def review_request_to_dspy_input(
@@ -61,12 +65,16 @@ def dspy_output_to_llm_response(output: DSPyTradeReviewOutput) -> LLMReviewRespo
         "rationale_short": output.rationale_short or output.rationale,
         "required_checks": sorted(set(output.required_checks)),
         "risk_flags": sorted(set(output.risk_flags)),
-        "committee": committee_trace.model_dump(mode="python") if committee_trace is not None else None,
+        "committee": committee_trace.model_dump(mode="python")
+        if committee_trace is not None
+        else None,
     }
     return LLMReviewResponse.model_validate(payload)
 
 
-def _build_committee_trace(committee: list[DSPyCommitteeMemberOutput]) -> LLMCommitteeTrace | None:
+def _build_committee_trace(
+    committee: list[DSPyCommitteeMemberOutput],
+) -> LLMCommitteeTrace | None:
     if not committee:
         return None
     roles: dict[str, LLMCommitteeMemberResponse] = {}
@@ -96,7 +104,9 @@ def _build_committee_trace(committee: list[DSPyCommitteeMemberOutput]) -> LLMCom
     )
 
 
-def _default_calibrated_probabilities(verdict: str, confidence: float) -> LLMCalibratedProbabilities:
+def _default_calibrated_probabilities(
+    verdict: str, confidence: float
+) -> LLMCalibratedProbabilities:
     labels = ["approve", "veto", "adjust", "abstain", "escalate"]
     selected = verdict if verdict in labels else "abstain"
     remainder = max(0.0, 1.0 - confidence)

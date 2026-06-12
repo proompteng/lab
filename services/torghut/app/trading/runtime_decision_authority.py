@@ -7,9 +7,7 @@ from typing import Any, cast
 
 ROUTE_ACQUISITION_SOURCE_DECISION_MODE = "route_acquisition_probe"
 STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE = "strategy_signal_paper"
-BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE = (
-    "bounded_paper_route_collection"
-)
+BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE = "bounded_paper_route_collection"
 LIVE_STRATEGY_SIGNAL_SOURCE_DECISION_MODE = "live_strategy_signal"
 SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER = (
     "source_decision_mode_not_profit_proof_eligible"

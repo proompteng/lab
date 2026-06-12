@@ -18,11 +18,11 @@ depends_on = None
 
 
 def _column_names(inspector: sa.Inspector, table: str) -> set[str]:
-    return {column['name'] for column in inspector.get_columns(table)}
+    return {column["name"] for column in inspector.get_columns(table)}
 
 
 def _index_names(inspector: sa.Inspector, table: str) -> set[str]:
-    return {index['name'] for index in inspector.get_indexes(table)}
+    return {index["name"] for index in inspector.get_indexes(table)}
 
 
 def _add_columns_if_missing(
@@ -74,38 +74,38 @@ def upgrade() -> None:
 
     _add_columns_if_missing(
         inspector,
-        'research_candidates',
+        "research_candidates",
         (
             (
-                'lifecycle_role',
+                "lifecycle_role",
                 sa.Column(
-                    'lifecycle_role',
+                    "lifecycle_role",
                     sa.String(length=32),
                     nullable=False,
                     server_default=sa.text("'challenger'"),
                 ),
             ),
             (
-                'lifecycle_status',
+                "lifecycle_status",
                 sa.Column(
-                    'lifecycle_status',
+                    "lifecycle_status",
                     sa.String(length=32),
                     nullable=False,
                     server_default=sa.text("'evaluated'"),
                 ),
             ),
             (
-                'metadata_bundle',
+                "metadata_bundle",
                 sa.Column(
-                    'metadata_bundle',
+                    "metadata_bundle",
                     postgresql.JSONB(astext_type=sa.Text()),
                     nullable=True,
                 ),
             ),
             (
-                'recommendation_bundle',
+                "recommendation_bundle",
                 sa.Column(
-                    'recommendation_bundle',
+                    "recommendation_bundle",
                     postgresql.JSONB(astext_type=sa.Text()),
                     nullable=True,
                 ),
@@ -114,55 +114,65 @@ def upgrade() -> None:
     )
     _add_indexes_if_missing(
         inspector,
-        'research_candidates',
+        "research_candidates",
         (
-            ('ix_research_candidates_lifecycle_role', ['lifecycle_role']),
-            ('ix_research_candidates_lifecycle_status', ['lifecycle_status']),
+            ("ix_research_candidates_lifecycle_role", ["lifecycle_role"]),
+            ("ix_research_candidates_lifecycle_status", ["lifecycle_status"]),
         ),
     )
 
     _add_columns_if_missing(
         inspector,
-        'research_promotions',
+        "research_promotions",
         (
             (
-                'decision_action',
+                "decision_action",
                 sa.Column(
-                    'decision_action',
+                    "decision_action",
                     sa.String(length=32),
                     nullable=False,
                     server_default=sa.text("'hold'"),
                 ),
             ),
-            ('decision_rationale', sa.Column('decision_rationale', sa.Text(), nullable=True)),
             (
-                'evidence_bundle',
+                "decision_rationale",
+                sa.Column("decision_rationale", sa.Text(), nullable=True),
+            ),
+            (
+                "evidence_bundle",
                 sa.Column(
-                    'evidence_bundle',
+                    "evidence_bundle",
                     postgresql.JSONB(astext_type=sa.Text()),
                     nullable=True,
                 ),
             ),
             (
-                'recommendation_trace_id',
-                sa.Column('recommendation_trace_id', sa.String(length=64), nullable=True),
+                "recommendation_trace_id",
+                sa.Column(
+                    "recommendation_trace_id", sa.String(length=64), nullable=True
+                ),
             ),
             (
-                'successor_candidate_id',
-                sa.Column('successor_candidate_id', sa.String(length=64), nullable=True),
+                "successor_candidate_id",
+                sa.Column(
+                    "successor_candidate_id", sa.String(length=64), nullable=True
+                ),
             ),
             (
-                'rollback_candidate_id',
-                sa.Column('rollback_candidate_id', sa.String(length=64), nullable=True),
+                "rollback_candidate_id",
+                sa.Column("rollback_candidate_id", sa.String(length=64), nullable=True),
             ),
         ),
     )
     _add_indexes_if_missing(
         inspector,
-        'research_promotions',
+        "research_promotions",
         (
-            ('ix_research_promotions_action', ['decision_action']),
-            ('ix_research_promotions_recommendation_trace', ['recommendation_trace_id']),
+            ("ix_research_promotions_action", ["decision_action"]),
+            (
+                "ix_research_promotions_recommendation_trace",
+                ["recommendation_trace_id"],
+            ),
         ),
     )
 
@@ -172,28 +182,39 @@ def downgrade() -> None:
 
     _drop_indexes_if_present(
         inspector,
-        'research_promotions',
-        ('ix_research_promotions_recommendation_trace', 'ix_research_promotions_action'),
+        "research_promotions",
+        (
+            "ix_research_promotions_recommendation_trace",
+            "ix_research_promotions_action",
+        ),
     )
     _drop_columns_if_present(
         inspector,
-        'research_promotions',
+        "research_promotions",
         (
-            'rollback_candidate_id',
-            'successor_candidate_id',
-            'recommendation_trace_id',
-            'evidence_bundle',
-            'decision_rationale',
-            'decision_action',
+            "rollback_candidate_id",
+            "successor_candidate_id",
+            "recommendation_trace_id",
+            "evidence_bundle",
+            "decision_rationale",
+            "decision_action",
         ),
     )
     _drop_indexes_if_present(
         inspector,
-        'research_candidates',
-        ('ix_research_candidates_lifecycle_status', 'ix_research_candidates_lifecycle_role'),
+        "research_candidates",
+        (
+            "ix_research_candidates_lifecycle_status",
+            "ix_research_candidates_lifecycle_role",
+        ),
     )
     _drop_columns_if_present(
         inspector,
-        'research_candidates',
-        ('recommendation_bundle', 'metadata_bundle', 'lifecycle_status', 'lifecycle_role'),
+        "research_candidates",
+        (
+            "recommendation_bundle",
+            "metadata_bundle",
+            "lifecycle_status",
+            "lifecycle_role",
+        ),
     )

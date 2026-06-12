@@ -8,7 +8,11 @@ from pydantic import ValidationError
 
 from app import config
 from app.trading.llm.policy import apply_policy
-from app.trading.llm.schema import LLMCommitteeMemberResponse, LLMCommitteeTrace, LLMReviewResponse
+from app.trading.llm.schema import (
+    LLMCommitteeMemberResponse,
+    LLMCommitteeTrace,
+    LLMReviewResponse,
+)
 from app.trading.models import StrategyDecision
 
 
@@ -300,8 +304,12 @@ class TestLLMPolicy(TestCase):
             outcome = apply_policy(decision, review)
             self.assertEqual(outcome.verdict, "veto")
             self.assertEqual(outcome.reason, "llm_uncertainty_guardrail_fallback_veto")
-            self.assertIn("llm_uncertainty_score_above_max", outcome.guardrail_reasons or [])
-            self.assertIn("llm_uncertainty_band_above_max", outcome.guardrail_reasons or [])
+            self.assertIn(
+                "llm_uncertainty_score_above_max", outcome.guardrail_reasons or []
+            )
+            self.assertIn(
+                "llm_uncertainty_band_above_max", outcome.guardrail_reasons or []
+            )
             self.assertIn(
                 "llm_calibrated_probability_below_min",
                 outcome.guardrail_reasons or [],

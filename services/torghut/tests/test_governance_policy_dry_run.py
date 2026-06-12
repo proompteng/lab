@@ -148,7 +148,9 @@ class TestGovernancePolicyDryRun(TestCase):
         reasons = output["promotion_prerequisites"]["reasons"]
         self.assertIn("stress_metrics_evidence_ref_not_trusted", reasons)
 
-    def test_dry_run_blocks_progression_when_contamination_registry_missing(self) -> None:
+    def test_dry_run_blocks_progression_when_contamination_registry_missing(
+        self,
+    ) -> None:
         output = self._run_harness("--simulate-contamination-missing")
         self.assertFalse(output["promotion_progression_allowed"])
         reasons = output["promotion_prerequisites"]["reasons"]
@@ -176,9 +178,7 @@ class TestGovernancePolicyDryRun(TestCase):
         if "--simulate-stress-metrics-stale" in extra_args:
             stress_metrics = gate_report["promotion_evidence"]["stress_metrics"]
             if isinstance(stress_metrics, dict):
-                stress_metrics["generated_at"] = (
-                    now - timedelta(hours=25)
-                ).isoformat()
+                stress_metrics["generated_at"] = (now - timedelta(hours=25)).isoformat()
         if "--simulate-stress-metrics-untrusted" in extra_args:
             stress_metrics = gate_report["promotion_evidence"]["stress_metrics"]
             if isinstance(stress_metrics, dict):
@@ -186,7 +186,10 @@ class TestGovernancePolicyDryRun(TestCase):
                     Path(tempfile.gettempdir())
                     / "torghut-dry-run-stress-metrics-untrusted.json"
                 )
-                Path(tempfile.gettempdir(), "torghut-dry-run-stress-metrics-untrusted.json").write_text(
+                Path(
+                    tempfile.gettempdir(),
+                    "torghut-dry-run-stress-metrics-untrusted.json",
+                ).write_text(
                     json.dumps(
                         {
                             "schema_version": "stress-metrics-v1",
@@ -217,7 +220,9 @@ class TestGovernancePolicyDryRun(TestCase):
                     "promotion_require_profitability_stage_manifest": False,
                 }
             tmp_policy_path = Path(tmpdir) / "autonomy-gates-v3.json"
-            tmp_policy_path.write_text(json.dumps(policy_payload, indent=2), encoding="utf-8")
+            tmp_policy_path.write_text(
+                json.dumps(policy_payload, indent=2), encoding="utf-8"
+            )
 
             gate_report_path = Path(tmpdir) / "gate-report.json"
             gate_report_path.write_text(

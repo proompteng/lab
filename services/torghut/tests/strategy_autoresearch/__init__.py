@@ -1,0 +1,1 @@
+"""Split strategy autoresearch tests."""

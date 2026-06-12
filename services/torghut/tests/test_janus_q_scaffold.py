@@ -115,7 +115,9 @@ class TestJanusQScaffold(TestCase):
 
         self.assertEqual(hgrm.summary["event_mapped_count"], 0)
         self.assertEqual(hgrm.summary["event_ambiguous_unmapped_count"], 2)
-        self.assertEqual([item.event_id for item in hgrm.rewards], ["unmapped", "unmapped"])
+        self.assertEqual(
+            [item.event_id for item in hgrm.rewards], ["unmapped", "unmapped"]
+        )
 
     def test_hgrm_reward_applies_configured_clipping(self) -> None:
         generated_at = datetime(2026, 2, 25, tzinfo=timezone.utc)

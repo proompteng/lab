@@ -81,7 +81,9 @@ class TestAlphaLane(TestCase):
                 recommendation_manifest["parent_lineage_hash"],
                 evaluation_manifest["lineage_hash"],
             )
-            self.assertEqual(recommendation_manifest["stage"], "promotion-recommendation")
+            self.assertEqual(
+                recommendation_manifest["stage"], "promotion-recommendation"
+            )
             self.assertEqual(recommendation_manifest["stage_index"], 3)
             self.assertEqual(
                 result.stage_lineage_root,
@@ -184,7 +186,9 @@ class TestAlphaLane(TestCase):
                 "iteration notes should be written under explicit artifactPath argument",
             )
 
-    def test_lane_iteration_notes_resolve_camelcase_artifact_and_priority_inputs(self) -> None:
+    def test_lane_iteration_notes_resolve_camelcase_artifact_and_priority_inputs(
+        self,
+    ) -> None:
         train, test = self._trend_frames()
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -282,7 +286,9 @@ class TestAlphaLane(TestCase):
             recommendation = recommendation_payload["recommendation"]
             self.assertFalse(recommendation["eligible"])
             self.assertEqual(recommendation["action"], "deny")
-            self.assertIn("test_total_return_below_threshold", recommendation["reasons"])
+            self.assertIn(
+                "test_total_return_below_threshold", recommendation["reasons"]
+            )
 
     def test_fail_closed_lane_still_records_full_stage_lineage(self) -> None:
         train, test = self._trend_frames()
@@ -326,10 +332,20 @@ class TestAlphaLane(TestCase):
 
             self.assertEqual(candidate_manifest["stage"], "candidate-generation")
             self.assertEqual(evaluation_manifest["stage"], "evaluation")
-            self.assertEqual(recommendation_manifest["stage"], "promotion-recommendation")
-            self.assertEqual(evaluation_manifest["parent_lineage_hash"], candidate_manifest["lineage_hash"])
-            self.assertEqual(recommendation_manifest["parent_lineage_hash"], evaluation_manifest["lineage_hash"])
-            self.assertEqual(result.stage_lineage_root, candidate_manifest["lineage_hash"])
+            self.assertEqual(
+                recommendation_manifest["stage"], "promotion-recommendation"
+            )
+            self.assertEqual(
+                evaluation_manifest["parent_lineage_hash"],
+                candidate_manifest["lineage_hash"],
+            )
+            self.assertEqual(
+                recommendation_manifest["parent_lineage_hash"],
+                evaluation_manifest["lineage_hash"],
+            )
+            self.assertEqual(
+                result.stage_lineage_root, candidate_manifest["lineage_hash"]
+            )
 
             candidate_spec = json.loads(
                 result.candidate_spec_path.read_text(encoding="utf-8")
@@ -420,31 +436,31 @@ class TestAlphaLane(TestCase):
     def test_lane_persists_strategy_factory_research_chain_when_enabled(self) -> None:
         train, test = self._trend_frames()
         engine = create_engine(
-            'sqlite+pysqlite:///:memory:',
+            "sqlite+pysqlite:///:memory:",
             future=True,
-            connect_args={'check_same_thread': False},
+            connect_args={"check_same_thread": False},
         )
         Base.metadata.create_all(engine)
         session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                output_dir = Path(tmpdir) / 'alpha-ledger'
+                output_dir = Path(tmpdir) / "alpha-ledger"
                 result = run_alpha_discovery_lane(
                     artifact_path=output_dir,
                     train_prices=train,
                     test_prices=test,
                     persist_results=True,
                     session_factory=session_factory,
-                    head='test-sha',
-                    repository='proompteng/lab',
+                    head="test-sha",
+                    repository="proompteng/lab",
                 )
 
                 candidate_spec = json.loads(
-                    result.candidate_spec_path.read_text(encoding='utf-8')
+                    result.candidate_spec_path.read_text(encoding="utf-8")
                 )
-                self.assertIn('strategy_factory', candidate_spec)
-                self.assertIn('attempt_ledger', candidate_spec['artifacts'])
-                self.assertIn('validation_formal_validity', candidate_spec['artifacts'])
+                self.assertIn("strategy_factory", candidate_spec)
+                self.assertIn("attempt_ledger", candidate_spec["artifacts"])
+                self.assertIn("validation_formal_validity", candidate_spec["artifacts"])
 
                 with session_factory() as session:
                     run_row = session.execute(
@@ -467,7 +483,8 @@ class TestAlphaLane(TestCase):
                     validations = (
                         session.execute(
                             select(ResearchValidationTest).where(
-                                ResearchValidationTest.candidate_id == result.candidate_id
+                                ResearchValidationTest.candidate_id
+                                == result.candidate_id
                             )
                         )
                         .scalars()
@@ -478,49 +495,51 @@ class TestAlphaLane(TestCase):
                             ResearchSequentialTrial.candidate_id == result.candidate_id
                         )
                     ).scalar_one()
-                    calibration = session.execute(select(ResearchCostCalibration)).scalar_one()
+                    calibration = session.execute(
+                        select(ResearchCostCalibration)
+                    ).scalar_one()
                     promotion = session.execute(
                         select(ResearchPromotion).where(
                             ResearchPromotion.candidate_id == result.candidate_id
                         )
                     ).scalar_one()
 
-                self.assertEqual(run_row.discovery_mode, 'strategy_factory_alpha_v1')
-                self.assertEqual(candidate_row.candidate_family, 'tsmom')
+                self.assertEqual(run_row.discovery_mode, "strategy_factory_alpha_v1")
+                self.assertEqual(candidate_row.candidate_family, "tsmom")
                 self.assertIsInstance(candidate_row.economic_validity_card, dict)
                 self.assertGreaterEqual(len(attempts), 1)
                 self.assertGreaterEqual(len(validations), 8)
-                self.assertIn(sequential.status, {'paper_ready', 'paper_only'})
-                self.assertEqual(calibration.scope_type, 'candidate_family')
+                self.assertIn(sequential.status, {"paper_ready", "paper_only"})
+                self.assertEqual(calibration.scope_type, "candidate_family")
                 self.assertIsInstance(promotion.evidence_bundle, dict)
-                self.assertIn('strategy_factory', promotion.evidence_bundle)
+                self.assertIn("strategy_factory", promotion.evidence_bundle)
         finally:
             engine.dispose()
 
     def test_lane_preserves_historical_cost_calibrations_for_same_family(self) -> None:
         train, test = self._trend_frames()
         engine = create_engine(
-            'sqlite+pysqlite:///:memory:',
+            "sqlite+pysqlite:///:memory:",
             future=True,
-            connect_args={'check_same_thread': False},
+            connect_args={"check_same_thread": False},
         )
         Base.metadata.create_all(engine)
         session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                output_dir = Path(tmpdir) / 'alpha-ledger'
+                output_dir = Path(tmpdir) / "alpha-ledger"
                 with session_factory() as session:
                     session.add(
                         ResearchCostCalibration(
-                            calibration_id='cal-existing-001',
-                            scope_type='candidate_family',
-                            scope_id='tsmom',
-                            modeled_slippage_bps=Decimal('4'),
-                            realized_slippage_bps=Decimal('4'),
-                            modeled_shortfall_bps=Decimal('4'),
-                            realized_shortfall_bps=Decimal('4'),
-                            calibration_error_bundle={'seeded': True},
-                            status='calibrated',
+                            calibration_id="cal-existing-001",
+                            scope_type="candidate_family",
+                            scope_id="tsmom",
+                            modeled_slippage_bps=Decimal("4"),
+                            realized_slippage_bps=Decimal("4"),
+                            modeled_shortfall_bps=Decimal("4"),
+                            realized_shortfall_bps=Decimal("4"),
+                            calibration_error_bundle={"seeded": True},
+                            status="calibrated",
                         )
                     )
                     session.commit()
@@ -531,26 +550,32 @@ class TestAlphaLane(TestCase):
                     test_prices=test,
                     persist_results=True,
                     session_factory=session_factory,
-                    head='test-sha-2',
-                    repository='proompteng/lab',
+                    head="test-sha-2",
+                    repository="proompteng/lab",
                 )
                 current_calibration = json.loads(
-                    result.cost_calibration_path.read_text(encoding='utf-8')
+                    result.cost_calibration_path.read_text(encoding="utf-8")
                 )
 
                 with session_factory() as session:
-                    calibrations = session.execute(
-                        select(ResearchCostCalibration)
-                        .where(ResearchCostCalibration.scope_type == 'candidate_family')
-                        .where(ResearchCostCalibration.scope_id == 'tsmom')
-                    ).scalars().all()
+                    calibrations = (
+                        session.execute(
+                            select(ResearchCostCalibration)
+                            .where(
+                                ResearchCostCalibration.scope_type == "candidate_family"
+                            )
+                            .where(ResearchCostCalibration.scope_id == "tsmom")
+                        )
+                        .scalars()
+                        .all()
+                    )
 
                 self.assertEqual(len(calibrations), 2)
                 self.assertEqual(
                     {calibration.calibration_id for calibration in calibrations},
                     {
-                        'cal-existing-001',
-                        str(current_calibration['calibration_id']),
+                        "cal-existing-001",
+                        str(current_calibration["calibration_id"]),
                     },
                 )
         finally:
@@ -558,37 +583,39 @@ class TestAlphaLane(TestCase):
 
     def test_sequential_trial_summary_handles_empty_samples(self) -> None:
         summary = build_sequential_trial_summary(
-            net_returns=pd.Series(dtype='float64'),
+            net_returns=pd.Series(dtype="float64"),
             started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
             updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
-            cost_calibration_status='calibrated',
+            cost_calibration_status="calibrated",
             baseline_outperformed=True,
         )
 
-        self.assertEqual(summary.status, 'observe_only')
-        self.assertIn('no_sequential_samples', summary.reason_codes)
+        self.assertEqual(summary.status, "observe_only")
+        self.assertIn("no_sequential_samples", summary.reason_codes)
 
-    def test_sequential_trial_summary_marks_single_sample_uncalibrated_baseline_failure(self) -> None:
+    def test_sequential_trial_summary_marks_single_sample_uncalibrated_baseline_failure(
+        self,
+    ) -> None:
         summary = build_sequential_trial_summary(
-            net_returns=pd.Series([0.75], dtype='float64'),
+            net_returns=pd.Series([0.75], dtype="float64"),
             started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
             updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
-            cost_calibration_status='stale',
+            cost_calibration_status="stale",
             baseline_outperformed=False,
         )
 
-        self.assertEqual(summary.status, 'paper_only')
-        self.assertIn('cost_calibration_not_calibrated', summary.reason_codes)
-        self.assertIn('baseline_not_outperformed', summary.reason_codes)
+        self.assertEqual(summary.status, "paper_only")
+        self.assertIn("cost_calibration_not_calibrated", summary.reason_codes)
+        self.assertIn("baseline_not_outperformed", summary.reason_codes)
 
     def test_sequential_trial_summary_blocks_non_positive_posterior_edge(self) -> None:
         summary = build_sequential_trial_summary(
-            net_returns=pd.Series([-0.25, -0.10], dtype='float64'),
+            net_returns=pd.Series([-0.25, -0.10], dtype="float64"),
             started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
             updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
-            cost_calibration_status='calibrated',
+            cost_calibration_status="calibrated",
             baseline_outperformed=True,
         )
 
-        self.assertEqual(summary.status, 'paper_only')
-        self.assertIn('posterior_edge_not_positive', summary.reason_codes)
+        self.assertEqual(summary.status, "paper_only")
+        self.assertIn("posterior_edge_not_positive", summary.reason_codes)

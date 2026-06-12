@@ -32,7 +32,9 @@ class OrderFirewall:
 
     def status(self) -> OrderFirewallStatus:
         if settings.trading_kill_switch_enabled:
-            return OrderFirewallStatus(kill_switch_enabled=True, reason="kill_switch_enabled")
+            return OrderFirewallStatus(
+                kill_switch_enabled=True, reason="kill_switch_enabled"
+            )
         return OrderFirewallStatus(kill_switch_enabled=False, reason="ok")
 
     def cancel_open_orders_if_kill_switch(self) -> bool:
@@ -41,7 +43,9 @@ class OrderFirewall:
             return False
         try:
             cancelled = self._client.cancel_all_orders(firewall_token=self._token)
-            logger.warning("Kill switch enabled; canceled %s open orders", len(cancelled))
+            logger.warning(
+                "Kill switch enabled; canceled %s open orders", len(cancelled)
+            )
         except Exception:
             logger.exception("Kill switch enabled; failed to cancel open orders")
         return True
@@ -79,7 +83,9 @@ class OrderFirewall:
         orders = self._client.cancel_all_orders(firewall_token=self._token)
         return _normalize_mapping_list(orders)
 
-    def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
+    def get_order_by_client_order_id(
+        self, client_order_id: str
+    ) -> dict[str, Any] | None:
         # Reads are always allowed; this is used for idempotency backfills.
         order = self._client.get_order_by_client_order_id(client_order_id)
         return _normalize_mapping(order)
@@ -91,15 +97,15 @@ class OrderFirewall:
             return {}
         return normalized
 
-    def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
-        lister = getattr(self._client, 'list_orders', None)
+    def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
+        lister = getattr(self._client, "list_orders", None)
         if not callable(lister):
             return []
         result = lister(status=status)
         return _normalize_mapping_list(result)
 
     def list_positions(self) -> list[dict[str, Any]] | None:
-        lister = getattr(self._client, 'list_positions', None)
+        lister = getattr(self._client, "list_positions", None)
         if not callable(lister):
             return None
         result = lister()
@@ -108,14 +114,14 @@ class OrderFirewall:
         return _normalize_mapping_list(result)
 
     def get_account(self) -> dict[str, Any] | None:
-        getter = getattr(self._client, 'get_account', None)
+        getter = getattr(self._client, "get_account", None)
         if not callable(getter):
             return None
         result = getter()
         return _normalize_mapping(result)
 
     def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None:
-        getter = getattr(self._client, 'get_asset', None)
+        getter = getattr(self._client, "get_asset", None)
         if not callable(getter):
             return None
         result = getter(symbol_or_asset_id)

@@ -28,20 +28,20 @@ __all__ = [
 ]
 
 _EXPORTS = {
-    'PerformanceSummary': ('.metrics', 'PerformanceSummary'),
-    'summarize_equity_curve': ('.metrics', 'summarize_equity_curve'),
-    'AlphaLaneResult': ('.lane', 'AlphaLaneResult'),
-    'run_alpha_discovery_lane': ('.lane', 'run_alpha_discovery_lane'),
-    'SearchResult': ('.search', 'SearchResult'),
-    'run_tsmom_grid_search': ('.search', 'run_tsmom_grid_search'),
-    'TSMOMConfig': ('.tsmom', 'TSMOMConfig'),
-    'backtest_tsmom': ('.tsmom', 'backtest_tsmom'),
+    "PerformanceSummary": (".metrics", "PerformanceSummary"),
+    "summarize_equity_curve": (".metrics", "summarize_equity_curve"),
+    "AlphaLaneResult": (".lane", "AlphaLaneResult"),
+    "run_alpha_discovery_lane": (".lane", "run_alpha_discovery_lane"),
+    "SearchResult": (".search", "SearchResult"),
+    "run_tsmom_grid_search": (".search", "run_tsmom_grid_search"),
+    "TSMOMConfig": (".tsmom", "TSMOMConfig"),
+    "backtest_tsmom": (".tsmom", "backtest_tsmom"),
 }
 
 
 def __getattr__(name: str) -> Any:
     if name not in _EXPORTS:
-        raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     module_name, attribute = _EXPORTS[name]
     module = import_module(module_name, __name__)
     value = getattr(module, attribute)

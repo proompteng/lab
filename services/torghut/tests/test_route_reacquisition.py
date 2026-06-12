@@ -280,7 +280,10 @@ def test_route_book_ranks_zero_notional_repair_candidates_from_live_shape() -> N
     assert candidates[0]["slippage_guardrail_bps"] == "8"
     assert candidates[0]["filled_execution_count"] == 2033
     assert candidates[0]["paper_probe_notional_limit"] == "0"
-    assert candidates[0]["next_repair_action"] == "repair_route_evidence_before_paper_probe"
+    assert (
+        candidates[0]["next_repair_action"]
+        == "repair_route_evidence_before_paper_probe"
+    )
     assert candidates[0]["promotion_authority"] is False
     assert candidates[-1]["symbol"] == "ORCL"
     assert (

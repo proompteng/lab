@@ -21,11 +21,15 @@ def _inspector() -> sa.Inspector[sa.engine.Connection]:
     return inspect(op.get_bind())
 
 
-def _table_exists(inspector: sa.Inspector[sa.engine.Connection], table_name: str) -> bool:
+def _table_exists(
+    inspector: sa.Inspector[sa.engine.Connection], table_name: str
+) -> bool:
     return inspector.has_table(table_name)
 
 
-def _index_names(inspector: sa.Inspector[sa.engine.Connection], table_name: str) -> set[str]:
+def _index_names(
+    inspector: sa.Inspector[sa.engine.Connection], table_name: str
+) -> set[str]:
     if not _table_exists(inspector, table_name):
         return set()
     return {
@@ -79,12 +83,26 @@ def upgrade() -> None:
             sa.Column("lane_id", sa.String(length=128), nullable=False),
             sa.Column("strategy_family", sa.String(length=128), nullable=False),
             sa.Column("source_manifest_ref", sa.String(length=255), nullable=True),
-            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+            sa.Column(
+                "active", sa.Boolean(), nullable=False, server_default=sa.text("true")
+            ),
             sa.Column("payload_json", _json_type(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
             sa.PrimaryKeyConstraint("id", name="pk_strategy_hypotheses"),
-            sa.UniqueConstraint("hypothesis_id", name="uq_strategy_hypotheses_hypothesis_id"),
+            sa.UniqueConstraint(
+                "hypothesis_id", name="uq_strategy_hypotheses_hypothesis_id"
+            ),
         )
         inspector = _inspector()
     _create_index_if_missing(
@@ -107,10 +125,22 @@ def upgrade() -> None:
             sa.Column("hypothesis_id", sa.String(length=128), nullable=False),
             sa.Column("version_key", sa.String(length=128), nullable=False),
             sa.Column("source_manifest_ref", sa.String(length=255), nullable=True),
-            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+            sa.Column(
+                "active", sa.Boolean(), nullable=False, server_default=sa.text("true")
+            ),
             sa.Column("payload_json", _json_type(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
             sa.PrimaryKeyConstraint("id", name="pk_strategy_hypothesis_versions"),
         )
         inspector = _inspector()
@@ -138,23 +168,62 @@ def upgrade() -> None:
             sa.Column("observed_stage", sa.String(length=32), nullable=False),
             sa.Column("window_started_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("window_ended_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("market_session_count", sa.BigInteger(), nullable=False, server_default=sa.text("1")),
-            sa.Column("decision_count", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
-            sa.Column("trade_count", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
-            sa.Column("order_count", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
+            sa.Column(
+                "market_session_count",
+                sa.BigInteger(),
+                nullable=False,
+                server_default=sa.text("1"),
+            ),
+            sa.Column(
+                "decision_count",
+                sa.BigInteger(),
+                nullable=False,
+                server_default=sa.text("0"),
+            ),
+            sa.Column(
+                "trade_count",
+                sa.BigInteger(),
+                nullable=False,
+                server_default=sa.text("0"),
+            ),
+            sa.Column(
+                "order_count",
+                sa.BigInteger(),
+                nullable=False,
+                server_default=sa.text("0"),
+            ),
             sa.Column("evidence_provenance", sa.String(length=64), nullable=True),
             sa.Column("evidence_maturity", sa.String(length=64), nullable=True),
             sa.Column("decision_alignment_ratio", sa.String(length=64), nullable=True),
             sa.Column("avg_abs_slippage_bps", sa.String(length=64), nullable=True),
             sa.Column("slippage_budget_bps", sa.String(length=64), nullable=True),
             sa.Column("post_cost_expectancy_bps", sa.String(length=64), nullable=True),
-            sa.Column("continuity_ok", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-            sa.Column("drift_ok", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-            sa.Column("dependency_quorum_decision", sa.String(length=32), nullable=True),
+            sa.Column(
+                "continuity_ok",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.text("true"),
+            ),
+            sa.Column(
+                "drift_ok", sa.Boolean(), nullable=False, server_default=sa.text("true")
+            ),
+            sa.Column(
+                "dependency_quorum_decision", sa.String(length=32), nullable=True
+            ),
             sa.Column("capital_stage", sa.String(length=32), nullable=True),
             sa.Column("payload_json", _json_type(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
             sa.PrimaryKeyConstraint("id", name="pk_strategy_hypothesis_metric_windows"),
         )
         inspector = _inspector()
@@ -195,8 +264,18 @@ def upgrade() -> None:
             sa.Column("capital_multiplier", sa.String(length=64), nullable=True),
             sa.Column("rollback_target_stage", sa.String(length=32), nullable=True),
             sa.Column("payload_json", _json_type(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
             sa.PrimaryKeyConstraint("id", name="pk_strategy_capital_allocations"),
         )
         inspector = _inspector()
@@ -228,11 +307,23 @@ def upgrade() -> None:
             sa.Column("hypothesis_id", sa.String(length=128), nullable=False),
             sa.Column("promotion_target", sa.String(length=16), nullable=False),
             sa.Column("state", sa.String(length=32), nullable=True),
-            sa.Column("allowed", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+            sa.Column(
+                "allowed", sa.Boolean(), nullable=False, server_default=sa.text("false")
+            ),
             sa.Column("reason_summary", sa.String(length=255), nullable=True),
             sa.Column("payload_json", _json_type(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
             sa.PrimaryKeyConstraint("id", name="pk_strategy_promotion_decisions"),
         )
         inspector = _inspector()

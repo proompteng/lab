@@ -40,7 +40,9 @@ class OrderFirewallViolation(PermissionError):
 class _TradingMutationGuardProxy:
     """Expose non-mutating trading methods while blocking direct order mutations."""
 
-    _blocked_methods = frozenset({"submit_order", "cancel_order_by_id", "cancel_orders"})
+    _blocked_methods = frozenset(
+        {"submit_order", "cancel_order_by_id", "cancel_orders"}
+    )
 
     def __init__(self, trading_client: TradingClient) -> None:
         self._trading_client = trading_client
@@ -96,7 +98,9 @@ class TorghutAlpacaClient:
         return self._model_to_dict(account)
 
     def get_asset(self, symbol_or_asset_id: str) -> Dict[str, Any] | None:
-        getter = cast(Callable[[str], Any] | None, getattr(self._trading, "get_asset", None))
+        getter = cast(
+            Callable[[str], Any] | None, getattr(self._trading, "get_asset", None)
+        )
         if getter is None:
             return None
         try:
@@ -129,11 +133,19 @@ class TorghutAlpacaClient:
         order = self._trading.get_order_by_id(alpaca_order_id)
         return self._model_to_dict(order)
 
-    def get_order_by_client_order_id(self, client_order_id: str) -> Dict[str, Any] | None:
+    def get_order_by_client_order_id(
+        self, client_order_id: str
+    ) -> Dict[str, Any] | None:
         # alpaca-py renamed this helper across versions.
-        getter = cast(Callable[[str], Any] | None, getattr(self._trading, "get_order_by_client_order_id", None))
+        getter = cast(
+            Callable[[str], Any] | None,
+            getattr(self._trading, "get_order_by_client_order_id", None),
+        )
         if getter is None:
-            getter = cast(Callable[[str], Any] | None, getattr(self._trading, "get_order_by_client_id", None))
+            getter = cast(
+                Callable[[str], Any] | None,
+                getattr(self._trading, "get_order_by_client_id", None),
+            )
         if getter is None:
             return None
 
@@ -164,7 +176,12 @@ class TorghutAlpacaClient:
         self._require_firewall_token(firewall_token)
         side_enum = OrderSide(side.lower())
         tif_enum = TimeInForce(time_in_force.lower())
-        payload = {"symbol": symbol, "qty": qty, "side": side_enum, "time_in_force": tif_enum}
+        payload = {
+            "symbol": symbol,
+            "qty": qty,
+            "side": side_enum,
+            "time_in_force": tif_enum,
+        }
         if extra_params:
             payload.update(extra_params)
 
@@ -181,21 +198,29 @@ class TorghutAlpacaClient:
             request = StopOrderRequest(stop_price=stop_price, **payload)
         elif order_type_lower == "stop_limit":
             if stop_price is None or limit_price is None:
-                raise ValueError("stop_limit orders require both stop_price and limit_price")
-            request = StopLimitOrderRequest(stop_price=stop_price, limit_price=limit_price, **payload)
+                raise ValueError(
+                    "stop_limit orders require both stop_price and limit_price"
+                )
+            request = StopLimitOrderRequest(
+                stop_price=stop_price, limit_price=limit_price, **payload
+            )
         else:
             raise ValueError(f"Unsupported order_type: {order_type}")
 
         order = self._trading.submit_order(request)
         return self._model_to_dict(order)
 
-    def cancel_order(self, alpaca_order_id: str, *, firewall_token: OrderFirewallToken) -> bool:
+    def cancel_order(
+        self, alpaca_order_id: str, *, firewall_token: OrderFirewallToken
+    ) -> bool:
         self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
         self._trading.cancel_order_by_id(alpaca_order_id)
         return True
 
-    def cancel_all_orders(self, *, firewall_token: OrderFirewallToken) -> List[Dict[str, Any]]:
+    def cancel_all_orders(
+        self, *, firewall_token: OrderFirewallToken
+    ) -> List[Dict[str, Any]]:
         self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
         responses = self._trading.cancel_orders()
@@ -209,7 +234,9 @@ class TorghutAlpacaClient:
         if isinstance(symbols, str):
             symbols = [symbols]
 
-        start = datetime.now(timezone.utc) - self._timeframe_to_timedelta(timeframe_obj, lookback_bars)
+        start = datetime.now(timezone.utc) - self._timeframe_to_timedelta(
+            timeframe_obj, lookback_bars
+        )
         request = StockBarsRequest(
             symbol_or_symbols=list(symbols),
             timeframe=timeframe_obj,
@@ -319,7 +346,9 @@ class TorghutAlpacaClient:
             caller = frame.f_back if frame is not None else None
             if caller is not None and caller.f_globals.get("__name__", "") == __name__:
                 caller = caller.f_back
-            caller_module = caller.f_globals.get("__name__", "") if caller is not None else ""
+            caller_module = (
+                caller.f_globals.get("__name__", "") if caller is not None else ""
+            )
             if caller_module == "app.trading.firewall":
                 return
             raise OrderFirewallViolation("order_firewall_boundary_violation")

@@ -214,9 +214,9 @@ def test_stale_market_context_domains_do_not_create_repair_lot() -> None:
     assert "market_context_domain_repair" not in {
         lot["lot_type"] for lot in cast(list[Mapping[str, Any]], ledger["lots"])
     }
-    assert "refresh_stale_market_context_domains" not in ledger[
-        "next_safe_repair_actions"
-    ]
+    assert (
+        "refresh_stale_market_context_domains" not in ledger["next_safe_repair_actions"]
+    )
 
 
 def test_repair_only_route_tca_and_submit_gate_keep_candidate_count_zero() -> None:

@@ -13,9 +13,15 @@ from ..features import (
     normalize_feature_vector_v3,
     validate_declared_features,
 )
-from ..intraday_tsmom_contract import evaluate_intraday_tsmom_signal, validate_intraday_tsmom_params
+from ..intraday_tsmom_contract import (
+    evaluate_intraday_tsmom_signal,
+    validate_intraday_tsmom_params,
+)
 from ..models import SignalEnvelope, StrategyDecision
-from ..strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
+from ..strategy_specs import (
+    build_compiled_strategy_artifacts,
+    strategy_type_supports_spec_v2,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +38,10 @@ class StrategyRuntimeConfig:
     strategy_type: str
     version: str
     params: dict[str, Any]
-    base_timeframe: str = '1Min'
+    base_timeframe: str = "1Min"
     enabled: bool = True
     priority: int = 100
-    compiler_source: str = 'legacy_runtime'
+    compiler_source: str = "legacy_runtime"
     strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
     compiled_targets: dict[str, Any] = field(default_factory=_empty_meta)
 
@@ -80,17 +86,15 @@ class StrategyPlugin(Protocol):
     strategy_type: str
     version: str
 
-    def validate_params(self, params: dict[str, Any]) -> None:
-        ...
+    def validate_params(self, params: dict[str, Any]) -> None: ...
 
-    def required_features(self) -> set[str]:
-        ...
+    def required_features(self) -> set[str]: ...
 
-    def warmup_bars(self) -> int:
-        ...
+    def warmup_bars(self) -> int: ...
 
-    def on_event(self, fv: FeatureVectorV3, ctx: StrategyContext) -> StrategyIntent | None:
-        ...
+    def on_event(
+        self, fv: FeatureVectorV3, ctx: StrategyContext
+    ) -> StrategyIntent | None: ...
 
 
 class StrategyPluginRegistry:
@@ -109,46 +113,54 @@ class StrategyPluginRegistry:
 class LegacyMacdRsiPlugin:
     """Compatibility plugin implementing legacy MACD/RSI logic."""
 
-    strategy_type = 'legacy_macd_rsi'
-    version = '1.0.0'
+    strategy_type = "legacy_macd_rsi"
+    version = "1.0.0"
 
     def validate_params(self, params: dict[str, Any]) -> None:
-        buy_rsi = _decimal(params.get('buy_rsi_threshold', Decimal('35')))
-        sell_rsi = _decimal(params.get('sell_rsi_threshold', Decimal('65')))
+        buy_rsi = _decimal(params.get("buy_rsi_threshold", Decimal("35")))
+        sell_rsi = _decimal(params.get("sell_rsi_threshold", Decimal("65")))
         if buy_rsi is None or sell_rsi is None:
-            raise ValueError('invalid_rsi_threshold')
+            raise ValueError("invalid_rsi_threshold")
 
     def required_features(self) -> set[str]:
-        return {'macd', 'macd_signal', 'rsi14', 'price'}
+        return {"macd", "macd_signal", "rsi14", "price"}
 
     def warmup_bars(self) -> int:
         return 0
 
-    def on_event(self, fv: FeatureVectorV3, ctx: StrategyContext) -> StrategyIntent | None:
-        macd = _decimal(fv.values.get('macd'))
-        macd_signal = _decimal(fv.values.get('macd_signal'))
-        rsi14 = _decimal(fv.values.get('rsi14'))
+    def on_event(
+        self, fv: FeatureVectorV3, ctx: StrategyContext
+    ) -> StrategyIntent | None:
+        macd = _decimal(fv.values.get("macd"))
+        macd_signal = _decimal(fv.values.get("macd_signal"))
+        rsi14 = _decimal(fv.values.get("rsi14"))
         if macd is None or macd_signal is None or rsi14 is None:
             return None
 
-        buy_rsi = _decimal(ctx.params.get('buy_rsi_threshold', Decimal('35'))) or Decimal('35')
-        sell_rsi = _decimal(ctx.params.get('sell_rsi_threshold', Decimal('65'))) or Decimal('65')
-        qty = _decimal(ctx.params.get('qty', Decimal('1'))) or Decimal('1')
+        buy_rsi = _decimal(
+            ctx.params.get("buy_rsi_threshold", Decimal("35"))
+        ) or Decimal("35")
+        sell_rsi = _decimal(
+            ctx.params.get("sell_rsi_threshold", Decimal("65"))
+        ) or Decimal("65")
+        qty = _decimal(ctx.params.get("qty", Decimal("1"))) or Decimal("1")
 
         if macd > macd_signal and rsi14 < buy_rsi:
             return StrategyIntent(
                 strategy_id=ctx.strategy_id,
                 symbol=fv.symbol,
-                direction='long',
-                confidence=Decimal('0.70'),
+                direction="long",
+                confidence=Decimal("0.70"),
                 target_qty=qty,
-                horizon='intraday',
-                rationale=['macd_cross_up', 'rsi_oversold'],
+                horizon="intraday",
+                rationale=["macd_cross_up", "rsi_oversold"],
                 meta={
-                    'strategy_type': ctx.strategy_type,
-                    'schema': fv.feature_schema_version,
-                    'feature_hash': fv.normalization_hash,
-                    'compiler_source': 'spec_v2' if ctx.strategy_spec else 'legacy_runtime',
+                    "strategy_type": ctx.strategy_type,
+                    "schema": fv.feature_schema_version,
+                    "feature_hash": fv.normalization_hash,
+                    "compiler_source": "spec_v2"
+                    if ctx.strategy_spec
+                    else "legacy_runtime",
                 },
             )
 
@@ -156,15 +168,15 @@ class LegacyMacdRsiPlugin:
             return StrategyIntent(
                 strategy_id=ctx.strategy_id,
                 symbol=fv.symbol,
-                direction='short',
-                confidence=Decimal('0.70'),
+                direction="short",
+                confidence=Decimal("0.70"),
                 target_qty=qty,
-                horizon='intraday',
-                rationale=['macd_cross_down', 'rsi_overbought'],
+                horizon="intraday",
+                rationale=["macd_cross_down", "rsi_overbought"],
                 meta={
-                    'strategy_type': ctx.strategy_type,
-                    'schema': fv.feature_schema_version,
-                    'feature_hash': fv.normalization_hash,
+                    "strategy_type": ctx.strategy_type,
+                    "schema": fv.feature_schema_version,
+                    "feature_hash": fv.normalization_hash,
                 },
             )
 
@@ -174,32 +186,42 @@ class LegacyMacdRsiPlugin:
 class IntradayTsmomV1Plugin:
     """Intraday momentum plugin with volatility gating and confidence shaping."""
 
-    strategy_type = 'intraday_tsmom_v1'
-    version = '1.1.0'
+    strategy_type = "intraday_tsmom_v1"
+    version = "1.1.0"
 
     def validate_params(self, params: dict[str, Any]) -> None:
         validate_intraday_tsmom_params(params)
 
     def required_features(self) -> set[str]:
-        return {'price', 'ema12', 'ema26', 'macd', 'macd_signal', 'rsi14', 'vol_realized_w60s'}
+        return {
+            "price",
+            "ema12",
+            "ema26",
+            "macd",
+            "macd_signal",
+            "rsi14",
+            "vol_realized_w60s",
+        }
 
     def warmup_bars(self) -> int:
         return 0
 
-    def on_event(self, fv: FeatureVectorV3, ctx: StrategyContext) -> StrategyIntent | None:
-        price = _decimal(fv.values.get('price'))
-        ema12 = _decimal(fv.values.get('ema12'))
-        ema26 = _decimal(fv.values.get('ema26'))
-        macd = _decimal(fv.values.get('macd'))
-        macd_signal = _decimal(fv.values.get('macd_signal'))
-        rsi14 = _decimal(fv.values.get('rsi14'))
-        vol = _decimal(fv.values.get('vol_realized_w60s'))
+    def on_event(
+        self, fv: FeatureVectorV3, ctx: StrategyContext
+    ) -> StrategyIntent | None:
+        price = _decimal(fv.values.get("price"))
+        ema12 = _decimal(fv.values.get("ema12"))
+        ema26 = _decimal(fv.values.get("ema26"))
+        macd = _decimal(fv.values.get("macd"))
+        macd_signal = _decimal(fv.values.get("macd_signal"))
+        rsi14 = _decimal(fv.values.get("rsi14"))
+        vol = _decimal(fv.values.get("vol_realized_w60s"))
         evaluation = evaluate_intraday_tsmom_signal(
             timeframe=fv.timeframe,
             params=ctx.params,
             event_ts=fv.event_ts,
             price=price,
-            spread=_decimal(fv.values.get('spread')),
+            spread=_decimal(fv.values.get("spread")),
             ema12=ema12,
             ema26=ema26,
             macd=macd,
@@ -216,17 +238,17 @@ class IntradayTsmomV1Plugin:
             direction=evaluation.direction,
             confidence=min(
                 evaluation.confidence,
-                Decimal('0.84') if evaluation.direction == 'long' else Decimal('0.80'),
+                Decimal("0.84") if evaluation.direction == "long" else Decimal("0.80"),
             ),
-            target_qty=_decimal(ctx.params.get('qty')) or Decimal('1'),
-            horizon='intraday',
+            target_qty=_decimal(ctx.params.get("qty")) or Decimal("1"),
+            horizon="intraday",
             rationale=list(evaluation.rationale),
             meta={
-                'strategy_type': ctx.strategy_type,
-                'schema': fv.feature_schema_version,
-                'feature_hash': fv.normalization_hash,
-                'macd_hist': str(evaluation.macd_hist),
-                'compiler_source': 'spec_v2' if ctx.strategy_spec else 'legacy_runtime',
+                "strategy_type": ctx.strategy_type,
+                "schema": fv.feature_schema_version,
+                "feature_hash": fv.normalization_hash,
+                "macd_hist": str(evaluation.macd_hist),
+                "compiler_source": "spec_v2" if ctx.strategy_spec else "legacy_runtime",
             },
         )
 
@@ -237,12 +259,18 @@ class StrategyRuntime:
     def __init__(self, registry: StrategyPluginRegistry | None = None) -> None:
         self.registry = registry or StrategyPluginRegistry()
 
-    def evaluate(self, signal: SignalEnvelope, strategies: list[StrategyRuntimeConfig]) -> RuntimeEvaluationResult:
+    def evaluate(
+        self, signal: SignalEnvelope, strategies: list[StrategyRuntimeConfig]
+    ) -> RuntimeEvaluationResult:
         errors: list[str] = []
         try:
             fv = normalize_feature_vector_v3(signal)
         except FeatureNormalizationError as exc:
-            return RuntimeEvaluationResult(decisions=[], errors=[f'feature_normalization_failed:{exc}'], normalized=None)
+            return RuntimeEvaluationResult(
+                decisions=[],
+                errors=[f"feature_normalization_failed:{exc}"],
+                normalized=None,
+            )
 
         decisions: list[StrategyDecision] = []
         ordered = sorted(strategies, key=lambda item: (item.priority, item.strategy_id))
@@ -254,7 +282,9 @@ class StrategyRuntime:
 
             plugin = self.registry.get(strategy.strategy_type, strategy.version)
             if plugin is None:
-                errors.append(f'plugin_not_found:{strategy.strategy_type}@{strategy.version}')
+                errors.append(
+                    f"plugin_not_found:{strategy.strategy_type}@{strategy.version}"
+                )
                 continue
 
             context = StrategyContext(
@@ -271,17 +301,25 @@ class StrategyRuntime:
                 declared_valid, unknown_declared = validate_declared_features(declared)
                 if not declared_valid:
                     errors.append(
-                        f'declared_features_not_in_schema:{strategy.strategy_id}:{"|".join(unknown_declared)}'
+                        f"declared_features_not_in_schema:{strategy.strategy_id}:{'|'.join(unknown_declared)}"
                     )
                     continue
-                missing = [feature for feature in declared if fv.values.get(feature) is None]
+                missing = [
+                    feature for feature in declared if fv.values.get(feature) is None
+                ]
                 if missing:
-                    errors.append(f'missing_features:{strategy.strategy_id}:{"|".join(sorted(missing))}')
+                    errors.append(
+                        f"missing_features:{strategy.strategy_id}:{'|'.join(sorted(missing))}"
+                    )
                     continue
                 intent = plugin.on_event(fv, context)
             except Exception as exc:  # defensive per-plugin isolation
-                logger.exception('strategy plugin failed strategy_id=%s', strategy.strategy_id)
-                errors.append(f'plugin_error:{strategy.strategy_id}:{type(exc).__name__}')
+                logger.exception(
+                    "strategy plugin failed strategy_id=%s", strategy.strategy_id
+                )
+                errors.append(
+                    f"plugin_error:{strategy.strategy_id}:{type(exc).__name__}"
+                )
                 continue
 
             if intent is None:
@@ -291,7 +329,9 @@ class StrategyRuntime:
             decisions.append(decision)
 
         decisions.sort(key=lambda item: (item.strategy_id, item.symbol, item.action))
-        return RuntimeEvaluationResult(decisions=decisions, errors=errors, normalized=fv)
+        return RuntimeEvaluationResult(
+            decisions=decisions, errors=errors, normalized=fv
+        )
 
 
 def default_runtime_registry() -> StrategyPluginRegistry:
@@ -301,31 +341,33 @@ def default_runtime_registry() -> StrategyPluginRegistry:
     return registry
 
 
-def _intent_to_decision(intent: StrategyIntent, signal: SignalEnvelope) -> StrategyDecision:
-    action = 'buy' if intent.direction == 'long' else 'sell'
-    qty = intent.target_qty.quantize(Decimal('1'), rounding=ROUND_DOWN)
+def _intent_to_decision(
+    intent: StrategyIntent, signal: SignalEnvelope
+) -> StrategyDecision:
+    action = "buy" if intent.direction == "long" else "sell"
+    qty = intent.target_qty.quantize(Decimal("1"), rounding=ROUND_DOWN)
     if qty <= 0:
-        qty = Decimal('1')
+        qty = Decimal("1")
 
     return StrategyDecision(
         strategy_id=intent.strategy_id,
         symbol=intent.symbol,
         event_ts=signal.event_ts,
-        timeframe=signal.timeframe or '1Min',
+        timeframe=signal.timeframe or "1Min",
         action=action,
         qty=qty,
-        order_type='market',
-        time_in_force='day',
-        rationale=','.join(intent.rationale) if intent.rationale else None,
+        order_type="market",
+        time_in_force="day",
+        rationale=",".join(intent.rationale) if intent.rationale else None,
         params={
-            'runtime': {
-                'strategy_type': intent.meta.get('strategy_type'),
-                'schema': intent.meta.get('schema'),
-                'confidence': str(intent.confidence),
-                'horizon': intent.horizon,
-                'compiler_source': intent.meta.get('compiler_source'),
+            "runtime": {
+                "strategy_type": intent.meta.get("strategy_type"),
+                "schema": intent.meta.get("schema"),
+                "confidence": str(intent.confidence),
+                "horizon": intent.horizon,
+                "compiler_source": intent.meta.get("compiler_source"),
             },
-            'feature_hash': intent.meta.get('feature_hash'),
+            "feature_hash": intent.meta.get("feature_hash"),
         },
     )
 
@@ -339,25 +381,27 @@ def compile_runtime_config(config: StrategyRuntimeConfig) -> StrategyRuntimeConf
         semantic_version=config.version,
         params=config.params,
         base_timeframe=config.base_timeframe,
-        source='spec_v2',
+        source="spec_v2",
     )
     shadow_runtime = dict(compiled.shadow_runtime_config)
-    params = shadow_runtime.get('params', config.params)
+    params = shadow_runtime.get("params", config.params)
     return StrategyRuntimeConfig(
         strategy_id=config.strategy_id,
-        strategy_type=str(shadow_runtime.get('strategy_type', config.strategy_type)),
-        version=str(shadow_runtime.get('version', config.version)),
-        params=cast(dict[str, Any], params) if isinstance(params, dict) else dict(config.params),
-        base_timeframe=str(shadow_runtime.get('base_timeframe', config.base_timeframe)),
+        strategy_type=str(shadow_runtime.get("strategy_type", config.strategy_type)),
+        version=str(shadow_runtime.get("version", config.version)),
+        params=cast(dict[str, Any], params)
+        if isinstance(params, dict)
+        else dict(config.params),
+        base_timeframe=str(shadow_runtime.get("base_timeframe", config.base_timeframe)),
         enabled=config.enabled,
         priority=config.priority,
-        compiler_source='spec_v2',
+        compiler_source="spec_v2",
         strategy_spec=compiled.strategy_spec.to_payload(),
         compiled_targets={
-            'evaluator_config': compiled.evaluator_config,
-            'shadow_runtime_config': compiled.shadow_runtime_config,
-            'live_runtime_config': compiled.live_runtime_config,
-            'promotion_metadata': compiled.promotion_metadata,
+            "evaluator_config": compiled.evaluator_config,
+            "shadow_runtime_config": compiled.shadow_runtime_config,
+            "live_runtime_config": compiled.live_runtime_config,
+            "promotion_metadata": compiled.promotion_metadata,
         },
     )
 
@@ -374,15 +418,15 @@ def _decimal(value: Any) -> Decimal | None:
 
 
 __all__ = [
-    'LegacyMacdRsiPlugin',
-    'IntradayTsmomV1Plugin',
-    'RuntimeEvaluationResult',
-    'StrategyContext',
-    'StrategyIntent',
-    'StrategyPlugin',
-    'StrategyPluginRegistry',
-    'StrategyRuntime',
-    'StrategyRuntimeConfig',
-    'compile_runtime_config',
-    'default_runtime_registry',
+    "LegacyMacdRsiPlugin",
+    "IntradayTsmomV1Plugin",
+    "RuntimeEvaluationResult",
+    "StrategyContext",
+    "StrategyIntent",
+    "StrategyPlugin",
+    "StrategyPluginRegistry",
+    "StrategyRuntime",
+    "StrategyRuntimeConfig",
+    "compile_runtime_config",
+    "default_runtime_registry",
 ]

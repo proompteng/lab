@@ -247,7 +247,9 @@ def _extract_context_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | 
             return {str(k): v for k, v in context_payload.items()}
 
     regime_payload = payload
-    if "posterior" in regime_payload and isinstance(regime_payload.get("posterior"), Mapping):
+    if "posterior" in regime_payload and isinstance(
+        regime_payload.get("posterior"), Mapping
+    ):
         if _has_any_context_field(regime_payload):
             return {str(k): v for k, v in regime_payload.items()}
     if _has_hmm_split_fields(regime_payload):
@@ -269,8 +271,7 @@ def _extract_context_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | 
 
 def _has_any_context_field(payload: Mapping[str, Any]) -> bool:
     return any(
-        isinstance(payload.get(field), Mapping)
-        or field in payload
+        isinstance(payload.get(field), Mapping) or field in payload
         for field in (
             "schema_version",
             "regime_id",
@@ -302,11 +303,15 @@ def _has_hmm_split_fields(payload: Mapping[str, Any]) -> bool:
 
 
 def _parse_context_map(payload: Mapping[str, Any]) -> HMMRegimeContext:
-    schema_version = _coerce_string(payload.get("schema_version") or payload.get("schemaVersion"))
+    schema_version = _coerce_string(
+        payload.get("schema_version") or payload.get("schemaVersion")
+    )
     if not schema_version:
         schema_version = HMM_UNKNOWN_SCHEMA_VERSION
 
-    regime_id = _normalize_regime_id(payload.get("regime_id") or payload.get("regimeId"))
+    regime_id = _normalize_regime_id(
+        payload.get("regime_id") or payload.get("regimeId")
+    )
     posterior_raw = payload.get("posterior")
     posterior, posterior_valid = _coerce_posterior(posterior_raw)
     entropy = _coerce_decimal_str(payload.get("entropy"))
@@ -323,7 +328,9 @@ def _parse_context_map(payload: Mapping[str, Any]) -> HMMRegimeContext:
     guardrail = _coerce_guardrail(
         payload.get("guardrail"),
         fallback_to_defensive=_coerce_bool(
-            _coerce_first_present(payload, "fallback_to_defensive", "fallbackToDefensive")
+            _coerce_first_present(
+                payload, "fallback_to_defensive", "fallbackToDefensive"
+            )
         ),
     )
 
@@ -388,7 +395,6 @@ def _coerce_posterior_probability(raw: Any) -> str:
     except (ArithmeticError, ValueError, TypeError) as exc:
         raise ValueError("posterior value must be a valid decimal") from exc
     return str(decimal_value)
-
 
 
 def _coerce_decimal_str(raw: Any) -> str:
@@ -509,9 +515,7 @@ def _coerce_guardrail(raw: Any, *, fallback_to_defensive: bool = False) -> HMMGu
                     "fallbackToDefensive",
                 )
             )
-        reason = _coerce_string(
-            guardrail_map.get("reason")
-        )
+        reason = _coerce_string(guardrail_map.get("reason"))
     else:
         stale = False
         reason = ""

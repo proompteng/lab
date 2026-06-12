@@ -10,7 +10,14 @@ from unittest import TestCase
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Base, Execution, LLMDecisionReview, PositionSnapshot, Strategy, TradeDecision
+from app.models import (
+    Base,
+    Execution,
+    LLMDecisionReview,
+    PositionSnapshot,
+    Strategy,
+    TradeDecision,
+)
 from app.snapshots import snapshot_account_and_positions, sync_order_to_db
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision
@@ -72,10 +79,15 @@ class TestJsonSerializationBoundary(TestCase):
                 action="buy",
                 qty=Decimal("1"),
                 rationale="test",
-                params={"decision_id": uuid.uuid4(), "nested": {"strategy_id": uuid.uuid4()}},
+                params={
+                    "decision_id": uuid.uuid4(),
+                    "nested": {"strategy_id": uuid.uuid4()},
+                },
             )
             executor = OrderExecutor()
-            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+            decision_row = executor.ensure_decision(
+                session, decision, strategy, "paper"
+            )
             stored = session.get(TradeDecision, decision_row.id)
             assert stored is not None
             _assert_no_uuid(stored.decision_json)
@@ -139,7 +151,10 @@ class TestJsonSerializationBoundary(TestCase):
             session.commit()
             session.refresh(decision)
 
-            request_payload = {"review_id": review_id, "nested": {"decision_id": decision.id}}
+            request_payload = {
+                "review_id": review_id,
+                "nested": {"decision_id": decision.id},
+            }
             response_payload = {"review_id": review_id}
             TradingPipeline._persist_llm_review(
                 session=session,

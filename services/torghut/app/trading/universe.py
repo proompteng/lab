@@ -54,10 +54,12 @@ class _HttpRequest:
 
 
 class _HttpResponseHandle:
-    def __init__(self, connection: HTTPConnection | HTTPSConnection, response: Any) -> None:
+    def __init__(
+        self, connection: HTTPConnection | HTTPSConnection, response: Any
+    ) -> None:
         self._connection = connection
         self._response = response
-        self.status = int(getattr(response, 'status', 200))
+        self.status = int(getattr(response, "status", 200))
 
     def read(self) -> bytes:
         return cast(bytes, self._response.read())
@@ -76,14 +78,14 @@ class _HttpResponseHandle:
 def urlopen(request: _HttpRequest, timeout: int) -> _HttpResponseHandle:
     parsed = urlsplit(request.full_url)
     scheme = parsed.scheme.lower()
-    if scheme not in {'http', 'https'}:
-        raise ValueError(f'unsupported_url_scheme:{scheme or "missing"}')
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"unsupported_url_scheme:{scheme or 'missing'}")
     if not parsed.hostname:
-        raise ValueError('missing_url_host')
-    request_path = parsed.path or '/'
+        raise ValueError("missing_url_host")
+    request_path = parsed.path or "/"
     if parsed.query:
-        request_path = f'{request_path}?{parsed.query}'
-    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+        request_path = f"{request_path}?{parsed.query}"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
     connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout, 1))
     try:
         connection.request(request.method, request_path, headers=request.headers)
@@ -103,8 +105,8 @@ class UniverseResolver:
         self._last_resolution: UniverseResolution = UniverseResolution(
             symbols=set(),
             source=settings.trading_universe_source,
-            status='unknown',
-            reason='not_evaluated',
+            status="unknown",
+            reason="not_evaluated",
             fetched_at=None,
             cache_age_seconds=None,
         )
@@ -134,9 +136,9 @@ class UniverseResolver:
             filtered = self._apply_symbol_allowlist(_filter_symbols(symbols))
             resolution = UniverseResolution(
                 symbols=filtered,
-                source='static',
-                status='ok' if filtered else 'empty',
-                reason='static_symbols_loaded' if filtered else 'static_symbols_empty',
+                source="static",
+                status="ok" if filtered else "empty",
+                reason="static_symbols_loaded" if filtered else "static_symbols_empty",
                 fetched_at=None,
                 cache_age_seconds=None,
             )
@@ -160,12 +162,14 @@ class UniverseResolver:
             resolution = self._resolve_from_jangar()
             self._last_resolution = resolution
             return resolution
-        logger.warning("Unknown trading universe source: %s", settings.trading_universe_source)
+        logger.warning(
+            "Unknown trading universe source: %s", settings.trading_universe_source
+        )
         resolution = UniverseResolution(
             symbols=set(),
             source=str(settings.trading_universe_source),
-            status='error',
-            reason='unknown_universe_source',
+            status="error",
+            reason="unknown_universe_source",
             fetched_at=None,
             cache_age_seconds=None,
         )
@@ -188,7 +192,7 @@ class UniverseResolver:
         if not url:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_url_missing',
+                reason="jangar_url_missing",
                 cause=RuntimeError("jangar_url_missing"),
             )
 
@@ -199,19 +203,21 @@ class UniverseResolver:
             if not cached_symbols and static_fallback_symbols:
                 return UniverseResolution(
                     symbols=static_fallback_symbols,
-                    source='jangar',
-                    status='degraded',
-                    reason='jangar_cache_hit_no_allowed_symbols_using_static_fallback',
+                    source="jangar",
+                    status="degraded",
+                    reason="jangar_cache_hit_no_allowed_symbols_using_static_fallback",
                     fetched_at=self._cache.fetched_at,
-                    cache_age_seconds=int((now - self._cache.fetched_at).total_seconds()),
+                    cache_age_seconds=int(
+                        (now - self._cache.fetched_at).total_seconds()
+                    ),
                 )
             return UniverseResolution(
                 symbols=cached_symbols,
-                source='jangar',
-                status='ok' if cached_symbols else 'error',
-                reason='jangar_cache_hit'
+                source="jangar",
+                status="ok" if cached_symbols else "error",
+                reason="jangar_cache_hit"
                 if cached_symbols
-                else 'jangar_cache_hit_no_allowed_symbols',
+                else "jangar_cache_hit_no_allowed_symbols",
                 fetched_at=self._cache.fetched_at,
                 cache_age_seconds=int((now - self._cache.fetched_at).total_seconds()),
             )
@@ -219,32 +225,33 @@ class UniverseResolver:
         request_url = url
         if settings.trading_simulation_enabled:
             delimiter = "&" if "?" in request_url else "?"
-            request_url = (
-                f'{request_url}{delimiter}'
-                + urlencode({"asOf": now.astimezone(timezone.utc).isoformat()})
+            request_url = f"{request_url}{delimiter}" + urlencode(
+                {"asOf": now.astimezone(timezone.utc).isoformat()}
             )
         request = _HttpRequest(
             full_url=request_url,
-            method='GET',
-            headers={'accept': 'application/json'},
+            method="GET",
+            headers={"accept": "application/json"},
         )
-        payload = ''
+        payload = ""
         try:
-            with urlopen(request, settings.trading_universe_timeout_seconds) as response:
-                raw_status = getattr(response, 'status', 200)
+            with urlopen(
+                request, settings.trading_universe_timeout_seconds
+            ) as response:
+                raw_status = getattr(response, "status", 200)
                 status = raw_status if isinstance(raw_status, int) else 200
                 if status < 200 or status >= 300:
                     return self._fallback_from_cache(
                         now=now,
-                        reason='jangar_http_error',
-                        cause=RuntimeError(f'jangar_http_status_{status}'),
+                        reason="jangar_http_error",
+                        cause=RuntimeError(f"jangar_http_status_{status}"),
                     )
                 payload = response.read().decode("utf-8")
         except ValueError as exc:
             message = str(exc)
-            reason = 'jangar_url_invalid_scheme'
-            if message == 'missing_url_host':
-                reason = 'jangar_url_invalid_host'
+            reason = "jangar_url_invalid_scheme"
+            if message == "missing_url_host":
+                reason = "jangar_url_invalid_host"
             return self._fallback_from_cache(
                 now=now,
                 reason=reason,
@@ -253,7 +260,7 @@ class UniverseResolver:
         except Exception as exc:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_fetch_failed',
+                reason="jangar_fetch_failed",
                 cause=exc,
             )
         try:
@@ -261,7 +268,7 @@ class UniverseResolver:
         except json.JSONDecodeError as exc:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_payload_decode_failed',
+                reason="jangar_payload_decode_failed",
                 cause=exc,
             )
 
@@ -270,16 +277,16 @@ class UniverseResolver:
         if not symbols:
             return self._fallback_from_cache(
                 now=now,
-                reason='jangar_payload_no_allowed_symbols'
+                reason="jangar_payload_no_allowed_symbols"
                 if parsed_symbols and self._has_symbol_allowlist()
-                else 'jangar_payload_empty',
+                else "jangar_payload_empty",
             )
         self._cache = UniverseCache(symbols=symbols, fetched_at=now)
         return UniverseResolution(
             symbols=symbols,
-            source='jangar',
-            status='ok',
-            reason='jangar_fetch_ok',
+            source="jangar",
+            status="ok",
+            reason="jangar_fetch_ok",
             fetched_at=now,
             cache_age_seconds=0,
         )
@@ -332,8 +339,8 @@ class UniverseResolver:
                     )
                 return UniverseResolution(
                     symbols=static_fallback_symbols,
-                    source='jangar',
-                    status='degraded',
+                    source="jangar",
+                    status="degraded",
                     reason=fallback_reason,
                     fetched_at=None,
                     cache_age_seconds=None,
@@ -351,8 +358,8 @@ class UniverseResolver:
                 )
             return UniverseResolution(
                 symbols=set(),
-                source='jangar',
-                status='error',
+                source="jangar",
+                status="error",
                 reason=reason,
                 fetched_at=None,
                 cache_age_seconds=None,
@@ -372,21 +379,21 @@ class UniverseResolver:
                         )
                     return UniverseResolution(
                         symbols=static_fallback_symbols,
-                        source='jangar',
-                        status='degraded',
+                        source="jangar",
+                        status="degraded",
                         reason=fallback_reason,
                         fetched_at=self._cache.fetched_at,
                         cache_age_seconds=age_seconds,
                     )
                 return UniverseResolution(
                     symbols=set(),
-                    source='jangar',
-                    status='error',
-                    reason=f'{reason}_stale_cache_no_allowed_symbols',
+                    source="jangar",
+                    status="error",
+                    reason=f"{reason}_stale_cache_no_allowed_symbols",
                     fetched_at=self._cache.fetched_at,
                     cache_age_seconds=age_seconds,
                 )
-            warning_reason = f'{reason}_using_stale_cache'
+            warning_reason = f"{reason}_using_stale_cache"
             if self._should_emit_stale_cache_warning(warning_reason, now):
                 logger.warning(
                     "Reusing cached Jangar universe after fetch failure reason=%s age_seconds=%s symbols=%s",
@@ -402,9 +409,9 @@ class UniverseResolver:
                 )
             return UniverseResolution(
                 symbols=cached_symbols,
-                source='jangar',
-                status='degraded',
-                reason=f'{reason}_using_stale_cache',
+                source="jangar",
+                status="degraded",
+                reason=f"{reason}_using_stale_cache",
                 fetched_at=self._cache.fetched_at,
                 cache_age_seconds=age_seconds,
             )
@@ -431,17 +438,17 @@ class UniverseResolver:
                 )
             return UniverseResolution(
                 symbols=static_fallback_symbols,
-                source='jangar',
-                status='degraded',
+                source="jangar",
+                status="degraded",
                 reason=fallback_reason,
                 fetched_at=self._cache.fetched_at,
                 cache_age_seconds=age_seconds,
             )
         return UniverseResolution(
             symbols=set(),
-            source='jangar',
-            status='error',
-            reason=f'{reason}_cache_stale',
+            source="jangar",
+            status="error",
+            reason=f"{reason}_cache_stale",
             fetched_at=self._cache.fetched_at,
             cache_age_seconds=age_seconds,
         )

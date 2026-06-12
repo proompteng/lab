@@ -31,24 +31,12 @@ AUTONOMY_PHASE_SLO_GATE_IDS = {
         "slo_signal_count_minimum",
         "slo_decision_count_minimum",
     ),
-    "promotion-prerequisites": (
-        "slo_required_artifacts_present",
-    ),
-    "rollback-readiness": (
-        "slo_required_rollback_checks_present",
-    ),
-    "drift-gate": (
-        "slo_drift_gate_allowed",
-    ),
-    "paper-canary": (
-        "slo_paper_canary_patch_present",
-    ),
-    "runtime-governance": (
-        "slo_runtime_rollback_not_triggered",
-    ),
-    "rollback-proof": (
-        "slo_rollback_evidence_required_when_triggered",
-    ),
+    "promotion-prerequisites": ("slo_required_artifacts_present",),
+    "rollback-readiness": ("slo_required_rollback_checks_present",),
+    "drift-gate": ("slo_drift_gate_allowed",),
+    "paper-canary": ("slo_paper_canary_patch_present",),
+    "runtime-governance": ("slo_runtime_rollback_not_triggered",),
+    "rollback-proof": ("slo_rollback_evidence_required_when_triggered",),
 }
 
 
@@ -73,7 +61,9 @@ def _coerce_manifest_artifact_context(
     execution_context: Mapping[str, Any],
 ) -> dict[str, str]:
     return {
-        "repository": _coerce_str(execution_context.get("repository"), default="unknown"),
+        "repository": _coerce_str(
+            execution_context.get("repository"), default="unknown"
+        ),
         "base": _coerce_str(execution_context.get("base"), default="unknown"),
         "head": _coerce_str(execution_context.get("head"), default="unknown"),
         "artifactPath": _coerce_str(
@@ -103,13 +93,7 @@ def coerce_path_strings(values: Any) -> list[str]:
     if not isinstance(values, (list, tuple, set)):
         return []
     values_iterable = cast(Iterable[Any], values)
-    return sorted(
-        {
-            _coerce_str(item)
-            for item in values_iterable
-            if _coerce_str(item)
-        }
-    )
+    return sorted({_coerce_str(item) for item in values_iterable if _coerce_str(item)})
 
 
 def build_phase_manifest_payload(
@@ -149,7 +133,9 @@ def build_phase_manifest_payload(
         )
     manifest_artifact_refs = coerce_path_strings(artifact_refs)
     for phase in normalized_phases:
-        manifest_artifact_refs.extend(coerce_path_strings(phase.get("artifact_refs", [])))
+        manifest_artifact_refs.extend(
+            coerce_path_strings(phase.get("artifact_refs", []))
+        )
 
     created_at_timestamp = (
         created_at.isoformat()
@@ -270,7 +256,9 @@ def build_rollback_proof_phase(
         "slo_gates": [
             {
                 "id": "slo_rollback_evidence_required_when_triggered",
-                "status": "pass" if not trigger else ("pass" if evidence_path else "fail"),
+                "status": "pass"
+                if not trigger
+                else ("pass" if evidence_path else "fail"),
                 "threshold": True,
                 "value": bool(evidence_path),
             },
@@ -303,12 +291,12 @@ def build_runtime_and_rollback_governance_payloads(
     normalized_drift_status = _coerce_str(drift_status, default="unknown")
     normalized_action_type = str(action_type or "").strip()
     normalized_rollback_triggered = bool(rollback_triggered)
-    normalized_governance_status = coerce_phase_status(governance_status, default="skipped")
+    normalized_governance_status = coerce_phase_status(
+        governance_status, default="skipped"
+    )
     normalized_incident_evidence_input = _coerce_str(rollback_incident_evidence_path)
     normalized_incident_evidence = (
-        normalized_incident_evidence_input
-        if normalized_rollback_triggered
-        else ""
+        normalized_incident_evidence_input if normalized_rollback_triggered else ""
     )
     rollback_proof_evidence_refs = normalized_evidence_refs
     if not normalized_rollback_triggered and normalized_incident_evidence_input:

@@ -67,7 +67,9 @@ class TestLLMDSPyCompiler(TestCase):
             self.assertTrue(result.compile_metrics_path.exists())
             self.assertEqual(len(result.compile_result.artifact_hash), 64)
             self.assertEqual(len(result.compile_result.reproducibility_hash), 64)
-            compiled_artifact_path = artifact_dir.resolve() / "dspy-compiled-program.json"
+            compiled_artifact_path = (
+                artifact_dir.resolve() / "dspy-compiled-program.json"
+            )
             self.assertEqual(
                 result.compile_result.compiled_artifact_uri,
                 f"{compiled_artifact_path}",
@@ -82,11 +84,15 @@ class TestLLMDSPyCompiler(TestCase):
             )
             self.assertEqual(compile_result_payload["optimizer"], "miprov2")
             self.assertEqual(
-                self._normalize_ref(compile_result_payload["metricBundle"]["metricPolicyRef"]),
+                self._normalize_ref(
+                    compile_result_payload["metricBundle"]["metricPolicyRef"]
+                ),
                 f"{metric_policy_path.resolve()}",
             )
             self.assertEqual(
-                self._normalize_ref(compile_result_payload["metricBundle"]["datasetRef"]),
+                self._normalize_ref(
+                    compile_result_payload["metricBundle"]["datasetRef"]
+                ),
                 f"{dataset_path.resolve()}",
             )
             self.assertEqual(
@@ -97,15 +103,14 @@ class TestLLMDSPyCompiler(TestCase):
                 result.compile_metrics_path.read_text(encoding="utf-8")
             )
             self.assertEqual(
-                compile_metrics_payload["artifactHash"], result.compile_result.artifact_hash
+                compile_metrics_payload["artifactHash"],
+                result.compile_result.artifact_hash,
             )
             self.assertEqual(
                 compile_metrics_payload["reproducibilityHash"],
                 result.compile_result.reproducibility_hash,
             )
-            self.assertEqual(
-                len(compile_metrics_payload["reproducibilityHash"]), 64
-            )
+            self.assertEqual(len(compile_metrics_payload["reproducibilityHash"]), 64)
 
     def test_compile_result_hashes_are_stable_for_fixed_inputs(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -216,7 +221,9 @@ class TestLLMDSPyCompiler(TestCase):
                 from_file_uri.compile_result.artifact_hash,
             )
             self.assertEqual(
-                self._normalize_ref(from_path.compile_result.metric_bundle["datasetRef"]),
+                self._normalize_ref(
+                    from_path.compile_result.metric_bundle["datasetRef"]
+                ),
                 f"{dataset_path.resolve()}",
             )
 

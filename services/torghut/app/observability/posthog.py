@@ -21,18 +21,18 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _PROHIBITED_PROPERTY_SUBSTRINGS = (
-    'api_key',
-    'authorization',
-    'password',
-    'secret',
-    'token',
+    "api_key",
+    "authorization",
+    "password",
+    "secret",
+    "token",
 )
 _PROHIBITED_EXACT_KEYS = {
-    'input_json',
-    'response_json',
-    'raw_order',
-    'prompt',
-    'prompt_text',
+    "input_json",
+    "response_json",
+    "raw_order",
+    "prompt",
+    "prompt_text",
 }
 _MAX_SEQUENCE_ITEMS = 20
 _DEFAULT_QUEUE_MAX_EVENTS = 2048
@@ -93,81 +93,85 @@ def _post_capture_payload(
         else {}
     )
     merged_properties: dict[str, object] = {
-        'service': 'torghut',
-        'env': settings.app_env,
-        'event_version': event_version,
-        'timestamp_utc': datetime.now(timezone.utc).isoformat(),
-        'severity': severity,
-        'distinct_id': distinct_id,
+        "service": "torghut",
+        "env": settings.app_env,
+        "event_version": event_version,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "severity": severity,
+        "distinct_id": distinct_id,
     }
     merged_properties.update(dynamic_properties)
     return {
-        'api_key': settings.posthog_api_key,
-        'event': event_name,
-        'properties': merged_properties,
+        "api_key": settings.posthog_api_key,
+        "event": event_name,
+        "properties": merged_properties,
     }
 
 
 def _posthog_capture_url() -> tuple[str | None, str | None]:
     host = _coerce_non_empty(settings.posthog_host)
     if host is None:
-        return None, 'missing_host'
+        return None, "missing_host"
     parsed = urlsplit(host)
     scheme = parsed.scheme.lower()
-    if scheme not in {'http', 'https'}:
-        return None, 'invalid_host'
+    if scheme not in {"http", "https"}:
+        return None, "invalid_host"
     if not parsed.hostname:
-        return None, 'invalid_host'
+        return None, "invalid_host"
     try:
         parsed.port
     except ValueError:
-        return None, 'invalid_host'
-    path = parsed.path.rstrip('/')
-    capture_path = f'{path}/capture/' if path else '/capture/'
+        return None, "invalid_host"
+    path = parsed.path.rstrip("/")
+    capture_path = f"{path}/capture/" if path else "/capture/"
     if parsed.query:
-        capture_path = f'{capture_path}?{parsed.query}'
+        capture_path = f"{capture_path}?{parsed.query}"
     netloc = parsed.netloc
-    return f'{scheme}://{netloc}{capture_path}', None
+    return f"{scheme}://{netloc}{capture_path}", None
 
 
-def _send_capture_request(url: str, payload: dict[str, object]) -> tuple[bool, str | None]:
+def _send_capture_request(
+    url: str, payload: dict[str, object]
+) -> tuple[bool, str | None]:
     parsed = urlsplit(url)
-    connection_type = HTTPSConnection if parsed.scheme.lower() == 'https' else HTTPConnection
+    connection_type = (
+        HTTPSConnection if parsed.scheme.lower() == "https" else HTTPConnection
+    )
     hostname = parsed.hostname
     if hostname is None:
-        return False, 'invalid_host'
+        return False, "invalid_host"
     try:
         port = parsed.port
     except ValueError:
-        return False, 'invalid_host'
-    request_path = parsed.path or '/capture/'
+        return False, "invalid_host"
+    request_path = parsed.path or "/capture/"
     if parsed.query:
-        request_path = f'{request_path}?{parsed.query}'
+        request_path = f"{request_path}?{parsed.query}"
     connection = connection_type(
         hostname,
         port,
         timeout=max(float(settings.posthog_timeout_seconds), 0.1),
     )
     try:
-        body = json.dumps(payload).encode('utf-8')
+        body = json.dumps(payload).encode("utf-8")
         connection.request(
-            'POST',
+            "POST",
             request_path,
             body=body,
             headers={
-                'content-type': 'application/json',
-                'accept': 'application/json',
+                "content-type": "application/json",
+                "accept": "application/json",
             },
         )
         response = connection.getresponse()
         response.read()
-        status = int(getattr(response, 'status', 500))
+        status = int(getattr(response, "status", 500))
         if 200 <= status < 300:
             return True, None
-        return False, f'http_{status}'
+        return False, f"http_{status}"
     except Exception:
-        logger.exception('PostHog capture failed event_url=%s', url)
-        return False, 'send_failed'
+        logger.exception("PostHog capture failed event_url=%s", url)
+        return False, "send_failed"
     finally:
         connection.close()
 
@@ -188,7 +192,7 @@ class _AsyncPostHogEmitter:
             self._shutdown.clear()
             self._thread = Thread(
                 target=self._run,
-                name='torghut-posthog-emitter',
+                name="torghut-posthog-emitter",
                 daemon=True,
             )
             self._thread.start()
@@ -199,7 +203,7 @@ class _AsyncPostHogEmitter:
             self._queue.put_nowait((url, payload))
             return True, None
         except Full:
-            return False, 'queue_full'
+            return False, "queue_full"
 
     def _run(self) -> None:
         while not self._shutdown.is_set() or not self._queue.empty():
@@ -210,7 +214,7 @@ class _AsyncPostHogEmitter:
             emitted, reason = _send_capture_request(url, payload)
             if not emitted and reason is not None:
                 logger.warning(
-                    'PostHog telemetry send failed in background worker reason=%s',
+                    "PostHog telemetry send failed in background worker reason=%s",
                     reason,
                 )
             self._queue.task_done()
@@ -228,7 +232,7 @@ _ASYNC_EMITTER = _AsyncPostHogEmitter()
 def capture_posthog_event(
     event_name: str,
     *,
-    severity: str = 'info',
+    severity: str = "info",
     distinct_id: str | None = None,
     properties: Mapping[str, Any] | None = None,
     event_version: int = 1,
@@ -236,19 +240,21 @@ def capture_posthog_event(
     """Capture a PostHog event without impacting trading critical paths."""
 
     if not settings.posthog_enabled:
-        return False, 'disabled'
+        return False, "disabled"
     normalized_event = _coerce_non_empty(event_name)
     if normalized_event is None:
-        return False, 'invalid_event'
+        return False, "invalid_event"
     if _coerce_non_empty(settings.posthog_api_key) is None:
-        return False, 'missing_api_key'
+        return False, "missing_api_key"
     capture_url, capture_url_error = _posthog_capture_url()
     if capture_url_error is not None:
         return False, capture_url_error
-    resolved_distinct_id = _coerce_non_empty(distinct_id) or settings.posthog_distinct_id
+    resolved_distinct_id = (
+        _coerce_non_empty(distinct_id) or settings.posthog_distinct_id
+    )
     payload = _post_capture_payload(
         event_name=normalized_event,
-        severity=str(severity).strip() or 'info',
+        severity=str(severity).strip() or "info",
         distinct_id=resolved_distinct_id,
         properties=properties,
         event_version=max(1, int(event_version)),
@@ -256,7 +262,7 @@ def capture_posthog_event(
     emitted, reason = _ASYNC_EMITTER.enqueue(cast(str, capture_url), payload)
     if not emitted and reason is not None:
         logger.warning(
-            'PostHog telemetry dropped event=%s reason=%s',
+            "PostHog telemetry dropped event=%s reason=%s",
             normalized_event,
             reason,
         )

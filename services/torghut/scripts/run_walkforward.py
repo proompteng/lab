@@ -87,28 +87,28 @@ def _default_strategy(timeframe: str) -> list[Strategy]:
 
 
 def _run_git_rev_parse() -> subprocess.CompletedProcess[str]:
-    if Path('/usr/bin/git').exists():
+    if Path("/usr/bin/git").exists():
         return subprocess.run(
-            ['/usr/bin/git', 'rev-parse', 'HEAD'],
+            ["/usr/bin/git", "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         )
-    if Path('/usr/local/bin/git').exists():
+    if Path("/usr/local/bin/git").exists():
         return subprocess.run(
-            ['/usr/local/bin/git', 'rev-parse', 'HEAD'],
+            ["/usr/local/bin/git", "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         )
-    if Path('/opt/homebrew/bin/git').exists():
+    if Path("/opt/homebrew/bin/git").exists():
         return subprocess.run(
-            ['/opt/homebrew/bin/git', 'rev-parse', 'HEAD'],
+            ["/opt/homebrew/bin/git", "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         )
-    raise FileNotFoundError('git not found in expected paths')
+    raise FileNotFoundError("git not found in expected paths")
 
 
 def _resolve_git_sha() -> str | None:
@@ -120,18 +120,49 @@ def _resolve_git_sha() -> str | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run walk-forward evaluation on fixture signals.")
-    parser.add_argument("--signals", type=Path, required=True, help="Path to fixture signal JSON.")
-    parser.add_argument("--output", type=Path, required=True, help="Path to write results JSON.")
-    parser.add_argument("--report", type=Path, help="Optional path to write evaluation report JSON.")
-    parser.add_argument("--start", type=str, required=True, help="Start datetime (ISO).")
+    parser = argparse.ArgumentParser(
+        description="Run walk-forward evaluation on fixture signals."
+    )
+    parser.add_argument(
+        "--signals", type=Path, required=True, help="Path to fixture signal JSON."
+    )
+    parser.add_argument(
+        "--output", type=Path, required=True, help="Path to write results JSON."
+    )
+    parser.add_argument(
+        "--report", type=Path, help="Optional path to write evaluation report JSON."
+    )
+    parser.add_argument(
+        "--start", type=str, required=True, help="Start datetime (ISO)."
+    )
     parser.add_argument("--end", type=str, required=True, help="End datetime (ISO).")
-    parser.add_argument("--train-window-minutes", type=int, default=60, help="Train window size in minutes.")
-    parser.add_argument("--test-window-minutes", type=int, default=30, help="Test window size in minutes.")
-    parser.add_argument("--step-minutes", type=int, default=30, help="Step size in minutes.")
-    parser.add_argument("--strategy-config", type=Path, help="Optional strategy config (YAML/JSON).")
-    parser.add_argument("--strategy-timeframe", type=str, default="1Min", help="Timeframe for default strategy.")
-    parser.add_argument("--gate-policy", type=Path, help="Optional gate policy JSON file.")
+    parser.add_argument(
+        "--train-window-minutes",
+        type=int,
+        default=60,
+        help="Train window size in minutes.",
+    )
+    parser.add_argument(
+        "--test-window-minutes",
+        type=int,
+        default=30,
+        help="Test window size in minutes.",
+    )
+    parser.add_argument(
+        "--step-minutes", type=int, default=30, help="Step size in minutes."
+    )
+    parser.add_argument(
+        "--strategy-config", type=Path, help="Optional strategy config (YAML/JSON)."
+    )
+    parser.add_argument(
+        "--strategy-timeframe",
+        type=str,
+        default="1Min",
+        help="Timeframe for default strategy.",
+    )
+    parser.add_argument(
+        "--gate-policy", type=Path, help="Optional gate policy JSON file."
+    )
     parser.add_argument(
         "--variant-count",
         type=int,
@@ -184,11 +215,17 @@ def main() -> int:
             strategies=strategies,
             git_sha=_resolve_git_sha(),
             run_id=args.run_id,
-            strategy_config_path=str(args.strategy_config) if args.strategy_config else None,
+            strategy_config_path=str(args.strategy_config)
+            if args.strategy_config
+            else None,
             variant_count=args.variant_count,
             variant_warning_threshold=args.variant_warning_threshold,
         )
-        gate_policy = EvaluationGatePolicy.from_path(args.gate_policy) if args.gate_policy else None
+        gate_policy = (
+            EvaluationGatePolicy.from_path(args.gate_policy)
+            if args.gate_policy
+            else None
+        )
         report = generate_evaluation_report(
             results,
             config=config,

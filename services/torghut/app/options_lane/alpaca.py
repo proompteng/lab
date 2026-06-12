@@ -125,14 +125,23 @@ class AlpacaOptionsClient:
                 "page_token": page_token,
             },
         )
-        rows = _as_json_list(payload.get("option_contracts") or payload.get("contracts") or payload.get("data") or [])
+        rows = _as_json_list(
+            payload.get("option_contracts")
+            or payload.get("contracts")
+            or payload.get("data")
+            or []
+        )
         next_token = payload.get("next_page_token") or payload.get("page_token")
         normalized_rows: list[JsonObject] = []
         for row in rows:
             row_dict = _as_json_object(row)
             if row_dict is not None:
                 normalized_rows.append(row_dict)
-        resolved_next_token = next_token.strip() if isinstance(next_token, str) and next_token.strip() else None
+        resolved_next_token = (
+            next_token.strip()
+            if isinstance(next_token, str) and next_token.strip()
+            else None
+        )
         return normalized_rows, resolved_next_token
 
     def get_snapshots(self, symbols: list[str]) -> dict[str, JsonObject]:
@@ -143,7 +152,11 @@ class AlpacaOptionsClient:
             "/v1beta1/options/snapshots",
             {"symbols": ",".join(symbols), "feed": self._feed},
         )
-        raw = _as_json_object(payload.get("snapshots")) if "snapshots" in payload else payload
+        raw = (
+            _as_json_object(payload.get("snapshots"))
+            if "snapshots" in payload
+            else payload
+        )
         if raw is None:
             return {}
         snapshots: dict[str, JsonObject] = {}
@@ -192,13 +205,17 @@ class AlpacaOptionsClient:
                 normalized[str(symbol).strip().upper()] = normalized_rows
         return normalized
 
-    def _request_json(self, base_url: str, path: str, params: dict[str, object]) -> JsonObject:
+    def _request_json(
+        self, base_url: str, path: str, params: dict[str, object]
+    ) -> JsonObject:
         encoded_params = urlencode(
             [(key, value) for key, value in params.items() if value is not None],
             doseq=True,
         )
         request = Request(
-            f"{base_url}{path}?{encoded_params}" if encoded_params else f"{base_url}{path}",
+            f"{base_url}{path}?{encoded_params}"
+            if encoded_params
+            else f"{base_url}{path}",
             headers={
                 "accept": "application/json",
                 "APCA-API-KEY-ID": self._key_id,
@@ -212,7 +229,11 @@ class AlpacaOptionsClient:
         except Exception as exc:
             status_code = int(getattr(exc, "code", 0) or 0)
             body = getattr(exc, "read", lambda: b"")()
-            raw = body.decode("utf-8", errors="ignore") if isinstance(body, bytes) else str(exc)
+            raw = (
+                body.decode("utf-8", errors="ignore")
+                if isinstance(body, bytes)
+                else str(exc)
+            )
             raise AlpacaApiError(status_code=status_code, body=raw or str(exc)) from exc
 
         try:
@@ -225,13 +246,19 @@ class AlpacaOptionsClient:
         return payload_dict
 
 
-def normalize_contract_record(raw: JsonObject, *, observed_at: datetime) -> dict[str, object]:
+def normalize_contract_record(
+    raw: JsonObject, *, observed_at: datetime
+) -> dict[str, object]:
     """Normalize an Alpaca contract payload into the raw Kafka and Postgres contract shape."""
 
     contract_symbol = str(raw.get("symbol") or "").strip().upper()
     status = str(raw.get("status") or "unknown").strip().lower() or "unknown"
-    expiration_date = _normalize_iso_date(raw.get("expiration_date")) or observed_at.date()
-    option_type = str(raw.get("type") or raw.get("option_type") or "call").strip().lower()
+    expiration_date = (
+        _normalize_iso_date(raw.get("expiration_date")) or observed_at.date()
+    )
+    option_type = (
+        str(raw.get("type") or raw.get("option_type") or "call").strip().lower()
+    )
     if option_type not in {"call", "put"}:
         option_type = "call"
     style = str(raw.get("style") or "unknown").strip().lower()
@@ -243,18 +270,25 @@ def normalize_contract_record(raw: JsonObject, *, observed_at: datetime) -> dict
         match = _OCC_SYMBOL_RE.match(contract_symbol)
         if match is not None:
             root_symbol = match.group(1)
-    underlying_symbol = str(raw.get("underlying_symbol") or raw.get("underlying") or root_symbol).strip().upper()
+    underlying_symbol = (
+        str(raw.get("underlying_symbol") or raw.get("underlying") or root_symbol)
+        .strip()
+        .upper()
+    )
 
     return {
         "contract_id": str(raw.get("id") or contract_symbol),
         "contract_symbol": contract_symbol,
         "name": str(raw.get("name") or "").strip() or None,
-        "status": status if status in {"active", "inactive", "expired", "unknown"} else "unknown",
+        "status": status
+        if status in {"active", "inactive", "expired", "unknown"}
+        else "unknown",
         "tradable": bool(raw.get("tradable", True)),
         "expiration_date": expiration_date,
         "root_symbol": root_symbol or contract_symbol[:6],
         "underlying_symbol": underlying_symbol,
-        "underlying_asset_id": str(raw.get("underlying_asset_id") or "").strip() or None,
+        "underlying_asset_id": str(raw.get("underlying_asset_id") or "").strip()
+        or None,
         "option_type": option_type,
         "style": style,
         "strike_price": _to_float(raw.get("strike_price")) or 0.0,
@@ -263,7 +297,9 @@ def normalize_contract_record(raw: JsonObject, *, observed_at: datetime) -> dict
         "open_interest_date": _normalize_iso_date(raw.get("open_interest_date")),
         "close_price": _to_float(raw.get("close_price")),
         "close_price_date": _normalize_iso_date(raw.get("close_price_date")),
-        "provider_updated_ts": _normalize_iso_datetime(raw.get("updated_at") or raw.get("provider_updated_at")),
+        "provider_updated_ts": _normalize_iso_datetime(
+            raw.get("updated_at") or raw.get("provider_updated_at")
+        ),
         "first_seen_ts": observed_at,
         "last_seen_ts": observed_at,
         "catalog_status_reason": None,
@@ -281,36 +317,67 @@ def normalize_snapshot_record(
 ) -> dict[str, object]:
     """Normalize an Alpaca snapshot payload into the raw snapshot contract."""
 
-    latest_trade = _as_json_object(snapshot.get("latestTrade") or snapshot.get("latest_trade")) or {}
-    latest_quote = _as_json_object(snapshot.get("latestQuote") or snapshot.get("latest_quote")) or {}
+    latest_trade = (
+        _as_json_object(snapshot.get("latestTrade") or snapshot.get("latest_trade"))
+        or {}
+    )
+    latest_quote = (
+        _as_json_object(snapshot.get("latestQuote") or snapshot.get("latest_quote"))
+        or {}
+    )
     greeks = _as_json_object(snapshot.get("greeks")) or {}
 
     bid_price = _to_float(latest_quote.get("bp") or latest_quote.get("bid_price"))
     ask_price = _to_float(latest_quote.get("ap") or latest_quote.get("ask_price"))
     mid_price = None
-    if bid_price is not None and ask_price is not None and bid_price > 0 and ask_price > 0:
+    if (
+        bid_price is not None
+        and ask_price is not None
+        and bid_price > 0
+        and ask_price > 0
+    ):
         mid_price = (bid_price + ask_price) / 2.0
 
     return {
         "contract_symbol": contract_symbol,
         "underlying_symbol": underlying_symbol,
-        "latest_trade_price": _to_float(latest_trade.get("p") or latest_trade.get("price")),
-        "latest_trade_size": _to_float(latest_trade.get("s") or latest_trade.get("size")),
-        "latest_trade_ts": _normalize_iso_datetime(latest_trade.get("t") or latest_trade.get("timestamp")),
+        "latest_trade_price": _to_float(
+            latest_trade.get("p") or latest_trade.get("price")
+        ),
+        "latest_trade_size": _to_float(
+            latest_trade.get("s") or latest_trade.get("size")
+        ),
+        "latest_trade_ts": _normalize_iso_datetime(
+            latest_trade.get("t") or latest_trade.get("timestamp")
+        ),
         "latest_bid_price": bid_price,
-        "latest_bid_size": _to_float(latest_quote.get("bs") or latest_quote.get("bid_size")),
+        "latest_bid_size": _to_float(
+            latest_quote.get("bs") or latest_quote.get("bid_size")
+        ),
         "latest_ask_price": ask_price,
-        "latest_ask_size": _to_float(latest_quote.get("as") or latest_quote.get("ask_size")),
-        "latest_quote_ts": _normalize_iso_datetime(latest_quote.get("t") or latest_quote.get("timestamp")),
-        "implied_volatility": _to_float(snapshot.get("impliedVolatility") or snapshot.get("implied_volatility")),
+        "latest_ask_size": _to_float(
+            latest_quote.get("as") or latest_quote.get("ask_size")
+        ),
+        "latest_quote_ts": _normalize_iso_datetime(
+            latest_quote.get("t") or latest_quote.get("timestamp")
+        ),
+        "implied_volatility": _to_float(
+            snapshot.get("impliedVolatility") or snapshot.get("implied_volatility")
+        ),
         "delta": _to_float(greeks.get("delta")),
         "gamma": _to_float(greeks.get("gamma")),
         "theta": _to_float(greeks.get("theta")),
         "vega": _to_float(greeks.get("vega")),
         "rho": _to_float(greeks.get("rho")),
-        "open_interest": _to_int(snapshot.get("openInterest") or snapshot.get("open_interest")),
-        "open_interest_date": _normalize_iso_date(snapshot.get("openInterestDate") or snapshot.get("open_interest_date")),
-        "mark_price": _to_float(snapshot.get("markPrice") or snapshot.get("mark_price")),
+        "open_interest": _to_int(
+            snapshot.get("openInterest") or snapshot.get("open_interest")
+        ),
+        "open_interest_date": _normalize_iso_date(
+            snapshot.get("openInterestDate") or snapshot.get("open_interest_date")
+        ),
+        "mark_price": _to_float(
+            snapshot.get("markPrice") or snapshot.get("mark_price")
+        ),
         "mid_price": mid_price,
         "snapshot_class": snapshot_class,
         "source_window_start_ts": None,

@@ -146,8 +146,13 @@ OPTIONS_SIMULATION_LANE = SimulationLaneContract(
 def simulation_schema_registry_subject_roles(
     contract: SimulationLaneContract,
 ) -> tuple[str, ...]:
-    configured_roles = contract.schema_registry_subject_roles or tuple(contract.ta_topic_key_by_role.keys())
-    return tuple(role for role in configured_roles if role in contract.ta_topic_key_by_role)
+    configured_roles = contract.schema_registry_subject_roles or tuple(
+        contract.ta_topic_key_by_role.keys()
+    )
+    return tuple(
+        role for role in configured_roles if role in contract.ta_topic_key_by_role
+    )
+
 
 SIMULATION_LANE_BY_NAME = {
     EQUITY_SIMULATION_LANE.lane: EQUITY_SIMULATION_LANE,

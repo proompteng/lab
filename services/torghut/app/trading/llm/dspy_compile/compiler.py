@@ -81,7 +81,9 @@ def compile_dspy_program_artifacts(
     normalized_seed = _require_value(seed, "seed")
     normalized_artifact_ref = _require_value(str(artifact_path), "artifact_path")
     normalized_dataset_ref = _require_value(dataset_ref, "dataset_ref")
-    normalized_metric_policy_ref = _require_value(metric_policy_ref, "metric_policy_ref")
+    normalized_metric_policy_ref = _require_value(
+        metric_policy_ref, "metric_policy_ref"
+    )
     normalized_compiled_artifact_name = _normalize_artifact_file_name(
         compiled_artifact_name, "compiled_artifact_name"
     )

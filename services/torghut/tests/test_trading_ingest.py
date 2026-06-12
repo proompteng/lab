@@ -22,7 +22,14 @@ class TimeoutAfterLatestIngestor(ClickHouseSignalIngestor):
         super().__init__(*args, **kwargs)
         self.latest_signal_ts = latest_signal_ts
         self.queries: list[str] = []
-        self._columns = {"event_ts", "symbol", "payload", "window_size", "seq", "source"}
+        self._columns = {
+            "event_ts",
+            "symbol",
+            "payload",
+            "window_size",
+            "seq",
+            "source",
+        }
         self._time_column = "event_ts"
 
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
@@ -76,7 +83,10 @@ def test_scoped_timeout_returns_only_non_authority_last_good_fallback() -> None:
         observed_at=now - timedelta(seconds=1),
     )
 
-    with session_local() as session, patch("app.trading.ingest.trading_now", return_value=now):
+    with (
+        session_local() as session,
+        patch("app.trading.ingest.trading_now", return_value=now),
+    ):
         batch = ingestor.fetch_signals(
             session,
             symbols={"AAPL", "AMZN"},
@@ -89,8 +99,13 @@ def test_scoped_timeout_returns_only_non_authority_last_good_fallback() -> None:
     assert batch.degraded_signal_source == "last_good_non_authority_stale_bounded"
     assert len(batch.fallback_signals) == 1
     fallback_payload = batch.fallback_signals[0].payload
-    assert fallback_payload["signal_authority"] == "non_authority_stale_bounded_fallback"
-    assert fallback_payload["signal_ingest_fallback"]["reason"] == "clickhouse_signal_query_timeout"
+    assert (
+        fallback_payload["signal_authority"] == "non_authority_stale_bounded_fallback"
+    )
+    assert (
+        fallback_payload["signal_ingest_fallback"]["reason"]
+        == "clickhouse_signal_query_timeout"
+    )
     assert any("symbol IN ('AAPL', 'AMZN')" in query for query in ingestor.queries)
     assert any("window_size IN ('PT1S')" in query for query in ingestor.queries)
 
@@ -117,9 +132,9 @@ def test_scoped_latest_timestamp_cache_and_refresh_failure_paths() -> None:
         symbols=("AAPL",),
         timeframes=("1Sec",),
     )
-    ingestor._latest_signal_ts_scoped_checked_at[(("AAPL",), ("1Sec",))] = (
-        datetime.now(timezone.utc) - timedelta(seconds=31)
-    )
+    ingestor._latest_signal_ts_scoped_checked_at[(("AAPL",), ("1Sec",))] = datetime.now(
+        timezone.utc
+    ) - timedelta(seconds=31)
     third = ingestor._latest_signal_timestamp(
         "event_ts",
         symbols=("AAPL",),

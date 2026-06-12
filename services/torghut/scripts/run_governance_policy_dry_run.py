@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
 def _json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -206,7 +207,9 @@ def main() -> int:
             if not isinstance(contamination_registry, dict):
                 contamination_registry = {}
                 promotion_evidence["contamination_registry"] = contamination_registry
-            contamination_registry["artifact_ref"] = "gates/contamination-leakage-report-v1.json"
+            contamination_registry["artifact_ref"] = (
+                "gates/contamination-leakage-report-v1.json"
+            )
             hmm_posterior = promotion_evidence.get("hmm_state_posterior")
             if isinstance(hmm_posterior, dict):
                 hmm_posterior_payload = {
@@ -237,8 +240,7 @@ def main() -> int:
             )
             if isinstance(foundation_router_parity, dict):
                 foundation_router_payload = {
-                    str(key): value
-                    for key, value in foundation_router_parity.items()
+                    str(key): value for key, value in foundation_router_parity.items()
                 }
             else:
                 foundation_router_payload = {}
@@ -251,8 +253,7 @@ def main() -> int:
             deeplob_bdlob_contract = promotion_evidence.get("deeplob_bdlob_contract")
             if isinstance(deeplob_bdlob_contract, dict):
                 deeplob_bdlob_payload = {
-                    str(key): value
-                    for key, value in deeplob_bdlob_contract.items()
+                    str(key): value for key, value in deeplob_bdlob_contract.items()
                 }
             else:
                 deeplob_bdlob_payload = {}
@@ -372,7 +373,11 @@ def main() -> int:
             },
         }
         hmm_artifact["artifact_hash"] = _stable_hash(
-            {key: value for key, value in hmm_artifact.items() if key != "artifact_hash"}
+            {
+                key: value
+                for key, value in hmm_artifact.items()
+                if key != "artifact_hash"
+            }
         )
         (root / "gates" / "hmm-state-posterior-v1.json").write_text(
             json.dumps(hmm_artifact, indent=2), encoding="utf-8"
@@ -382,11 +387,15 @@ def main() -> int:
             "run_id": str(gate_report.get("run_id", "run-dry-run")),
             "candidate_id": "cand-dry-run",
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "router_version": str(expert_router_payload.get("router_version") or "router-v1"),
+            "router_version": str(
+                expert_router_payload.get("router_version") or "router-v1"
+            ),
             "route_count": int(expert_router_payload.get("route_count") or 10),
             "fallback_count": int(expert_router_payload.get("fallback_count") or 0),
             "fallback_rate": str(expert_router_payload.get("fallback_rate") or "0"),
-            "max_expert_weight": str(expert_router_payload.get("max_expert_weight") or "0.62"),
+            "max_expert_weight": str(
+                expert_router_payload.get("max_expert_weight") or "0.62"
+            ),
             "avg_expert_weights": {
                 "trend": "0.62",
                 "reversal": "0.14",
@@ -539,19 +548,25 @@ def main() -> int:
             ],
             "feature_quality_summary": {
                 "pass_rate": float(
-                    policy.get("promotion_deeplob_bdlob_min_feature_quality_pass_rate", 0.99)
+                    policy.get(
+                        "promotion_deeplob_bdlob_min_feature_quality_pass_rate", 0.99
+                    )
                 ),
                 "status": "pass",
             },
             "prediction_quality_summary": {
                 "score": float(
-                    policy.get("promotion_deeplob_bdlob_min_prediction_quality_score", 0.85)
+                    policy.get(
+                        "promotion_deeplob_bdlob_min_prediction_quality_score", 0.85
+                    )
                 ),
                 "status": "pass",
             },
             "execution_impact_summary": {
                 "slippage_divergence_bps": float(
-                    policy.get("promotion_deeplob_bdlob_max_slippage_divergence_bps", 1.0)
+                    policy.get(
+                        "promotion_deeplob_bdlob_max_slippage_divergence_bps", 1.0
+                    )
                 )
                 / 2.0,
                 "deterministic_gate_compatible": True,
@@ -559,7 +574,9 @@ def main() -> int:
             },
             "cost_adjusted_outcomes": {
                 "edge_bps": float(
-                    policy.get("promotion_deeplob_bdlob_min_cost_adjusted_edge_bps", 0.0)
+                    policy.get(
+                        "promotion_deeplob_bdlob_min_cost_adjusted_edge_bps", 0.0
+                    )
                 )
                 + 0.5,
                 "status": "pass",
@@ -571,7 +588,9 @@ def main() -> int:
                 "slo_pass": True,
                 "status": "pass",
             },
-            "overall_status": str(deeplob_bdlob_payload.get("overall_status") or "pass"),
+            "overall_status": str(
+                deeplob_bdlob_payload.get("overall_status") or "pass"
+            ),
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
         }
         deeplob_bdlob_artifact["artifact_hash"] = _stable_hash(
@@ -637,7 +656,9 @@ def main() -> int:
                 "slo_pass": True,
                 "status": "pass",
             },
-            "overall_status": str(advisor_fallback_payload.get("overall_status") or "pass"),
+            "overall_status": str(
+                advisor_fallback_payload.get("overall_status") or "pass"
+            ),
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
         }
         advisor_fallback_artifact["artifact_hash"] = _stable_hash(

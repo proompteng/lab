@@ -40,9 +40,9 @@ class LeanLaneManager:
             config=dict(config),
             correlation_id=correlation_id,
         )
-        backtest_id = str(payload.get('backtest_id') or '').strip()
+        backtest_id = str(payload.get("backtest_id") or "").strip()
         if not backtest_id:
-            raise RuntimeError('lean_backtest_submit_invalid_response')
+            raise RuntimeError("lean_backtest_submit_invalid_response")
 
         row = session.execute(
             select(LeanBacktestRun).where(LeanBacktestRun.backtest_id == backtest_id)
@@ -51,16 +51,20 @@ class LeanLaneManager:
             row = LeanBacktestRun(
                 backtest_id=backtest_id,
                 lane=lane,
-                status=str(payload.get('status') or 'queued'),
+                status=str(payload.get("status") or "queued"),
                 requested_by=requested_by,
                 config_json=coerce_json_payload(dict(config)),
-                reproducibility_hash=str(payload.get('reproducibility_hash') or '') or None,
+                reproducibility_hash=str(payload.get("reproducibility_hash") or "")
+                or None,
             )
         else:
-            row.status = str(payload.get('status') or row.status)
+            row.status = str(payload.get("status") or row.status)
             row.requested_by = requested_by or row.requested_by
             row.config_json = coerce_json_payload(dict(config))
-            row.reproducibility_hash = str(payload.get('reproducibility_hash') or '') or row.reproducibility_hash
+            row.reproducibility_hash = (
+                str(payload.get("reproducibility_hash") or "")
+                or row.reproducibility_hash
+            )
         session.add(row)
         try:
             session.commit()
@@ -70,31 +74,34 @@ class LeanLaneManager:
         session.refresh(row)
         return row
 
-    def refresh_backtest(self, session: Session, *, backtest_id: str) -> LeanBacktestRun:
+    def refresh_backtest(
+        self, session: Session, *, backtest_id: str
+    ) -> LeanBacktestRun:
         row = session.execute(
             select(LeanBacktestRun).where(LeanBacktestRun.backtest_id == backtest_id)
         ).scalar_one_or_none()
         if row is None:
-            raise RuntimeError('lean_backtest_not_found')
+            raise RuntimeError("lean_backtest_not_found")
 
         payload = get_backtest(backtest_id)
         previous_status = row.status
-        row.status = str(payload.get('status') or row.status)
-        result = payload.get('result')
+        row.status = str(payload.get("status") or row.status)
+        result = payload.get("result")
         if isinstance(result, Mapping):
             result_map = cast(Mapping[str, Any], result)
             row.result_json = coerce_json_payload(dict(result_map))
-            row.artifacts_json = coerce_json_payload(dict(cast(Mapping[str, Any], result_map.get('artifacts') or {})))
-            replay_hash = str(result_map.get('replay_hash') or '').strip()
+            row.artifacts_json = coerce_json_payload(
+                dict(cast(Mapping[str, Any], result_map.get("artifacts") or {}))
+            )
+            replay_hash = str(result_map.get("replay_hash") or "").strip()
             if replay_hash:
                 row.replay_hash = replay_hash
-            deterministic = result_map.get('deterministic_replay_passed')
+            deterministic = result_map.get("deterministic_replay_passed")
             if isinstance(deterministic, bool):
                 row.deterministic_replay_passed = deterministic
         row.failure_taxonomy = self._derive_backtest_failure_taxonomy(row)
-        if (
-            row.status == 'completed'
-            and (previous_status != 'completed' or row.completed_at is None)
+        if row.status == "completed" and (
+            previous_status != "completed" or row.completed_at is None
         ):
             row.completed_at = datetime.now(timezone.utc)
         session.add(row)
@@ -115,17 +122,24 @@ class LeanLaneManager:
         intent: Mapping[str, Any],
         shadow_result: Mapping[str, Any],
     ) -> LeanStrategyShadowEvaluation:
-        run_id = str(shadow_result.get('run_id') or '').strip()
+        run_id = str(shadow_result.get("run_id") or "").strip()
         if not run_id:
             signature = hashlib.sha256(
-                json.dumps({'strategy_id': strategy_id, 'symbol': symbol, 'intent': dict(intent)}, sort_keys=True).encode(
-                    'utf-8'
-                )
+                json.dumps(
+                    {
+                        "strategy_id": strategy_id,
+                        "symbol": symbol,
+                        "intent": dict(intent),
+                    },
+                    sort_keys=True,
+                ).encode("utf-8")
             ).hexdigest()
             run_id = signature[:24]
 
         row = session.execute(
-            select(LeanStrategyShadowEvaluation).where(LeanStrategyShadowEvaluation.run_id == run_id)
+            select(LeanStrategyShadowEvaluation).where(
+                LeanStrategyShadowEvaluation.run_id == run_id
+            )
         ).scalar_one_or_none()
         if row is None:
             row = LeanStrategyShadowEvaluation(
@@ -134,14 +148,20 @@ class LeanLaneManager:
                 symbol=symbol,
                 intent_json=coerce_json_payload(dict(intent)),
                 shadow_json=coerce_json_payload(dict(shadow_result)),
-                parity_status=str(shadow_result.get('parity_status') or 'unknown'),
-                governance_json=coerce_json_payload(dict(cast(Mapping[str, Any], shadow_result.get('governance') or {}))),
+                parity_status=str(shadow_result.get("parity_status") or "unknown"),
+                governance_json=coerce_json_payload(
+                    dict(cast(Mapping[str, Any], shadow_result.get("governance") or {}))
+                ),
                 disable_switch_active=settings.trading_lean_lane_disable_switch,
             )
         else:
             row.shadow_json = coerce_json_payload(dict(shadow_result))
-            row.parity_status = str(shadow_result.get('parity_status') or row.parity_status)
-            row.governance_json = coerce_json_payload(dict(cast(Mapping[str, Any], shadow_result.get('governance') or {})))
+            row.parity_status = str(
+                shadow_result.get("parity_status") or row.parity_status
+            )
+            row.governance_json = coerce_json_payload(
+                dict(cast(Mapping[str, Any], shadow_result.get("governance") or {}))
+            )
             row.disable_switch_active = settings.trading_lean_lane_disable_switch
         session.add(row)
         try:
@@ -152,30 +172,40 @@ class LeanLaneManager:
         session.refresh(row)
         return row
 
-    def parity_summary(self, session: Session, *, lookback_hours: int = 24) -> dict[str, Any]:
+    def parity_summary(
+        self, session: Session, *, lookback_hours: int = 24
+    ) -> dict[str, Any]:
         since = datetime.now(timezone.utc) - timedelta(hours=max(lookback_hours, 1))
-        rows = session.execute(
-            select(LeanExecutionShadowEvent).where(LeanExecutionShadowEvent.created_at >= since)
-        ).scalars().all()
+        rows = (
+            session.execute(
+                select(LeanExecutionShadowEvent).where(
+                    LeanExecutionShadowEvent.created_at >= since
+                )
+            )
+            .scalars()
+            .all()
+        )
         total = len(rows)
-        drift = sum(1 for row in rows if row.parity_status != 'pass')
+        drift = sum(1 for row in rows if row.parity_status != "pass")
         failure_counts: dict[str, int] = {}
-        avg_delta_bps = Decimal('0')
+        avg_delta_bps = Decimal("0")
         counted_delta = 0
         for row in rows:
             if row.failure_taxonomy:
-                failure_counts[row.failure_taxonomy] = failure_counts.get(row.failure_taxonomy, 0) + 1
+                failure_counts[row.failure_taxonomy] = (
+                    failure_counts.get(row.failure_taxonomy, 0) + 1
+                )
             if row.parity_delta_bps is not None:
                 avg_delta_bps += row.parity_delta_bps
                 counted_delta += 1
-        average = (avg_delta_bps / counted_delta) if counted_delta > 0 else Decimal('0')
+        average = (avg_delta_bps / counted_delta) if counted_delta > 0 else Decimal("0")
         return {
-            'lookback_hours': lookback_hours,
-            'events_total': total,
-            'drift_events': drift,
-            'drift_ratio': (drift / total) if total > 0 else 0.0,
-            'avg_parity_delta_bps': float(average),
-            'failure_classes': failure_counts,
+            "lookback_hours": lookback_hours,
+            "events_total": total,
+            "drift_events": drift,
+            "drift_ratio": (drift / total) if total > 0 else 0.0,
+            "avg_parity_delta_bps": float(average),
+            "failure_classes": failure_counts,
         }
 
     def record_canary_incident(
@@ -190,7 +220,9 @@ class LeanLaneManager:
         rollback_triggered: bool,
     ) -> LeanCanaryIncident:
         row = session.execute(
-            select(LeanCanaryIncident).where(LeanCanaryIncident.incident_key == incident_key)
+            select(LeanCanaryIncident).where(
+                LeanCanaryIncident.incident_key == incident_key
+            )
         ).scalar_one_or_none()
         if row is None:
             row = LeanCanaryIncident(
@@ -213,15 +245,15 @@ class LeanLaneManager:
         return row
 
     def _derive_backtest_failure_taxonomy(self, row: LeanBacktestRun) -> str | None:
-        if row.status in {'queued', 'running'}:
+        if row.status in {"queued", "running"}:
             return None
-        if row.status != 'completed':
-            return 'backtest_failed'
+        if row.status != "completed":
+            return "backtest_failed"
         if row.deterministic_replay_passed is False:
-            return 'replay_nondeterministic'
+            return "replay_nondeterministic"
         if row.reproducibility_hash and row.replay_hash:
             return None
-        return 'missing_repro_artifacts'
+        return "missing_repro_artifacts"
 
 
-__all__ = ['LeanLaneManager']
+__all__ = ["LeanLaneManager"]

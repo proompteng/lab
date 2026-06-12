@@ -32,7 +32,9 @@ class TSMOMConfig:
     end: Optional[date] = None
 
 
-def backtest_tsmom(prices: pd.DataFrame, cfg: TSMOMConfig) -> tuple[pd.Series, pd.DataFrame]:
+def backtest_tsmom(
+    prices: pd.DataFrame, cfg: TSMOMConfig
+) -> tuple[pd.Series, pd.DataFrame]:
     """Backtest TSMOM on a price matrix.
 
     Args:
@@ -92,7 +94,9 @@ def _prepare_prices(prices: pd.DataFrame, cfg: TSMOMConfig) -> pd.DataFrame:
     return px
 
 
-def _compute_weights(px: pd.DataFrame, rets: pd.DataFrame, cfg: TSMOMConfig) -> pd.DataFrame:
+def _compute_weights(
+    px: pd.DataFrame, rets: pd.DataFrame, cfg: TSMOMConfig
+) -> pd.DataFrame:
     lookback_ret = px.shift(1) / px.shift(cfg.lookback_days + 1) - 1.0
     signal = np.sign(lookback_ret)
     if cfg.long_only:

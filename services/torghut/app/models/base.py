@@ -71,7 +71,9 @@ class JSONType(TypeDecorator[Any]):
 
     def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:  # type: ignore[override]
         if dialect.name == "postgresql":
-            from sqlalchemy.dialects.postgresql import JSONB  # imported lazily to avoid hard dependency
+            from sqlalchemy.dialects.postgresql import (
+                JSONB,
+            )  # imported lazily to avoid hard dependency
 
             return dialect.type_descriptor(JSONB())
         return dialect.type_descriptor(JSON())
@@ -110,7 +112,6 @@ def _assert_no_uuid(value: Any, path: str = "$") -> None:
     if isinstance(value, (list, tuple)):
         for index, child in enumerate(cast(list[Any] | tuple[Any, ...], value)):
             _assert_no_uuid(child, f"{path}[{index}]")
-
 
 
 __all__ = ["Base", "GUID", "JSONType", "coerce_json_payload", "metadata_obj"]

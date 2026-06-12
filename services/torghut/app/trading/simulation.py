@@ -42,7 +42,9 @@ def resolve_event_persisted_at(
     return trading_now(account_label=account_label)
 
 
-def resolve_market_context_as_of(*, account_label: str | None = None) -> datetime | None:
+def resolve_market_context_as_of(
+    *, account_label: str | None = None
+) -> datetime | None:
     if simulation_context_enabled():
         return trading_now(account_label=account_label)
     return None
@@ -78,11 +80,13 @@ def resolve_simulation_context(
             context["signal_seq"] = int(seq)
 
     runtime_context = active_simulation_runtime_context()
-    run_id = (runtime_context or {}).get('run_id') or settings.trading_simulation_run_id
+    run_id = (runtime_context or {}).get("run_id") or settings.trading_simulation_run_id
     if run_id and context.get("simulation_run_id") in (None, ""):
         context["simulation_run_id"] = run_id
 
-    dataset_id = (runtime_context or {}).get('dataset_id') or settings.trading_simulation_dataset_id
+    dataset_id = (runtime_context or {}).get(
+        "dataset_id"
+    ) or settings.trading_simulation_dataset_id
     if dataset_id and context.get("dataset_id") in (None, ""):
         context["dataset_id"] = dataset_id
 
@@ -102,9 +106,9 @@ def resolve_simulation_context(
 
 
 __all__ = [
-    'resolve_event_persisted_at',
-    'resolve_market_context_as_of',
-    'resolve_simulation_context',
-    'signal_ingest_runtime',
-    'simulation_context_enabled',
+    "resolve_event_persisted_at",
+    "resolve_market_context_as_of",
+    "resolve_simulation_context",
+    "signal_ingest_runtime",
+    "simulation_context_enabled",
 ]

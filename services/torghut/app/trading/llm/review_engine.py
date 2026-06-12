@@ -348,9 +348,9 @@ def _sanitize_regime_hmm_context(value: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(artifact, Mapping):
             artifact_version = cast(Mapping[str, Any], artifact).get("model_id")
             if artifact_version is None:
-                artifact_version = cast(
-                    Mapping[str, Any], artifact
-                ).get("artifact_version")
+                artifact_version = cast(Mapping[str, Any], artifact).get(
+                    "artifact_version"
+                )
     artifact_version = _coerce_text(
         artifact_version,
         default="unknown",

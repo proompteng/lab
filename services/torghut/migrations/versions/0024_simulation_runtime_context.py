@@ -56,7 +56,9 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.PrimaryKeyConstraint("lane", "account_label", name="pk_simulation_runtime_context"),
+        sa.PrimaryKeyConstraint(
+            "lane", "account_label", name="pk_simulation_runtime_context"
+        ),
     )
     op.create_index(
         "ix_simulation_runtime_context_run",
@@ -71,6 +73,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_simulation_runtime_context_updated_at", table_name="simulation_runtime_context")
-    op.drop_index("ix_simulation_runtime_context_run", table_name="simulation_runtime_context")
+    op.drop_index(
+        "ix_simulation_runtime_context_updated_at",
+        table_name="simulation_runtime_context",
+    )
+    op.drop_index(
+        "ix_simulation_runtime_context_run", table_name="simulation_runtime_context"
+    )
     op.drop_table("simulation_runtime_context")
