@@ -8,7 +8,13 @@ from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.models import VNextEmpiricalJobRun
 from app.trading.empirical_jobs import (
+    EMPIRICAL_JOB_TYPES,
     build_empirical_benchmark_parity_report,
     build_empirical_foundation_router_parity_report,
     promote_janus_payload_to_empirical,
@@ -289,6 +295,82 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             "latest_empirical_jobs_missing:foundation_router_parity,janus_event_car,janus_hgrm_reward",
         ):
             renewal._latest_authoritative_rows(cast(Any, rows))
+
+    def test_load_latest_empirical_job_rows_reads_latest_per_job_type(self) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        VNextEmpiricalJobRun.__table__.create(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        old_at = datetime(2026, 5, 18, 8, 13, tzinfo=timezone.utc)
+        new_at = datetime(2026, 5, 19, 8, 13, tzinfo=timezone.utc)
+
+        with session_local() as session:
+            for job_type in EMPIRICAL_JOB_TYPES:
+                session.add(
+                    VNextEmpiricalJobRun(
+                        run_id=f"old-{job_type}",
+                        candidate_id="candidate-old",
+                        job_name=f"{job_type}-old",
+                        job_type=job_type,
+                        job_run_id=f"{job_type}-old",
+                        status="completed",
+                        authority="empirical",
+                        promotion_authority_eligible=True,
+                        dataset_snapshot_ref="snapshot-old",
+                        artifact_refs=[],
+                        payload_json={"marker": "old"},
+                        created_at=old_at,
+                        updated_at=old_at,
+                    )
+                )
+                session.add(
+                    VNextEmpiricalJobRun(
+                        run_id=f"new-{job_type}",
+                        candidate_id="candidate-new",
+                        job_name=f"{job_type}-new",
+                        job_type=job_type,
+                        job_run_id=f"{job_type}-new",
+                        status="completed",
+                        authority="empirical",
+                        promotion_authority_eligible=True,
+                        dataset_snapshot_ref="snapshot-new",
+                        artifact_refs=[],
+                        payload_json={"marker": "new"},
+                        created_at=new_at,
+                        updated_at=new_at,
+                    )
+                )
+            session.add(
+                VNextEmpiricalJobRun(
+                    run_id="irrelevant",
+                    candidate_id="candidate-new",
+                    job_name="irrelevant",
+                    job_type="irrelevant",
+                    job_run_id="irrelevant-new",
+                    status="completed",
+                    authority="empirical",
+                    promotion_authority_eligible=True,
+                    dataset_snapshot_ref="snapshot-new",
+                    artifact_refs=[],
+                    payload_json={"marker": "irrelevant"},
+                    created_at=new_at,
+                    updated_at=new_at,
+                )
+            )
+            session.commit()
+
+            rows = renewal._load_latest_empirical_job_rows(session)
+
+        self.assertEqual({row.job_type for row in rows}, set(EMPIRICAL_JOB_TYPES))
+        self.assertEqual({row.payload_json["marker"] for row in rows}, {"new"})
+        self.assertEqual(
+            {row.job_run_id for row in rows},
+            {f"{job_type}-new" for job_type in EMPIRICAL_JOB_TYPES},
+        )
 
     def test_runtime_version_ref_prefers_runtime_digest(self) -> None:
         with patch.dict(

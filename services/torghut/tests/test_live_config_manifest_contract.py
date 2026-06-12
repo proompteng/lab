@@ -2090,12 +2090,12 @@ class TestLiveConfigManifestContract(TestCase):
             {
                 "requests": {
                     "cpu": "100m",
-                    "memory": "256Mi",
+                    "memory": "512Mi",
                     "ephemeral-storage": "256Mi",
                 },
                 "limits": {
                     "cpu": "1",
-                    "memory": "1Gi",
+                    "memory": "2Gi",
                     "ephemeral-storage": "2Gi",
                 },
             },
