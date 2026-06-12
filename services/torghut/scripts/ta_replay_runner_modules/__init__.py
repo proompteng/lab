@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from importlib import import_module
-import sys
-import types
-
 from .replay_core import (
     APPLY_CONFIRMATION_PHRASE,
     CLICKHOUSE_TA_TTL_DAYS,
@@ -62,36 +58,6 @@ from .replay_orchestration import (
     main,
     parse_args,
 )
-
-_IMPLEMENTATION_MODULES = [
-    import_module(f"{__name__}.replay_core"),
-    import_module(f"{__name__}.replay_orchestration"),
-]
-
-
-class _CompatModule(types.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in _IMPLEMENTATION_MODULES:
-            module.__dict__[name] = value
-
-
-def _export_module(module: types.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-for _module in _IMPLEMENTATION_MODULES:
-    _export_module(_module)
-
-for _module in _IMPLEMENTATION_MODULES:
-    _module.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-sys.modules[__name__].__class__ = _CompatModule
 
 __all__ = (
     "APPLY_CONFIRMATION_PHRASE",

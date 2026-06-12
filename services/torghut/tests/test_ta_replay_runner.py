@@ -10,6 +10,7 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from scripts import ta_replay_runner as runner
+from scripts.ta_replay_runner_modules import replay_core, replay_orchestration
 
 
 _TABLE_COVERAGE_TSV = """table_name\tdays\tfirst_day\tlast_day\trows
@@ -196,7 +197,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self,
     ) -> None:
         with patch.object(
-            runner,
+            replay_core,
             "_clickhouse_query",
             side_effect=[_TABLE_COVERAGE_TSV, _DAY_GAP_TSV],
         ):
@@ -218,7 +219,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self,
     ) -> None:
         with patch.object(
-            runner,
+            replay_orchestration,
             "_kubectl_get_kafka_topics_json",
             return_value=_KAFKA_TOPICS_JSON,
         ):
@@ -254,7 +255,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             ]
         }
         with patch.object(
-            runner,
+            replay_orchestration,
             "_kubectl_get_kafka_topics_json",
             return_value=payload,
         ):
@@ -293,7 +294,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
 
     def test_kafka_retention_helpers_cover_kubectl_and_json_edges(self) -> None:
         with patch.object(
-            runner,
+            replay_core,
             "_run_kubectl",
             return_value=CompletedProcess(
                 args=[], returncode=0, stdout='{"items": []}'
@@ -343,7 +344,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self,
     ) -> None:
         with patch.object(
-            runner,
+            replay_orchestration,
             "_kubectl_get_kafka_topics_json",
             return_value=_KAFKA_TOPICS_JSON,
         ):
@@ -363,7 +364,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
     def test_plan_json_embeds_coverage_preflight(self) -> None:
         output = io.StringIO()
         with patch.object(
-            runner,
+            replay_core,
             "_clickhouse_query",
             side_effect=[_TABLE_COVERAGE_TSV, _DAY_GAP_TSV],
         ):
@@ -388,7 +389,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
     def test_plan_json_embeds_kafka_retention_preflight(self) -> None:
         output = io.StringIO()
         with patch.object(
-            runner,
+            replay_orchestration,
             "_kubectl_get_kafka_topics_json",
             return_value=_KAFKA_TOPICS_JSON,
         ):
@@ -542,13 +543,13 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self.assertIn("do_not_start_ta_replay_until_preflight_passes", text)
 
     def test_replay_state_and_plan_helpers_cover_edge_branches(self) -> None:
-        with patch.object(runner.shutil, "which", return_value=None):
+        with patch.object(replay_core.shutil, "which", return_value=None):
             with self.assertRaisesRegex(SystemExit, "kubectl not found"):
                 runner._require_kubectl()
             with self.assertRaisesRegex(SystemExit, "kubectl not found"):
                 runner._kubectl_binary()
 
-        with patch.object(runner.shutil, "which", return_value="/usr/bin/kubectl"):
+        with patch.object(replay_core.shutil, "which", return_value="/usr/bin/kubectl"):
             runner._require_kubectl()
             self.assertEqual(runner._kubectl_binary(), "/usr/bin/kubectl")
 
@@ -602,9 +603,11 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             },
             "status": {"jobStatus": {"state": "RUNNING"}},
         }
-        with patch.object(runner, "_kubectl_get_ta_config_json", return_value=config):
+        with patch.object(
+            replay_core, "_kubectl_get_ta_config_json", return_value=config
+        ):
             with patch.object(
-                runner, "_kubectl_get_ta_deployment_json", return_value=deployment
+                replay_core, "_kubectl_get_ta_deployment_json", return_value=deployment
             ):
                 state = runner._load_state("torghut")
 
@@ -614,17 +617,19 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self.assertEqual(state.flink_restart_nonce, 8)
         self.assertEqual(state.flink_status_state, "RUNNING")
 
-        with patch.object(runner, "_kubectl_get_ta_config_json", return_value={}):
+        with patch.object(replay_core, "_kubectl_get_ta_config_json", return_value={}):
             with self.assertRaisesRegex(SystemExit, "configmap data"):
                 runner._load_state("torghut")
         with patch.object(
-            runner, "_kubectl_get_ta_config_json", return_value={"data": {}}
+            replay_core, "_kubectl_get_ta_config_json", return_value={"data": {}}
         ):
             with self.assertRaisesRegex(SystemExit, "TA_GROUP_ID missing"):
                 runner._load_state("torghut")
-        with patch.object(runner, "_kubectl_get_ta_config_json", return_value=config):
+        with patch.object(
+            replay_core, "_kubectl_get_ta_config_json", return_value=config
+        ):
             with patch.object(
-                runner, "_kubectl_get_ta_deployment_json", return_value={}
+                replay_core, "_kubectl_get_ta_deployment_json", return_value={}
             ):
                 with self.assertRaisesRegex(SystemExit, "flinkdeployment spec"):
                     runner._load_state("torghut")
@@ -638,11 +643,13 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             mode="plan",
             confirm="",
         )
-        with patch.object(runner, "parse_args", return_value=base_args):
-            with patch.object(runner, "_require_kubectl"):
-                with patch.object(runner, "_load_state", return_value=self._state()):
+        with patch.object(replay_orchestration, "parse_args", return_value=base_args):
+            with patch.object(replay_orchestration, "_require_kubectl"):
+                with patch.object(
+                    replay_orchestration, "_load_state", return_value=self._state()
+                ):
                     with patch.object(
-                        runner, "_handle_plan_mode", return_value=4
+                        replay_orchestration, "_handle_plan_mode", return_value=4
                     ) as handle_plan:
                         self.assertEqual(runner.main(), 4)
         handle_plan.assert_called_once()
@@ -655,11 +662,13 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             mode="verify",
             confirm="",
         )
-        with patch.object(runner, "parse_args", return_value=verify_args):
-            with patch.object(runner, "_require_kubectl"):
-                with patch.object(runner, "_load_state", return_value=self._state()):
+        with patch.object(replay_orchestration, "parse_args", return_value=verify_args):
+            with patch.object(replay_orchestration, "_require_kubectl"):
+                with patch.object(
+                    replay_orchestration, "_load_state", return_value=self._state()
+                ):
                     with patch.object(
-                        runner, "_handle_verify_mode", return_value=5
+                        replay_orchestration, "_handle_verify_mode", return_value=5
                     ) as handle_verify:
                         self.assertEqual(runner.main(), 5)
         handle_verify.assert_called_once()
@@ -672,11 +681,13 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             mode="apply",
             confirm=runner.APPLY_CONFIRMATION_PHRASE,
         )
-        with patch.object(runner, "parse_args", return_value=apply_args):
-            with patch.object(runner, "_require_kubectl"):
-                with patch.object(runner, "_load_state", return_value=self._state()):
+        with patch.object(replay_orchestration, "parse_args", return_value=apply_args):
+            with patch.object(replay_orchestration, "_require_kubectl"):
+                with patch.object(
+                    replay_orchestration, "_load_state", return_value=self._state()
+                ):
                     with patch.object(
-                        runner, "_handle_apply_mode", return_value=6
+                        replay_orchestration, "_handle_apply_mode", return_value=6
                     ) as handle_apply:
                         self.assertEqual(runner.main(), 6)
         handle_apply.assert_called_once()
@@ -689,8 +700,10 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             mode="apply",
             confirm="",
         )
-        with patch.object(runner, "parse_args", return_value=unconfirmed_apply_args):
-            with patch.object(runner, "_require_kubectl"):
+        with patch.object(
+            replay_orchestration, "parse_args", return_value=unconfirmed_apply_args
+        ):
+            with patch.object(replay_orchestration, "_require_kubectl"):
                 with self.assertRaisesRegex(SystemExit, "requires --confirm"):
                     runner.main()
 
@@ -705,7 +718,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         )
         output = io.StringIO()
         with patch.object(
-            runner,
+            replay_core,
             "_clickhouse_query",
             side_effect=[_TABLE_COVERAGE_TSV, _DAY_GAP_TSV],
         ):
@@ -738,8 +751,12 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         def capture_patch(kind: str, name: str, patch: dict[str, object]) -> None:
             patches.append((kind, name, patch))
 
-        with patch.object(runner, "_kubectl_merge_patch", side_effect=capture_patch):
-            with patch.object(runner, "_load_state", return_value=applied_state):
+        with patch.object(
+            replay_orchestration, "_kubectl_merge_patch", side_effect=capture_patch
+        ):
+            with patch.object(
+                replay_orchestration, "_load_state", return_value=applied_state
+            ):
                 with redirect_stdout(output):
                     exit_code = runner._handle_apply_mode(
                         args=self._args(
@@ -763,11 +780,13 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
     def test_apply_mode_blocks_before_patching_when_feasibility_rejects(self) -> None:
         output = io.StringIO()
         with patch.object(
-            runner,
+            replay_orchestration,
             "_kubectl_get_kafka_topics_json",
             return_value=_KAFKA_TOPICS_JSON,
         ):
-            with patch.object(runner, "_kubectl_merge_patch") as merge_patch:
+            with patch.object(
+                replay_orchestration, "_kubectl_merge_patch"
+            ) as merge_patch:
                 with redirect_stdout(output):
                     exit_code = runner._handle_apply_mode(
                         args=self._args(
@@ -805,7 +824,9 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
             def read(self) -> bytes:
                 return b"ok"
 
-        with patch.object(runner, "urlopen", return_value=FakeResponse()) as urlopen:
+        with patch.object(
+            replay_core, "urlopen", return_value=FakeResponse()
+        ) as urlopen:
             result = runner._clickhouse_query(
                 http_url="http://clickhouse.test:8123",
                 username="torghut",
@@ -824,7 +845,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         )
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 1)
 
-        with patch.object(runner, "urlopen", side_effect=URLError("refused")):
+        with patch.object(replay_core, "urlopen", side_effect=URLError("refused")):
             with self.assertRaisesRegex(
                 RuntimeError, "clickhouse_coverage_query_failed"
             ):
@@ -853,7 +874,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
 
         with patch.dict(os.environ, {"TA_CLICKHOUSE_PASSWORD": "from-env"}):
             with patch.object(
-                runner,
+                replay_core,
                 "_clickhouse_query",
                 side_effect=[
                     "table_name\tdays\tfirst_day\tlast_day\trows\nta_signals\tbad\t\t\t0\n",
