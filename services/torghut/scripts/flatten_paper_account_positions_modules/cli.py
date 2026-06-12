@@ -1,42 +1,31 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Flatten the Torghut paper account so runtime proof windows start clean."""
 
 from __future__ import annotations
 
-import argparse
-import hashlib
 import json
-import os
-import time
-import urllib.error
-import urllib.request
-from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.alpaca_client import TorghutAlpacaClient
-from app.config import settings
-from app.db import SessionLocal
-from app.models import Execution, Strategy, TradeDecision, coerce_json_payload
-from app.snapshots import snapshot_account_and_positions, sync_order_to_db
+from app.snapshots import snapshot_account_and_positions
 from app.trading.firewall import OrderFirewall
-from app.trading.runtime_decision_authority import (
-    source_decision_mode_is_profit_proof_eligible,
+
+from .flatten_core import (
+    DEFAULT_EXTENDED_HOURS_LIMIT_AWAY_BPS,
+    DEFAULT_MAX_GROSS_MARKET_VALUE,
+    DEFAULT_POLL_SECONDS,
+    TERMINAL_CLEAN_STATUSES,
+    _as_mapping,
+    _decimal,
+    _parse_args,
+    _session_factory_from_env,
+    _target_plan_readback_pending_clean_window_baseline_only,
+    read_target_plan_clean_window_readback,
 )
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_35 import *
-from .part_02_position_payload import *
+from .lineage_execution import flatten_paper_account_positions
 
 
 def main() -> int:
@@ -144,6 +133,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,40 +1,25 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Flatten the Torghut paper account so runtime proof windows start clean."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
-import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Protocol, cast
+from decimal import Decimal, InvalidOperation
+from typing import Any, Protocol
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.alpaca_client import TorghutAlpacaClient
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Execution, Strategy, TradeDecision, coerce_json_payload
-from app.snapshots import snapshot_account_and_positions, sync_order_to_db
-from app.trading.firewall import OrderFirewall
-from app.trading.runtime_decision_authority import (
-    source_decision_mode_is_profit_proof_eligible,
-)
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
 
 DEFAULT_ACCOUNT_LABEL = "TORGHUT_SIM"
 
@@ -685,6 +670,3 @@ def _normalize_positions(
             )
         )
     return sorted(normalized, key=lambda item: item.symbol)
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
