@@ -221,6 +221,9 @@ class _FakeResult:
     def __init__(self, rows: list[object]) -> None:
         self._rows = rows
 
+    def mappings(self) -> "_FakeResult":
+        return self
+
     def all(self) -> list[object]:
         return self._rows
 
@@ -325,7 +328,19 @@ def test_load_session_rows_adds_linked_source_account_windows() -> None:
         created_at=datetime(2026, 5, 1, 15, tzinfo=timezone.utc),
     )
     session = _FakeReadSession(
-        decision_pairs=[(decision, DEFAULT_HPAIRS_RUNTIME_STRATEGY)],
+        decision_pairs=[
+            {
+                "id": decision.id,
+                "strategy_id": decision.strategy_id,
+                "strategy_name": DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+                "alpaca_account_label": decision.alpaca_account_label,
+                "symbol": decision.symbol,
+                "status": decision.status,
+                "decision_hash": decision.decision_hash,
+                "created_at": decision.created_at,
+                "executed_at": decision.executed_at,
+            }
+        ],
         scalar_results=[[execution], [event], [], []],
     )
 
@@ -1234,8 +1249,23 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
     )
 
     class ExecuteResult:
-        def all(self) -> list[tuple[SimpleNamespace, str]]:
-            return [(decision, DEFAULT_HPAIRS_RUNTIME_STRATEGY)]
+        def mappings(self) -> "ExecuteResult":
+            return self
+
+        def all(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "id": decision.id,
+                    "strategy_id": decision.strategy_id,
+                    "strategy_name": DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+                    "alpaca_account_label": decision.alpaca_account_label,
+                    "symbol": decision.symbol,
+                    "status": decision.status,
+                    "decision_hash": decision.decision_hash,
+                    "created_at": decision.created_at,
+                    "executed_at": decision.executed_at,
+                }
+            ]
 
     class ScalarResult:
         def __init__(self, rows: list[SimpleNamespace]) -> None:
@@ -1250,6 +1280,7 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
 
         def execute(self, statement: object) -> ExecuteResult:
             assert statement is not None
+            assert "decision_json" not in str(statement)
             return ExecuteResult()
 
         def scalars(self, statement: object) -> ScalarResult:
