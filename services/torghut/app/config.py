@@ -1472,6 +1472,22 @@ class Settings(BaseSettings):
         alias="TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL",
         description="Simple-lane absolute exposure cap per symbol.",
     )
+    trading_simple_max_order_pct_equity: Optional[float] = Field(
+        default=0.25,
+        alias="TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY",
+        description=(
+            "Simple-lane max new-exposure order notional as a fraction of account "
+            "equity. Closing or covering quantity is exempt."
+        ),
+    )
+    trading_simple_max_gross_exposure_pct_equity: Optional[float] = Field(
+        default=1.0,
+        alias="TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY",
+        description=(
+            "Simple-lane max gross exposure as a fraction of account equity. "
+            "Closing or covering quantity is exempt."
+        ),
+    )
     trading_simple_buying_power_reserve_bps: float = Field(
         default=25.0,
         alias="TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS",
@@ -2434,6 +2450,14 @@ class Settings(BaseSettings):
             (
                 self.trading_simple_max_notional_per_symbol,
                 "TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL must be >= 0",
+            ),
+            (
+                self.trading_simple_max_order_pct_equity,
+                "TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY must be >= 0",
+            ),
+            (
+                self.trading_simple_max_gross_exposure_pct_equity,
+                "TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY must be >= 0",
             ),
             (
                 self.trading_simple_buying_power_reserve_bps,

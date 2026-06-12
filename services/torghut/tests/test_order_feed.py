@@ -4939,6 +4939,119 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
 
+    def test_source_window_refresh_counts_cross_dsn_refs_separately(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="PA3SX7FYNUTF",
+                assignment_mode="manual",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 6, 11, 13, 30, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 6, 11, 20, 10, tzinfo=timezone.utc),
+                start_offset=1,
+                end_offset=4,
+                consumed_count=4,
+                inserted_count=4,
+                unlinked_execution_count=4,
+                unlinked_decision_count=4,
+                status="inserted",
+                classification_counts={
+                    "cross_dsn_execution_ref_count": 99,
+                },
+                payload_json={
+                    "classification_counts": {
+                        "cross_dsn_execution_ref_count": 99,
+                    }
+                },
+            )
+            session.add(source_window)
+            session.flush()
+            events = [
+                ExecutionOrderEvent(
+                    event_fingerprint="cross-dsn-raw-list",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=1,
+                    alpaca_account_label="PA3SX7FYNUTF",
+                    event_ts=datetime(2026, 6, 11, 14, 0, tzinfo=timezone.utc),
+                    symbol="AMZN",
+                    raw_event=["not-a-mapping"],
+                    source_window_id=source_window.id,
+                ),
+                ExecutionOrderEvent(
+                    event_fingerprint="cross-dsn-no-linkage",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=2,
+                    alpaca_account_label="PA3SX7FYNUTF",
+                    event_ts=datetime(2026, 6, 11, 14, 1, tzinfo=timezone.utc),
+                    symbol="AMZN",
+                    raw_event={"event": "fill"},
+                    source_window_id=source_window.id,
+                ),
+                ExecutionOrderEvent(
+                    event_fingerprint="cross-dsn-bad-linkage",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=3,
+                    alpaca_account_label="PA3SX7FYNUTF",
+                    event_ts=datetime(2026, 6, 11, 14, 2, tzinfo=timezone.utc),
+                    symbol="AMZN",
+                    raw_event={"_torghut_cross_dsn_linkage": "bad"},
+                    source_window_id=source_window.id,
+                ),
+                ExecutionOrderEvent(
+                    event_fingerprint="cross-dsn-linked",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=4,
+                    alpaca_account_label="PA3SX7FYNUTF",
+                    event_ts=datetime(2026, 6, 11, 14, 3, tzinfo=timezone.utc),
+                    symbol="AMZN",
+                    raw_event={
+                        "_torghut_cross_dsn_linkage": {
+                            "canonical_execution_id": "execution-1",
+                            "canonical_trade_decision_id": "decision-1",
+                            "canonical_execution_tca_metric_id": "tca-1",
+                        }
+                    },
+                    source_window_id=source_window.id,
+                ),
+            ]
+            session.add_all(events)
+            session.flush()
+
+            counts = order_feed_module._cross_dsn_linkage_counts_for_source_window(
+                session,
+                source_window.id,
+            )
+            order_feed_module._refresh_source_window_linkage_counts(
+                session,
+                events[-1],
+            )
+            session.commit()
+            session.refresh(source_window)
+
+        self.assertEqual(
+            counts,
+            {
+                "cross_dsn_execution_ref_count": 1,
+                "cross_dsn_trade_decision_ref_count": 1,
+                "cross_dsn_tca_ref_count": 1,
+            },
+        )
+        self.assertEqual(source_window.payload_json["cross_dsn_execution_ref_count"], 1)
+        self.assertEqual(
+            source_window.classification_counts["cross_dsn_trade_decision_ref_count"],
+            1,
+        )
+        self.assertEqual(source_window.unlinked_execution_count, 4)
+        self.assertEqual(source_window.unlinked_decision_count, 4)
+
     def test_duplicate_event_advances_cursor_accounting_and_commits(self) -> None:
         record = FakeRecord(
             value=(

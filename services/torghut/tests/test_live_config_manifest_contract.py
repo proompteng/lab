@@ -30,6 +30,7 @@ _QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE = ("AAPL", "AMZN", "INTC", "NVDA")
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL = "1000000"
+_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL = "25000"
 _HPAIRS_PAPER_ACCOUNT_FLATTEN_MAX_GROSS_MARKET_VALUE = (
     _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL
 )
@@ -694,7 +695,12 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
+            _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
+        )
+        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
+        self.assertEqual(
+            sim_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
+            "1.0",
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
@@ -1500,6 +1506,17 @@ class TestLiveConfigManifestContract(TestCase):
             )
 
         args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/reconcile_cross_dsn_order_feed_links.py", args)
+        self.assertIn("--event-dsn-env DB_DSN", args)
+        self.assertIn("--canonical-dsn-env SIM_DB_DSN", args)
+        self.assertIn("--source-account-label PA3SX7FYNUTF", args)
+        self.assertIn("--canonical-account-label TORGHUT_SIM", args)
+        self.assertIn('--window-start "${WINDOW_START}"', args)
+        self.assertIn('--window-end "${WINDOW_END}"', args)
+        self.assertLess(
+            args.index("scripts/reconcile_cross_dsn_order_feed_links.py"),
+            args.index("scripts/repair_order_feed_source_windows.py"),
+        )
         self.assertIn("scripts/repair_order_feed_source_windows.py", args)
         self.assertIn("--dsn-env DB_DSN", args)
         self.assertIn("--account-label PA3SX7FYNUTF", args)
@@ -1511,6 +1528,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--batch-size 100", args)
         self.assertIn("--max-batches 4", args)
         self.assertIn("--account-label TORGHUT_REPLAY", args)
+        self.assertEqual(
+            args.count("scripts/reconcile_cross_dsn_order_feed_links.py"),
+            1,
+        )
         self.assertEqual(args.count("scripts/repair_order_feed_source_windows.py"), 3)
         self.assertEqual(args.count("--dsn-env SIM_DB_DSN"), 2)
         self.assertEqual(args.count("--backfill-execution-events"), 2)
@@ -1685,11 +1706,25 @@ class TestLiveConfigManifestContract(TestCase):
 
         self.assertEqual(
             live_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
+            _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
         )
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
+            _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
+        )
+        self.assertNotEqual(
+            live_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
+            "1000000",
+        )
+        self.assertEqual(live_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
+        self.assertEqual(
+            live_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
+            "1.0",
+        )
+        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
+        self.assertEqual(
+            sim_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
+            "1.0",
         )
         self.assertIn(
             f"--max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}", args
@@ -2098,6 +2133,13 @@ class TestLiveConfigManifestContract(TestCase):
             )
 
         args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/reconcile_cross_dsn_order_feed_links.py", args)
+        self.assertIn("--event-dsn-env DB_DSN", args)
+        self.assertIn("--canonical-dsn-env SIM_DB_DSN", args)
+        self.assertIn("--source-account-label PA3SX7FYNUTF", args)
+        self.assertIn("--canonical-account-label TORGHUT_SIM", args)
+        self.assertIn('--window-start "${WINDOW_START}"', args)
+        self.assertIn('--window-end "${WINDOW_END}"', args)
         self.assertIn("scripts/repair_order_feed_source_windows.py", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
@@ -2106,12 +2148,20 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--account-label TORGHUT_REPLAY", args)
         self.assertIn("--backfill-execution-events", args)
         self.assertEqual(args.count("--backfill-execution-events"), 2)
+        self.assertEqual(
+            args.count("scripts/reconcile_cross_dsn_order_feed_links.py"),
+            1,
+        )
         self.assertEqual(args.count("scripts/repair_order_feed_source_windows.py"), 2)
         self.assertIn("scripts/refresh_execution_tca_metrics.py", args)
         self.assertIn("--older-than-seconds 0", args)
         self.assertIn("--max-batches 5", args)
         self.assertEqual(args.count("scripts/refresh_execution_tca_metrics.py"), 1)
         self.assertEqual(args.count("--dsn-env SIM_DB_DSN"), 3)
+        self.assertLess(
+            args.index("scripts/reconcile_cross_dsn_order_feed_links.py"),
+            args.index("scripts/repair_order_feed_source_windows.py"),
+        )
         self.assertLess(
             args.index("scripts/refresh_execution_tca_metrics.py"),
             args.index("scripts/renew_latest_empirical_promotion_jobs.py"),
@@ -2175,7 +2225,10 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertNotIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
         self.assertNotIn('--runtime-window-target \'{"hypothesis_id"', args)
-        self.assertNotIn("PA3SX7FYNUTF", args)
+        renewal_args = args[
+            args.index("scripts/renew_latest_empirical_promotion_jobs.py") :
+        ]
+        self.assertNotIn("PA3SX7FYNUTF", renewal_args)
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
         self.assertIn("--runtime-window-observed-stage paper", args)
         self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)
@@ -2453,7 +2506,12 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
         self.assertEqual(
             env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
+            _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
+        )
+        self.assertEqual(env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
+        self.assertEqual(
+            env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
+            "1.0",
         )
         self.assertTrue(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
         self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "iex")
