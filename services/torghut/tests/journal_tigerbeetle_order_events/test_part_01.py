@@ -209,7 +209,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart1(
                 ],
             ),
             patch(
-                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                "scripts.journal_tigerbeetle_order_events_modules.journal_payloads.subprocess.run",
                 side_effect=subprocess.TimeoutExpired(
                     cmd=["python", "journal_tigerbeetle_order_events.py"],
                     timeout=0.01,
@@ -420,7 +420,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart1(
                 ],
             ),
             patch(
-                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                "scripts.journal_tigerbeetle_order_events_modules.journal_payloads.subprocess.run",
                 side_effect=subprocess.TimeoutExpired(
                     cmd=["python", "journal_tigerbeetle_order_events.py"],
                     timeout=0.01,
@@ -501,7 +501,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart1(
                 ],
             ),
             patch(
-                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                "scripts.journal_tigerbeetle_order_events_modules.journal_payloads.subprocess.run",
                 side_effect=subprocess.TimeoutExpired(
                     cmd=["python", "journal_tigerbeetle_order_events.py"],
                     timeout=0.01,
@@ -555,7 +555,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart1(
                 ],
             ),
             patch(
-                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                "scripts.journal_tigerbeetle_order_events_modules.journal_payloads.subprocess.run",
                 side_effect=[
                     subprocess.CompletedProcess(
                         args=["python", "journal_tigerbeetle_order_events.py"],
@@ -648,7 +648,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart1(
                 ],
             ),
             patch(
-                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                "scripts.journal_tigerbeetle_order_events_modules.journal_payloads.subprocess.run",
                 return_value=subprocess.CompletedProcess(
                     args=["python", "journal_tigerbeetle_order_events.py"],
                     returncode=1,
@@ -719,7 +719,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart1(
                 ],
             ),
             patch(
-                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                "scripts.journal_tigerbeetle_order_events_modules.journal_payloads.subprocess.run",
                 return_value=subprocess.CompletedProcess(
                     args=["python", "journal_tigerbeetle_order_events.py"],
                     returncode=1,

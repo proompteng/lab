@@ -33,7 +33,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                 payload = {**base_payload, **override}
                 session = object()
                 with patch.object(
-                    script,
+                    script_payloads,
                     "latest_tigerbeetle_reconciliation_payload",
                     return_value=payload,
                 ) as latest:
@@ -73,8 +73,10 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
-                patch.object(script, "reconcile_tigerbeetle_transfers") as reconcile,
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(
+                    script_cli, "reconcile_tigerbeetle_transfers"
+                ) as reconcile,
                 redirect_stdout(stdout),
             ):
                 exit_code = script.main()
@@ -124,14 +126,14 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
                 patch.object(
-                    script,
+                    script_cli,
                     "reconcile_tigerbeetle_transfers",
                     return_value={"ok": True},
                 ),
                 patch.object(
-                    script,
+                    script_core,
                     "build_order_event_transfer_plan",
                     side_effect=build_plan_with_failure,
                 ),
@@ -172,9 +174,9 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
                 patch.object(
-                    script,
+                    script_cli,
                     "reconcile_tigerbeetle_transfers",
                     return_value={"ok": False},
                 ),
@@ -224,9 +226,9 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
                 patch.object(
-                    script,
+                    script_cli,
                     "reconcile_tigerbeetle_transfers",
                     return_value={"ok": True},
                 ) as reconcile,
@@ -273,9 +275,9 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
                 patch.object(
-                    script,
+                    script_cli,
                     "reconcile_tigerbeetle_transfers",
                     return_value={"ok": False},
                 ),
@@ -313,9 +315,9 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
                 patch.object(
-                    script,
+                    script_cli,
                     "reconcile_tigerbeetle_transfers",
                     return_value={"ok": False, "blockers": ["missing"]},
                 ),
@@ -358,9 +360,9 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
                 patch.object(
-                    script,
+                    script_cli,
                     "reconcile_tigerbeetle_transfers",
                     return_value={
                         "ok": False,
@@ -421,9 +423,9 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
                 patch.object(
-                    script,
+                    script_cli,
                     "reconcile_tigerbeetle_transfers",
                     return_value={"ok": True, "blockers": []},
                 ),
@@ -466,9 +468,9 @@ class TestJournalTigerBeetleOrderEventsScriptPart4(
                         "--json",
                     ],
                 ),
-                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script_cli, "TigerBeetleLedgerJournal", FakeJournal),
                 patch.object(
-                    script,
+                    script_cli,
                     "reconcile_tigerbeetle_transfers",
                     return_value={
                         "ok": False,
