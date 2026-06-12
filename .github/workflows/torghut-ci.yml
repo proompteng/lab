@@ -462,7 +462,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t TEST_FILES < <(
-            find tests -name 'test_*.py' ! -path 'tests/test_run_whitepaper_autoresearch_profit_target.py' -print |
+            find tests -name 'test_*.py' ! -path 'tests/autoresearch_runner/*' -print |
               sort |
               awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '((NR - 1) % total) == shard'
           )
@@ -491,16 +491,12 @@ jobs:
           include-hidden-files: true
 
   pytest-autoresearch-runner:
-    name: Pytest autoresearch runner ${{ matrix.slice }}
+    name: Pytest autoresearch runner
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs:
       - changes
     if: ${{ needs.changes.outputs.service == 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        slice: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - name: Checkout
         shell: bash
@@ -547,40 +543,34 @@ jobs:
         working-directory: services/torghut
         shell: bash
         env:
-          COVERAGE_FILE: .coverage.autoresearch-runner-${{ matrix.slice }}
-          SLICE_INDEX: ${{ matrix.slice }}
-          SLICE_TOTAL: 16
+          COVERAGE_FILE: .coverage.autoresearch-runner
         run: |
           set -euo pipefail
-          mapfile -t TEST_IDS < <(
-            uv run --frozen pytest --collect-only -q tests/test_run_whitepaper_autoresearch_profit_target.py |
-              awk '/^tests\/.*::/ {print $1}' |
-              while IFS= read -r test_id; do
-                checksum="$(printf '%s' "${test_id}" | cksum | awk '{print $1}')"
-                if [ "$((checksum % SLICE_TOTAL))" -eq "${SLICE_INDEX}" ]; then
-                  printf '%s\n' "${test_id}"
-                fi
-              done
-          )
-          printf 'Running %s autoresearch runner tests in slice %s/%s\n' "${#TEST_IDS[@]}" "${SLICE_INDEX}" "${SLICE_TOTAL}"
-          if [ "${#TEST_IDS[@]}" -eq 0 ]; then
-            echo "No autoresearch runner tests selected for slice ${SLICE_INDEX}"
+          collected_count="$(
+            uv run --frozen pytest --collect-only -q tests/autoresearch_runner |
+              awk '/^tests\/.*::/ {count += 1} END {print count + 0}'
+          )"
+          printf 'Collected %s autoresearch runner tests\n' "${collected_count}"
+          if [ "${collected_count}" -ne 185 ]; then
+            echo "Expected 185 autoresearch runner tests after split, got ${collected_count}"
             exit 1
           fi
 
           uv run --frozen pytest \
+            -n auto \
+            --dist=worksteal \
             --cov \
             --cov-branch \
             --cov-fail-under=0 \
             --cov-report= \
-            "${TEST_IDS[@]}"
+            tests/autoresearch_runner
 
       - name: Upload coverage data
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: torghut-coverage-autoresearch-runner-${{ matrix.slice }}
-          path: services/torghut/.coverage.autoresearch-runner-${{ matrix.slice }}*
+          name: torghut-coverage-autoresearch-runner
+          path: services/torghut/.coverage.autoresearch-runner*
           if-no-files-found: error
           include-hidden-files: true
 
