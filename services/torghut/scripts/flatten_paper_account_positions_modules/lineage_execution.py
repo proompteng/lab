@@ -1,41 +1,39 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Flatten the Torghut paper account so runtime proof windows start clean."""
 
 from __future__ import annotations
 
-import argparse
 import hashlib
-import json
-import os
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Mapping, Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Protocol, cast
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any, cast
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.engine import Engine
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.alpaca_client import TorghutAlpacaClient
-from app.config import settings
-from app.db import SessionLocal
 from app.models import Execution, Strategy, TradeDecision, coerce_json_payload
-from app.snapshots import snapshot_account_and_positions, sync_order_to_db
-from app.trading.firewall import OrderFirewall
+from app.snapshots import sync_order_to_db
 from app.trading.runtime_decision_authority import (
     source_decision_mode_is_profit_proof_eligible,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_35 import *
+from .flatten_core import (
+    DEFAULT_EXTENDED_HOURS_LIMIT_AWAY_BPS,
+    DEFAULT_POLL_SECONDS,
+    DEFAULT_WAIT_FLAT_SECONDS,
+    FLATTEN_CLEANUP_STRATEGY_NAME,
+    FLATTEN_CLOSE_DECISION_SCHEMA_VERSION,
+    LINEAGE_LINKED_STATUS,
+    LINEAGE_PERSIST_FAILED_STATUS,
+    LINEAGE_UNLINKED_STATUS,
+    FlattenPosition,
+    PaperFlattenClient,
+    _normalize_positions,
+)
 
 
 def _position_payload(position: FlattenPosition) -> dict[str, str | None]:
@@ -720,6 +718,3 @@ def flatten_paper_account_positions(
         "submitted_order_count": len(submitted_orders),
         "submitted_orders": submitted_orders,
     }
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
