@@ -75,21 +75,12 @@ def _classify_volatility(
     prices: list[Decimal],
 ) -> VolatilityBucket:
     if volatilities:
-        avg_vol = _decimal_mean(volatilities)
-        if avg_vol < Decimal("0.01"):
-            return "low"
-        if avg_vol < Decimal("0.03"):
-            return "mid"
-        return "high"
+        return _volatility_bucket_from_average(_decimal_mean(volatilities))
 
     price_vol = _average_abs_pct_change(prices)
     if price_vol is None:
         return "unknown"
-    if price_vol < Decimal("0.002"):
-        return "low"
-    if price_vol < Decimal("0.01"):
-        return "mid"
-    return "high"
+    return _price_volatility_bucket(price_vol)
 
 
 def _classify_trend(
@@ -97,26 +88,50 @@ def _classify_trend(
     macd_diffs: list[Decimal],
 ) -> TrendBucket:
     if len(prices) >= 2:
-        start = prices[0]
-        end = prices[-1]
-        if start == 0:
-            return "unknown"
-        change = (end - start) / start
-        if change >= Decimal("0.002"):
-            return "up"
-        if change <= Decimal("-0.002"):
-            return "down"
-        return "flat"
+        return _trend_bucket_from_price_change(prices[0], prices[-1])
 
     if macd_diffs:
-        avg_macd = _decimal_mean(macd_diffs)
-        if avg_macd >= Decimal("0.05"):
-            return "up"
-        if avg_macd <= Decimal("-0.05"):
-            return "down"
-        return "flat"
+        return _trend_bucket_from_average_macd(_decimal_mean(macd_diffs))
 
     return "unknown"
+
+
+def _volatility_bucket_from_average(avg_volatility: Decimal) -> VolatilityBucket:
+    if avg_volatility < Decimal("0.01"):
+        return "low"
+    if avg_volatility < Decimal("0.03"):
+        return "mid"
+    return "high"
+
+
+def _price_volatility_bucket(price_volatility: Decimal) -> VolatilityBucket:
+    if price_volatility < Decimal("0.002"):
+        return "low"
+    if price_volatility < Decimal("0.01"):
+        return "mid"
+    return "high"
+
+
+def _trend_bucket_from_price_change(
+    start: Decimal,
+    end: Decimal,
+) -> TrendBucket:
+    if start == 0:
+        return "unknown"
+    change = (end - start) / start
+    if change >= Decimal("0.002"):
+        return "up"
+    if change <= Decimal("-0.002"):
+        return "down"
+    return "flat"
+
+
+def _trend_bucket_from_average_macd(avg_macd: Decimal) -> TrendBucket:
+    if avg_macd >= Decimal("0.05"):
+        return "up"
+    if avg_macd <= Decimal("-0.05"):
+        return "down"
+    return "flat"
 
 
 def _classify_liquidity(

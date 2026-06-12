@@ -164,6 +164,31 @@ class TestRegimeClassifier(TestCase):
         self.assertEqual(one, two)
         self.assertEqual(two, three)
 
+    def test_regime_classifier_uses_macd_trend_when_price_history_is_short(
+        self,
+    ) -> None:
+        cases = [
+            (Decimal("0.08"), "vol=unknown|trend=up|liq=unknown"),
+            (Decimal("-0.08"), "vol=unknown|trend=down|liq=unknown"),
+            (Decimal("0.01"), "vol=unknown|trend=flat|liq=unknown"),
+        ]
+
+        for macd_delta, expected_label in cases:
+            with self.subTest(macd_delta=macd_delta):
+                regime = classify_regime(
+                    [
+                        self._decision(
+                            0,
+                            price=Decimal("100"),
+                            volatility=None,
+                            macd=macd_delta,
+                            macd_signal=Decimal("0"),
+                        )
+                    ]
+                )
+
+                self.assertEqual(regime.label(), expected_label)
+
     @staticmethod
     def _decision(
         minute_offset: int,
