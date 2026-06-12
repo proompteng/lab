@@ -1,20 +1,14 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Build profitability proof artifacts from historical simulation run directories."""
 
 from __future__ import annotations
 
-import argparse
-import csv
-import hashlib
 import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
-import yaml
 
 from app.trading.evaluation import (
     build_profitability_evidence_v4,
@@ -22,9 +16,33 @@ from app.trading.evaluation import (
     validate_profitability_evidence_v4,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_24 import *
+from .proof_core import (
+    _DEFAULT_BASELINE_ID,
+    _DEFAULT_EXTENDED_MAX_DRAWDOWN_PCT_EQUITY,
+    _DEFAULT_MAX_BEST_DAY_SHARE,
+    _DEFAULT_MAX_DRAWDOWN_PCT_EQUITY,
+    _DEFAULT_MIN_ACTIVE_DAY_RATIO,
+    _DEFAULT_MIN_POSITIVE_DAY_RATIO,
+    _DEFAULT_MIN_SAMPLE_SIZE,
+    _DEFAULT_MIN_TOTAL_NET_PNL_TO_DRAWDOWN_RATIO,
+    _DEFAULT_START_EQUITY,
+    _DEFAULT_TARGET_NET_PNL_PER_DAY,
+    _PROFITABILITY_PROOF_SCHEMA_VERSION,
+    HistoricalRunSummary,
+    _as_decimal,
+    _as_dict,
+    _as_int,
+    _as_list,
+    _as_text,
+    _build_report_payload,
+    _load_run_summary,
+    _parse_args,
+    _proof_gate_policy,
+    _proof_gate_summary,
+    _require_consistent_lineage,
+    _sha256_json,
+    _stable_hash_payload,
+)
 
 
 def _build_zero_baseline_payload(trading_days: list[str]) -> dict[str, object]:
@@ -400,6 +418,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
