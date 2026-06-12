@@ -495,7 +495,11 @@ def _paper_route_probe_blockers(
     if configured_limit is None:
         blockers.append("paper_route_probe_max_notional_invalid")
     if market_session_open is not True:
-        blockers.append("session_closed" if market_session_open is False else "market_session_unknown")
+        blockers.append(
+            "session_closed"
+            if market_session_open is False
+            else "market_session_unknown"
+        )
     if eligible_symbol_count <= 0:
         blockers.append("paper_route_probe_candidate_missing")
     return blockers

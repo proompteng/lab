@@ -28,21 +28,29 @@ class _FakeOp:
         self.create_index_calls: list[tuple[str, str, list[str], bool]] = []
         self.create_unique_constraint_calls: list[tuple[str, str, list[str]]] = []
 
-    def drop_constraint(self, name: str, table_name: str, *, type_: str | None = None) -> None:
+    def drop_constraint(
+        self, name: str, table_name: str, *, type_: str | None = None
+    ) -> None:
         self.drop_constraint_calls.append((name, table_name, type_))
 
     def drop_index(self, name: str, *, table_name: str) -> None:
         self.drop_index_calls.append((name, table_name))
 
-    def create_index(self, name: str, table_name: str, columns: list[str], *, unique: bool = False) -> None:
+    def create_index(
+        self, name: str, table_name: str, columns: list[str], *, unique: bool = False
+    ) -> None:
         self.create_index_calls.append((name, table_name, columns, unique))
 
-    def create_unique_constraint(self, name: str, table_name: str, columns: list[str]) -> None:
+    def create_unique_constraint(
+        self, name: str, table_name: str, columns: list[str]
+    ) -> None:
         self.create_unique_constraint_calls.append((name, table_name, columns))
 
 
 class TestAutoresearchCandidateSpecMigration(TestCase):
-    def test_upgrade_drops_existing_unique_constraint_before_epoch_scoped_index(self) -> None:
+    def test_upgrade_drops_existing_unique_constraint_before_epoch_scoped_index(
+        self,
+    ) -> None:
         module = _load_migration_module()
         fake_op = _FakeOp()
         original_op = module.op

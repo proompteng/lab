@@ -29,7 +29,9 @@ def _write_migration(path: Path, revision: str, down_revision: str | None) -> No
 
 
 class TestCheckMigrationGraphScript(TestCase):
-    def _run_script(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def _run_script(
+        self, *args: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         service_root = _service_root()
         script_path = _script_path()
         process_env = dict(os.environ)
@@ -58,10 +60,13 @@ class TestCheckMigrationGraphScript(TestCase):
         payload = json.loads(result.stdout)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["branch_count"], 2)
-        self.assertEqual(payload["errors"], [
-            "migration branch count 2 exceeds allowed 1; add --allow-signature "
-            "<signature> (or update allowlist) in the same change if intentional"
-        ])
+        self.assertEqual(
+            payload["errors"],
+            [
+                "migration branch count 2 exceeds allowed 1; add --allow-signature "
+                "<signature> (or update allowlist) in the same change if intentional"
+            ],
+        )
 
     def test_cli_accepts_allowlisted_signature_for_known_divergence(self) -> None:
         with TemporaryDirectory() as tmpdir:

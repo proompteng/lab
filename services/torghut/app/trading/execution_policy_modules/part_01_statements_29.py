@@ -1,0 +1,157 @@
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+"""Execution policy enforcing order placement safety and impact assumptions."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from datetime import timezone
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any, Iterable, Mapping, Optional, cast
+
+from ...config import settings
+from ...models import Strategy
+from ..costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
+from ..microstructure import (
+    MicrostructureStateV5,
+    is_microstructure_stale,
+    parse_execution_advice,
+    parse_microstructure_state,
+)
+from ..models import StrategyDecision
+from ..prices import MarketSnapshot, resolve_execution_reference_price
+from ..quantity_rules import (
+    min_qty_for_symbol,
+    qty_has_valid_increment,
+    quantize_qty_for_symbol,
+    resolve_quantity_resolution,
+)
+from ..tca import AdaptiveExecutionPolicyDecision
+
+# ruff: noqa: F401,F403,F405,F811,F821
+
+
+DEFAULT_EXECUTION_SECONDS = 60
+
+ADAPTIVE_PARTICIPATION_RATE_FLOOR = Decimal("0.05")
+
+ADAPTIVE_EXECUTION_SECONDS_MIN = 10
+
+ADAPTIVE_EXECUTION_SECONDS_MAX = 600
+
+MICROSTRUCTURE_PARTICIPATION_FLOOR = Decimal("0.05")
+
+MICROSTRUCTURE_EXECUTION_SCALE_MIN = Decimal("1.0")
+
+MICROSTRUCTURE_EXECUTION_SCALE_MAX = Decimal("3.0")
+
+MICROSTRUCTURE_SPREAD_BPS_PRESSURE = Decimal("8")
+
+MICROSTRUCTURE_DEPTH_USD_PRESSURE = Decimal("800000")
+
+MICROSTRUCTURE_HAZARD_PRESSURE = Decimal("0.8")
+
+MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE = Decimal("0.70")
+
+MICROSTRUCTURE_LATENCY_PRESSURE_MS = 250
+
+MICROSTRUCTURE_STRESSED_RATE_SCALE = Decimal("0.40")
+
+MICROSTRUCTURE_COMPRESSED_RATE_SCALE = Decimal("0.65")
+
+MICROSTRUCTURE_HIGH_SPREAD_RATE_SCALE = Decimal("0.70")
+
+MICROSTRUCTURE_HAZARD_RATE_SCALE = Decimal("0.75")
+
+MICROSTRUCTURE_CRUMBLING_QUOTE_RATE_SCALE = Decimal("0.65")
+
+MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE = Decimal("0.75")
+
+MICROSTRUCTURE_STRESS_EXECUTION_SCALE = Decimal("1.40")
+
+MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE = Decimal("1.10")
+
+MICROSTRUCTURE_CRUMBLING_QUOTE_EXECUTION_SCALE = Decimal("1.15")
+
+MICROSTRUCTURE_EXECUTION_SCALE_EPSILON = Decimal("0.01")
+
+HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX = Decimal("12")
+
+HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN = Decimal("0.70")
+
+HIGH_CONVICTION_BREAKOUT_MICROPRICE_BPS_MIN = Decimal("0.05")
+
+HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN = Decimal("0.55")
+
+HIGH_CONVICTION_WASHOUT_MICROPRICE_BPS_MIN = Decimal("0.05")
+
+_SIZING_LIMITING_CONSTRAINT_REASONS: frozenset[str] = frozenset(
+    {
+        "symbol_capacity_exhausted",
+        "sell_inventory_unavailable",
+        "gross_exposure_capacity_exhausted",
+        "net_exposure_capacity_exhausted",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ExecutionPolicyConfig:
+    min_notional: Optional[Decimal]
+    max_notional: Optional[Decimal]
+    max_participation_rate: Decimal
+    allow_shorts: bool
+    kill_switch_enabled: bool
+    prefer_limit: bool
+    max_retries: int
+    backoff_base_seconds: float
+    backoff_multiplier: float
+    backoff_max_seconds: float
+
+
+@dataclass(frozen=True)
+class AdaptiveExecutionApplication:
+    decision: AdaptiveExecutionPolicyDecision
+    applied: bool
+    reason: str
+
+    def as_payload(self) -> dict[str, Any]:
+        payload = self.decision.as_payload()
+        payload["applied"] = self.applied
+        payload["reason"] = self.reason
+        return payload
+
+
+@dataclass(frozen=True)
+class ExecutionPolicyOutcome:
+    approved: bool
+    decision: StrategyDecision
+    reasons: list[str]
+    notional: Optional[Decimal]
+    participation_rate: Optional[Decimal]
+    retry_delays: list[float]
+    impact_assumptions: dict[str, Any]
+    selected_order_type: str
+    adaptive: AdaptiveExecutionApplication | None
+    advisor_metadata: dict[str, Any]
+    microstructure_metadata: dict[str, Any]
+
+    def params_update(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "execution_policy": {
+                "approved": self.approved,
+                "reasons": list(self.reasons),
+                "notional": _stringify_decimal(self.notional),
+                "participation_rate": _stringify_decimal(self.participation_rate),
+                "selected_order_type": self.selected_order_type,
+                "retry_delays": self.retry_delays,
+            },
+            "impact_assumptions": self.impact_assumptions,
+            "execution_advisor": self.advisor_metadata,
+            "execution_microstructure": self.microstructure_metadata,
+        }
+        if self.adaptive is not None:
+            payload["execution_policy"]["adaptive"] = self.adaptive.as_payload()
+        return payload
+
+
+__all__ = [name for name in globals() if not name.startswith("__")]

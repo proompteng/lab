@@ -13,10 +13,18 @@ from app.trading.alpha.lane import run_alpha_discovery_lane
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run deterministic alpha discovery lane.")
-    parser.add_argument("--train-csv", type=Path, required=True, help="Train-price CSV path.")
-    parser.add_argument("--test-csv", type=Path, required=True, help="Test-price CSV path.")
-    parser.add_argument("--output-dir", type=Path, required=True, help="Artifact output directory.")
+    parser = argparse.ArgumentParser(
+        description="Run deterministic alpha discovery lane."
+    )
+    parser.add_argument(
+        "--train-csv", type=Path, required=True, help="Train-price CSV path."
+    )
+    parser.add_argument(
+        "--test-csv", type=Path, required=True, help="Test-price CSV path."
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, required=True, help="Artifact output directory."
+    )
     parser.add_argument(
         "--repository", type=str, default=None, help="Repository context for the run."
     )
@@ -123,12 +131,8 @@ def main() -> int:
         head=args.head,
         priority_id=args.priority_id,
         priorityId=args.priorityId,
-        artifactPath=str(args.artifactPath)
-        if args.artifactPath is not None
-        else None,
-        notes_artifact_path=str(args.artifact_path)
-        if args.artifact_path
-        else None,
+        artifactPath=str(args.artifactPath) if args.artifactPath is not None else None,
+        notes_artifact_path=str(args.artifact_path) if args.artifact_path else None,
         lookback_days=_parse_ints(args.lookbacks),
         vol_lookback_days=_parse_ints(args.vol_lookbacks),
         target_daily_vols=_parse_floats(args.target_vols),
@@ -143,7 +147,9 @@ def main() -> int:
         "run_id": result.run_id,
         "candidate_id": result.candidate_id,
         "output_dir": str(result.output_dir),
-        "candidate_generation_manifest_path": str(result.candidate_generation_manifest_path),
+        "candidate_generation_manifest_path": str(
+            result.candidate_generation_manifest_path
+        ),
         "evaluation_manifest_path": str(result.evaluation_manifest_path),
         "recommendation_manifest_path": str(result.recommendation_manifest_path),
         "recommendation_artifact_path": str(result.recommendation_artifact_path),

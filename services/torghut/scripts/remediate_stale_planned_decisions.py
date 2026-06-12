@@ -141,7 +141,9 @@ def main() -> None:
                     "strategy_id": str(row.strategy_id),
                     "symbol": row.symbol,
                     "account_label": row.alpaca_account_label,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "created_at": row.created_at.isoformat()
+                    if row.created_at
+                    else None,
                     "age_seconds": age_seconds,
                     "reason": reason,
                 }

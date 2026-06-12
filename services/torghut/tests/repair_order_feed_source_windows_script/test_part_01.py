@@ -1,0 +1,687 @@
+from __future__ import annotations
+
+# ruff: noqa: F401,F403,F405
+from tests.repair_order_feed_source_windows_script.support import *
+
+
+class TestRepairOrderFeedSourceWindowsScriptPart1(
+    _TestRepairOrderFeedSourceWindowsScriptBase
+):
+    def test_parse_optional_dt_handles_empty_and_naive_values(self) -> None:
+        self.assertIsNone(script._parse_optional_dt(" "))
+        parsed = script._parse_optional_dt("2026-05-13T17:00:00")
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.tzinfo, timezone.utc)
+        self.assertEqual(parsed.isoformat(), "2026-05-13T17:00:00+00:00")
+
+    def test_main_rejects_invalid_bounded_window(self) -> None:
+        with (
+            patch.dict(os.environ, {"SIM_DSN": "postgresql://example/sim"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "repair_order_feed_source_windows.py",
+                    "--dsn-env",
+                    "SIM_DSN",
+                    "--window-start",
+                    "2026-05-13T17:30:00Z",
+                    "--window-end",
+                    "2026-05-13T17:00:00Z",
+                    "--json",
+                ],
+            ),
+            patch.object(script, "create_engine", return_value=object()),
+            patch.object(script, "sessionmaker") as sessionmaker_mock,
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                script.main()
+
+        self.assertEqual(str(raised.exception), "window_end_must_be_after_window_start")
+        sessionmaker_mock.assert_called_once()
+
+    def test_main_defaults_to_dry_run_and_rolls_back(self) -> None:
+        fake_session = _FakeSession()
+        stdout = io.StringIO()
+
+        with (
+            patch.dict(os.environ, {"TEST_DSN": "postgresql://example/test"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "repair_order_feed_source_windows.py",
+                    "--dsn-env",
+                    "TEST_DSN",
+                    "--json",
+                    "--batch-size",
+                    "6000",
+                    "--max-batches",
+                    "3",
+                ],
+            ),
+            patch.object(
+                script, "create_engine", return_value=object()
+            ) as create_engine,
+            patch.object(
+                script,
+                "sessionmaker",
+                return_value=_FakeSessionFactory(fake_session),
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_source_windows",
+                return_value={
+                    "selected": 5,
+                    "source_windows_created": 3,
+                    "source_windows_reused": 2,
+                    "events_linked": 5,
+                },
+            ) as backfill,
+            patch.object(
+                script,
+                "repair_order_feed_execution_links",
+                return_value={
+                    "selected": 4,
+                    "executions_matched": 3,
+                    "executions_linked": 2,
+                    "decisions_matched": 1,
+                    "events_linked": 3,
+                    "decision_events_linked": 1,
+                    "events_without_execution": 1,
+                    "events_without_decision": 0,
+                },
+            ) as repair_links,
+            patch.object(
+                script,
+                "backfill_order_feed_events_from_executions",
+            ) as backfill_execution_events,
+            patch.object(
+                script,
+                "repair_order_feed_execution_states",
+                return_value={
+                    "selected": 7,
+                    "latest_event_found": 6,
+                    "executions_updated": 5,
+                    "out_of_order_events_skipped": 1,
+                },
+            ) as repair_states,
+            patch.object(
+                script,
+                "repair_order_feed_fill_deltas",
+                return_value={
+                    "selected": 6,
+                    "delta_events_repaired": 5,
+                    "non_increasing_events_marked": 1,
+                    "missing_identity_events_marked": 0,
+                },
+            ) as repair_deltas,
+            patch("sys.stdout", stdout),
+        ):
+            exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["apply"], False)
+        self.assertEqual(payload["backfill_execution_events"], False)
+        self.assertEqual(payload["source_window_only"], False)
+        self.assertEqual(payload["execution_event_backfill_enabled"], False)
+        self.assertIsNone(payload["execution_event_backfill_skip_reason"])
+        self.assertEqual(payload["dsn_env"], "TEST_DSN")
+        self.assertEqual(payload["batch_size"], 5000)
+        self.assertEqual(payload["max_batches"], 3)
+        self.assertEqual(payload["selected"], 5)
+        self.assertEqual(payload["source_windows_created"], 3)
+        self.assertEqual(payload["source_windows_reused"], 2)
+        self.assertEqual(payload["events_linked"], 5)
+        self.assertEqual(payload["execution_link_candidates"], 4)
+        self.assertEqual(payload["execution_link_executions_matched"], 3)
+        self.assertEqual(payload["execution_link_executions_linked"], 2)
+        self.assertEqual(payload["execution_link_decisions_matched"], 1)
+        self.assertEqual(payload["execution_link_events_linked"], 3)
+        self.assertEqual(payload["execution_link_decision_events_linked"], 1)
+        self.assertEqual(payload["execution_link_events_without_execution"], 1)
+        self.assertEqual(payload["execution_link_events_without_decision"], 0)
+        self.assertEqual(payload["execution_state_candidates"], 7)
+        self.assertEqual(payload["execution_state_latest_event_found"], 6)
+        self.assertEqual(payload["execution_state_executions_updated"], 5)
+        self.assertEqual(payload["execution_state_out_of_order_events_skipped"], 1)
+        self.assertEqual(payload["execution_event_backfill_candidates"], 0)
+        self.assertEqual(payload["execution_event_backfill_events_created"], 0)
+        self.assertEqual(payload["execution_event_backfill_source_windows_created"], 0)
+        self.assertEqual(payload["fill_delta_candidates"], 6)
+        self.assertEqual(payload["fill_delta_events_repaired"], 5)
+        self.assertEqual(payload["fill_delta_non_increasing_events_marked"], 1)
+        self.assertEqual(payload["fill_delta_missing_identity_events_marked"], 0)
+        self.assertEqual(fake_session.commits, 0)
+        self.assertEqual(fake_session.rollbacks, 1)
+        create_engine.assert_called_once_with(
+            "postgresql+psycopg://example/test",
+            pool_pre_ping=True,
+            future=True,
+        )
+        backfill.assert_called_once_with(
+            fake_session,
+            account_label=None,
+            window_start=None,
+            window_end=None,
+            limit=5000,
+        )
+        repair_links.assert_called_once_with(
+            fake_session,
+            account_label=None,
+            canonical_account_label=None,
+            window_start=None,
+            window_end=None,
+            limit=5000,
+        )
+        backfill_execution_events.assert_not_called()
+        repair_states.assert_called_once_with(
+            fake_session,
+            account_label=None,
+            window_start=None,
+            window_end=None,
+            limit=5000,
+        )
+        repair_deltas.assert_called_once_with(
+            fake_session,
+            account_label=None,
+            window_start=None,
+            window_end=None,
+            limit=5000,
+        )
+
+    def test_main_applies_until_selection_drops_below_batch_size(self) -> None:
+        fake_session = _FakeSession()
+        stdout = io.StringIO()
+
+        with (
+            patch.dict(os.environ, {"SIM_DSN": "postgresql://example/sim"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "repair_order_feed_source_windows.py",
+                    "--dsn-env",
+                    "SIM_DSN",
+                    "--account-label",
+                    "TORGHUT_SIM",
+                    "--batch-size",
+                    "2",
+                    "--max-batches",
+                    "3",
+                    "--apply",
+                ],
+            ),
+            patch.object(script, "create_engine", return_value=object()),
+            patch.object(
+                script,
+                "sessionmaker",
+                return_value=_FakeSessionFactory(fake_session),
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_source_windows",
+                side_effect=[
+                    {
+                        "selected": 2,
+                        "source_windows_created": 2,
+                        "source_windows_reused": 0,
+                        "events_linked": 2,
+                    },
+                    {
+                        "selected": 1,
+                        "source_windows_created": 0,
+                        "source_windows_reused": 1,
+                        "events_linked": 1,
+                    },
+                ],
+            ) as backfill,
+            patch.object(
+                script,
+                "repair_order_feed_execution_links",
+                side_effect=[
+                    {
+                        "selected": 2,
+                        "executions_matched": 2,
+                        "executions_linked": 1,
+                        "decisions_matched": 0,
+                        "events_linked": 2,
+                        "decision_events_linked": 0,
+                        "events_without_execution": 0,
+                        "events_without_decision": 0,
+                    },
+                    {
+                        "selected": 0,
+                        "executions_matched": 0,
+                        "executions_linked": 0,
+                        "decisions_matched": 0,
+                        "events_linked": 0,
+                        "decision_events_linked": 0,
+                        "events_without_execution": 0,
+                        "events_without_decision": 0,
+                    },
+                ],
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_events_from_executions",
+            ),
+            patch.object(
+                script,
+                "repair_order_feed_execution_states",
+                side_effect=[
+                    {
+                        "selected": 2,
+                        "latest_event_found": 2,
+                        "executions_updated": 2,
+                        "out_of_order_events_skipped": 0,
+                    },
+                    {
+                        "selected": 1,
+                        "latest_event_found": 1,
+                        "executions_updated": 0,
+                        "out_of_order_events_skipped": 1,
+                    },
+                ],
+            ),
+            patch.object(
+                script,
+                "repair_order_feed_fill_deltas",
+                side_effect=[
+                    {
+                        "selected": 2,
+                        "delta_events_repaired": 2,
+                        "non_increasing_events_marked": 0,
+                        "missing_identity_events_marked": 0,
+                    },
+                    {
+                        "selected": 1,
+                        "delta_events_repaired": 0,
+                        "non_increasing_events_marked": 1,
+                        "missing_identity_events_marked": 0,
+                    },
+                ],
+            ),
+            patch("sys.stdout", stdout),
+        ):
+            exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["apply"], True)
+        self.assertEqual(payload["account_label"], "TORGHUT_SIM")
+        self.assertEqual(payload["backfill_execution_events"], False)
+        self.assertEqual(payload["execution_event_backfill_enabled"], False)
+        self.assertIsNone(payload["execution_event_backfill_skip_reason"])
+        self.assertEqual(payload["selected"], 3)
+        self.assertEqual(payload["source_windows_created"], 2)
+        self.assertEqual(payload["source_windows_reused"], 1)
+        self.assertEqual(payload["events_linked"], 3)
+        self.assertEqual(payload["execution_link_candidates"], 2)
+        self.assertEqual(payload["execution_link_executions_matched"], 2)
+        self.assertEqual(payload["execution_link_executions_linked"], 1)
+        self.assertEqual(payload["execution_link_decisions_matched"], 0)
+        self.assertEqual(payload["execution_link_events_linked"], 2)
+        self.assertEqual(payload["execution_link_decision_events_linked"], 0)
+        self.assertEqual(payload["execution_link_events_without_execution"], 0)
+        self.assertEqual(payload["execution_link_events_without_decision"], 0)
+        self.assertEqual(payload["execution_state_candidates"], 3)
+        self.assertEqual(payload["execution_state_latest_event_found"], 3)
+        self.assertEqual(payload["execution_state_executions_updated"], 2)
+        self.assertEqual(payload["execution_state_out_of_order_events_skipped"], 1)
+        self.assertEqual(payload["fill_delta_candidates"], 3)
+        self.assertEqual(payload["fill_delta_events_repaired"], 2)
+        self.assertEqual(payload["fill_delta_non_increasing_events_marked"], 1)
+        self.assertEqual(payload["fill_delta_missing_identity_events_marked"], 0)
+        self.assertEqual(fake_session.commits, 2)
+        self.assertEqual(fake_session.rollbacks, 0)
+        self.assertEqual(backfill.call_count, 2)
+        self.assertEqual(backfill.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertIsNone(backfill.call_args.kwargs["window_start"])
+        self.assertIsNone(backfill.call_args.kwargs["window_end"])
+        self.assertEqual(backfill.call_args.kwargs["limit"], 2)
+
+    def test_main_passes_bounded_window_to_source_window_backfill(self) -> None:
+        fake_session = _FakeSession()
+        stdout = io.StringIO()
+
+        with (
+            patch.dict(os.environ, {"SIM_DSN": "postgresql://example/sim"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "repair_order_feed_source_windows.py",
+                    "--dsn-env",
+                    "SIM_DSN",
+                    "--account-label",
+                    "TORGHUT_SIM",
+                    "--window-start",
+                    "2026-05-13T17:00:00Z",
+                    "--window-end",
+                    "2026-05-13T17:30:00Z",
+                    "--json",
+                    "--apply",
+                ],
+            ),
+            patch.object(script, "create_engine", return_value=object()),
+            patch.object(
+                script,
+                "sessionmaker",
+                return_value=_FakeSessionFactory(fake_session),
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_source_windows",
+                return_value={
+                    "selected": 2,
+                    "source_windows_created": 1,
+                    "source_windows_reused": 1,
+                    "events_linked": 2,
+                },
+            ) as backfill,
+            patch.object(
+                script,
+                "repair_order_feed_execution_links",
+                return_value={
+                    "selected": 0,
+                    "executions_matched": 0,
+                    "executions_linked": 0,
+                    "decisions_matched": 0,
+                    "events_linked": 0,
+                    "decision_events_linked": 0,
+                    "events_without_execution": 0,
+                    "events_without_decision": 0,
+                    "account_alias_events_linked": 0,
+                },
+            ) as repair_links,
+            patch.object(
+                script,
+                "repair_order_feed_execution_states",
+                return_value={
+                    "selected": 0,
+                    "latest_event_found": 0,
+                    "executions_updated": 0,
+                    "out_of_order_events_skipped": 0,
+                },
+            ) as repair_states,
+            patch.object(
+                script,
+                "backfill_order_feed_events_from_executions",
+            ) as backfill_execution_events,
+            patch.object(
+                script,
+                "repair_order_feed_fill_deltas",
+                return_value={
+                    "selected": 0,
+                    "delta_events_repaired": 0,
+                    "non_increasing_events_marked": 0,
+                    "missing_identity_events_marked": 0,
+                },
+            ) as repair_deltas,
+            patch("sys.stdout", stdout),
+        ):
+            exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["window_start"], "2026-05-13T17:00:00+00:00")
+        self.assertEqual(payload["window_end"], "2026-05-13T17:30:00+00:00")
+        self.assertEqual(fake_session.commits, 1)
+        self.assertEqual(fake_session.rollbacks, 0)
+        backfill.assert_called_once()
+        self.assertEqual(backfill.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            backfill.call_args.kwargs["window_start"].isoformat(),
+            "2026-05-13T17:00:00+00:00",
+        )
+        self.assertEqual(
+            backfill.call_args.kwargs["window_end"].isoformat(),
+            "2026-05-13T17:30:00+00:00",
+        )
+        backfill_execution_events.assert_not_called()
+        self.assertEqual(repair_links.call_count, 1)
+        self.assertEqual(repair_links.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertIsNone(repair_links.call_args.kwargs["canonical_account_label"])
+        self.assertEqual(
+            repair_links.call_args.kwargs["window_start"].isoformat(),
+            "2026-05-13T17:00:00+00:00",
+        )
+        self.assertEqual(
+            repair_links.call_args.kwargs["window_end"].isoformat(),
+            "2026-05-13T17:30:00+00:00",
+        )
+        self.assertEqual(repair_links.call_args.kwargs["limit"], 1000)
+        self.assertEqual(repair_states.call_count, 1)
+        self.assertEqual(repair_states.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            repair_states.call_args.kwargs["window_start"].isoformat(),
+            "2026-05-13T17:00:00+00:00",
+        )
+        self.assertEqual(
+            repair_states.call_args.kwargs["window_end"].isoformat(),
+            "2026-05-13T17:30:00+00:00",
+        )
+        self.assertEqual(repair_states.call_args.kwargs["limit"], 1000)
+        self.assertEqual(repair_deltas.call_count, 1)
+        self.assertEqual(repair_deltas.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            repair_deltas.call_args.kwargs["window_start"].isoformat(),
+            "2026-05-13T17:00:00+00:00",
+        )
+        self.assertEqual(
+            repair_deltas.call_args.kwargs["window_end"].isoformat(),
+            "2026-05-13T17:30:00+00:00",
+        )
+        self.assertEqual(repair_deltas.call_args.kwargs["limit"], 1000)
+
+    def test_main_source_window_only_skips_broader_repairs(self) -> None:
+        fake_session = _FakeSession()
+        stdout = io.StringIO()
+
+        with (
+            patch.dict(os.environ, {"SIM_DSN": "postgresql://example/sim"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "repair_order_feed_source_windows.py",
+                    "--dsn-env",
+                    "SIM_DSN",
+                    "--account-label",
+                    "TORGHUT_SIM",
+                    "--source-window-only",
+                    "--backfill-execution-events",
+                    "--json",
+                    "--apply",
+                    "--batch-size",
+                    "2",
+                ],
+            ),
+            patch.object(script, "create_engine", return_value=object()),
+            patch.object(
+                script,
+                "sessionmaker",
+                return_value=_FakeSessionFactory(fake_session),
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_source_windows",
+                return_value={
+                    "selected": 2,
+                    "source_windows_created": 1,
+                    "source_windows_reused": 1,
+                    "events_linked": 2,
+                },
+            ) as backfill,
+            patch.object(script, "repair_order_feed_execution_links") as repair_links,
+            patch.object(script, "repair_order_feed_execution_states") as repair_states,
+            patch.object(
+                script,
+                "backfill_order_feed_events_from_executions",
+            ) as backfill_execution_events,
+            patch.object(script, "repair_order_feed_fill_deltas") as repair_deltas,
+            patch("sys.stdout", stdout),
+        ):
+            exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["source_window_only"])
+        self.assertFalse(payload["execution_event_backfill_enabled"])
+        self.assertEqual(
+            payload["execution_event_backfill_skip_reason"], "source_window_only"
+        )
+        self.assertEqual(payload["selected"], 2)
+        self.assertEqual(payload["events_linked"], 2)
+        self.assertEqual(payload["execution_link_candidates"], 0)
+        self.assertEqual(payload["execution_state_candidates"], 0)
+        self.assertEqual(payload["execution_event_backfill_candidates"], 0)
+        self.assertEqual(payload["fill_delta_candidates"], 0)
+        self.assertEqual(fake_session.commits, 1)
+        self.assertEqual(fake_session.rollbacks, 0)
+        backfill.assert_called_once_with(
+            fake_session,
+            account_label="TORGHUT_SIM",
+            window_start=None,
+            window_end=None,
+            limit=2,
+        )
+        repair_links.assert_not_called()
+        repair_states.assert_not_called()
+        backfill_execution_events.assert_not_called()
+        repair_deltas.assert_not_called()
+
+    def test_main_backfills_execution_events_when_enabled(self) -> None:
+        fake_session = _FakeSession()
+        stdout = io.StringIO()
+
+        with (
+            patch.dict(os.environ, {"LIVE_DSN": "postgresql://example/live"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "repair_order_feed_source_windows.py",
+                    "--dsn-env",
+                    "LIVE_DSN",
+                    "--account-label",
+                    "PA3SX7FYNUTF",
+                    "--window-start",
+                    "2026-05-13T17:00:00Z",
+                    "--window-end",
+                    "2026-05-13T17:30:00Z",
+                    "--batch-size",
+                    "100",
+                    "--max-batches",
+                    "1",
+                    "--backfill-execution-events",
+                    "--apply",
+                    "--json",
+                ],
+            ),
+            patch.object(script, "create_engine", return_value=object()),
+            patch.object(
+                script,
+                "sessionmaker",
+                return_value=_FakeSessionFactory(fake_session),
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_source_windows",
+                return_value={
+                    "selected": 0,
+                    "source_windows_created": 0,
+                    "source_windows_reused": 0,
+                    "events_linked": 0,
+                },
+            ),
+            patch.object(
+                script,
+                "repair_order_feed_execution_links",
+                return_value={
+                    "selected": 0,
+                    "executions_matched": 0,
+                    "executions_linked": 0,
+                    "events_linked": 0,
+                    "events_without_execution": 0,
+                },
+            ),
+            patch.object(
+                script,
+                "backfill_order_feed_events_from_executions",
+                return_value={
+                    "selected": 7,
+                    "events_created": 6,
+                    "source_windows_created": 6,
+                    "skipped_existing_event": 1,
+                    "skipped_missing_trade_decision": 0,
+                    "skipped_missing_order_identity": 0,
+                    "skipped_source_offset_collision": 0,
+                },
+            ) as backfill_execution_events,
+            patch.object(
+                script,
+                "repair_order_feed_execution_states",
+                return_value={
+                    "selected": 0,
+                    "latest_event_found": 0,
+                    "executions_updated": 0,
+                    "out_of_order_events_skipped": 0,
+                },
+            ) as repair_states,
+            patch.object(
+                script,
+                "repair_order_feed_fill_deltas",
+                return_value={
+                    "selected": 0,
+                    "delta_events_repaired": 0,
+                    "non_increasing_events_marked": 0,
+                    "missing_identity_events_marked": 0,
+                },
+            ) as repair_deltas,
+            patch("sys.stdout", stdout),
+        ):
+            exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["apply"], True)
+        self.assertEqual(payload["backfill_execution_events"], True)
+        self.assertEqual(payload["execution_event_backfill_enabled"], True)
+        self.assertIsNone(payload["execution_event_backfill_skip_reason"])
+        self.assertEqual(payload["account_label"], "PA3SX7FYNUTF")
+        self.assertEqual(payload["window_start"], "2026-05-13T17:00:00+00:00")
+        self.assertEqual(payload["window_end"], "2026-05-13T17:30:00+00:00")
+        self.assertEqual(payload["execution_state_candidates"], 0)
+        self.assertEqual(payload["execution_state_executions_updated"], 0)
+        self.assertEqual(payload["execution_event_backfill_candidates"], 7)
+        self.assertEqual(payload["execution_event_backfill_events_created"], 6)
+        self.assertEqual(payload["execution_event_backfill_source_windows_created"], 6)
+        self.assertEqual(payload["execution_event_backfill_skipped_existing_event"], 1)
+        self.assertEqual(payload["fill_delta_candidates"], 0)
+        self.assertEqual(payload["fill_delta_events_repaired"], 0)
+        self.assertEqual(fake_session.commits, 1)
+        backfill_execution_events.assert_called_once_with(
+            fake_session,
+            account_label="PA3SX7FYNUTF",
+            window_start=script._parse_optional_dt("2026-05-13T17:00:00Z"),
+            window_end=script._parse_optional_dt("2026-05-13T17:30:00Z"),
+            limit=100,
+        )
+        repair_states.assert_called_once_with(
+            fake_session,
+            account_label="PA3SX7FYNUTF",
+            window_start=script._parse_optional_dt("2026-05-13T17:00:00Z"),
+            window_end=script._parse_optional_dt("2026-05-13T17:30:00Z"),
+            limit=100,
+        )
+        repair_deltas.assert_called_once_with(
+            fake_session,
+            account_label="PA3SX7FYNUTF",
+            window_start=script._parse_optional_dt("2026-05-13T17:00:00Z"),
+            window_end=script._parse_optional_dt("2026-05-13T17:30:00Z"),
+            limit=100,
+        )

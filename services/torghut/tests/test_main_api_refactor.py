@@ -4,7 +4,8 @@ import sys
 import types
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.routing import APIRoute
 
 from app import main as main_module
 from app.api import common as api_common
@@ -14,6 +15,66 @@ from app.api.proxy import (
     install_main_compat_proxies,
 )
 from app.trading import TradingScheduler
+
+
+def _route_methods() -> dict[str, set[str]]:
+    route_methods: dict[str, set[str]] = {}
+    for route in main_module.app.routes:
+        if isinstance(route, APIRoute):
+            route_methods.setdefault(route.path, set()).update(route.methods or set())
+    return route_methods
+
+
+def test_main_exports_fastapi_app_with_compatibility_routes() -> None:
+    assert isinstance(main_module.app, FastAPI)
+    assert main_module.app.title == "torghut"
+
+    mounted_routes = _route_methods()
+    expected_routes = {
+        "/": {"GET"},
+        "/healthz": {"GET"},
+        "/db-check": {"GET"},
+        "/readyz": {"GET"},
+        "/metrics": {"GET"},
+        "/trading/status": {"GET"},
+        "/trading/health": {"GET"},
+        "/trading/proofs": {"GET"},
+        "/trading/paper-route-evidence": {"GET"},
+        "/trading/profitability/runtime": {"GET"},
+        "/whitepapers/status": {"GET"},
+        "/whitepapers/search": {"GET"},
+    }
+
+    missing_routes = {
+        path: methods
+        for path, methods in expected_routes.items()
+        if not methods.issubset(mounted_routes.get(path, set()))
+    }
+    assert missing_routes == {}
+
+
+def test_main_keeps_legacy_patch_targets_exported() -> None:
+    expected_attrs = [
+        "SessionLocal",
+        "WHITEPAPER_WORKFLOW",
+        "_TRADING_STATUS_READ_BUDGET_SECONDS",
+        "_TradingStatusReadBudget",
+        "_build_live_submission_gate_payload",
+        "_build_trading_proofs_payload",
+        "_check_account_scope_invariants_bounded",
+        "_evaluate_database_contract",
+        "_load_tca_summary",
+        "build_revenue_repair_digest",
+        "readyz",
+        "trading_health",
+        "trading_status",
+        "whitepaper_kafka_enabled",
+        "whitepaper_semantic_indexing_enabled",
+        "whitepaper_workflow_enabled",
+    ]
+
+    missing_attrs = [name for name in expected_attrs if not hasattr(main_module, name)]
+    assert missing_attrs == []
 
 
 def test_main_runtime_value_falls_back_to_common_default() -> None:

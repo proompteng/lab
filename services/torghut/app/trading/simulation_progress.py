@@ -26,10 +26,10 @@ from ..models.entities import (
 
 logger = logging.getLogger(__name__)
 
-COMPONENT_REPLAY = 'replay'
-COMPONENT_TA = 'ta'
-COMPONENT_TORGHUT = 'torghut'
-COMPONENT_ARTIFACTS = 'artifacts'
+COMPONENT_REPLAY = "replay"
+COMPONENT_TA = "ta"
+COMPONENT_TORGHUT = "torghut"
+COMPONENT_ARTIFACTS = "artifacts"
 SIMULATION_PROGRESS_COMPONENTS = (
     COMPONENT_REPLAY,
     COMPONENT_TA,
@@ -115,33 +115,33 @@ _PROGRESS_UPSERT = text(
 
 
 def _resolve_lane() -> str:
-    dataset_id = (settings.trading_simulation_dataset_id or '').strip().lower()
-    signal_table = (settings.trading_signal_table or '').strip().lower()
-    if 'options' in dataset_id or 'sim_options' in signal_table:
-        return 'options'
-    return 'equity'
+    dataset_id = (settings.trading_simulation_dataset_id or "").strip().lower()
+    signal_table = (settings.trading_signal_table or "").strip().lower()
+    if "options" in dataset_id or "sim_options" in signal_table:
+        return "options"
+    return "equity"
 
 
 def _resolve_account_label() -> str:
-    account_label = (settings.trading_account_label or '').strip()
-    return account_label or 'paper'
+    account_label = (settings.trading_account_label or "").strip()
+    return account_label or "paper"
 
 
 def _static_simulation_runtime_context() -> dict[str, str] | None:
     if not settings.trading_simulation_enabled:
         return None
-    run_id = (settings.trading_simulation_run_id or '').strip()
-    dataset_id = (settings.trading_simulation_dataset_id or '').strip()
-    window_start = (settings.trading_simulation_window_start or '').strip()
-    window_end = (settings.trading_simulation_window_end or '').strip()
+    run_id = (settings.trading_simulation_run_id or "").strip()
+    dataset_id = (settings.trading_simulation_dataset_id or "").strip()
+    window_start = (settings.trading_simulation_window_start or "").strip()
+    window_end = (settings.trading_simulation_window_end or "").strip()
     if not any((run_id, dataset_id, window_start, window_end)):
         return None
     payload = {
-        'run_id': run_id,
-        'dataset_id': dataset_id,
-        'lane': _resolve_lane(),
-        'window_start': window_start,
-        'window_end': window_end,
+        "run_id": run_id,
+        "dataset_id": dataset_id,
+        "lane": _resolve_lane(),
+        "window_start": window_start,
+        "window_end": window_end,
     }
     return payload
 
@@ -164,15 +164,15 @@ def _active_simulation_runtime_context_via_session(
     if row is None:
         return None
     payload = _coerce_payload_mapping(row.metadata_json)
-    window_start = row.window_start.isoformat() if row.window_start is not None else ''
-    window_end = row.window_end.isoformat() if row.window_end is not None else ''
+    window_start = row.window_start.isoformat() if row.window_start is not None else ""
+    window_end = row.window_end.isoformat() if row.window_end is not None else ""
     return {
-        'run_id': str(row.run_id).strip(),
-        'dataset_id': str(row.dataset_id or '').strip(),
-        'lane': str(row.lane).strip() or _resolve_lane(),
-        'window_start': window_start or str(payload.get('window_start') or '').strip(),
-        'window_end': window_end or str(payload.get('window_end') or '').strip(),
-        'account_label': str(row.account_label).strip() or _resolve_account_label(),
+        "run_id": str(row.run_id).strip(),
+        "dataset_id": str(row.dataset_id or "").strip(),
+        "lane": str(row.lane).strip() or _resolve_lane(),
+        "window_start": window_start or str(payload.get("window_start") or "").strip(),
+        "window_end": window_end or str(payload.get("window_end") or "").strip(),
+        "account_label": str(row.account_label).strip() or _resolve_account_label(),
     }
 
 
@@ -196,7 +196,7 @@ def active_simulation_runtime_context(
         with SessionLocal() as session:
             return _active_simulation_runtime_context_via_session(session)
     except Exception:
-        logger.exception('Failed to resolve active simulation runtime context')
+        logger.exception("Failed to resolve active simulation runtime context")
         return None
 
 
@@ -204,12 +204,12 @@ def simulation_progress_context(
     connection_or_session: Connection | Session | None = None,
 ) -> dict[str, str] | None:
     context = active_simulation_runtime_context(connection_or_session)
-    if context is None or not context.get('run_id'):
+    if context is None or not context.get("run_id"):
         return None
     return {
-        'run_id': context['run_id'],
-        'dataset_id': context['dataset_id'],
-        'lane': context['lane'],
+        "run_id": context["run_id"],
+        "dataset_id": context["dataset_id"],
+        "lane": context["lane"],
     }
 
 
@@ -221,7 +221,7 @@ def _utc_datetime(value: datetime | str | None) -> datetime | None:
         if not cleaned:
             return None
         try:
-            parsed = datetime.fromisoformat(cleaned.replace('Z', '+00:00'))
+            parsed = datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
         except ValueError:
             return None
     else:
@@ -260,37 +260,37 @@ def upsert_simulation_progress(
         return
     payload_json = dict(payload or {})
     values = {
-        'run_id': context['run_id'],
-        'component': component,
-        'dataset_id': context['dataset_id'] or None,
-        'lane': context['lane'],
-        'workflow_name': workflow_name,
-        'status': status or 'running',
-        'last_source_ts': _utc_datetime(last_source_ts),
-        'last_signal_ts': _utc_datetime(last_signal_ts),
-        'last_price_ts': _utc_datetime(last_price_ts),
-        'cursor_at': _utc_datetime(cursor_at),
-        'records_dumped': max(0, int(records_dumped)),
-        'records_replayed': max(0, int(records_replayed)),
-        'trade_decisions': max(0, int(trade_decisions)),
-        'executions': max(0, int(executions)),
-        'execution_tca_metrics': max(0, int(execution_tca_metrics)),
-        'execution_order_events': max(0, int(execution_order_events)),
-        'strategy_type': strategy_type,
-        'legacy_path_count': max(0, int(legacy_path_count)),
-        'fallback_count': max(0, int(fallback_count)),
-        'terminal_state': terminal_state,
-        'last_error_code': last_error_code,
-        'last_error_message': last_error_message,
-        'payload_json': json.dumps(payload_json, sort_keys=True),
+        "run_id": context["run_id"],
+        "component": component,
+        "dataset_id": context["dataset_id"] or None,
+        "lane": context["lane"],
+        "workflow_name": workflow_name,
+        "status": status or "running",
+        "last_source_ts": _utc_datetime(last_source_ts),
+        "last_signal_ts": _utc_datetime(last_signal_ts),
+        "last_price_ts": _utc_datetime(last_price_ts),
+        "cursor_at": _utc_datetime(cursor_at),
+        "records_dumped": max(0, int(records_dumped)),
+        "records_replayed": max(0, int(records_replayed)),
+        "trade_decisions": max(0, int(trade_decisions)),
+        "executions": max(0, int(executions)),
+        "execution_tca_metrics": max(0, int(execution_tca_metrics)),
+        "execution_order_events": max(0, int(execution_order_events)),
+        "strategy_type": strategy_type,
+        "legacy_path_count": max(0, int(legacy_path_count)),
+        "fallback_count": max(0, int(fallback_count)),
+        "terminal_state": terminal_state,
+        "last_error_code": last_error_code,
+        "last_error_message": last_error_message,
+        "payload_json": json.dumps(payload_json, sort_keys=True),
     }
     try:
-        if connection.dialect.name != 'postgresql':
+        if connection.dialect.name != "postgresql":
             _upsert_simulation_progress_fallback(
                 connection,
                 values={
                     **values,
-                    'payload_json': payload_json,
+                    "payload_json": payload_json,
                 },
             )
             return
@@ -299,7 +299,7 @@ def upsert_simulation_progress(
             values,
         )
     except Exception:
-        logger.exception('Failed to upsert simulation progress ledger')
+        logger.exception("Failed to upsert simulation progress ledger")
 
 
 def _coerce_payload_mapping(value: Any) -> dict[str, Any]:
@@ -314,48 +314,59 @@ def _upsert_simulation_progress_fallback(
     values: dict[str, Any],
 ) -> None:
     table = cast(Table, SimulationRunProgress.__table__)
-    existing = connection.execute(
-        select(table).where(
-            table.c.run_id == values['run_id'],
-            table.c.component == values['component'],
+    existing = (
+        connection.execute(
+            select(table).where(
+                table.c.run_id == values["run_id"],
+                table.c.component == values["component"],
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     if existing is None:
         connection.execute(table.insert().values(**values))
         return
 
-    existing_payload = _coerce_payload_mapping(existing.get('payload_json'))
-    existing_payload.update(_coerce_payload_mapping(values.get('payload_json')))
+    existing_payload = _coerce_payload_mapping(existing.get("payload_json"))
+    existing_payload.update(_coerce_payload_mapping(values.get("payload_json")))
     now = datetime.now(timezone.utc)
     connection.execute(
         table.update()
         .where(
-            table.c.run_id == values['run_id'],
-            table.c.component == values['component'],
+            table.c.run_id == values["run_id"],
+            table.c.component == values["component"],
         )
         .values(
-            dataset_id=values['dataset_id'] or existing.get('dataset_id'),
-            lane=values['lane'] or existing.get('lane'),
-            workflow_name=values['workflow_name'] or existing.get('workflow_name'),
-            status=values['status'] or existing.get('status'),
-            last_source_ts=values['last_source_ts'] or existing.get('last_source_ts'),
-            last_signal_ts=values['last_signal_ts'] or existing.get('last_signal_ts'),
-            last_price_ts=values['last_price_ts'] or existing.get('last_price_ts'),
-            cursor_at=values['cursor_at'] or existing.get('cursor_at'),
-            records_dumped=int(existing.get('records_dumped') or 0) + int(values['records_dumped']),
-            records_replayed=int(existing.get('records_replayed') or 0) + int(values['records_replayed']),
-            trade_decisions=int(existing.get('trade_decisions') or 0) + int(values['trade_decisions']),
-            executions=int(existing.get('executions') or 0) + int(values['executions']),
-            execution_tca_metrics=int(existing.get('execution_tca_metrics') or 0)
-            + int(values['execution_tca_metrics']),
-            execution_order_events=int(existing.get('execution_order_events') or 0)
-            + int(values['execution_order_events']),
-            strategy_type=values['strategy_type'] or existing.get('strategy_type'),
-            legacy_path_count=int(existing.get('legacy_path_count') or 0) + int(values['legacy_path_count']),
-            fallback_count=int(existing.get('fallback_count') or 0) + int(values['fallback_count']),
-            terminal_state=values['terminal_state'] or existing.get('terminal_state'),
-            last_error_code=values['last_error_code'] or existing.get('last_error_code'),
-            last_error_message=values['last_error_message'] or existing.get('last_error_message'),
+            dataset_id=values["dataset_id"] or existing.get("dataset_id"),
+            lane=values["lane"] or existing.get("lane"),
+            workflow_name=values["workflow_name"] or existing.get("workflow_name"),
+            status=values["status"] or existing.get("status"),
+            last_source_ts=values["last_source_ts"] or existing.get("last_source_ts"),
+            last_signal_ts=values["last_signal_ts"] or existing.get("last_signal_ts"),
+            last_price_ts=values["last_price_ts"] or existing.get("last_price_ts"),
+            cursor_at=values["cursor_at"] or existing.get("cursor_at"),
+            records_dumped=int(existing.get("records_dumped") or 0)
+            + int(values["records_dumped"]),
+            records_replayed=int(existing.get("records_replayed") or 0)
+            + int(values["records_replayed"]),
+            trade_decisions=int(existing.get("trade_decisions") or 0)
+            + int(values["trade_decisions"]),
+            executions=int(existing.get("executions") or 0) + int(values["executions"]),
+            execution_tca_metrics=int(existing.get("execution_tca_metrics") or 0)
+            + int(values["execution_tca_metrics"]),
+            execution_order_events=int(existing.get("execution_order_events") or 0)
+            + int(values["execution_order_events"]),
+            strategy_type=values["strategy_type"] or existing.get("strategy_type"),
+            legacy_path_count=int(existing.get("legacy_path_count") or 0)
+            + int(values["legacy_path_count"]),
+            fallback_count=int(existing.get("fallback_count") or 0)
+            + int(values["fallback_count"]),
+            terminal_state=values["terminal_state"] or existing.get("terminal_state"),
+            last_error_code=values["last_error_code"]
+            or existing.get("last_error_code"),
+            last_error_message=values["last_error_message"]
+            or existing.get("last_error_message"),
             payload_json=existing_payload,
             updated_at=now,
         )
@@ -368,12 +379,14 @@ def simulation_progress_snapshot(
     run_id: str | None = None,
 ) -> dict[str, Any]:
     context = simulation_progress_context()
-    resolved_run_id = (run_id or '').strip() or (context['run_id'] if context is not None else '')
+    resolved_run_id = (run_id or "").strip() or (
+        context["run_id"] if context is not None else ""
+    )
     if not resolved_run_id:
         return {
-            'enabled': False,
-            'run_id': None,
-            'components': {},
+            "enabled": False,
+            "run_id": None,
+            "components": {},
         }
 
     rows = (
@@ -388,115 +401,141 @@ def simulation_progress_snapshot(
     components: dict[str, dict[str, Any]] = {}
     for row in rows:
         components[row.component] = {
-            'component': row.component,
-            'dataset_id': row.dataset_id,
-            'lane': row.lane,
-            'workflow_name': row.workflow_name,
-            'status': row.status,
-            'updated_at': row.updated_at.isoformat(),
-            'last_source_ts': row.last_source_ts.isoformat() if row.last_source_ts is not None else None,
-            'last_signal_ts': row.last_signal_ts.isoformat() if row.last_signal_ts is not None else None,
-            'last_price_ts': row.last_price_ts.isoformat() if row.last_price_ts is not None else None,
-            'cursor_at': row.cursor_at.isoformat() if row.cursor_at is not None else None,
-            'records_dumped': int(row.records_dumped or 0),
-            'records_replayed': int(row.records_replayed or 0),
-            'trade_decisions': int(row.trade_decisions or 0),
-            'executions': int(row.executions or 0),
-            'execution_tca_metrics': int(row.execution_tca_metrics or 0),
-            'execution_order_events': int(row.execution_order_events or 0),
-            'strategy_type': row.strategy_type,
-            'legacy_path_count': int(row.legacy_path_count or 0),
-            'fallback_count': int(row.fallback_count or 0),
-            'terminal_state': row.terminal_state,
-            'last_error_code': row.last_error_code,
-            'last_error_message': row.last_error_message,
-            'payload': cast(dict[str, Any], row.payload_json or {}),
+            "component": row.component,
+            "dataset_id": row.dataset_id,
+            "lane": row.lane,
+            "workflow_name": row.workflow_name,
+            "status": row.status,
+            "updated_at": row.updated_at.isoformat(),
+            "last_source_ts": row.last_source_ts.isoformat()
+            if row.last_source_ts is not None
+            else None,
+            "last_signal_ts": row.last_signal_ts.isoformat()
+            if row.last_signal_ts is not None
+            else None,
+            "last_price_ts": row.last_price_ts.isoformat()
+            if row.last_price_ts is not None
+            else None,
+            "cursor_at": row.cursor_at.isoformat()
+            if row.cursor_at is not None
+            else None,
+            "records_dumped": int(row.records_dumped or 0),
+            "records_replayed": int(row.records_replayed or 0),
+            "trade_decisions": int(row.trade_decisions or 0),
+            "executions": int(row.executions or 0),
+            "execution_tca_metrics": int(row.execution_tca_metrics or 0),
+            "execution_order_events": int(row.execution_order_events or 0),
+            "strategy_type": row.strategy_type,
+            "legacy_path_count": int(row.legacy_path_count or 0),
+            "fallback_count": int(row.fallback_count or 0),
+            "terminal_state": row.terminal_state,
+            "last_error_code": row.last_error_code,
+            "last_error_message": row.last_error_message,
+            "payload": cast(dict[str, Any], row.payload_json or {}),
         }
 
     torghut = components.get(COMPONENT_TORGHUT, {})
     replay = components.get(COMPONENT_REPLAY, {})
     ta = components.get(COMPONENT_TA, {})
     artifacts = components.get(COMPONENT_ARTIFACTS, {})
-    artifacts_payload = cast(dict[str, Any], artifacts.get('payload') or {})
-    analysis_run = artifacts_payload.get('analysis_run')
-    activity_classification = artifacts_payload.get('activity_classification')
+    artifacts_payload = cast(dict[str, Any], artifacts.get("payload") or {})
+    analysis_run = artifacts_payload.get("analysis_run")
+    activity_classification = artifacts_payload.get("activity_classification")
     if activity_classification is None and isinstance(analysis_run, Mapping):
-        activity_classification = cast(dict[str, Any], analysis_run).get('activity_classification')
-    strategy_type = cast(Optional[str], torghut.get('strategy_type') or replay.get('strategy_type'))
-    statuses = {component: payload.get('status') for component, payload in components.items()}
+        activity_classification = cast(dict[str, Any], analysis_run).get(
+            "activity_classification"
+        )
+    strategy_type = cast(
+        Optional[str], torghut.get("strategy_type") or replay.get("strategy_type")
+    )
+    statuses = {
+        component: payload.get("status") for component, payload in components.items()
+    }
     return {
-        'enabled': True,
-        'run_id': resolved_run_id,
-        'dataset_id': replay.get('dataset_id') or torghut.get('dataset_id'),
-        'lane': replay.get('lane') or torghut.get('lane'),
-        'components': components,
-        'summary': {
-            'statuses': statuses,
-            'records_dumped': int(replay.get('records_dumped') or 0),
-            'records_replayed': int(replay.get('records_replayed') or 0),
-            'trade_decisions': int(torghut.get('trade_decisions') or 0),
-            'executions': int(torghut.get('executions') or 0),
-            'execution_tca_metrics': int(torghut.get('execution_tca_metrics') or 0),
-            'execution_order_events': int(torghut.get('execution_order_events') or 0),
-            'cursor_at': torghut.get('cursor_at'),
-            'last_signal_ts': torghut.get('last_signal_ts') or replay.get('last_signal_ts') or ta.get('last_signal_ts'),
-            'last_price_ts': torghut.get('last_price_ts') or replay.get('last_price_ts') or ta.get('last_price_ts'),
-            'last_source_ts': replay.get('last_source_ts') or ta.get('last_source_ts'),
-            'strategy_type': strategy_type,
-            'legacy_path_count': int(torghut.get('legacy_path_count') or 0),
-            'fallback_count': int(torghut.get('fallback_count') or 0),
-            'activity_classification': activity_classification,
-            'final_artifacts_ready': bool(artifacts.get('terminal_state') == 'complete'),
+        "enabled": True,
+        "run_id": resolved_run_id,
+        "dataset_id": replay.get("dataset_id") or torghut.get("dataset_id"),
+        "lane": replay.get("lane") or torghut.get("lane"),
+        "components": components,
+        "summary": {
+            "statuses": statuses,
+            "records_dumped": int(replay.get("records_dumped") or 0),
+            "records_replayed": int(replay.get("records_replayed") or 0),
+            "trade_decisions": int(torghut.get("trade_decisions") or 0),
+            "executions": int(torghut.get("executions") or 0),
+            "execution_tca_metrics": int(torghut.get("execution_tca_metrics") or 0),
+            "execution_order_events": int(torghut.get("execution_order_events") or 0),
+            "cursor_at": torghut.get("cursor_at"),
+            "last_signal_ts": torghut.get("last_signal_ts")
+            or replay.get("last_signal_ts")
+            or ta.get("last_signal_ts"),
+            "last_price_ts": torghut.get("last_price_ts")
+            or replay.get("last_price_ts")
+            or ta.get("last_price_ts"),
+            "last_source_ts": replay.get("last_source_ts") or ta.get("last_source_ts"),
+            "strategy_type": strategy_type,
+            "legacy_path_count": int(torghut.get("legacy_path_count") or 0),
+            "fallback_count": int(torghut.get("fallback_count") or 0),
+            "activity_classification": activity_classification,
+            "final_artifacts_ready": bool(
+                artifacts.get("terminal_state") == "complete"
+            ),
         },
     }
 
 
 def _decision_strategy_type(target: TradeDecision) -> str | None:
     raw = _coerce_payload_mapping(target.decision_json)
-    for key in ('strategy_type', 'strategyType', 'strategy_id', 'strategyId'):
+    for key in ("strategy_type", "strategyType", "strategy_id", "strategyId"):
         value = raw.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
 
 
-@event.listens_for(TradeDecision, 'after_insert')
-def _trade_decision_after_insert(_mapper: Any, connection: Connection, target: TradeDecision) -> None:
+@event.listens_for(TradeDecision, "after_insert")
+def _trade_decision_after_insert(
+    _mapper: Any, connection: Connection, target: TradeDecision
+) -> None:
     strategy_type = _decision_strategy_type(target)
-    legacy_count = 1 if (strategy_type or '').strip().lower() == 'legacy_macd_rsi' else 0
+    legacy_count = (
+        1 if (strategy_type or "").strip().lower() == "legacy_macd_rsi" else 0
+    )
     upsert_simulation_progress(
         connection,
         component=COMPONENT_TORGHUT,
-        status='running',
+        status="running",
         trade_decisions=1,
         strategy_type=strategy_type,
         legacy_path_count=legacy_count,
         payload={
-            'symbol': target.symbol,
-            'timeframe': target.timeframe,
-            'decision_status': target.status,
+            "symbol": target.symbol,
+            "timeframe": target.timeframe,
+            "decision_status": target.status,
         },
     )
 
 
-@event.listens_for(Execution, 'after_insert')
-def _execution_after_insert(_mapper: Any, connection: Connection, target: Execution) -> None:
+@event.listens_for(Execution, "after_insert")
+def _execution_after_insert(
+    _mapper: Any, connection: Connection, target: Execution
+) -> None:
     upsert_simulation_progress(
         connection,
         component=COMPONENT_TORGHUT,
-        status='running',
+        status="running",
         executions=1,
         fallback_count=int(target.execution_fallback_count or 0),
         payload={
-            'symbol': target.symbol,
-            'side': target.side,
-            'execution_actual_adapter': target.execution_actual_adapter,
-            'execution_expected_adapter': target.execution_expected_adapter,
+            "symbol": target.symbol,
+            "side": target.side,
+            "execution_actual_adapter": target.execution_actual_adapter,
+            "execution_expected_adapter": target.execution_expected_adapter,
         },
     )
 
 
-@event.listens_for(ExecutionOrderEvent, 'after_insert')
+@event.listens_for(ExecutionOrderEvent, "after_insert")
 def _execution_order_event_after_insert(
     _mapper: Any,
     connection: Connection,
@@ -505,65 +544,71 @@ def _execution_order_event_after_insert(
     upsert_simulation_progress(
         connection,
         component=COMPONENT_TORGHUT,
-        status='running',
+        status="running",
         execution_order_events=1,
         payload={
-            'event_type': target.event_type,
-            'alpaca_order_id': target.alpaca_order_id,
+            "event_type": target.event_type,
+            "alpaca_order_id": target.alpaca_order_id,
         },
     )
 
 
-@event.listens_for(ExecutionTCAMetric, 'after_insert')
-def _execution_tca_after_insert(_mapper: Any, connection: Connection, target: ExecutionTCAMetric) -> None:
+@event.listens_for(ExecutionTCAMetric, "after_insert")
+def _execution_tca_after_insert(
+    _mapper: Any, connection: Connection, target: ExecutionTCAMetric
+) -> None:
     upsert_simulation_progress(
         connection,
         component=COMPONENT_TORGHUT,
-        status='running',
+        status="running",
         execution_tca_metrics=1,
         payload={
-            'symbol': target.symbol,
-            'side': target.side,
+            "symbol": target.symbol,
+            "side": target.side,
         },
     )
 
 
 def _record_trade_cursor_progress(connection: Connection, target: TradeCursor) -> None:
-    if target.source != 'clickhouse':
+    if target.source != "clickhouse":
         return
     upsert_simulation_progress(
         connection,
         component=COMPONENT_TORGHUT,
-        status='running',
+        status="running",
         cursor_at=target.cursor_at,
         last_signal_ts=target.cursor_at,
         payload={
-            'cursor_source': target.source,
-            'cursor_seq': target.cursor_seq,
-            'cursor_symbol': target.cursor_symbol,
-            'account_label': target.account_label,
+            "cursor_source": target.source,
+            "cursor_seq": target.cursor_seq,
+            "cursor_symbol": target.cursor_symbol,
+            "account_label": target.account_label,
         },
     )
 
 
-@event.listens_for(TradeCursor, 'after_insert')
-def _trade_cursor_after_insert(_mapper: Any, connection: Connection, target: TradeCursor) -> None:
+@event.listens_for(TradeCursor, "after_insert")
+def _trade_cursor_after_insert(
+    _mapper: Any, connection: Connection, target: TradeCursor
+) -> None:
     _record_trade_cursor_progress(connection, target)
 
 
-@event.listens_for(TradeCursor, 'after_update')
-def _trade_cursor_after_update(_mapper: Any, connection: Connection, target: TradeCursor) -> None:
+@event.listens_for(TradeCursor, "after_update")
+def _trade_cursor_after_update(
+    _mapper: Any, connection: Connection, target: TradeCursor
+) -> None:
     _record_trade_cursor_progress(connection, target)
 
 
 __all__ = [
-    'COMPONENT_ARTIFACTS',
-    'COMPONENT_REPLAY',
-    'COMPONENT_TA',
-    'COMPONENT_TORGHUT',
-    'SIMULATION_PROGRESS_COMPONENTS',
-    'active_simulation_runtime_context',
-    'simulation_progress_context',
-    'simulation_progress_snapshot',
-    'upsert_simulation_progress',
+    "COMPONENT_ARTIFACTS",
+    "COMPONENT_REPLAY",
+    "COMPONENT_TA",
+    "COMPONENT_TORGHUT",
+    "SIMULATION_PROGRESS_COMPONENTS",
+    "active_simulation_runtime_context",
+    "simulation_progress_context",
+    "simulation_progress_snapshot",
+    "upsert_simulation_progress",
 ]

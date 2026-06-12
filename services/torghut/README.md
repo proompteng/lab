@@ -52,6 +52,23 @@ Optional migration-lineage controls:
 - Remove the runtime override from GitOps after merge migrations collapse the graph back to the tolerated branch count;
   keep the feature flag default disabled outside explicit rollout windows.
 
+## Pylint size and design guardrails
+
+Torghut uses Pylint for focused refactor guardrails rather than full default lint churn. CI blocks Python modules over
+`1000` lines in `app`, `scripts`, `tests`, or `migrations`. The selected design-complexity checks for runtime code in
+`app` and `scripts` still run as inventory until that broader debt surface is reduced to zero.
+
+Current rollout commands:
+
+```bash
+cd services/torghut
+uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
+uv run --frozen pylint app scripts --disable=all --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements --score=n
+```
+
+The file-length command is blocking in CI. The design-complexity command is intentionally non-blocking inventory until
+the remaining findings are refactored without broad suppressions.
+
 ## Dead-code audit (Vulture)
 
 Run Vulture from the Torghut service root so it picks up the checked-in `[tool.vulture]` config in

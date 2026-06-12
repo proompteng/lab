@@ -78,7 +78,9 @@ class StrategyConfig(BaseModel):
 
         strategy_type = (self.strategy_type or "").strip()
         if self.universe_type == "static" and strategy_type:
-            normalized_universe_type = _map_strategy_type_to_universe_type(strategy_type)
+            normalized_universe_type = _map_strategy_type_to_universe_type(
+                strategy_type
+            )
             if normalized_universe_type:
                 self.universe_type = normalized_universe_type
 
@@ -86,7 +88,9 @@ class StrategyConfig(BaseModel):
             if self.description is None:
                 self.description = f"{self.strategy_type} v{self.version}"
             elif f"{self.strategy_type}@{self.version}" not in self.description:
-                self.description = f"{self.description} ({self.strategy_type}@{self.version})"
+                self.description = (
+                    f"{self.description} ({self.strategy_type}@{self.version})"
+                )
         return self
 
 
@@ -132,8 +136,16 @@ class StrategyCatalog:
             if digest == self._last_digest:
                 return False
             catalog = _parse_catalog_payload(payload)
-        except (OSError, json.JSONDecodeError, ValidationError, ValueError, yaml.YAMLError) as exc:
-            logger.warning("Strategy catalog load failed path=%s error=%s", self.path, exc)
+        except (
+            OSError,
+            json.JSONDecodeError,
+            ValidationError,
+            ValueError,
+            yaml.YAMLError,
+        ) as exc:
+            logger.warning(
+                "Strategy catalog load failed path=%s error=%s", self.path, exc
+            )
             return False
 
         try:
@@ -195,8 +207,13 @@ def _map_strategy_type_to_universe_type(strategy_type: str) -> str:
     return strategy_type
 
 
-def _apply_catalog(session: Session, catalog: StrategyCatalogConfig, mode: Literal["merge", "sync"]) -> int:
-    existing = {strategy.name: strategy for strategy in session.execute(select(Strategy)).scalars().all()}
+def _apply_catalog(
+    session: Session, catalog: StrategyCatalogConfig, mode: Literal["merge", "sync"]
+) -> int:
+    existing = {
+        strategy.name: strategy
+        for strategy in session.execute(select(Strategy)).scalars().all()
+    }
     seen: set[str] = set()
     updated = 0
 

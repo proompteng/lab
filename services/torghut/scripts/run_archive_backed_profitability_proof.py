@@ -178,13 +178,14 @@ def run_archive_backed_profitability_proof(
                 min_sample_size=min_execution_days,
                 min_positive_day_ratio=profitable_day_ratio_target,
             )
-            artifact_refs.extend(
-                [
-                    str(path)
-                    for key, path in historical_bundle_summary.items()
-                    if key.endswith("_path") and str(path).strip()
-                ]
-            )
+            if historical_bundle_summary is not None:
+                artifact_refs.extend(
+                    [
+                        str(path)
+                        for key, path in historical_bundle_summary.items()
+                        if key.endswith("_path") and str(path).strip()
+                    ]
+                )
 
     data_sufficiency_path = output_dir / "data-sufficiency.json"
     trial_ledger_path = output_dir / "trial-ledger.json"

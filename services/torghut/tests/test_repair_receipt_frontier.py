@@ -214,8 +214,7 @@ def test_retired_market_context_profit_repair_is_not_frontier_lot() -> None:
     )
 
     assert {
-        lot["source_lot_ref"]
-        for lot in cast(list[Mapping[str, Any]], frontier["lots"])
+        lot["source_lot_ref"] for lot in cast(list[Mapping[str, Any]], frontier["lots"])
     }.isdisjoint({"profit-freshness-repair-lot:market-context"})
 
 

@@ -34,7 +34,7 @@ from app.trading.empirical_manifest import (
 )
 from app.whitepapers.workflow import CephS3Client
 
-DOC29_TRUTHFULNESS_GATE = 'promotion_truthfulness_firewall'
+DOC29_TRUTHFULNESS_GATE = "promotion_truthfulness_firewall"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -59,7 +59,11 @@ def _load_manifest(path: Path) -> dict[str, Any]:
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
-    return {str(key): item for key, item in value.items()} if isinstance(value, Mapping) else {}
+    return (
+        {str(key): item for key, item in value.items()}
+        if isinstance(value, Mapping)
+        else {}
+    )
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -86,20 +90,34 @@ def _ceph_client_from_env() -> tuple[CephS3Client | None, str]:
     endpoint = os.getenv("TORGHUT_EMPIRICAL_CEPH_ENDPOINT", "").strip()
     bucket_host = os.getenv("TORGHUT_EMPIRICAL_CEPH_BUCKET_HOST", "").strip()
     bucket_port = os.getenv("TORGHUT_EMPIRICAL_CEPH_BUCKET_PORT", "").strip()
-    access_key = os.getenv("TORGHUT_EMPIRICAL_CEPH_ACCESS_KEY", "").strip() or os.getenv(
-        "AWS_ACCESS_KEY_ID",
-        "",
-    ).strip()
-    secret_key = os.getenv("TORGHUT_EMPIRICAL_CEPH_SECRET_KEY", "").strip() or os.getenv(
-        "AWS_SECRET_ACCESS_KEY",
-        "",
-    ).strip()
-    bucket = os.getenv("TORGHUT_EMPIRICAL_CEPH_BUCKET", "").strip() or os.getenv(
-        "BUCKET_NAME",
-        "",
-    ).strip() or "torghut-empirical-artifacts"
+    access_key = (
+        os.getenv("TORGHUT_EMPIRICAL_CEPH_ACCESS_KEY", "").strip()
+        or os.getenv(
+            "AWS_ACCESS_KEY_ID",
+            "",
+        ).strip()
+    )
+    secret_key = (
+        os.getenv("TORGHUT_EMPIRICAL_CEPH_SECRET_KEY", "").strip()
+        or os.getenv(
+            "AWS_SECRET_ACCESS_KEY",
+            "",
+        ).strip()
+    )
+    bucket = (
+        os.getenv("TORGHUT_EMPIRICAL_CEPH_BUCKET", "").strip()
+        or os.getenv(
+            "BUCKET_NAME",
+            "",
+        ).strip()
+        or "torghut-empirical-artifacts"
+    )
     if not endpoint and bucket_host:
-        scheme = "https" if os.getenv("TORGHUT_EMPIRICAL_CEPH_USE_TLS", "").strip() == "true" else "http"
+        scheme = (
+            "https"
+            if os.getenv("TORGHUT_EMPIRICAL_CEPH_USE_TLS", "").strip() == "true"
+            else "http"
+        )
         endpoint = f"{scheme}://{bucket_host}"
         if bucket_port:
             endpoint = f"{endpoint}:{bucket_port}"
@@ -110,8 +128,12 @@ def _ceph_client_from_env() -> tuple[CephS3Client | None, str]:
             endpoint=endpoint,
             access_key=access_key,
             secret_key=secret_key,
-            region=os.getenv("TORGHUT_EMPIRICAL_CEPH_REGION", "us-east-1").strip() or "us-east-1",
-            timeout_seconds=max(int(os.getenv("TORGHUT_EMPIRICAL_CEPH_TIMEOUT_SECONDS", "20") or "20"), 1),
+            region=os.getenv("TORGHUT_EMPIRICAL_CEPH_REGION", "us-east-1").strip()
+            or "us-east-1",
+            timeout_seconds=max(
+                int(os.getenv("TORGHUT_EMPIRICAL_CEPH_TIMEOUT_SECONDS", "20") or "20"),
+                1,
+            ),
         ),
         bucket,
     )
@@ -133,9 +155,7 @@ def _write_artifact(
     if client is None:
         return str(path)
     key = "/".join(
-        part.strip("/")
-        for part in (prefix, relative_path)
-        if part.strip("/")
+        part.strip("/") for part in (prefix, relative_path) if part.strip("/")
     )
     result = client.put_object(
         bucket=bucket,
@@ -159,8 +179,16 @@ def _build_janus_summary(
 ) -> dict[str, object]:
     event_summary = _as_dict(event_car_payload.get("summary"))
     reward_summary = _as_dict(hgrm_reward_payload.get("summary"))
-    event_count = int(event_summary.get("event_count") or len(_as_list(event_car_payload.get("events"))) or 0)
-    reward_count = int(reward_summary.get("reward_count") or len(_as_list(hgrm_reward_payload.get("rewards"))) or 0)
+    event_count = int(
+        event_summary.get("event_count")
+        or len(_as_list(event_car_payload.get("events")))
+        or 0
+    )
+    reward_count = int(
+        reward_summary.get("reward_count")
+        or len(_as_list(hgrm_reward_payload.get("rewards")))
+        or 0
+    )
     mapped_count = int(reward_summary.get("event_mapped_count") or 0)
     event_truthful = artifact_is_truthful(event_car_payload)
     reward_truthful = artifact_is_truthful(hgrm_reward_payload)
@@ -182,18 +210,23 @@ def _build_janus_summary(
         "reasons": reasons,
         "promotion_authority_eligible": evidence_complete,
         "event_car": {
-            "schema_version": str(event_car_payload.get("schema_version") or "").strip() or "janus-event-car-v1",
+            "schema_version": str(event_car_payload.get("schema_version") or "").strip()
+            or "janus-event-car-v1",
             "event_count": event_count,
             "manifest_hash": event_car_payload.get("manifest_hash"),
             "artifact_ref": event_car_artifact_ref,
             "artifact_authority": event_car_payload.get("artifact_authority"),
         },
         "hgrm_reward": {
-            "schema_version": str(hgrm_reward_payload.get("schema_version") or "").strip()
+            "schema_version": str(
+                hgrm_reward_payload.get("schema_version") or ""
+            ).strip()
             or "janus-hgrm-reward-v1",
             "reward_count": reward_count,
             "event_mapped_count": mapped_count,
-            "direction_gate_pass_ratio": reward_summary.get("direction_gate_pass_ratio", "0"),
+            "direction_gate_pass_ratio": reward_summary.get(
+                "direction_gate_pass_ratio", "0"
+            ),
             "manifest_hash": hgrm_reward_payload.get("manifest_hash"),
             "artifact_ref": hgrm_reward_artifact_ref,
             "artifact_authority": hgrm_reward_payload.get("artifact_authority"),
@@ -230,9 +263,19 @@ def main() -> int:
     candidate_id = str(manifest.get("candidate_id") or "").strip() or None
     baseline_candidate_id = str(manifest.get("baseline_candidate_id") or "").strip()
     dataset_snapshot_ref = str(manifest.get("dataset_snapshot_ref") or "").strip()
-    runtime_version_refs = [str(item).strip() for item in _as_list(manifest.get("runtime_version_refs")) if str(item).strip()]
-    model_refs = [str(item).strip() for item in _as_list(manifest.get("model_refs")) if str(item).strip()]
-    artifact_prefix = str(manifest.get("artifact_prefix") or f"empirical/{run_id}").strip("/")
+    runtime_version_refs = [
+        str(item).strip()
+        for item in _as_list(manifest.get("runtime_version_refs"))
+        if str(item).strip()
+    ]
+    model_refs = [
+        str(item).strip()
+        for item in _as_list(manifest.get("model_refs"))
+        if str(item).strip()
+    ]
+    artifact_prefix = str(
+        manifest.get("artifact_prefix") or f"empirical/{run_id}"
+    ).strip("/")
 
     client, bucket = _ceph_client_from_env()
     summary: dict[str, object] = {
@@ -265,14 +308,19 @@ def main() -> int:
                 candidate_id=candidate_id or f"cand-{run_id}",
                 baseline_candidate_id=baseline_candidate_id or "baseline",
                 benchmark_runs=[
-                    _as_dict(item) for item in _as_list(benchmark_manifest.get("benchmark_runs"))
+                    _as_dict(item)
+                    for item in _as_list(benchmark_manifest.get("benchmark_runs"))
                 ],
                 scorecards={
                     str(name): _as_dict(payload)
-                    for name, payload in _as_dict(benchmark_manifest.get("scorecards")).items()
+                    for name, payload in _as_dict(
+                        benchmark_manifest.get("scorecards")
+                    ).items()
                     if isinstance(payload, Mapping)
                 },
-                degradation_summary=_as_dict(benchmark_manifest.get("degradation_summary")),
+                degradation_summary=_as_dict(
+                    benchmark_manifest.get("degradation_summary")
+                ),
                 dataset_snapshot_ref=dataset_snapshot_ref,
                 job_run_id=benchmark_job_run_id,
                 runtime_version_refs=runtime_version_refs,
@@ -293,13 +341,21 @@ def main() -> int:
                 job_name="benchmark parity",
                 job_type="benchmark_parity",
                 job_run_id=benchmark_job_run_id,
-                status="completed" if bool(benchmark_payload.get("promotion_authority_eligible")) else "degraded",
+                status="completed"
+                if bool(benchmark_payload.get("promotion_authority_eligible"))
+                else "degraded",
                 authority=(
                     "empirical"
-                    if bool(_as_dict(benchmark_payload.get("artifact_authority")).get("authoritative"))
+                    if bool(
+                        _as_dict(benchmark_payload.get("artifact_authority")).get(
+                            "authoritative"
+                        )
+                    )
                     else "blocked"
                 ),
-                promotion_authority_eligible=bool(benchmark_payload.get("promotion_authority_eligible")),
+                promotion_authority_eligible=bool(
+                    benchmark_payload.get("promotion_authority_eligible")
+                ),
                 dataset_snapshot_ref=dataset_snapshot_ref or None,
                 artifact_refs=[benchmark_ref],
                 payload=benchmark_payload,
@@ -321,15 +377,23 @@ def main() -> int:
             foundation_payload = build_empirical_foundation_router_parity_report(
                 candidate_id=candidate_id or f"cand-{run_id}",
                 router_policy_version=str(
-                    foundation_manifest.get("router_policy_version") or "forecast_router_policy_v1"
+                    foundation_manifest.get("router_policy_version")
+                    or "forecast_router_policy_v1"
                 ).strip(),
-                adapters=[str(item) for item in _as_list(foundation_manifest.get("adapters"))],
+                adapters=[
+                    str(item) for item in _as_list(foundation_manifest.get("adapters"))
+                ],
                 slice_metrics=_as_dict(foundation_manifest.get("slice_metrics")),
-                calibration_metrics=_as_dict(foundation_manifest.get("calibration_metrics")),
+                calibration_metrics=_as_dict(
+                    foundation_manifest.get("calibration_metrics")
+                ),
                 latency_metrics=_as_dict(foundation_manifest.get("latency_metrics")),
                 fallback_metrics=_as_dict(foundation_manifest.get("fallback_metrics")),
                 drift_metrics=_as_dict(foundation_manifest.get("drift_metrics")),
-                overall_status=str(foundation_manifest.get("overall_status") or "pass").strip() or "pass",
+                overall_status=str(
+                    foundation_manifest.get("overall_status") or "pass"
+                ).strip()
+                or "pass",
                 dataset_snapshot_ref=dataset_snapshot_ref,
                 job_run_id=foundation_job_run_id,
                 runtime_version_refs=runtime_version_refs,
@@ -350,13 +414,21 @@ def main() -> int:
                 job_name="foundation router parity",
                 job_type="foundation_router_parity",
                 job_run_id=foundation_job_run_id,
-                status="completed" if bool(foundation_payload.get("promotion_authority_eligible")) else "degraded",
+                status="completed"
+                if bool(foundation_payload.get("promotion_authority_eligible"))
+                else "degraded",
                 authority=(
                     "empirical"
-                    if bool(_as_dict(foundation_payload.get("artifact_authority")).get("authoritative"))
+                    if bool(
+                        _as_dict(foundation_payload.get("artifact_authority")).get(
+                            "authoritative"
+                        )
+                    )
                     else "blocked"
                 ),
-                promotion_authority_eligible=bool(foundation_payload.get("promotion_authority_eligible")),
+                promotion_authority_eligible=bool(
+                    foundation_payload.get("promotion_authority_eligible")
+                ),
                 dataset_snapshot_ref=dataset_snapshot_ref or None,
                 artifact_refs=[foundation_ref],
                 payload=foundation_payload,
@@ -365,7 +437,9 @@ def main() -> int:
             artifacts_summary["foundation_router_parity"] = foundation_ref
             jobs_summary["foundation_router_parity"] = {
                 "job_run_id": foundation_job_run_id,
-                "eligible": bool(foundation_payload.get("promotion_authority_eligible")),
+                "eligible": bool(
+                    foundation_payload.get("promotion_authority_eligible")
+                ),
             }
 
         janus_manifest = _as_dict(manifest.get("janus_q"))
@@ -374,12 +448,16 @@ def main() -> int:
             event_job_run_id = _job_run_id(
                 run_id,
                 "janus_event_car",
-                f"{janus_base_job_run_id}:janus_event_car" if janus_base_job_run_id else None,
+                f"{janus_base_job_run_id}:janus_event_car"
+                if janus_base_job_run_id
+                else None,
             )
             reward_job_run_id = _job_run_id(
                 run_id,
                 "janus_hgrm_reward",
-                f"{janus_base_job_run_id}:janus_hgrm_reward" if janus_base_job_run_id else None,
+                f"{janus_base_job_run_id}:janus_hgrm_reward"
+                if janus_base_job_run_id
+                else None,
             )
             summary_job_run_id = _job_run_id(
                 run_id,
@@ -450,16 +528,24 @@ def main() -> int:
                     candidate_id=candidate_id,
                     job_name=job_name,
                     job_type=job_type,
-                    job_run_id=event_job_run_id if job_type == "janus_event_car" else reward_job_run_id,
+                    job_run_id=event_job_run_id
+                    if job_type == "janus_event_car"
+                    else reward_job_run_id,
                     status="completed"
                     if bool(payload.get("promotion_authority_eligible"))
                     else "degraded",
                     authority=(
                         "empirical"
-                        if bool(_as_dict(payload.get("artifact_authority")).get("authoritative"))
+                        if bool(
+                            _as_dict(payload.get("artifact_authority")).get(
+                                "authoritative"
+                            )
+                        )
                         else "blocked"
                     ),
-                    promotion_authority_eligible=bool(payload.get("promotion_authority_eligible")),
+                    promotion_authority_eligible=bool(
+                        payload.get("promotion_authority_eligible")
+                    ),
                     dataset_snapshot_ref=dataset_snapshot_ref or None,
                     artifact_refs=[artifact_ref, summary_ref],
                     payload=payload,
@@ -512,11 +598,17 @@ def main() -> int:
         )
         blocked_reasons: dict[str, str] = {}
         if not manifest_gate_satisfied:
-            blocked_reasons[DOC29_EMPIRICAL_MANIFEST_GATE] = "manifest_missing_run_or_dataset_lineage"
+            blocked_reasons[DOC29_EMPIRICAL_MANIFEST_GATE] = (
+                "manifest_missing_run_or_dataset_lineage"
+            )
         if not empirical_jobs_satisfied:
-            blocked_reasons[DOC29_EMPIRICAL_JOBS_GATE] = "required_empirical_jobs_missing_or_ineligible"
+            blocked_reasons[DOC29_EMPIRICAL_JOBS_GATE] = (
+                "required_empirical_jobs_missing_or_ineligible"
+            )
         if not truthfulness_satisfied:
-            blocked_reasons[DOC29_TRUTHFULNESS_GATE] = "empirical_artifacts_not_truthful"
+            blocked_reasons[DOC29_TRUTHFULNESS_GATE] = (
+                "empirical_artifacts_not_truthful"
+            )
         summary_path = output_dir / "empirical-job-summary.json"
         summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         completion_trace = build_completion_trace(
@@ -529,7 +621,8 @@ def main() -> int:
             run_id=run_id,
             dataset_snapshot_ref=dataset_snapshot_ref or None,
             candidate_id=candidate_id,
-            workflow_name=_as_text(os.getenv("ARGO_WORKFLOW_NAME")) or "torghut-empirical-promotion",
+            workflow_name=_as_text(os.getenv("ARGO_WORKFLOW_NAME"))
+            or "torghut-empirical-promotion",
             analysis_run_names=[],
             artifact_refs=[
                 str(item)
@@ -546,20 +639,28 @@ def main() -> int:
             },
             result_by_gate={
                 DOC29_TRUTHFULNESS_GATE: {
-                    "status": TRACE_STATUS_SATISFIED if truthfulness_satisfied else TRACE_STATUS_BLOCKED,
+                    "status": TRACE_STATUS_SATISFIED
+                    if truthfulness_satisfied
+                    else TRACE_STATUS_BLOCKED,
                     "blocked_reason": blocked_reasons.get(DOC29_TRUTHFULNESS_GATE),
                     "artifact_ref": str(output_dir / "empirical-job-summary.json"),
                     "acceptance_snapshot": {
-                        "benchmark_parity_truthful": artifact_is_truthful(benchmark_payload)
+                        "benchmark_parity_truthful": artifact_is_truthful(
+                            benchmark_payload
+                        )
                         if benchmark_manifest
                         else False,
-                        "foundation_router_truthful": artifact_is_truthful(foundation_payload)
+                        "foundation_router_truthful": artifact_is_truthful(
+                            foundation_payload
+                        )
                         if foundation_manifest
                         else False,
                         "janus_event_car_truthful": artifact_is_truthful(event_payload)
                         if janus_manifest
                         else False,
-                        "janus_hgrm_reward_truthful": artifact_is_truthful(reward_payload)
+                        "janus_hgrm_reward_truthful": artifact_is_truthful(
+                            reward_payload
+                        )
                         if janus_manifest
                         else False,
                         "janus_summary_truthful": artifact_is_truthful(summary_payload)
@@ -568,8 +669,12 @@ def main() -> int:
                     },
                 },
                 DOC29_EMPIRICAL_MANIFEST_GATE: {
-                    "status": TRACE_STATUS_SATISFIED if manifest_gate_satisfied else TRACE_STATUS_BLOCKED,
-                    "blocked_reason": blocked_reasons.get(DOC29_EMPIRICAL_MANIFEST_GATE),
+                    "status": TRACE_STATUS_SATISFIED
+                    if manifest_gate_satisfied
+                    else TRACE_STATUS_BLOCKED,
+                    "blocked_reason": blocked_reasons.get(
+                        DOC29_EMPIRICAL_MANIFEST_GATE
+                    ),
                     "artifact_ref": str(output_dir / "empirical-job-summary.json"),
                     "acceptance_snapshot": {
                         "run_id_present": bool(run_id),
@@ -577,7 +682,9 @@ def main() -> int:
                     },
                 },
                 DOC29_EMPIRICAL_JOBS_GATE: {
-                    "status": TRACE_STATUS_SATISFIED if empirical_jobs_satisfied else TRACE_STATUS_BLOCKED,
+                    "status": TRACE_STATUS_SATISFIED
+                    if empirical_jobs_satisfied
+                    else TRACE_STATUS_BLOCKED,
                     "blocked_reason": blocked_reasons.get(DOC29_EMPIRICAL_JOBS_GATE),
                     "artifact_ref": str(output_dir / "empirical-job-summary.json"),
                     "acceptance_snapshot": {
@@ -589,7 +696,9 @@ def main() -> int:
             blocked_reasons=blocked_reasons,
         )
         completion_trace_path = output_dir / "completion-trace.json"
-        completion_trace_path.write_text(json.dumps(completion_trace, indent=2), encoding="utf-8")
+        completion_trace_path.write_text(
+            json.dumps(completion_trace, indent=2), encoding="utf-8"
+        )
         gate_row_ids = persist_completion_trace(
             session=session,
             trace_payload=completion_trace,
@@ -599,7 +708,9 @@ def main() -> int:
             "empirical_job_row_ids": job_row_ids,
             "completion_gate_row_ids": gate_row_ids,
         }
-        completion_trace_path.write_text(json.dumps(completion_trace, indent=2), encoding="utf-8")
+        completion_trace_path.write_text(
+            json.dumps(completion_trace, indent=2), encoding="utf-8"
+        )
         session.commit()
 
     if args.json:

@@ -19,7 +19,9 @@ class PerformanceSummary:
     days: int
 
 
-def summarize_equity_curve(equity: pd.Series, *, periods_per_year: int = 252) -> PerformanceSummary:
+def summarize_equity_curve(
+    equity: pd.Series, *, periods_per_year: int = 252
+) -> PerformanceSummary:
     """Summarize an equity curve (indexed by datetime)."""
 
     if equity.empty:

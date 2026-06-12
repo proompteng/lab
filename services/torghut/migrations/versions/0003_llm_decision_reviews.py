@@ -26,7 +26,9 @@ def upgrade() -> None:
     if not inspector.has_table("llm_decision_reviews"):
         op.create_table(
             "llm_decision_reviews",
-            sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+            sa.Column(
+                "id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False
+            ),
             sa.Column(
                 "trade_decision_id",
                 postgresql.UUID(as_uuid=True),
@@ -45,10 +47,17 @@ def upgrade() -> None:
             sa.Column("risk_flags", postgresql.JSONB(), nullable=True),
             sa.Column("tokens_prompt", sa.Integer(), nullable=True),
             sa.Column("tokens_completion", sa.Integer(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("now()"),
+                nullable=False,
+            ),
         )
 
-    review_indexes = {index["name"] for index in inspector.get_indexes("llm_decision_reviews")}
+    review_indexes = {
+        index["name"] for index in inspector.get_indexes("llm_decision_reviews")
+    }
     if "ix_llm_decision_reviews_trade_decision_id" not in review_indexes:
         op.create_index(
             "ix_llm_decision_reviews_trade_decision_id",
@@ -70,7 +79,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_llm_decision_reviews_created_at", table_name="llm_decision_reviews")
+    op.drop_index(
+        "ix_llm_decision_reviews_created_at", table_name="llm_decision_reviews"
+    )
     op.drop_index("ix_llm_decision_reviews_verdict", table_name="llm_decision_reviews")
-    op.drop_index("ix_llm_decision_reviews_trade_decision_id", table_name="llm_decision_reviews")
+    op.drop_index(
+        "ix_llm_decision_reviews_trade_decision_id", table_name="llm_decision_reviews"
+    )
     op.drop_table("llm_decision_reviews")

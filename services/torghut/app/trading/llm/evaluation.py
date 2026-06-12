@@ -17,7 +17,9 @@ DEFAULT_TIMEZONE = "America/New_York"
 TOP_RISK_FLAGS_LIMIT = 5
 
 
-def build_llm_evaluation_metrics(session: Session, now: datetime | None = None) -> dict[str, object]:
+def build_llm_evaluation_metrics(
+    session: Session, now: datetime | None = None
+) -> dict[str, object]:
     start_local, end_local, start_utc, end_utc = _resolve_today_window(now)
     metrics = _query_llm_metrics(session, start_utc, end_utc)
     return {
@@ -33,7 +35,9 @@ def build_llm_evaluation_metrics(session: Session, now: datetime | None = None) 
     }
 
 
-def _resolve_today_window(now: datetime | None) -> tuple[datetime, datetime, datetime, datetime]:
+def _resolve_today_window(
+    now: datetime | None,
+) -> tuple[datetime, datetime, datetime, datetime]:
     tz = ZoneInfo(DEFAULT_TIMEZONE)
     if now is None:
         now_local = datetime.now(tz)
@@ -48,7 +52,9 @@ def _resolve_today_window(now: datetime | None) -> tuple[datetime, datetime, dat
     return start_local, end_local, start_utc, end_utc
 
 
-def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime) -> dict[str, object]:
+def _query_llm_metrics(
+    session: Session, start_utc: datetime, end_utc: datetime
+) -> dict[str, object]:
     filter_clause = [
         TradeDecision.created_at >= start_utc,
         TradeDecision.created_at < end_utc,
@@ -56,7 +62,9 @@ def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime)
     total_reviews = _as_int(
         session.execute(
             select(func.count(LLMDecisionReview.id))
-            .join(TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id)
+            .join(
+                TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id
+            )
             .where(*filter_clause)
         ).scalar_one()
     )
@@ -91,14 +99,18 @@ def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime)
     tokens_prompt = _as_int(
         session.execute(
             select(func.coalesce(func.sum(LLMDecisionReview.tokens_prompt), 0))
-            .join(TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id)
+            .join(
+                TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id
+            )
             .where(*filter_clause)
         ).scalar_one()
     )
     tokens_completion = _as_int(
         session.execute(
             select(func.coalesce(func.sum(LLMDecisionReview.tokens_completion), 0))
-            .join(TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id)
+            .join(
+                TradeDecision, TradeDecision.id == LLMDecisionReview.trade_decision_id
+            )
             .where(*filter_clause)
         ).scalar_one()
     )
@@ -114,7 +126,9 @@ def _query_llm_metrics(session: Session, start_utc: datetime, end_utc: datetime)
             counter[flag] += 1
     top_risk_flags = [
         {"flag": flag, "count": count}
-        for flag, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:TOP_RISK_FLAGS_LIMIT]
+        for flag, count in sorted(
+            counter.items(), key=lambda item: (-item[1], item[0])
+        )[:TOP_RISK_FLAGS_LIMIT]
     ]
 
     calibration_quality = _compute_calibration_quality(
@@ -199,7 +213,9 @@ def _compute_calibration_quality(
 
     return {
         "mean_confidence_gap": (
-            confidence_gap_total / confidence_gap_count if confidence_gap_count else None
+            confidence_gap_total / confidence_gap_count
+            if confidence_gap_count
+            else None
         ),
         "mean_uncertainty_alignment_error": (
             uncertainty_alignment_total / uncertainty_alignment_count
@@ -209,9 +225,7 @@ def _compute_calibration_quality(
         "mean_calibration_quality_score": (
             quality_score_total / quality_score_count if quality_score_count else None
         ),
-        "high_uncertainty_rate": (
-            high_uncertainty_count / len(rows) if rows else 0.0
-        ),
+        "high_uncertainty_rate": (high_uncertainty_count / len(rows) if rows else 0.0),
         "samples": len(rows),
     }
 
@@ -233,7 +247,10 @@ def _compute_decision_contribution(
     for (response_raw,) in response_rows:
         response = _as_mapping(response_raw)
         policy_override = str(response.get("policy_override") or "")
-        if "_fallback_" in policy_override or response.get("fallback") in {"veto", "pass_through"}:
+        if "_fallback_" in policy_override or response.get("fallback") in {
+            "veto",
+            "pass_through",
+        }:
             fallback_total += 1
         if isinstance(response.get("deterministic_guardrails"), list):
             deterministic_guardrail_total += 1
@@ -276,7 +293,11 @@ def _normalize_risk_flags(value: object) -> list[str]:
                 flags.append(flag)
         return flags
     if isinstance(value, dict):
-        return [str(key).strip() for key in cast(dict[Any, Any], value).keys() if str(key).strip()]
+        return [
+            str(key).strip()
+            for key in cast(dict[Any, Any], value).keys()
+            if str(key).strip()
+        ]
     return [str(value)]
 
 

@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from tests.hypothesis_profiles import default_profile_name, load_default_hypothesis_profile
+from tests.hypothesis_profiles import (
+    default_profile_name,
+    load_default_hypothesis_profile,
+)
 
 _ACTIVE_HYPOTHESIS_PROFILE = load_default_hypothesis_profile()
 
@@ -19,7 +22,9 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001, ARG001
     # active and standard streams are already closed. Run the cleanup explicitly here so
     # atexit exits cleanly without creating a fresh loop.
     try:
-        from litellm.llms.custom_httpx.async_client_cleanup import close_litellm_async_clients
+        from litellm.llms.custom_httpx.async_client_cleanup import (
+            close_litellm_async_clients,
+        )
     except Exception:
         return
 
@@ -38,4 +43,6 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001, ARG001
 
 
 def pytest_report_header() -> list[str]:
-    return [f'torghut hypothesis profile: {_ACTIVE_HYPOTHESIS_PROFILE or default_profile_name()}']
+    return [
+        f"torghut hypothesis profile: {_ACTIVE_HYPOTHESIS_PROFILE or default_profile_name()}"
+    ]

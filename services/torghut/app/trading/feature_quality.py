@@ -254,18 +254,18 @@ def _quality_identity_key(
     signal: SignalEnvelope,
 ) -> tuple[datetime, str, str, int, str, str]:
     payload = signal.payload or {}
-    declared_schema = payload.get('feature_schema_version')
+    declared_schema = payload.get("feature_schema_version")
     schema_version = (
         str(declared_schema).strip()
-        if declared_schema not in (None, '')
+        if declared_schema not in (None, "")
         else FEATURE_SCHEMA_VERSION_V3
     )
     return (
         signal.event_ts,
         signal.symbol,
-        signal.timeframe or '1Min',
+        signal.timeframe or "1Min",
         signal.seq or 0,
-        signal.source or 'unknown',
+        signal.source or "unknown",
         schema_version,
     )
 

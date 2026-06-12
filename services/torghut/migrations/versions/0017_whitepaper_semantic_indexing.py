@@ -40,11 +40,26 @@ def upgrade() -> None:
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("content_sha256", sa.String(length=64), nullable=False),
         sa.Column("token_count", sa.BigInteger(), nullable=True),
-        sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
         sa.Column("text_tsvector", postgresql.TSVECTOR(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint("source_scope IN ('full_text', 'synthesis')", name="ck_wp_semantic_chunks_source_scope"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.CheckConstraint(
+            "source_scope IN ('full_text', 'synthesis')",
+            name="ck_wp_semantic_chunks_source_scope",
+        ),
         sa.ForeignKeyConstraint(
             ["analysis_run_id"],
             ["whitepaper_analysis_runs.id"],
@@ -120,7 +135,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_whitepaper_semantic_embeddings_embedding_ivfflat")
+    op.execute(
+        "DROP INDEX IF EXISTS ix_whitepaper_semantic_embeddings_embedding_ivfflat"
+    )
     op.drop_index(
         "ix_whitepaper_semantic_embeddings_model_dimension",
         table_name="whitepaper_semantic_embeddings",

@@ -14,7 +14,11 @@ from app.trading.quantity_rules import (
     quantize_qty_for_symbol,
     resolve_quantity_resolution,
 )
-from tests.strategies.trading import position_quantities, positive_quantities, trading_symbols
+from tests.strategies.trading import (
+    position_quantities,
+    positive_quantities,
+    trading_symbols,
+)
 
 pytestmark = pytest.mark.property
 
@@ -22,8 +26,8 @@ pytestmark = pytest.mark.property
 @given(
     symbol=trading_symbols(include_crypto=True),
     qty=st.decimals(
-        min_value=Decimal('0'),
-        max_value=Decimal('1000'),
+        min_value=Decimal("0"),
+        max_value=Decimal("1000"),
         allow_nan=False,
         allow_infinity=False,
         places=8,
@@ -52,8 +56,8 @@ def test_quantize_qty_for_symbol_is_idempotent(
 @given(
     symbol=trading_symbols(include_crypto=True),
     qty=st.decimals(
-        min_value=Decimal('0'),
-        max_value=Decimal('1000'),
+        min_value=Decimal("0"),
+        max_value=Decimal("1000"),
         allow_nan=False,
         allow_infinity=False,
         places=8,
@@ -102,8 +106,8 @@ def test_short_increasing_sell_never_becomes_fractional(
     assume(position_qty <= 0 or requested_qty > position_qty)
 
     resolution = resolve_quantity_resolution(
-        'AAPL',
-        action='sell',
+        "AAPL",
+        action="sell",
         global_enabled=True,
         allow_shorts=allow_shorts,
         position_qty=position_qty,
@@ -112,7 +116,7 @@ def test_short_increasing_sell_never_becomes_fractional(
 
     assert resolution.short_increasing is True
     assert resolution.fractional_allowed is False
-    assert resolution.qty_step == Decimal('1')
+    assert resolution.qty_step == Decimal("1")
 
 
 @given(position_qty=positive_quantities(), requested_qty=positive_quantities())
@@ -123,8 +127,8 @@ def test_reducing_long_sell_keeps_fractional_behavior(
     assume(requested_qty <= position_qty)
 
     resolution = resolve_quantity_resolution(
-        'AAPL',
-        action='sell',
+        "AAPL",
+        action="sell",
         global_enabled=True,
         allow_shorts=False,
         position_qty=position_qty,
@@ -134,7 +138,7 @@ def test_reducing_long_sell_keeps_fractional_behavior(
     assert resolution.short_increasing is False
     assert resolution.fractional_allowed is True
     assert fractional_equities_enabled_for_trade(
-        action='sell',
+        action="sell",
         global_enabled=True,
         allow_shorts=False,
         position_qty=position_qty,

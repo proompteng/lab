@@ -27,7 +27,9 @@ class DailyBars:
         return self.df["close"]
 
 
-def fetch_stooq_daily(symbol: str, *, start: Optional[date] = None, end: Optional[date] = None) -> DailyBars:
+def fetch_stooq_daily(
+    symbol: str, *, start: Optional[date] = None, end: Optional[date] = None
+) -> DailyBars:
     """Fetch daily OHLCV bars from Stooq.
 
     Stooq symbols are typically lowercase and region qualified, e.g.:
@@ -39,26 +41,26 @@ def fetch_stooq_daily(symbol: str, *, start: Optional[date] = None, end: Optiona
     if not cleaned:
         raise ValueError("symbol is required")
 
-    query = urlencode({'s': cleaned, 'i': 'd'})
-    url = f'https://stooq.com/q/d/l/?{query}'
+    query = urlencode({"s": cleaned, "i": "d"})
+    url = f"https://stooq.com/q/d/l/?{query}"
     parsed = urlsplit(url)
     scheme = parsed.scheme.lower()
-    if scheme not in {'http', 'https'}:
+    if scheme not in {"http", "https"}:
         raise ValueError(f"unsupported Stooq URL scheme: {scheme or 'missing'}")
     if not parsed.hostname:
-        raise ValueError('invalid Stooq URL host')
+        raise ValueError("invalid Stooq URL host")
 
-    path = parsed.path or '/'
+    path = parsed.path or "/"
     if parsed.query:
-        path = f'{path}?{parsed.query}'
-    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+        path = f"{path}?{parsed.query}"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
     connection = connection_class(parsed.hostname, parsed.port, timeout=30)
     try:
-        connection.request('GET', path, headers={'accept': 'text/csv'})
+        connection.request("GET", path, headers={"accept": "text/csv"})
         response = connection.getresponse()
         if response.status < 200 or response.status >= 300:
-            raise ValueError(f'stooq request failed with status={response.status}')
-        raw = response.read().decode('utf-8')
+            raise ValueError(f"stooq request failed with status={response.status}")
+        raw = response.read().decode("utf-8")
     finally:
         connection.close()
 
@@ -83,7 +85,9 @@ def fetch_stooq_daily(symbol: str, *, start: Optional[date] = None, end: Optiona
         }
     )
 
-    keep = [c for c in ["date", "open", "high", "low", "close", "volume"] if c in df.columns]
+    keep = [
+        c for c in ["date", "open", "high", "low", "close", "volume"] if c in df.columns
+    ]
     df = df[keep].sort_values("date").dropna(subset=["date", "close"])
 
     if start is not None:

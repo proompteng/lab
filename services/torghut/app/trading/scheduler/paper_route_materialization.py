@@ -4,37 +4,37 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal, cast
-from uuid import UUID
 
-from sqlalchemy import select  # pyright: ignore[reportUnknownVariableType]
 from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import (
     Strategy,
     TradeDecision,
-    coerce_json_payload,
 )
 from ..models import StrategyDecision
 from ..runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
 )
+from .paper_route_materialization_processing import (
+    SimplePipelinePaperRouteMaterializationProcessingMixin,
+)
 from .target_plan_helpers import (
     _bounded_sim_collection_blockers,
-    _bounded_sim_collection_metadata_from_decision,
     _bounded_sim_collection_target_with_runtime_account_audit,
     _merge_paper_route_probe_lineage,
     _optional_decimal,
     _paper_route_probe_lineage_from_params,
     _parse_target_datetime,
-    _safe_int,
     _safe_text,
     _target_plan_lineage,
     _target_probe_action,
     _target_probe_cap,
+    _TargetProbeQuantityResolution,
     _target_probe_symbol_actions,
     _target_probe_symbol_quantities,
     _target_probe_window,
@@ -46,7 +46,67 @@ from .target_plan_helpers import (
 logger = logging.getLogger(__name__)
 
 
-class SimplePipelinePaperRouteMaterializationMixin:
+@dataclass(frozen=True)
+class _MaterializedDecisionBuild:
+    target_symbols: list[str]
+    symbol_quantities: Mapping[str, Decimal]
+    metadata: dict[str, Any]
+    execution_metadata: Mapping[str, Any]
+    simple_lane: dict[str, Any]
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _MaterializedPaperRouteCandidate:
+    payload: Mapping[str, Any]
+    target: Mapping[str, Any]
+    strategy: Strategy
+    symbol: str
+    action: Literal["buy", "sell"]
+    window_start: datetime
+    window_end: datetime
+    target_cap: Decimal
+
+
+@dataclass(frozen=True)
+class _MaterializedCandidateContext:
+    session: Session
+    strategies: Sequence[Strategy]
+    positions: Sequence[Mapping[str, Any]]
+    now: datetime
+
+
+@dataclass(frozen=True)
+class _MaterializedWindowCap:
+    window_start: datetime
+    window_end: datetime
+    target_cap: Decimal
+
+
+@dataclass(frozen=True)
+class _MaterializedPlanningContext:
+    session: Session
+    strategies: Sequence[Strategy]
+    positions: Sequence[Mapping[str, Any]]
+    flat_check_positions: Sequence[Mapping[str, Any]]
+    now: datetime
+
+
+@dataclass(frozen=True)
+class _MaterializedPlanningResult:
+    candidate: _MaterializedPaperRouteCandidate | None
+    expired: bool = False
+
+
+@dataclass(frozen=True)
+class _MaterializedPlanningWindowResult:
+    window_cap: _MaterializedWindowCap | None
+    expired: bool = False
+
+
+class SimplePipelinePaperRouteMaterializationMixin(
+    SimplePipelinePaperRouteMaterializationProcessingMixin,
+):
     @staticmethod
     def _paper_route_materialized_source_payload(
         decision_row: TradeDecision,
@@ -168,11 +228,10 @@ class SimplePipelinePaperRouteMaterializationMixin:
             }
         return target
 
-    def _paper_route_materialized_decision_with_execution_metadata(
+    def _paper_route_materialized_metadata(
         self,
         *,
         decision_row: TradeDecision,
-        payload: Mapping[str, Any],
         target: Mapping[str, Any],
         strategy: Strategy,
         symbol: str,
@@ -180,8 +239,7 @@ class SimplePipelinePaperRouteMaterializationMixin:
         window_start: datetime,
         window_end: datetime,
         max_notional: Decimal,
-        now: datetime,
-    ) -> StrategyDecision | None:
+    ) -> tuple[list[str], Mapping[str, Decimal], dict[str, Any], Mapping[str, Any]]:
         target_symbols = sorted(_target_symbols(target))
         symbol_quantities = _target_probe_symbol_quantities(target, target_symbols)
         metadata = self._paper_route_target_source_decision_metadata(
@@ -217,14 +275,27 @@ class SimplePipelinePaperRouteMaterializationMixin:
             account_label=self.account_label,
             max_notional=max_notional,
         )
-        source_decision_mode = BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
-        metadata["source_decision_mode"] = source_decision_mode
+        metadata["source_decision_mode"] = (
+            BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+        )
         metadata["profit_proof_eligible"] = True
         metadata["bounded_paper_route_submit_path"] = execution_metadata["submit_path"]
         metadata["bounded_paper_route_execution_policy"] = execution_metadata[
             "execution_policy"
         ]
+        return target_symbols, symbol_quantities, metadata, execution_metadata
 
+    @staticmethod
+    def _paper_route_materialized_simple_lane(
+        *,
+        metadata: Mapping[str, Any],
+        execution_metadata: Mapping[str, Any],
+        symbol_quantities: Mapping[str, Decimal],
+        action: Literal["buy", "sell"],
+        window_start: datetime,
+        window_end: datetime,
+        max_notional: Decimal,
+    ) -> dict[str, Any]:
         simple_lane = {
             "source": "paper_route_target_plan_materializer",
             "target_plan_source_decision": True,
@@ -246,7 +317,18 @@ class SimplePipelinePaperRouteMaterializationMixin:
                 item_symbol: str(quantity)
                 for item_symbol, quantity in symbol_quantities.items()
             }
+        return simple_lane
 
+    @staticmethod
+    def _paper_route_materialized_params(
+        *,
+        decision_row: TradeDecision,
+        target: Mapping[str, Any],
+        metadata: Mapping[str, Any],
+        execution_metadata: Mapping[str, Any],
+        simple_lane: Mapping[str, Any],
+        symbol: str,
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "paper_route_target_plan_materialized": True,
             "paper_route_materialized_trade_decision_id": str(decision_row.id),
@@ -254,7 +336,7 @@ class SimplePipelinePaperRouteMaterializationMixin:
             "paper_route_target_plan": metadata,
             "paper_route_target_plan_source_decision": metadata,
             "simple_lane": simple_lane,
-            "source_decision_mode": source_decision_mode,
+            "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
             "profit_proof_eligible": True,
             "hypothesis_id": metadata.get("hypothesis_id"),
             "candidate_id": metadata.get("candidate_id"),
@@ -292,87 +374,228 @@ class SimplePipelinePaperRouteMaterializationMixin:
             params,
             _paper_route_probe_lineage_from_params(params),
         )
+        return params
 
-        event_ts = _parse_target_datetime(payload.get("event_ts"))
-        if event_ts is None:
-            raw_created_at = decision_row.created_at
-            event_ts = (
-                raw_created_at
-                if raw_created_at.tzinfo is not None
-                else raw_created_at.replace(tzinfo=timezone.utc)
+    def _paper_route_materialized_build(
+        self,
+        *,
+        decision_row: TradeDecision,
+        target: Mapping[str, Any],
+        strategy: Strategy,
+        symbol: str,
+        action: Literal["buy", "sell"],
+        window_start: datetime,
+        window_end: datetime,
+        max_notional: Decimal,
+    ) -> _MaterializedDecisionBuild:
+        target_symbols, symbol_quantities, metadata, execution_metadata = (
+            self._paper_route_materialized_metadata(
+                decision_row=decision_row,
+                target=target,
+                strategy=strategy,
+                symbol=symbol,
+                action=action,
+                window_start=window_start,
+                window_end=window_end,
+                max_notional=max_notional,
             )
-        event_ts = event_ts.astimezone(timezone.utc)
-        timeframe = (
-            _safe_text(payload.get("timeframe")) or strategy.base_timeframe or "1Min"
         )
+        simple_lane = self._paper_route_materialized_simple_lane(
+            metadata=metadata,
+            execution_metadata=execution_metadata,
+            symbol_quantities=symbol_quantities,
+            action=action,
+            window_start=window_start,
+            window_end=window_end,
+            max_notional=max_notional,
+        )
+        params = self._paper_route_materialized_params(
+            decision_row=decision_row,
+            target=target,
+            metadata=metadata,
+            execution_metadata=execution_metadata,
+            simple_lane=simple_lane,
+            symbol=symbol,
+        )
+        return _MaterializedDecisionBuild(
+            target_symbols=target_symbols,
+            symbol_quantities=symbol_quantities,
+            metadata=metadata,
+            execution_metadata=execution_metadata,
+            simple_lane=simple_lane,
+            params=params,
+        )
+
+    @staticmethod
+    def _paper_route_materialized_event_ts(
+        *,
+        decision_row: TradeDecision,
+        payload: Mapping[str, Any],
+    ) -> datetime:
+        event_ts = _parse_target_datetime(payload.get("event_ts"))
+        if event_ts is not None:
+            return event_ts.astimezone(timezone.utc)
+        raw_created_at = decision_row.created_at
+        if raw_created_at.tzinfo is not None:
+            return raw_created_at.astimezone(timezone.utc)
+        return raw_created_at.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _paper_route_materialized_timeframe(
+        *,
+        payload: Mapping[str, Any],
+        strategy: Strategy,
+    ) -> str:
+        return _safe_text(payload.get("timeframe")) or strategy.base_timeframe or "1Min"
+
+    @staticmethod
+    def _paper_route_materialized_order_type(
+        payload: Mapping[str, Any],
+    ) -> Literal["market", "limit", "stop", "stop_limit"]:
+        order_type_text = _safe_text(payload.get("order_type")) or "market"
+        if order_type_text in {"market", "limit", "stop", "stop_limit"}:
+            return cast(
+                Literal["market", "limit", "stop", "stop_limit"],
+                order_type_text,
+            )
+        return "market"
+
+    @staticmethod
+    def _paper_route_materialized_time_in_force(
+        payload: Mapping[str, Any],
+    ) -> Literal["day", "gtc", "ioc", "fok"]:
+        time_in_force_text = _safe_text(payload.get("time_in_force")) or "day"
+        if time_in_force_text in {"day", "gtc", "ioc", "fok"}:
+            return cast(Literal["day", "gtc", "ioc", "fok"], time_in_force_text)
+        return "day"
+
+    def _paper_route_materialized_quantity_resolution(
+        self,
+        *,
+        decision_row: TradeDecision,
+        payload: Mapping[str, Any],
+        target: Mapping[str, Any],
+        symbol: str,
+        action: Literal["buy", "sell"],
+        max_notional: Decimal,
+        event_ts: datetime,
+        timeframe: str,
+        build: _MaterializedDecisionBuild,
+    ) -> _TargetProbeQuantityResolution | None:
         payload_qty = _optional_decimal(payload.get("qty"))
         if payload_qty is not None and payload_qty <= 0:
             return None
-        requested_qty = payload_qty or symbol_quantities.get(symbol) or Decimal("1")
+        requested_qty = (
+            payload_qty or build.symbol_quantities.get(symbol) or Decimal("1")
+        )
         quantity_resolution = self._paper_route_target_quantity_resolution(
             target=target,
             symbol=symbol,
-            symbols=target_symbols,
+            symbols=build.target_symbols,
             action=action,
             requested_qty=requested_qty,
-            symbol_quantities=symbol_quantities,
+            symbol_quantities=build.symbol_quantities,
             max_notional=max_notional,
             event_ts=event_ts,
             timeframe=timeframe,
         )
         if quantity_resolution is None:
             return None
-        if quantity_resolution.audit.get("sizing_source") != "target_notional":
-            blockers = quantity_resolution.audit.get("blockers")
-            blocker_items = (
-                cast(list[object], blockers) if isinstance(blockers, list) else []
-            )
-            blocker_text = ",".join(str(item) for item in blocker_items)
-            logger.warning(
-                "Skipping materialized paper-route target source decision because "
-                "target-notional sizing is not authoritative decision_id=%s "
-                "symbol=%s blockers=%s",
-                decision_row.id,
-                symbol,
-                blocker_text,
-            )
-            return None
-        qty = quantity_resolution.qty
-        metadata["paper_route_target_notional_sizing"] = quantity_resolution.audit
-        simple_lane["paper_route_target_notional_sizing"] = quantity_resolution.audit
-        simple_lane["target_source_notional_sized"] = (
+        if quantity_resolution.audit.get("sizing_source") == "target_notional":
+            return quantity_resolution
+
+        blockers = quantity_resolution.audit.get("blockers")
+        blocker_items = (
+            cast(list[object], blockers) if isinstance(blockers, list) else []
+        )
+        logger.warning(
+            "Skipping materialized paper-route target source decision because "
+            "target-notional sizing is not authoritative decision_id=%s "
+            "symbol=%s blockers=%s",
+            decision_row.id,
+            symbol,
+            ",".join(str(item) for item in blocker_items),
+        )
+        return None
+
+    @staticmethod
+    def _apply_materialized_quantity_resolution(
+        *,
+        build: _MaterializedDecisionBuild,
+        quantity_resolution: _TargetProbeQuantityResolution,
+    ) -> None:
+        build.metadata["paper_route_target_notional_sizing"] = quantity_resolution.audit
+        build.simple_lane["paper_route_target_notional_sizing"] = (
+            quantity_resolution.audit
+        )
+        build.simple_lane["target_source_notional_sized"] = (
             quantity_resolution.audit.get("sizing_source") == "target_notional"
         )
-        params["paper_route_target_notional_sizing"] = quantity_resolution.audit
-        params.update(quantity_resolution.price_params)
+        build.params["paper_route_target_notional_sizing"] = quantity_resolution.audit
+        build.params.update(quantity_resolution.price_params)
 
-        order_type_text = _safe_text(payload.get("order_type")) or "market"
-        order_type: Literal["market", "limit", "stop", "stop_limit"] = (
-            cast(
-                Literal["market", "limit", "stop", "stop_limit"],
-                order_type_text,
-            )
-            if order_type_text in {"market", "limit", "stop", "stop_limit"}
-            else "market"
+    def _paper_route_materialized_decision_with_execution_metadata(
+        self,
+        *,
+        decision_row: TradeDecision,
+        payload: Mapping[str, Any],
+        target: Mapping[str, Any],
+        strategy: Strategy,
+        symbol: str,
+        action: Literal["buy", "sell"],
+        window_start: datetime,
+        window_end: datetime,
+        max_notional: Decimal,
+        now: datetime,
+    ) -> StrategyDecision | None:
+        build = self._paper_route_materialized_build(
+            decision_row=decision_row,
+            target=target,
+            strategy=strategy,
+            symbol=symbol,
+            action=action,
+            window_start=window_start,
+            window_end=window_end,
+            max_notional=max_notional,
         )
-        time_in_force_text = _safe_text(payload.get("time_in_force")) or "day"
-        time_in_force: Literal["day", "gtc", "ioc", "fok"] = (
-            cast(Literal["day", "gtc", "ioc", "fok"], time_in_force_text)
-            if time_in_force_text in {"day", "gtc", "ioc", "fok"}
-            else "day"
+
+        event_ts = self._paper_route_materialized_event_ts(
+            decision_row=decision_row,
+            payload=payload,
+        )
+        timeframe = self._paper_route_materialized_timeframe(
+            payload=payload,
+            strategy=strategy,
+        )
+        quantity_resolution = self._paper_route_materialized_quantity_resolution(
+            decision_row=decision_row,
+            payload=payload,
+            target=target,
+            symbol=symbol,
+            action=action,
+            max_notional=max_notional,
+            event_ts=event_ts,
+            timeframe=timeframe,
+            build=build,
+        )
+        if quantity_resolution is None:
+            return None
+        self._apply_materialized_quantity_resolution(
+            build=build,
+            quantity_resolution=quantity_resolution,
         )
 
         return StrategyDecision(
             strategy_id=str(strategy.id),
             symbol=symbol,
-            event_ts=event_ts or now,
+            event_ts=event_ts,
             timeframe=timeframe,
             action=action,
-            qty=qty,
-            order_type=order_type,
-            time_in_force=time_in_force,
+            qty=quantity_resolution.qty,
+            order_type=self._paper_route_materialized_order_type(payload),
+            time_in_force=self._paper_route_materialized_time_in_force(payload),
             rationale=("materialized bounded paper-route target plan source decision"),
-            params=params,
+            params=build.params,
         )
 
     @staticmethod
@@ -410,7 +633,138 @@ class SimplePipelinePaperRouteMaterializationMixin:
         decision_row.decision_json = decision_json
         return True
 
-    def _active_materialized_paper_route_client_order_ids(
+    def _paper_route_materialized_payload_and_target(
+        self,
+        *,
+        session: Session,
+        decision_row: TradeDecision,
+        positions: Sequence[Mapping[str, Any]],
+        log_blockers: bool = False,
+    ) -> tuple[Mapping[str, Any], Mapping[str, Any]] | None:
+        payload = self._paper_route_materialized_source_payload(decision_row)
+        if payload is None:
+            return None
+        if self.executor.execution_exists(session, decision_row):
+            return None
+        raw_target = self._paper_route_materialized_target_from_payload(payload)
+        if raw_target is None:
+            return None
+        target = _bounded_sim_collection_target_with_runtime_account_audit(
+            raw_target,
+            positions=positions,
+            account_label=self.account_label,
+        )
+        if not _target_requires_bounded_sim_collection_gate(target):
+            return None
+        collection_blockers = _bounded_sim_collection_blockers(
+            target,
+            account_label=self.account_label,
+        )
+        if not collection_blockers:
+            return payload, target
+        if log_blockers:
+            logger.warning(
+                "Skipping materialized paper-route target source decision because "
+                "bounded SIM collection is not authorized decision_id=%s blockers=%s",
+                decision_row.id,
+                ",".join(collection_blockers),
+            )
+        return None
+
+    @staticmethod
+    def _paper_route_materialized_window_cap(
+        *,
+        target: Mapping[str, Any],
+        now: datetime,
+    ) -> _MaterializedWindowCap | None:
+        window = _target_probe_window(target)
+        if window is None:
+            return None
+        window_start, window_end = window
+        if now < window_start or now >= window_end:
+            return None
+        target_cap = _target_probe_cap(target)
+        if target_cap is None or target_cap <= 0:
+            return None
+        return _MaterializedWindowCap(
+            window_start=window_start,
+            window_end=window_end,
+            target_cap=target_cap,
+        )
+
+    def _paper_route_materialized_strategy_action(
+        self,
+        *,
+        session: Session,
+        decision_row: TradeDecision,
+        payload: Mapping[str, Any],
+        target: Mapping[str, Any],
+        strategies: Sequence[Strategy],
+    ) -> tuple[Strategy, str, Literal["buy", "sell"]] | None:
+        strategy = session.get(Strategy, decision_row.strategy_id)
+        if strategy is None:
+            strategy = self._paper_route_target_strategy(target, strategies)
+        if strategy is None:
+            return None
+        symbol = _safe_text(decision_row.symbol) or _safe_text(payload.get("symbol"))
+        if symbol is None:
+            return None
+        symbol = symbol.upper()
+        strategy_symbols = self._paper_route_target_strategy_symbols(strategy)
+        if strategy_symbols and symbol not in strategy_symbols:
+            return None
+        symbol_actions = _target_probe_symbol_actions(target, [symbol])
+        action_text = _safe_text(payload.get("action")) or symbol_actions.get(symbol)
+        if action_text not in {"buy", "sell"}:
+            action_text = _target_probe_action(target)
+        if action_text == "sell" and not settings.trading_allow_shorts:
+            return None
+        return strategy, symbol, cast(Literal["buy", "sell"], action_text)
+
+    def _paper_route_materialized_candidate(
+        self,
+        *,
+        decision_row: TradeDecision,
+        context: _MaterializedCandidateContext,
+        log_blockers: bool = False,
+    ) -> _MaterializedPaperRouteCandidate | None:
+        payload_and_target = self._paper_route_materialized_payload_and_target(
+            session=context.session,
+            decision_row=decision_row,
+            positions=context.positions,
+            log_blockers=log_blockers,
+        )
+        if payload_and_target is None:
+            return None
+        payload, target = payload_and_target
+        window_cap = self._paper_route_materialized_window_cap(
+            target=target,
+            now=context.now,
+        )
+        if window_cap is None:
+            return None
+        resolved = self._paper_route_materialized_strategy_action(
+            session=context.session,
+            decision_row=decision_row,
+            payload=payload,
+            target=target,
+            strategies=context.strategies,
+        )
+        if resolved is None:
+            return None
+        strategy, symbol, action = resolved
+        return _MaterializedPaperRouteCandidate(
+            payload=payload,
+            target=target,
+            strategy=strategy,
+            symbol=symbol,
+            action=action,
+            window_start=window_cap.window_start,
+            window_end=window_cap.window_end,
+            target_cap=window_cap.target_cap,
+        )
+
+    def _paper_route_materialized_planning_context(
         self,
         *,
         session: Session,
@@ -418,97 +772,7 @@ class SimplePipelinePaperRouteMaterializationMixin:
         strategies: Sequence[Strategy],
         positions: Sequence[Mapping[str, Any]],
         now: datetime,
-    ) -> set[str]:
-        client_order_ids: set[str] = set()
-        for decision_row in rows:
-            decision_hash = _safe_text(decision_row.decision_hash)
-            if decision_hash is None:
-                continue
-            payload = self._paper_route_materialized_source_payload(decision_row)
-            if payload is None:
-                continue
-            if self.executor.execution_exists(session, decision_row):
-                continue
-            raw_target = self._paper_route_materialized_target_from_payload(payload)
-            if raw_target is None:
-                continue
-            target = _bounded_sim_collection_target_with_runtime_account_audit(
-                raw_target,
-                positions=positions,
-                account_label=self.account_label,
-            )
-            if not _target_requires_bounded_sim_collection_gate(target):
-                continue
-            collection_blockers = _bounded_sim_collection_blockers(
-                target,
-                account_label=self.account_label,
-            )
-            if collection_blockers:
-                continue
-            window = _target_probe_window(target)
-            if window is None:
-                continue
-            window_start, window_end = window
-            if now < window_start or now >= window_end:
-                continue
-            target_cap = _target_probe_cap(target)
-            if target_cap is None or target_cap <= 0:
-                continue
-            strategy = session.get(Strategy, decision_row.strategy_id)
-            if strategy is None:
-                strategy = self._paper_route_target_strategy(target, strategies)
-            if strategy is None:
-                continue
-            symbol = _safe_text(decision_row.symbol) or _safe_text(
-                payload.get("symbol")
-            )
-            if symbol is None:
-                continue
-            symbol = symbol.upper()
-            strategy_symbols = self._paper_route_target_strategy_symbols(strategy)
-            if strategy_symbols and symbol not in strategy_symbols:
-                continue
-            symbol_actions = _target_probe_symbol_actions(target, [symbol])
-            action_text = _safe_text(payload.get("action")) or symbol_actions.get(
-                symbol
-            )
-            if action_text not in {"buy", "sell"}:
-                action_text = _target_probe_action(target)
-            if action_text == "sell" and not settings.trading_allow_shorts:
-                continue
-            client_order_ids.add(decision_hash)
-        return client_order_ids
-
-    def _paper_route_materialized_planned_decisions(
-        self,
-        *,
-        session: Session,
-        strategies: Sequence[Strategy],
-        allowed_symbols: set[str],
-        positions: Sequence[Mapping[str, Any]],
-    ) -> list[StrategyDecision]:
-        if settings.trading_mode != "paper":
-            return []
-        if not settings.trading_simple_paper_route_probe_enabled:
-            return []
-        now = self._trading_now().astimezone(timezone.utc)
-
-        rows = (
-            session.execute(
-                select(TradeDecision)
-                .where(
-                    TradeDecision.status == "planned",
-                    TradeDecision.alpaca_account_label == self.account_label,
-                )
-                .order_by(TradeDecision.created_at.asc(), TradeDecision.symbol.asc())
-                .limit(100)
-            )
-            .scalars()
-            .all()
-        )
-        decisions: list[StrategyDecision] = []
-        seen: set[str] = set()
-        expired_count = 0
+    ) -> _MaterializedPlanningContext:
         materialized_client_order_ids = (
             self._active_materialized_paper_route_client_order_ids(
                 session=session,
@@ -524,410 +788,129 @@ class SimplePipelinePaperRouteMaterializationMixin:
                 materialized_client_order_ids,
             )
         )
-        for decision_row in rows:
-            if str(decision_row.id) in seen:
-                continue
-            payload = self._paper_route_materialized_source_payload(decision_row)
-            if payload is None:
-                continue
-            if self.executor.execution_exists(session, decision_row):
-                continue
-            raw_target = self._paper_route_materialized_target_from_payload(payload)
-            if raw_target is None:
-                continue
-            target = _bounded_sim_collection_target_with_runtime_account_audit(
-                raw_target,
-                positions=positions,
-                account_label=self.account_label,
-            )
-            if _target_requires_bounded_sim_collection_gate(target):
-                collection_blockers = _bounded_sim_collection_blockers(
-                    target,
-                    account_label=self.account_label,
-                )
-                if collection_blockers:
-                    logger.warning(
-                        "Skipping materialized paper-route target source decision "
-                        "because bounded SIM collection is not authorized "
-                        "decision_id=%s blockers=%s",
-                        decision_row.id,
-                        ",".join(collection_blockers),
-                    )
-                    continue
-            else:
-                continue
-
-            window = _target_probe_window(target)
-            if window is None:
-                continue
-            window_start, window_end = window
-            if self._expire_stale_materialized_paper_route_decision(
-                decision_row=decision_row,
-                payload=payload,
-                window_end=window_end,
-                now=now,
-            ):
-                session.add(decision_row)
-                expired_count += 1
-                seen.add(str(decision_row.id))
-                continue
-            if now < window_start or now >= window_end:
-                continue
-            if not self._is_market_session_open(now):
-                continue
-            target_cap = _target_probe_cap(target)
-            if target_cap is None or target_cap <= 0:
-                continue
-            strategy = session.get(Strategy, decision_row.strategy_id)
-            if strategy is None:
-                strategy = self._paper_route_target_strategy(target, strategies)
-            if strategy is None:
-                continue
-            symbol = _safe_text(decision_row.symbol) or _safe_text(
-                payload.get("symbol")
-            )
-            if symbol is None:
-                continue
-            symbol = symbol.upper()
-            strategy_symbols = self._paper_route_target_strategy_symbols(strategy)
-            if strategy_symbols and symbol not in strategy_symbols:
-                continue
-            symbol_actions = _target_probe_symbol_actions(target, [symbol])
-            action_text = _safe_text(payload.get("action")) or symbol_actions.get(
-                symbol
-            )
-            if action_text not in {"buy", "sell"}:
-                action_text = _target_probe_action(target)
-            action = cast(Literal["buy", "sell"], action_text)
-            if action == "sell" and not settings.trading_allow_shorts:
-                continue
-            if self._paper_route_target_account_has_open_exposure(flat_check_positions):
-                logger.warning(
-                    "Skipping materialized paper-route target source decision because "
-                    "account is not flat for bounded SIM evidence decision_id=%s",
-                    decision_row.id,
-                )
-                continue
-            if self._paper_route_target_symbol_has_open_position(
-                flat_check_positions, symbol
-            ):
-                continue
-            if self._paper_route_target_symbol_has_open_strategy_exposure(
-                session=session,
-                strategy=strategy,
-                symbol=symbol,
-                account_label=self.account_label,
-                window_start=window_start,
-            ):
-                continue
-            if self._paper_route_target_symbol_has_open_profit_proof_exposure(
-                session=session,
-                strategy=strategy,
-                symbol=symbol,
-                account_label=self.account_label,
-                window_start=window_start,
-            ):
-                continue
-            decision = self._paper_route_materialized_decision_with_execution_metadata(
-                decision_row=decision_row,
-                payload=payload,
-                target=target,
-                strategy=strategy,
-                symbol=symbol,
-                action=action,
-                window_start=window_start,
-                window_end=window_end,
-                max_notional=target_cap,
-                now=now,
-            )
-            if decision is None:
-                continue
-            decisions.append(decision)
-            seen.add(str(decision_row.id))
-        if expired_count:
-            session.commit()
-            logger.warning(
-                "Expired stale materialized paper-route target source decisions account_label=%s count=%s",
-                self.account_label,
-                expired_count,
-            )
-        return decisions
-
-    def _process_paper_route_materialized_decisions(
-        self,
-        *,
-        session: Session,
-        strategies: list[Strategy],
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        allowed_symbols: set[str],
-    ) -> None:
-        decisions = self._paper_route_materialized_planned_decisions(
+        return _MaterializedPlanningContext(
             session=session,
             strategies=strategies,
             positions=positions,
-            allowed_symbols=allowed_symbols,
+            flat_check_positions=flat_check_positions,
+            now=now,
         )
-        for decision in decisions:
-            self.state.metrics.decisions_total += 1
-            try:
-                submitted = self._handle_decision(
-                    session,
-                    decision,
-                    strategies,
-                    account,
-                    positions,
-                    allowed_symbols,
-                )
-                if submitted is not None:
-                    self._apply_simple_projected_buying_power(
-                        account,
-                        positions,
-                        submitted,
-                    )
-                    self._apply_simple_projected_position(positions, submitted)
-            except Exception:
-                logger.exception(
-                    "Materialized paper-route target source decision handling failed "
-                    "strategy_id=%s symbol=%s timeframe=%s",
-                    decision.strategy_id,
-                    decision.symbol,
-                    decision.timeframe,
-                )
-                self.state.metrics.orders_rejected_total += 1
-                self.state.metrics.record_decision_rejection_reasons(
-                    ["broker_submit_failed"]
-                )
 
-    def _reopen_bounded_sim_collection_decision(
+    def _paper_route_materialized_planned_window(
         self,
         *,
-        session: Session,
-        decision: StrategyDecision,
         decision_row: TradeDecision,
-    ) -> TradeDecision | None:
-        retry_transition = self._paper_route_retry_transition(
-            decision_row,
-            allowed_kinds=frozenset({"bounded_probe"}),
+        payload: Mapping[str, Any],
+        target: Mapping[str, Any],
+        context: _MaterializedPlanningContext,
+    ) -> _MaterializedPlanningWindowResult:
+        window = _target_probe_window(target)
+        if window is None:
+            return _MaterializedPlanningWindowResult(window_cap=None)
+        _, window_end = window
+        if self._expire_stale_materialized_paper_route_decision(
+            decision_row=decision_row,
+            payload=payload,
+            window_end=window_end,
+            now=context.now,
+        ):
+            context.session.add(decision_row)
+            return _MaterializedPlanningWindowResult(window_cap=None, expired=True)
+        window_cap = self._paper_route_materialized_window_cap(
+            target=target,
+            now=context.now,
         )
-        if retry_transition is None:
-            return None
-        retry_metadata = retry_transition.metadata
-        if self.executor.execution_exists(session, decision_row):
-            return None
-        collection_metadata = _bounded_sim_collection_metadata_from_decision(
-            decision,
+        if window_cap is None or not self._is_market_session_open(context.now):
+            return _MaterializedPlanningWindowResult(window_cap=None)
+        return _MaterializedPlanningWindowResult(window_cap=window_cap)
+
+    def _paper_route_materialized_has_open_exposure(
+        self,
+        *,
+        context: _MaterializedPlanningContext,
+        candidate: _MaterializedPaperRouteCandidate,
+        decision_row: TradeDecision,
+    ) -> bool:
+        if self._paper_route_target_account_has_open_exposure(
+            context.flat_check_positions
+        ):
+            logger.warning(
+                "Skipping materialized paper-route target source decision because "
+                "account is not flat for bounded SIM evidence decision_id=%s",
+                decision_row.id,
+            )
+            return True
+        if self._paper_route_target_symbol_has_open_position(
+            context.flat_check_positions,
+            candidate.symbol,
+        ):
+            return True
+        if self._paper_route_target_symbol_has_open_strategy_exposure(
+            session=context.session,
+            strategy=candidate.strategy,
+            symbol=candidate.symbol,
             account_label=self.account_label,
-            trading_mode=settings.trading_mode,
+            window_start=candidate.window_start,
+        ):
+            return True
+        return self._paper_route_target_symbol_has_open_profit_proof_exposure(
+            session=context.session,
+            strategy=candidate.strategy,
+            symbol=candidate.symbol,
+            account_label=self.account_label,
+            window_start=candidate.window_start,
         )
-        if collection_metadata is None:
-            return None
-        proof_floor = self._profitability_proof_floor(session=session)
-        if self._proof_floor_submission_block_reason(proof_floor) is None:
-            return None
 
-        self.executor.update_decision_params(session, decision_row, decision.params)
-        self.executor.sync_decision_state(session, decision_row, decision)
-        decision_row.status = "planned"
-        decision_row.created_at = self._trading_now()
-        decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
-        retry_attempts = _safe_int(
-            decision_json.get("paper_route_probe_retry_attempts")
-        )
-        decision_json["paper_route_probe_retry_attempts"] = retry_attempts + 1
-        decision_json["bounded_sim_collection_retry"] = {
-            **retry_metadata,
-            "submission_stage": "bounded_sim_collection_retry_pending",
-            "symbol": decision.symbol.strip().upper(),
-            "strategy_id": decision.strategy_id,
-            "collection_metadata": dict(collection_metadata),
-        }
-        decision_json["submission_stage"] = "bounded_sim_collection_retry_pending"
-        decision_json.pop("submission_block_reason", None)
-        decision_json.pop("submission_block_atomic", None)
-        decision_row.decision_json = decision_json
-        session.add(decision_row)
-        session.commit()
-        session.refresh(decision_row)
-        logger.warning(
-            "Reopening proof-floor-blocked decision for bounded SIM evidence collection strategy_id=%s decision_id=%s symbol=%s previous_reason=%s",
-            decision.strategy_id,
-            decision_row.id,
-            decision.symbol,
-            retry_metadata["previous_submission_block_reason"],
-        )
-        return decision_row
-
-    def _claim_materialized_paper_route_decision_row(
+    def _paper_route_materialized_planned_candidate(
         self,
         *,
-        session: Session,
-        decision: StrategyDecision,
-        strategy: Strategy,
-    ) -> TradeDecision | None:
-        row_id_text = _safe_text(
-            decision.params.get("paper_route_materialized_trade_decision_id")
-        )
-        if row_id_text is None:
-            return None
-        try:
-            row_id = UUID(row_id_text)
-        except ValueError:
-            return None
-        decision_row = session.get(TradeDecision, row_id)
-        if decision_row is None:
-            return None
-        if decision_row.alpaca_account_label != self.account_label:
-            return None
-        retryable_status = (
-            decision_row.status in {"blocked", "rejected"}
-            and self._paper_route_retry_transition(decision_row) is not None
-        )
-        if decision_row.status != "planned" and not retryable_status:
-            return None
-        if self.executor.execution_exists(session, decision_row):
-            return None
-
-        decision_row.strategy_id = strategy.id
-        decision_row.symbol = decision.symbol
-        decision_row.timeframe = decision.timeframe
-        decision_row.rationale = decision.rationale
-        if decision_row.status == "planned":
-            decision_row.decision_json = coerce_json_payload(
-                decision.model_dump(mode="json")
-            )
-        session.add(decision_row)
-        session.commit()
-        session.refresh(decision_row)
-        return decision_row
-
-    def _ensure_pending_decision_row(
-        self,
-        *,
-        session: Session,
-        decision: StrategyDecision,
-        strategy: Strategy,
-    ) -> TradeDecision | None:
-        decision = self._with_paper_route_target_lineage(decision, strategy=strategy)
-        if (
-            _safe_text(
-                decision.params.get("paper_route_materialized_trade_decision_id")
-            )
-            is not None
-        ):
-            decision_row = self._claim_materialized_paper_route_decision_row(
-                session=session,
-                decision=decision,
-                strategy=strategy,
-            )
-            if decision_row is None:
-                return None
-        else:
-            decision_row = self.executor.ensure_decision(
-                session, decision, strategy, self.account_label
-            )
-        reopened_quote_routeability = (
-            self._reopen_rejected_paper_route_quote_routeability_decision(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-            )
-        )
-        if reopened_quote_routeability is not None:
-            return reopened_quote_routeability
-        reopened_exit = self._reopen_rejected_paper_route_probe_exit_decision(
-            session=session,
-            decision=decision,
+        decision_row: TradeDecision,
+        context: _MaterializedPlanningContext,
+    ) -> _MaterializedPlanningResult:
+        payload_and_target = self._paper_route_materialized_payload_and_target(
+            session=context.session,
             decision_row=decision_row,
+            positions=context.positions,
+            log_blockers=True,
         )
-        if reopened_exit is not None:
-            return reopened_exit
-        reopened_price_retry = self._reopen_rejected_paper_route_target_price_decision(
-            session=session,
-            decision=decision,
+        if payload_and_target is None:
+            return _MaterializedPlanningResult(candidate=None)
+        payload, target = payload_and_target
+        window_result = self._paper_route_materialized_planned_window(
             decision_row=decision_row,
+            payload=payload,
+            target=target,
+            context=context,
         )
-        if reopened_price_retry is not None:
-            return reopened_price_retry
-        reopened_bounded_collection = self._reopen_bounded_sim_collection_decision(
-            session=session,
-            decision=decision,
-            decision_row=decision_row,
-        )
-        if reopened_bounded_collection is not None:
-            return reopened_bounded_collection
-        if "paper_route_target_plan" in decision.params:
-            self.executor.update_decision_params(session, decision_row, decision.params)
-            self.executor.sync_decision_state(session, decision_row, decision)
-        if (
-            decision_row.status == "planned"
-            and self._paper_route_target_source_cap(decision.params) is not None
-        ):
-            decision_row.created_at = self._trading_now()
-            session.add(decision_row)
-            session.commit()
-            session.refresh(decision_row)
-        if (
-            _safe_text(
-                decision.params.get("paper_route_materialized_trade_decision_id")
-            )
-            is not None
-        ):
-            return decision_row
-        retry_transition = self._paper_route_retry_transition(
-            decision_row,
-            allowed_kinds=frozenset({"bounded_probe"}),
-        )
-        if retry_transition is None:
-            return super()._ensure_pending_decision_row(
-                session=session,
-                decision=decision,
-                strategy=strategy,
-            )
-        retry_metadata = retry_transition.metadata
-        if self.executor.execution_exists(session, decision_row):
-            return None
+        if window_result.expired:
+            return _MaterializedPlanningResult(candidate=None, expired=True)
+        if window_result.window_cap is None:
+            return _MaterializedPlanningResult(candidate=None)
 
-        proof_floor = self._profitability_proof_floor(session=session)
-        if self._proof_floor_submission_block_reason(proof_floor) is None:
-            return None
-        probe_context = self._paper_route_probe_context(
-            proof_floor=proof_floor,
-            decision=decision,
+        resolved = self._paper_route_materialized_strategy_action(
+            session=context.session,
+            decision_row=decision_row,
+            payload=payload,
+            target=target,
+            strategies=context.strategies,
+        )
+        if resolved is None:
+            return _MaterializedPlanningResult(candidate=None)
+        strategy, symbol, action = resolved
+        candidate = _MaterializedPaperRouteCandidate(
+            payload=payload,
+            target=target,
             strategy=strategy,
-            session=session,
-            strategies=[strategy],
+            symbol=symbol,
+            action=action,
+            window_start=window_result.window_cap.window_start,
+            window_end=window_result.window_cap.window_end,
+            target_cap=window_result.window_cap.target_cap,
         )
-        if probe_context is None:
-            return None
-        if self._paper_route_probe_reference_price(decision) is None:
-            return None
-
-        decision_row.status = "planned"
-        decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
-        retry_attempts = _safe_int(
-            decision_json.get("paper_route_probe_retry_attempts")
-        )
-        decision_json["paper_route_probe_retry_attempts"] = retry_attempts + 1
-        decision_json["paper_route_probe_retry"] = {
-            **retry_metadata,
-            "submission_stage": "paper_route_probe_retry_pending",
-            "symbol": decision.symbol.strip().upper(),
-            "strategy_id": decision.strategy_id,
-            "context": dict(probe_context),
-        }
-        decision_json["submission_stage"] = "paper_route_probe_retry_pending"
-        decision_json.pop("submission_block_reason", None)
-        decision_json.pop("submission_block_atomic", None)
-        decision_row.decision_json = decision_json
-        session.add(decision_row)
-        session.commit()
-        session.refresh(decision_row)
-        logger.warning(
-            "Reopening proof-floor-blocked decision for bounded paper route probe strategy_id=%s decision_id=%s symbol=%s previous_reason=%s",
-            decision.strategy_id,
-            decision_row.id,
-            decision.symbol,
-            retry_metadata["previous_submission_block_reason"],
-        )
-        return decision_row
+        if self._paper_route_materialized_has_open_exposure(
+            context=context,
+            candidate=candidate,
+            decision_row=decision_row,
+        ):
+            return _MaterializedPlanningResult(candidate=None)
+        return _MaterializedPlanningResult(candidate=candidate)

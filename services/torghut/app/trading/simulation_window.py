@@ -9,10 +9,10 @@ from .simulation_progress import active_simulation_runtime_context
 
 
 def _parse_datetime(raw: str | None) -> datetime | None:
-    value = (raw or '').strip()
+    value = (raw or "").strip()
     if not value:
         return None
-    normalized = f'{value[:-1]}+00:00' if value.endswith('Z') else value
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
@@ -27,10 +27,12 @@ def simulation_window_bounds() -> tuple[datetime | None, datetime | None]:
         return None, None
     runtime_context = active_simulation_runtime_context()
     start = _parse_datetime(
-        (runtime_context or {}).get('window_start') or settings.trading_simulation_window_start
+        (runtime_context or {}).get("window_start")
+        or settings.trading_simulation_window_start
     )
     end = _parse_datetime(
-        (runtime_context or {}).get('window_end') or settings.trading_simulation_window_end
+        (runtime_context or {}).get("window_end")
+        or settings.trading_simulation_window_end
     )
     if start is not None and end is not None and end < start:
         end = start
@@ -48,4 +50,4 @@ def normalize_simulation_cursor(cursor_at: datetime | None) -> datetime | None:
     return cursor_at
 
 
-__all__ = ['normalize_simulation_cursor', 'simulation_window_bounds']
+__all__ = ["normalize_simulation_cursor", "simulation_window_bounds"]

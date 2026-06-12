@@ -20,7 +20,9 @@ def upgrade() -> None:
         "research_stress_metrics",
         "research_promotions",
     ):
-        op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.{table_name} TO torghut_app;")
+        op.execute(
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.{table_name} TO torghut_app;"
+        )
 
     op.execute(
         """
@@ -81,4 +83,6 @@ def downgrade() -> None:
         "research_stress_metrics",
         "research_promotions",
     ):
-        op.execute(f"REVOKE ALL PRIVILEGES ON TABLE public.{table_name} FROM torghut_app;")
+        op.execute(
+            f"REVOKE ALL PRIVILEGES ON TABLE public.{table_name} FROM torghut_app;"
+        )

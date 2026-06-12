@@ -1,5 +1,5 @@
 """Pure and shared helpers for the trading pipeline."""
-# pyright: reportUnusedImport=false, reportPrivateUsage=false, reportUnusedFunction=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
 
 from __future__ import annotations
 
@@ -47,6 +47,22 @@ def _runtime_uncertainty_gate_rank(action: RuntimeUncertaintyGateAction) -> int:
         "fail": 3,
     }
     return ranking[action]
+
+
+def _extract_top_regime_posterior_probability(
+    posterior: Mapping[str, str],
+) -> Decimal | None:
+    top_probability = None
+    for raw_probability in posterior.values():
+        try:
+            parsed_probability = Decimal(raw_probability)
+        except (ArithmeticError, ValueError):
+            continue
+        if parsed_probability < 0 or parsed_probability > 1:
+            continue
+        if top_probability is None or parsed_probability > top_probability:
+            top_probability = parsed_probability
+    return top_probability
 
 
 def _select_strictest_runtime_uncertainty_gate(
@@ -932,6 +948,7 @@ __all__ = [
     "_expected_fail_mode_for_stage",
     "_extract_decision_price",
     "_extract_json_error_payload",
+    "_extract_top_regime_posterior_probability",
     "_format_order_submit_rejection",
     "_hash_payload",
     "_is_llm_stage_policy_violation",

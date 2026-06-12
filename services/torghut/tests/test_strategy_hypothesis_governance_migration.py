@@ -9,13 +9,13 @@ from unittest import TestCase
 def _load_migration_module() -> ModuleType:
     path = (
         Path(__file__).resolve().parents[1]
-        / 'migrations'
-        / 'versions'
-        / '0021_strategy_hypothesis_governance.py'
+        / "migrations"
+        / "versions"
+        / "0021_strategy_hypothesis_governance.py"
     )
-    spec = importlib.util.spec_from_file_location('torghut_migration_0021', path)
+    spec = importlib.util.spec_from_file_location("torghut_migration_0021", path)
     if spec is None or spec.loader is None:  # pragma: no cover - importlib guard
-        raise AssertionError('failed_to_load_migration_0021')
+        raise AssertionError("failed_to_load_migration_0021")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -29,7 +29,7 @@ class _FakeInspector:
         return table_name in self._tables
 
     def get_indexes(self, table_name: str) -> list[dict[str, str]]:
-        return [{'name': name} for name in self._tables.get(table_name, [])]
+        return [{"name": name} for name in self._tables.get(table_name, [])]
 
 
 class _FakeOp:
@@ -70,30 +70,30 @@ class TestStrategyHypothesisGovernanceMigration(TestCase):
         fake_op = _FakeOp()
         fake_inspector = _FakeInspector(
             {
-                'strategy_hypotheses': [
-                    'ix_strategy_hypotheses_hypothesis_id',
-                    'ix_strategy_hypotheses_strategy_family',
+                "strategy_hypotheses": [
+                    "ix_strategy_hypotheses_hypothesis_id",
+                    "ix_strategy_hypotheses_strategy_family",
                 ],
-                'strategy_hypothesis_versions': [
-                    'ix_strategy_hypothesis_versions_hypothesis_id',
-                    'uq_strategy_hypothesis_versions_hypothesis_version',
+                "strategy_hypothesis_versions": [
+                    "ix_strategy_hypothesis_versions_hypothesis_id",
+                    "uq_strategy_hypothesis_versions_hypothesis_version",
                 ],
-                'strategy_hypothesis_metric_windows': [
-                    'ix_strategy_hypothesis_metric_windows_run_id',
-                    'ix_strategy_hypothesis_metric_windows_candidate_id',
-                    'ix_strategy_hypothesis_metric_windows_hypothesis_id',
-                    'ix_strategy_hypothesis_metric_windows_observed_stage',
+                "strategy_hypothesis_metric_windows": [
+                    "ix_strategy_hypothesis_metric_windows_run_id",
+                    "ix_strategy_hypothesis_metric_windows_candidate_id",
+                    "ix_strategy_hypothesis_metric_windows_hypothesis_id",
+                    "ix_strategy_hypothesis_metric_windows_observed_stage",
                 ],
-                'strategy_capital_allocations': [
-                    'ix_strategy_capital_allocations_run_id',
-                    'ix_strategy_capital_allocations_candidate_id',
-                    'ix_strategy_capital_allocations_hypothesis_id',
+                "strategy_capital_allocations": [
+                    "ix_strategy_capital_allocations_run_id",
+                    "ix_strategy_capital_allocations_candidate_id",
+                    "ix_strategy_capital_allocations_hypothesis_id",
                 ],
-                'strategy_promotion_decisions': [
-                    'ix_strategy_promotion_decisions_run_id',
-                    'ix_strategy_promotion_decisions_candidate_id',
-                    'ix_strategy_promotion_decisions_hypothesis_id',
-                    'uq_strategy_promotion_decisions_run_hypothesis_target',
+                "strategy_promotion_decisions": [
+                    "ix_strategy_promotion_decisions_run_id",
+                    "ix_strategy_promotion_decisions_candidate_id",
+                    "ix_strategy_promotion_decisions_hypothesis_id",
+                    "uq_strategy_promotion_decisions_run_hypothesis_target",
                 ],
             }
         )

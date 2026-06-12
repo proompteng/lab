@@ -91,7 +91,10 @@ def lean_authority_status() -> dict[str, Any]:
     authoritative_modes: list[str] = []
     if settings.trading_lean_backtest_upstream_url:
         authoritative_modes.append("research_backtest")
-    if settings.trading_lean_shadow_upstream_url or settings.trading_lean_strategy_shadow_upstream_url:
+    if (
+        settings.trading_lean_shadow_upstream_url
+        or settings.trading_lean_strategy_shadow_upstream_url
+    ):
         authoritative_modes.append("shadow_replay")
     if settings.trading_lean_lane_disable_switch:
         return {
@@ -136,7 +139,9 @@ def submit_backtest(
 
     canonical = _canonical_json(dict(config))
     reproducibility_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    backtest_id = hashlib.sha256(f"{normalized_lane}:{reproducibility_hash}".encode("utf-8")).hexdigest()[:20]
+    backtest_id = hashlib.sha256(
+        f"{normalized_lane}:{reproducibility_hash}".encode("utf-8")
+    ).hexdigest()[:20]
 
     with _cache_lock:
         existing = _backtests.get(backtest_id)
@@ -170,10 +175,12 @@ def get_backtest(backtest_id: str) -> dict[str, Any]:
         )
         result = payload.get("result")
         if isinstance(result, dict) and "artifact_authority" not in result:
-            cast(dict[str, Any], result)["artifact_authority"] = evidence_contract_payload(
-                provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
-                maturity=EvidenceMaturity.EMPIRICALLY_VALIDATED,
-                notes="LEAN backtest result returned from configured upstream integration.",
+            cast(dict[str, Any], result)["artifact_authority"] = (
+                evidence_contract_payload(
+                    provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+                    maturity=EvidenceMaturity.EMPIRICALLY_VALIDATED,
+                    notes="LEAN backtest result returned from configured upstream integration.",
+                )
             )
         return payload
 
@@ -276,7 +283,9 @@ def shadow_simulate(
             payload=payload,
             headers={"accept": "application/json", "X-Correlation-ID": correlation_id},
         )
-    seed = hashlib.sha256(f"{symbol}:{side}:{qty}:{order_type}".encode("utf-8")).hexdigest()
+    seed = hashlib.sha256(
+        f"{symbol}:{side}:{qty}:{order_type}".encode("utf-8")
+    ).hexdigest()
     basis = int(seed[:8], 16)
     slippage_bps = ((basis % 29) - 14) / 10.0
     base_price = intent_price or limit_price or max(qty, 1.0)

@@ -58,7 +58,14 @@ class _EnricherState:
 _state = _EnricherState()
 _seq = SequenceGenerator()
 _repository = OptionsRepository(settings.sqlalchemy_dsn)
-_repository.ensure_rate_bucket_defaults({"contracts": (0.25, 2), "snapshots_hot": (1.0, 10), "snapshots_cold": (0.25, 5), "bars_backfill": (0.25, 2)})
+_repository.ensure_rate_bucket_defaults(
+    {
+        "contracts": (0.25, 2),
+        "snapshots_hot": (1.0, 10),
+        "snapshots_cold": (0.25, 5),
+        "bars_backfill": (0.25, 2),
+    }
+)
 _producer = OptionsKafkaProducer(
     bootstrap_servers=settings.kafka_bootstrap,
     security_protocol=settings.kafka_security_protocol,
@@ -78,7 +85,9 @@ _client = AlpacaOptionsClient(
 )
 
 
-def _publish_snapshot(*, symbol: str, payload: dict[str, Any], observed_at: datetime) -> None:
+def _publish_snapshot(
+    *, symbol: str, payload: dict[str, Any], observed_at: datetime
+) -> None:
     envelope = build_envelope(
         feed=settings.alpaca_feed,
         channel="snapshot",
@@ -92,7 +101,14 @@ def _publish_snapshot(*, symbol: str, payload: dict[str, Any], observed_at: date
     _producer.send(settings.topic_snapshots, symbol, envelope)
 
 
-def _publish_status(*, status_value: str, observed_at: datetime, error_code: str | None = None, error_detail: str | None = None, backlog: int | None = None) -> None:
+def _publish_status(
+    *,
+    status_value: str,
+    observed_at: datetime,
+    error_code: str | None = None,
+    error_detail: str | None = None,
+    backlog: int | None = None,
+) -> None:
     payload = build_status_payload(
         component="enricher",
         status=status_value,
@@ -122,7 +138,9 @@ def _ranking_inputs_from_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     quote_recency_score = 1.0 if payload.get("latest_quote_ts") else 0.2
     liquidity_score = 0.5
     if payload.get("latest_bid_size") and payload.get("latest_ask_size"):
-        total_size = float(payload["latest_bid_size"]) + float(payload["latest_ask_size"])
+        total_size = float(payload["latest_bid_size"]) + float(
+            payload["latest_ask_size"]
+        )
         liquidity_score = min(total_size / 1000.0, 1.0)
     return {
         "trade_recency_score": trade_recency_score,
@@ -206,7 +224,9 @@ def _enricher_loop() -> None:
                 _repository.halve_rate_bucket("snapshots_hot")
                 _repository.halve_rate_bucket("snapshots_cold")
             _publish_status(
-                status_value="blocked" if exc.status_code in {405, 406, 410, 412, 413, 429} else "degraded",
+                status_value="blocked"
+                if exc.status_code in {405, 406, 410, 412, 413, 429}
+                else "degraded",
                 observed_at=utc_now(),
                 error_code=str(exc.status_code or "alpaca_api_error"),
                 error_detail=exc.body[:200],
@@ -228,7 +248,9 @@ def _enricher_loop() -> None:
 def _start_worker() -> None:
     if _state.thread is not None:
         return
-    _state.thread = threading.Thread(target=_enricher_loop, name="options-enricher", daemon=True)
+    _state.thread = threading.Thread(
+        target=_enricher_loop, name="options-enricher", daemon=True
+    )
     _state.thread.start()
 
 

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, cast
 
-EMPIRICAL_PROMOTION_MANIFEST_SCHEMA_VERSION = (
-    "torghut-empirical-promotion-manifest-v1"
-)
+EMPIRICAL_PROMOTION_MANIFEST_SCHEMA_VERSION = "torghut-empirical-promotion-manifest-v1"
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -28,7 +26,9 @@ def _as_string_list(value: Any) -> list[str]:
     return [text for item in cast(list[Any], value) if (text := _as_text(item))]
 
 
-def normalize_empirical_promotion_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_empirical_promotion_manifest(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
     normalized = {str(key): value for key, value in payload.items()}
     normalized.setdefault(
         "schema_version",

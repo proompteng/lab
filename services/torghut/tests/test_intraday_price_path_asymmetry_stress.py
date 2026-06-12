@@ -158,7 +158,9 @@ class TestIntradayPricePathAsymmetryStress(TestCase):
         self.assertTrue(proof_neutrality["requires_route_tca"])
         self.assertTrue(proof_neutrality["requires_runtime_ledger"])
         self.assertTrue(proof_neutrality["rejects_intraday_asymmetry_as_pnl_authority"])
-        self.assertTrue(proof_neutrality["rejects_same_day_path_proxy_as_execution_authority"])
+        self.assertTrue(
+            proof_neutrality["rejects_same_day_path_proxy_as_execution_authority"]
+        )
         self.assertTrue(proof_neutrality["rejects_missing_ohlc_as_neutral"])
         self.assertFalse(payload["promotion_proof"])
         self.assertFalse(payload["promotion_allowed"])

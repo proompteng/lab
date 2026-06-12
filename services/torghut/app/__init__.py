@@ -1,2 +1,1 @@
 """torghut FastAPI application package."""
-

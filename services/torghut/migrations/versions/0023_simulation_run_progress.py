@@ -133,7 +133,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_simulation_run_progress_dataset", table_name="simulation_run_progress")
-    op.drop_index("ix_simulation_run_progress_updated_at", table_name="simulation_run_progress")
-    op.drop_index("ix_simulation_run_progress_status", table_name="simulation_run_progress")
+    op.drop_index(
+        "ix_simulation_run_progress_dataset", table_name="simulation_run_progress"
+    )
+    op.drop_index(
+        "ix_simulation_run_progress_updated_at", table_name="simulation_run_progress"
+    )
+    op.drop_index(
+        "ix_simulation_run_progress_status", table_name="simulation_run_progress"
+    )
     op.drop_table("simulation_run_progress")

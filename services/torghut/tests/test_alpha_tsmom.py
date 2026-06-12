@@ -35,7 +35,9 @@ class TestAlphaTSMOM(TestCase):
     def test_costs_reduce_performance(self) -> None:
         idx = pd.date_range("2020-01-01", periods=260, freq="B", tz="UTC")
         # Zig-zag: creates turnover.
-        close = pd.Series([100 + (i % 2) for i in range(len(idx))], index=idx, dtype="float64").cumsum()
+        close = pd.Series(
+            [100 + (i % 2) for i in range(len(idx))], index=idx, dtype="float64"
+        ).cumsum()
         prices = pd.DataFrame({"CHOP": close})
 
         equity_free, _ = backtest_tsmom(

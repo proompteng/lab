@@ -87,8 +87,12 @@ def decision_hash(
         "qty": str(decision.qty),
         "order_type": decision.order_type,
         "time_in_force": decision.time_in_force,
-        "limit_price": str(decision.limit_price) if decision.limit_price is not None else None,
-        "stop_price": str(decision.stop_price) if decision.stop_price is not None else None,
+        "limit_price": str(decision.limit_price)
+        if decision.limit_price is not None
+        else None,
+        "stop_price": str(decision.stop_price)
+        if decision.stop_price is not None
+        else None,
         "account_label": account_label,
     }
     raw = json.dumps(params_payload, sort_keys=True, separators=(",", ":"), default=str)

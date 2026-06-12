@@ -14,7 +14,11 @@ from fastapi import FastAPI, HTTPException
 from .alpaca import AlpacaApiError, AlpacaOptionsClient, normalize_contract_record
 from .kafka import OptionsKafkaProducer, SequenceGenerator, build_envelope
 from .options_status import build_status_payload
-from .repository import OptionsRepository, merge_top_ranked_contract_rows, top_ranked_contract_rows
+from .repository import (
+    OptionsRepository,
+    merge_top_ranked_contract_rows,
+    top_ranked_contract_rows,
+)
 from .session import session_state, utc_now
 from .settings import get_options_lane_settings
 
@@ -62,7 +66,14 @@ class _CatalogState:
 _state = _CatalogState()
 _seq = SequenceGenerator()
 _repository = OptionsRepository(settings.sqlalchemy_dsn)
-_repository.ensure_rate_bucket_defaults({"contracts": (1.0, 4), "snapshots_hot": (1.0, 10), "snapshots_cold": (0.25, 5), "bars_backfill": (0.25, 2)})
+_repository.ensure_rate_bucket_defaults(
+    {
+        "contracts": (1.0, 4),
+        "snapshots_hot": (1.0, 10),
+        "snapshots_cold": (0.25, 5),
+        "bars_backfill": (0.25, 2),
+    }
+)
 _producer = OptionsKafkaProducer(
     bootstrap_servers=settings.kafka_bootstrap,
     security_protocol=settings.kafka_security_protocol,
@@ -120,7 +131,13 @@ def _publish_contract_row(contract: dict[str, Any], *, observed_at: datetime) ->
     _producer.send(settings.topic_contracts, contract["contract_symbol"], envelope)
 
 
-def _publish_status(*, status_value: str, observed_at: datetime, error_code: str | None = None, error_detail: str | None = None) -> None:
+def _publish_status(
+    *,
+    status_value: str,
+    observed_at: datetime,
+    error_code: str | None = None,
+    error_detail: str | None = None,
+) -> None:
     payload = build_status_payload(
         component="catalog",
         status=status_value,
@@ -155,7 +172,9 @@ def _discovery_interval_seconds() -> int:
 def _run_discovery_cycle() -> None:
     observed_at = utc_now()
     expiration_start = observed_at.date()
-    expiration_end = expiration_start + timedelta(days=settings.options_contract_expiration_horizon_days)
+    expiration_end = expiration_start + timedelta(
+        days=settings.options_contract_expiration_horizon_days
+    )
     page_token: str | None = None
     page_count = 0
     contract_count = 0
@@ -183,7 +202,13 @@ def _run_discovery_cycle() -> None:
         contract_count += len(normalized_contracts)
         max_open_interest = max(
             max_open_interest,
-            max((cast(int, contract.get("open_interest") or 0) for contract in normalized_contracts), default=0),
+            max(
+                (
+                    cast(int, contract.get("open_interest") or 0)
+                    for contract in normalized_contracts
+                ),
+                default=0,
+            ),
         )
         changed_rows = _repository.sync_contract_catalog_page(
             normalized_contracts,
@@ -203,8 +228,12 @@ def _run_discovery_cycle() -> None:
             underlying_priority=settings.underlying_priority_set,
         )
         if provisional_ranked_rows:
-            _repository.write_subscription_state(ranked_rows=provisional_ranked_rows, observed_at=observed_at)
-            if not _state.snapshot()["ready"] and any(row["tier"] == "hot" for row in provisional_ranked_rows):
+            _repository.write_subscription_state(
+                ranked_rows=provisional_ranked_rows, observed_at=observed_at
+            )
+            if not _state.snapshot()["ready"] and any(
+                row["tier"] == "hot" for row in provisional_ranked_rows
+            ):
                 _state.set_ready()
                 logger.info(
                     "options catalog provisional hot-set ready pages=%s contracts=%s hot=%s warm=%s",
@@ -239,7 +268,9 @@ def _run_discovery_cycle() -> None:
         provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
         underlying_priority=settings.underlying_priority_set,
     )
-    _repository.write_subscription_state(ranked_rows=ranked_rows, observed_at=observed_at)
+    _repository.write_subscription_state(
+        ranked_rows=ranked_rows, observed_at=observed_at
+    )
     logger.info(
         "options catalog discovery cycle completed pages=%s contracts=%s changed=%s transitions=%s hot=%s warm=%s",
         page_count,
@@ -262,7 +293,9 @@ def _catalog_loop() -> None:
             logger.exception("options catalog discovery failed")
             _state.set_error(str(exc.status_code), exc.body[:200])
             _publish_status(
-                status_value="blocked" if exc.status_code in {401, 403, 405, 406, 410, 412, 413} else "degraded",
+                status_value="blocked"
+                if exc.status_code in {401, 403, 405, 406, 410, 412, 413}
+                else "degraded",
                 observed_at=utc_now(),
                 error_code=str(exc.status_code or "alpaca_api_error"),
                 error_detail=exc.body[:200],
@@ -284,7 +317,9 @@ def _catalog_loop() -> None:
 def _start_worker() -> None:
     if _state.thread is not None:
         return
-    _state.thread = threading.Thread(target=_catalog_loop, name="options-catalog", daemon=True)
+    _state.thread = threading.Thread(
+        target=_catalog_loop, name="options-catalog", daemon=True
+    )
     _state.thread.start()
 
 

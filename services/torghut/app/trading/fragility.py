@@ -17,6 +17,8 @@ _STATE_ORDER: dict[FragilityState, int] = {
     "stress": 2,
     "crisis": 3,
 }
+
+
 @dataclass(frozen=True)
 class FragilityMonitorConfig:
     mode: FragilityMode
@@ -28,6 +30,8 @@ class FragilityMonitorConfig:
     state_capacity_multipliers: dict[FragilityState, Decimal]
     state_participation_clamps: dict[FragilityState, Decimal]
     state_abstain_bias: dict[FragilityState, Decimal]
+
+
 @dataclass(frozen=True)
 class FragilitySnapshot:
     schema_version: str
@@ -50,6 +54,8 @@ class FragilitySnapshot:
             "fragility_score": str(self.fragility_score),
             "fragility_state": self.fragility_state,
         }
+
+
 @dataclass(frozen=True)
 class FragilityAllocationAdjustment:
     snapshot: FragilitySnapshot
@@ -77,6 +83,8 @@ class FragilityAllocationAdjustment:
             "abstain_probability_bias": str(self.abstain_probability_bias),
             "clamp_reasons": list(self.clamp_reasons),
         }
+
+
 class FragilityMonitor:
     """Compute deterministic fragility state and allocation clamps."""
 
@@ -86,7 +94,9 @@ class FragilityMonitor:
     def evaluate(self, decision: StrategyDecision) -> FragilityAllocationAdjustment:
         snapshot = self._snapshot_from_decision(decision)
         state = snapshot.fragility_state
-        budget_multiplier = self.config.state_budget_multipliers.get(state, Decimal("1"))
+        budget_multiplier = self.config.state_budget_multipliers.get(
+            state, Decimal("1")
+        )
         capacity_multiplier = self.config.state_capacity_multipliers.get(
             state, Decimal("1")
         )
@@ -196,6 +206,8 @@ def _resolve_snapshot_value(
     if key in snapshot_map and snapshot_map.get(key) is not None:
         return snapshot_map.get(key)
     return params.get(key)
+
+
 def _optional_decimal(value: Any) -> Optional[Decimal]:
     if value is None:
         return None
@@ -205,6 +217,8 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return Decimal(str(value))
     except (ArithmeticError, TypeError, ValueError):
         return None
+
+
 def _state_from_score(
     score: Decimal,
     *,
@@ -219,6 +233,8 @@ def _state_from_score(
     if score >= elevated:
         return "elevated"
     return "normal"
+
+
 def _normalize_state(value: Any) -> Optional[FragilityState]:
     if not isinstance(value, str):
         return None
@@ -232,10 +248,14 @@ def _normalize_state(value: Any) -> Optional[FragilityState]:
     if normalized == "crisis":
         return "crisis"
     return None
+
+
 def _max_state(left: FragilityState, right: FragilityState) -> FragilityState:
     if _STATE_ORDER[left] >= _STATE_ORDER[right]:
         return left
     return right
+
+
 def _clamp_unit_interval(value: Decimal) -> Decimal:
     if value < 0:
         return Decimal("0")

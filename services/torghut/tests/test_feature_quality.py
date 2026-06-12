@@ -6,36 +6,39 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app import config
-from app.trading.feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
+from app.trading.feature_quality import (
+    FeatureQualityThresholds,
+    evaluate_feature_batch_quality,
+)
 from app.trading.models import SignalEnvelope
 
 
 def _signal(
     *,
     ts: datetime,
-    symbol: str = 'AAPL',
+    symbol: str = "AAPL",
     seq: int = 1,
     ingest_lag_ms: int = 200,
-    schema: str | None = '3.0.0',
+    schema: str | None = "3.0.0",
     payload_overrides: dict[str, object] | None = None,
 ) -> SignalEnvelope:
     payload: dict[str, object] = {
-        'macd': {'macd': '1', 'signal': '0.4'},
-        'rsi14': '48',
-        'price': '100',
-        'spread': '0.02',
-        'imbalance_bid_px': '99.99',
-        'imbalance_ask_px': '100.01',
+        "macd": {"macd": "1", "signal": "0.4"},
+        "rsi14": "48",
+        "price": "100",
+        "spread": "0.02",
+        "imbalance_bid_px": "99.99",
+        "imbalance_ask_px": "100.01",
     }
     if schema is not None:
-        payload['feature_schema_version'] = schema
+        payload["feature_schema_version"] = schema
     if payload_overrides:
         payload.update(payload_overrides)
     return SignalEnvelope(
         event_ts=ts,
         ingest_ts=ts + timedelta(milliseconds=ingest_lag_ms),
         symbol=symbol,
-        timeframe='1Min',
+        timeframe="1Min",
         seq=seq,
         payload=payload,
     )
@@ -44,7 +47,9 @@ def _signal(
 class TestFeatureQuality(TestCase):
     def test_batch_fails_closed_on_schema_mismatch(self) -> None:
         signals = [
-            _signal(ts=datetime(2026, 1, 1, tzinfo=timezone.utc), seq=1, schema='4.0.0'),
+            _signal(
+                ts=datetime(2026, 1, 1, tzinfo=timezone.utc), seq=1, schema="4.0.0"
+            ),
             _signal(ts=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc), seq=2),
         ]
 
@@ -52,7 +57,7 @@ class TestFeatureQuality(TestCase):
 
         self.assertFalse(report.accepted)
         self.assertEqual(report.schema_mismatch_total, 1)
-        self.assertIn('schema_mismatch', report.reasons)
+        self.assertIn("schema_mismatch", report.reasons)
 
     def test_batch_fails_closed_on_duplicates_and_staleness(self) -> None:
         ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -73,14 +78,14 @@ class TestFeatureQuality(TestCase):
         self.assertFalse(report.accepted)
         self.assertGreater(report.duplicate_ratio, 0)
         self.assertGreater(report.staleness_ms_p95, 2_000)
-        self.assertIn('duplicate_ratio_exceeds_threshold', report.reasons)
-        self.assertIn('feature_staleness_exceeds_budget', report.reasons)
+        self.assertIn("duplicate_ratio_exceeds_threshold", report.reasons)
+        self.assertIn("feature_staleness_exceeds_budget", report.reasons)
 
     def test_batch_treats_distinct_sources_as_distinct_feature_rows(self) -> None:
         ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
         signals = [
-            _signal(ts=ts, seq=1).model_copy(update={'source': 'ta'}),
-            _signal(ts=ts, seq=1).model_copy(update={'source': 'ws'}),
+            _signal(ts=ts, seq=1).model_copy(update={"source": "ta"}),
+            _signal(ts=ts, seq=1).model_copy(update={"source": "ws"}),
         ]
 
         report = evaluate_feature_batch_quality(
@@ -94,7 +99,7 @@ class TestFeatureQuality(TestCase):
 
         self.assertTrue(report.accepted)
         self.assertEqual(report.duplicate_ratio, 0.0)
-        self.assertNotIn('duplicate_ratio_exceeds_threshold', report.reasons)
+        self.assertNotIn("duplicate_ratio_exceeds_threshold", report.reasons)
 
     def test_batch_uses_event_time_for_staleness_in_simulation_mode(self) -> None:
         original = config.settings.trading_simulation_enabled
@@ -117,7 +122,7 @@ class TestFeatureQuality(TestCase):
 
             self.assertTrue(report.accepted)
             self.assertEqual(report.staleness_ms_p95, 0)
-            self.assertNotIn('feature_staleness_exceeds_budget', report.reasons)
+            self.assertNotIn("feature_staleness_exceeds_budget", report.reasons)
         finally:
             config.settings.trading_simulation_enabled = original
 
@@ -133,11 +138,13 @@ class TestFeatureQuality(TestCase):
                 values["staleness_ms"] = "n/a"
             return values
 
-        with patch("app.trading.feature_quality.map_feature_values_v3", side_effect=_corrupt):
+        with patch(
+            "app.trading.feature_quality.map_feature_values_v3", side_effect=_corrupt
+        ):
             report = evaluate_feature_batch_quality(signals)
 
         self.assertFalse(report.accepted)
-        self.assertIn('feature_staleness_exceeds_budget', report.reasons)
+        self.assertIn("feature_staleness_exceeds_budget", report.reasons)
 
     def test_batch_fails_closed_on_required_field_null_rate(self) -> None:
         ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -146,7 +153,7 @@ class TestFeatureQuality(TestCase):
             _signal(
                 ts=ts + timedelta(seconds=1),
                 seq=2,
-                payload_overrides={'macd': {'macd': None, 'signal': None}},
+                payload_overrides={"macd": {"macd": None, "signal": None}},
             ),
         ]
 
@@ -156,22 +163,22 @@ class TestFeatureQuality(TestCase):
         )
 
         self.assertFalse(report.accepted)
-        self.assertGreater(report.null_rate_by_field['macd'], 0)
-        self.assertIn('required_feature_null_rate_exceeds_threshold', report.reasons)
+        self.assertGreater(report.null_rate_by_field["macd"], 0)
+        self.assertIn("required_feature_null_rate_exceeds_threshold", report.reasons)
         self.assertEqual(report.blocking_reasons, [])
         self.assertEqual(
             report.warning_only_reasons,
-            ['required_feature_null_rate_exceeds_threshold'],
+            ["required_feature_null_rate_exceeds_threshold"],
         )
 
     def test_batch_fails_on_non_monotonic_progression(self) -> None:
         ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
         signals = [
-            _signal(ts=ts + timedelta(seconds=1), symbol='MSFT', seq=2),
-            _signal(ts=ts, symbol='AAPL', seq=1),
+            _signal(ts=ts + timedelta(seconds=1), symbol="MSFT", seq=2),
+            _signal(ts=ts, symbol="AAPL", seq=1),
         ]
 
         report = evaluate_feature_batch_quality(signals)
 
         self.assertFalse(report.accepted)
-        self.assertIn('non_monotonic_progression', report.reasons)
+        self.assertIn("non_monotonic_progression", report.reasons)

@@ -9,7 +9,13 @@ from unittest import TestCase
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Base, ExecutionOrderEvent, OrderFeedSourceWindow, Strategy, TradeDecision
+from app.models import (
+    Base,
+    ExecutionOrderEvent,
+    OrderFeedSourceWindow,
+    Strategy,
+    TradeDecision,
+)
 from app.snapshots import (
     _runtime_cost_payload_from_mapping,
     snapshot_account_and_positions,

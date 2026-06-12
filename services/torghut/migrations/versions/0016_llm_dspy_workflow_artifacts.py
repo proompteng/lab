@@ -33,7 +33,9 @@ def upgrade() -> None:
         sa.Column("dataset_hash", sa.String(length=64), nullable=True),
         sa.Column("compiled_prompt_hash", sa.String(length=64), nullable=True),
         sa.Column("reproducibility_hash", sa.String(length=64), nullable=True),
-        sa.Column("metric_bundle", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "metric_bundle", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
         sa.Column("gate_compatibility", sa.String(length=16), nullable=True),
         sa.Column("promotion_recommendation", sa.String(length=32), nullable=True),
         sa.Column("promotion_target", sa.String(length=32), nullable=True),
@@ -41,11 +43,31 @@ def upgrade() -> None:
         sa.Column("agentrun_name", sa.String(length=128), nullable=True),
         sa.Column("agentrun_namespace", sa.String(length=64), nullable=True),
         sa.Column("agentrun_uid", sa.String(length=128), nullable=True),
-        sa.Column("request_payload_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("response_payload_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "request_payload_json",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+        ),
+        sa.Column(
+            "response_payload_json",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+        ),
+        sa.Column(
+            "metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_llm_dspy_workflow_artifacts"),
         sa.UniqueConstraint("run_key", name="uq_llm_dspy_workflow_artifacts_run_key"),
     )
@@ -77,9 +99,23 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_llm_dspy_workflow_artifacts_created_at", table_name="llm_dspy_workflow_artifacts")
-    op.drop_index("ix_llm_dspy_workflow_artifacts_artifact_hash", table_name="llm_dspy_workflow_artifacts")
-    op.drop_index("ix_llm_dspy_workflow_artifacts_program_name", table_name="llm_dspy_workflow_artifacts")
-    op.drop_index("ix_llm_dspy_workflow_artifacts_status", table_name="llm_dspy_workflow_artifacts")
-    op.drop_index("ix_llm_dspy_workflow_artifacts_lane", table_name="llm_dspy_workflow_artifacts")
+    op.drop_index(
+        "ix_llm_dspy_workflow_artifacts_created_at",
+        table_name="llm_dspy_workflow_artifacts",
+    )
+    op.drop_index(
+        "ix_llm_dspy_workflow_artifacts_artifact_hash",
+        table_name="llm_dspy_workflow_artifacts",
+    )
+    op.drop_index(
+        "ix_llm_dspy_workflow_artifacts_program_name",
+        table_name="llm_dspy_workflow_artifacts",
+    )
+    op.drop_index(
+        "ix_llm_dspy_workflow_artifacts_status",
+        table_name="llm_dspy_workflow_artifacts",
+    )
+    op.drop_index(
+        "ix_llm_dspy_workflow_artifacts_lane", table_name="llm_dspy_workflow_artifacts"
+    )
     op.drop_table("llm_dspy_workflow_artifacts")

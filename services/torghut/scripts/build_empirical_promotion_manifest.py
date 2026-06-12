@@ -182,9 +182,8 @@ def _build_benchmark_payload(
         1.0 - _safe_float(execution_quality.get("fallback_ratio"))
     )
     deterministic_gate_compatible = (
-        (_as_text(verdict.get("status")) or "FAIL").upper() != "FAIL"
-        and decision_count > 0
-    )
+        _as_text(verdict.get("status")) or "FAIL"
+    ).upper() != "FAIL" and decision_count > 0
     window_ref = _window_ref(report, run_id)
     coverage_ratio = _bounded_ratio(
         _safe_float(coverage.get("window_coverage_ratio_from_dump"))
@@ -302,7 +301,9 @@ def _build_foundation_router_payload(
         latency_ms.get("decision_to_submit_p95")
     )
 
-    symbol_counts = _as_dict(report.get("funnel")).get("decision_strategy_symbol_counts")
+    symbol_counts = _as_dict(report.get("funnel")).get(
+        "decision_strategy_symbol_counts"
+    )
     symbols: list[str] = []
     if isinstance(symbol_counts, list):
         for item in symbol_counts:
@@ -396,7 +397,9 @@ def _build_janus_payloads(
     event_count = _safe_int(funnel.get("trade_decisions"))
     reward_count = max(_safe_int(funnel.get("executions")), event_count)
     mapped_count = min(event_count, reward_count)
-    slippage = _safe_float(_as_dict(execution_quality.get("slippage_bps")).get("p95_abs"))
+    slippage = _safe_float(
+        _as_dict(execution_quality.get("slippage_bps")).get("p95_abs")
+    )
     event_payload = {
         "schema_version": "janus-event-car-v1",
         "run_id": run_id,
@@ -442,7 +445,11 @@ def _build_janus_payloads(
             ),
         },
         "manifest_hash": _hash_payload(
-            {"run_id": run_id, "candidate_id": candidate_id, "reward_count": reward_count}
+            {
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "reward_count": reward_count,
+            }
         ),
     }
     return event_payload, reward_payload
@@ -477,12 +484,15 @@ def build_empirical_promotion_manifest(
         source_manifest=source_manifest,
         report=report,
     )
-    baseline_candidate_id = _lineage_value(
-        key="baseline_candidate_id",
-        run_manifest=run_manifest,
-        source_manifest=source_manifest,
-        report=report,
-    ) or "baseline"
+    baseline_candidate_id = (
+        _lineage_value(
+            key="baseline_candidate_id",
+            run_manifest=run_manifest,
+            source_manifest=source_manifest,
+            report=report,
+        )
+        or "baseline"
+    )
     strategy_spec_ref = _lineage_value(
         key="strategy_spec_ref",
         run_manifest=run_manifest,
@@ -512,7 +522,9 @@ def build_empirical_promotion_manifest(
         candidate_id=candidate_id or f"cand-{run_id}",
     )
 
-    verdict = (_as_text(_as_dict(report.get("verdict")).get("status")) or "FAIL").upper()
+    verdict = (
+        _as_text(_as_dict(report.get("verdict")).get("status")) or "FAIL"
+    ).upper()
     funnel = _as_dict(report.get("funnel"))
     promotion_authority_eligible = (
         verdict != "FAIL"

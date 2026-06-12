@@ -34,11 +34,15 @@ class FakeAlpacaClient:
         self.submissions.append(order)
         return order
 
-    def cancel_all_orders(self, *, firewall_token: object | None = None) -> list[dict[str, str]]:
+    def cancel_all_orders(
+        self, *, firewall_token: object | None = None
+    ) -> list[dict[str, str]]:
         self.cancel_all_calls += 1
         return [{"id": "order-1"}]
 
-    def cancel_order(self, alpaca_order_id: str, *, firewall_token: object | None = None) -> bool:
+    def cancel_order(
+        self, alpaca_order_id: str, *, firewall_token: object | None = None
+    ) -> bool:
         return True
 
 

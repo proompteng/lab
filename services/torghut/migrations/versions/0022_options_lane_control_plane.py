@@ -53,8 +53,12 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
-        sa.PrimaryKeyConstraint("contract_symbol", name="pk_torghut_options_contract_catalog"),
-        sa.UniqueConstraint("contract_id", name="uq_torghut_options_contract_catalog_contract_id"),
+        sa.PrimaryKeyConstraint(
+            "contract_symbol", name="pk_torghut_options_contract_catalog"
+        ),
+        sa.UniqueConstraint(
+            "contract_id", name="uq_torghut_options_contract_catalog_contract_id"
+        ),
         sa.CheckConstraint(
             "option_type IN ('call', 'put')",
             name="ck_torghut_options_contract_catalog_option_type",
@@ -118,11 +122,17 @@ def upgrade() -> None:
             server_default=sa.text("0"),
         ),
         sa.Column("last_ranked_ts", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("last_subscribe_attempt_ts", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("last_subscribe_success_ts", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "last_subscribe_attempt_ts", sa.DateTime(timezone=True), nullable=True
+        ),
+        sa.Column(
+            "last_subscribe_success_ts", sa.DateTime(timezone=True), nullable=True
+        ),
         sa.Column("suppress_until_ts", sa.DateTime(timezone=True), nullable=True),
         sa.Column("suppress_reason", sa.Text(), nullable=True),
-        sa.PrimaryKeyConstraint("contract_symbol", name="pk_torghut_options_subscription_state"),
+        sa.PrimaryKeyConstraint(
+            "contract_symbol", name="pk_torghut_options_subscription_state"
+        ),
         sa.ForeignKeyConstraint(
             ["contract_symbol"],
             ["torghut_options_contract_catalog.contract_symbol"],
@@ -183,7 +193,9 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
-        sa.PrimaryKeyConstraint("bucket_name", name="pk_torghut_options_rate_limit_state"),
+        sa.PrimaryKeyConstraint(
+            "bucket_name", name="pk_torghut_options_rate_limit_state"
+        ),
     )
 
 

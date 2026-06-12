@@ -34,14 +34,30 @@ def upgrade() -> None:
         sa.Column("validation_notes", sa.Text(), nullable=True),
         sa.Column("confidence", sa.Numeric(6, 4), nullable=True),
         sa.Column("metadata_json", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.ForeignKeyConstraint(["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_whitepaper_claims"),
     )
-    op.create_index("ix_whitepaper_claims_run_id", "whitepaper_claims", ["analysis_run_id"])
+    op.create_index(
+        "ix_whitepaper_claims_run_id", "whitepaper_claims", ["analysis_run_id"]
+    )
     op.create_index("ix_whitepaper_claims_type", "whitepaper_claims", ["claim_type"])
-    op.create_index("ix_whitepaper_claims_asset_scope", "whitepaper_claims", ["asset_scope"])
+    op.create_index(
+        "ix_whitepaper_claims_asset_scope", "whitepaper_claims", ["asset_scope"]
+    )
     op.create_index(
         "uq_whitepaper_claims_run_claim_id",
         "whitepaper_claims",
@@ -61,15 +77,43 @@ def upgrade() -> None:
         sa.Column("rationale", sa.Text(), nullable=True),
         sa.Column("confidence", sa.Numeric(6, 4), nullable=True),
         sa.Column("metadata_json", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.ForeignKeyConstraint(["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_whitepaper_claim_relations"),
     )
-    op.create_index("ix_whitepaper_claim_relations_run_id", "whitepaper_claim_relations", ["analysis_run_id"])
-    op.create_index("ix_whitepaper_claim_relations_type", "whitepaper_claim_relations", ["relation_type"])
-    op.create_index("ix_whitepaper_claim_relations_source", "whitepaper_claim_relations", ["source_claim_id"])
-    op.create_index("ix_whitepaper_claim_relations_target", "whitepaper_claim_relations", ["target_claim_id"])
+    op.create_index(
+        "ix_whitepaper_claim_relations_run_id",
+        "whitepaper_claim_relations",
+        ["analysis_run_id"],
+    )
+    op.create_index(
+        "ix_whitepaper_claim_relations_type",
+        "whitepaper_claim_relations",
+        ["relation_type"],
+    )
+    op.create_index(
+        "ix_whitepaper_claim_relations_source",
+        "whitepaper_claim_relations",
+        ["source_claim_id"],
+    )
+    op.create_index(
+        "ix_whitepaper_claim_relations_target",
+        "whitepaper_claim_relations",
+        ["target_claim_id"],
+    )
     op.create_index(
         "uq_whitepaper_claim_relations_run_relation_id",
         "whitepaper_claim_relations",
@@ -96,13 +140,33 @@ def upgrade() -> None:
         sa.Column("regime_activation_rules_json", sa.JSON(), nullable=True),
         sa.Column("day_veto_rules_json", sa.JSON(), nullable=True),
         sa.Column("metadata_json", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.ForeignKeyConstraint(["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_whitepaper_strategy_templates"),
     )
-    op.create_index("ix_whitepaper_strategy_templates_run_id", "whitepaper_strategy_templates", ["analysis_run_id"])
-    op.create_index("ix_whitepaper_strategy_templates_family_id", "whitepaper_strategy_templates", ["family_template_id"])
+    op.create_index(
+        "ix_whitepaper_strategy_templates_run_id",
+        "whitepaper_strategy_templates",
+        ["analysis_run_id"],
+    )
+    op.create_index(
+        "ix_whitepaper_strategy_templates_family_id",
+        "whitepaper_strategy_templates",
+        ["family_template_id"],
+    )
     op.create_index(
         "uq_whitepaper_strategy_templates_run_template_id",
         "whitepaper_strategy_templates",
@@ -128,13 +192,33 @@ def upgrade() -> None:
         sa.Column("expected_failure_modes_json", sa.JSON(), nullable=True),
         sa.Column("promotion_contract_json", sa.JSON(), nullable=True),
         sa.Column("payload_json", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.ForeignKeyConstraint(["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_whitepaper_experiment_specs"),
     )
-    op.create_index("ix_whitepaper_experiment_specs_run_id", "whitepaper_experiment_specs", ["analysis_run_id"])
-    op.create_index("ix_whitepaper_experiment_specs_family_id", "whitepaper_experiment_specs", ["family_template_id"])
+    op.create_index(
+        "ix_whitepaper_experiment_specs_run_id",
+        "whitepaper_experiment_specs",
+        ["analysis_run_id"],
+    )
+    op.create_index(
+        "ix_whitepaper_experiment_specs_family_id",
+        "whitepaper_experiment_specs",
+        ["family_template_id"],
+    )
     op.create_index(
         "uq_whitepaper_experiment_specs_run_experiment_id",
         "whitepaper_experiment_specs",
@@ -150,18 +234,47 @@ def upgrade() -> None:
         sa.Column("source_claim_id", sa.String(length=128), nullable=False),
         sa.Column("target_claim_id", sa.String(length=128), nullable=True),
         sa.Column("target_run_id", sa.String(length=64), nullable=True),
-        sa.Column("status", sa.String(length=32), nullable=False, server_default=sa.text("'open'")),
+        sa.Column(
+            "status",
+            sa.String(length=32),
+            nullable=False,
+            server_default=sa.text("'open'"),
+        ),
         sa.Column("required_action", sa.String(length=64), nullable=True),
         sa.Column("rationale", sa.Text(), nullable=True),
         sa.Column("metadata_json", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
-        sa.ForeignKeyConstraint(["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["analysis_run_id"], ["whitepaper_analysis_runs.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_whitepaper_contradiction_events"),
     )
-    op.create_index("ix_whitepaper_contradiction_events_run_id", "whitepaper_contradiction_events", ["analysis_run_id"])
-    op.create_index("ix_whitepaper_contradiction_events_status", "whitepaper_contradiction_events", ["status"])
-    op.create_index("ix_whitepaper_contradiction_events_source_claim_id", "whitepaper_contradiction_events", ["source_claim_id"])
+    op.create_index(
+        "ix_whitepaper_contradiction_events_run_id",
+        "whitepaper_contradiction_events",
+        ["analysis_run_id"],
+    )
+    op.create_index(
+        "ix_whitepaper_contradiction_events_status",
+        "whitepaper_contradiction_events",
+        ["status"],
+    )
+    op.create_index(
+        "ix_whitepaper_contradiction_events_source_claim_id",
+        "whitepaper_contradiction_events",
+        ["source_claim_id"],
+    )
     op.create_index(
         "uq_whitepaper_contradiction_events_run_event_id",
         "whitepaper_contradiction_events",
@@ -171,27 +284,68 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("uq_whitepaper_contradiction_events_run_event_id", table_name="whitepaper_contradiction_events")
-    op.drop_index("ix_whitepaper_contradiction_events_source_claim_id", table_name="whitepaper_contradiction_events")
-    op.drop_index("ix_whitepaper_contradiction_events_status", table_name="whitepaper_contradiction_events")
-    op.drop_index("ix_whitepaper_contradiction_events_run_id", table_name="whitepaper_contradiction_events")
+    op.drop_index(
+        "uq_whitepaper_contradiction_events_run_event_id",
+        table_name="whitepaper_contradiction_events",
+    )
+    op.drop_index(
+        "ix_whitepaper_contradiction_events_source_claim_id",
+        table_name="whitepaper_contradiction_events",
+    )
+    op.drop_index(
+        "ix_whitepaper_contradiction_events_status",
+        table_name="whitepaper_contradiction_events",
+    )
+    op.drop_index(
+        "ix_whitepaper_contradiction_events_run_id",
+        table_name="whitepaper_contradiction_events",
+    )
     op.drop_table("whitepaper_contradiction_events")
 
-    op.drop_index("uq_whitepaper_experiment_specs_run_experiment_id", table_name="whitepaper_experiment_specs")
-    op.drop_index("ix_whitepaper_experiment_specs_family_id", table_name="whitepaper_experiment_specs")
-    op.drop_index("ix_whitepaper_experiment_specs_run_id", table_name="whitepaper_experiment_specs")
+    op.drop_index(
+        "uq_whitepaper_experiment_specs_run_experiment_id",
+        table_name="whitepaper_experiment_specs",
+    )
+    op.drop_index(
+        "ix_whitepaper_experiment_specs_family_id",
+        table_name="whitepaper_experiment_specs",
+    )
+    op.drop_index(
+        "ix_whitepaper_experiment_specs_run_id",
+        table_name="whitepaper_experiment_specs",
+    )
     op.drop_table("whitepaper_experiment_specs")
 
-    op.drop_index("uq_whitepaper_strategy_templates_run_template_id", table_name="whitepaper_strategy_templates")
-    op.drop_index("ix_whitepaper_strategy_templates_family_id", table_name="whitepaper_strategy_templates")
-    op.drop_index("ix_whitepaper_strategy_templates_run_id", table_name="whitepaper_strategy_templates")
+    op.drop_index(
+        "uq_whitepaper_strategy_templates_run_template_id",
+        table_name="whitepaper_strategy_templates",
+    )
+    op.drop_index(
+        "ix_whitepaper_strategy_templates_family_id",
+        table_name="whitepaper_strategy_templates",
+    )
+    op.drop_index(
+        "ix_whitepaper_strategy_templates_run_id",
+        table_name="whitepaper_strategy_templates",
+    )
     op.drop_table("whitepaper_strategy_templates")
 
-    op.drop_index("uq_whitepaper_claim_relations_run_relation_id", table_name="whitepaper_claim_relations")
-    op.drop_index("ix_whitepaper_claim_relations_target", table_name="whitepaper_claim_relations")
-    op.drop_index("ix_whitepaper_claim_relations_source", table_name="whitepaper_claim_relations")
-    op.drop_index("ix_whitepaper_claim_relations_type", table_name="whitepaper_claim_relations")
-    op.drop_index("ix_whitepaper_claim_relations_run_id", table_name="whitepaper_claim_relations")
+    op.drop_index(
+        "uq_whitepaper_claim_relations_run_relation_id",
+        table_name="whitepaper_claim_relations",
+    )
+    op.drop_index(
+        "ix_whitepaper_claim_relations_target", table_name="whitepaper_claim_relations"
+    )
+    op.drop_index(
+        "ix_whitepaper_claim_relations_source", table_name="whitepaper_claim_relations"
+    )
+    op.drop_index(
+        "ix_whitepaper_claim_relations_type", table_name="whitepaper_claim_relations"
+    )
+    op.drop_index(
+        "ix_whitepaper_claim_relations_run_id", table_name="whitepaper_claim_relations"
+    )
     op.drop_table("whitepaper_claim_relations")
 
     op.drop_index("uq_whitepaper_claims_run_claim_id", table_name="whitepaper_claims")

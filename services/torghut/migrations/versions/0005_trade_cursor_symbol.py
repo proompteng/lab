@@ -19,7 +19,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("trade_cursor", sa.Column("cursor_symbol", sa.String(length=32), nullable=True))
+    op.add_column(
+        "trade_cursor", sa.Column("cursor_symbol", sa.String(length=32), nullable=True)
+    )
 
 
 def downgrade() -> None:

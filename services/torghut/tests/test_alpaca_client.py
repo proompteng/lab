@@ -55,7 +55,9 @@ class DummyDataClient:
 
     def get_stock_bars(self, request):  # type: ignore[override]
         self.requested.append(request)
-        return type("Obj", (), {"data": {"AAPL": [DummyModel(symbol="AAPL", open=1, close=2)]}})()
+        return type(
+            "Obj", (), {"data": {"AAPL": [DummyModel(symbol="AAPL", open=1, close=2)]}}
+        )()
 
 
 class TestAlpacaClient(TestCase):
@@ -192,7 +194,9 @@ class TestAlpacaClient(TestCase):
         try:
             with (
                 patch("app.alpaca_client.TradingClient") as mock_trading_client,
-                patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client,
+                patch(
+                    "app.alpaca_client.StockHistoricalDataClient"
+                ) as mock_data_client,
             ):
                 TorghutAlpacaClient(
                     api_key="k",
@@ -217,7 +221,9 @@ class TestAlpacaClient(TestCase):
         try:
             with (
                 patch("app.alpaca_client.TradingClient") as mock_trading_client,
-                patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client,
+                patch(
+                    "app.alpaca_client.StockHistoricalDataClient"
+                ) as mock_data_client,
             ):
                 client = TorghutAlpacaClient(
                     api_key="k",
@@ -244,4 +250,6 @@ class TestAlpacaClient(TestCase):
             )
 
             trading_kwargs = mock_trading_client.call_args.kwargs
-            self.assertEqual(trading_kwargs.get("url_override"), "https://paper-api.alpaca.markets")
+            self.assertEqual(
+                trading_kwargs.get("url_override"), "https://paper-api.alpaca.markets"
+            )

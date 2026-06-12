@@ -194,8 +194,10 @@ def _resolve_adjusted_qty(
 ) -> tuple[Decimal, Optional[str], PolicyOutcome | None]:
     adjusted_qty = review.adjusted_qty
     if adjusted_qty is None:
-        return Decimal("0"), None, PolicyOutcome(
-            "veto", decision, "llm_adjustment_missing_qty"
+        return (
+            Decimal("0"),
+            None,
+            PolicyOutcome("veto", decision, "llm_adjustment_missing_qty"),
         )
 
     qty = Decimal(str(decision.qty))
@@ -203,8 +205,10 @@ def _resolve_adjusted_qty(
     max_qty = qty * Decimal(str(settings.llm_max_qty_multiplier))
     adjusted_qty_dec = Decimal(str(adjusted_qty))
     if adjusted_qty_dec <= 0:
-        return Decimal("0"), None, PolicyOutcome(
-            "veto", decision, "llm_adjustment_non_positive"
+        return (
+            Decimal("0"),
+            None,
+            PolicyOutcome("veto", decision, "llm_adjustment_non_positive"),
         )
 
     clamp_reason: Optional[str] = None
@@ -253,17 +257,26 @@ def _deterministic_guardrail_reasons(review: LLMReviewResponse) -> list[str]:
     calibrated = review.calibrated_probabilities.model_dump(mode="python")
     sorted_probabilities = sorted(float(value) for value in calibrated.values())
     top_probability = sorted_probabilities[-1]
-    second_probability = sorted_probabilities[-2] if len(sorted_probabilities) > 1 else 0.0
+    second_probability = (
+        sorted_probabilities[-2] if len(sorted_probabilities) > 1 else 0.0
+    )
     if top_probability < settings.llm_min_calibrated_top_probability:
         reasons.append("llm_calibrated_probability_below_min")
     if (top_probability - second_probability) < settings.llm_min_probability_margin:
         reasons.append("llm_calibrated_probability_margin_below_min")
     if review.uncertainty.score > settings.llm_max_uncertainty:
         reasons.append("llm_uncertainty_score_above_max")
-    if _band_rank(review.uncertainty.band) > _band_rank(settings.llm_max_uncertainty_band):
+    if _band_rank(review.uncertainty.band) > _band_rank(
+        settings.llm_max_uncertainty_band
+    ):
         reasons.append("llm_uncertainty_band_above_max")
-    quality_score = _parse_quality_score(review.calibration_metadata.get("quality_score"))
-    if quality_score is not None and quality_score < settings.llm_min_calibration_quality_score:
+    quality_score = _parse_quality_score(
+        review.calibration_metadata.get("quality_score")
+    )
+    if (
+        quality_score is not None
+        and quality_score < settings.llm_min_calibration_quality_score
+    ):
         reasons.append("llm_calibration_quality_below_min")
     return reasons
 

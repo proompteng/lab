@@ -187,7 +187,9 @@ class TestLLMDSPyRuntime(TestCase):
                 _resolve_dspy_api_base(),
                 "http://jangar.example/openai/v1",
             )
-            settings.jangar_base_url = "http://jangar.example/openai/v1/chat/completions"
+            settings.jangar_base_url = (
+                "http://jangar.example/openai/v1/chat/completions"
+            )
             self.assertEqual(
                 _resolve_dspy_api_base(),
                 "http://jangar.example/openai/v1",
@@ -201,7 +203,9 @@ class TestLLMDSPyRuntime(TestCase):
             settings.jangar_base_url = None
             with self.assertRaises(DSPyRuntimeUnsupportedStateError):
                 _resolve_dspy_api_base()
-            settings.jangar_base_url = "http://jangar.example/openai/v1/chat/completions"
+            settings.jangar_base_url = (
+                "http://jangar.example/openai/v1/chat/completions"
+            )
             self.assertEqual(
                 _resolve_dspy_api_base(),
                 "http://jangar.example/openai/v1",
@@ -212,7 +216,9 @@ class TestLLMDSPyRuntime(TestCase):
             settings.jangar_base_url = "http://jangar.example/foo"
             with self.assertRaises(DSPyRuntimeUnsupportedStateError):
                 _resolve_dspy_api_base()
-            settings.jangar_base_url = "http://jangar.example/openai/v1/chat/completions#frag"
+            settings.jangar_base_url = (
+                "http://jangar.example/openai/v1/chat/completions#frag"
+            )
             with self.assertRaises(DSPyRuntimeUnsupportedStateError):
                 _resolve_dspy_api_base()
         finally:
@@ -374,9 +380,7 @@ class TestLLMDSPyRuntime(TestCase):
             with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
                 runtime.review(self._request())
 
-            self.assertIn(
-                "dspy_live_runtime_gate_blocked", str(exc.exception)
-            )
+            self.assertIn("dspy_live_runtime_gate_blocked", str(exc.exception))
             self.assertIn("dspy_live_runtime_gate_blocked:", str(exc.exception))
         finally:
             self._restore_live_runtime_gate(original_gate)
@@ -488,9 +492,7 @@ class TestLLMDSPyRuntime(TestCase):
             source="database",
         )
 
-        with patch.object(
-            runtime, "_load_manifest_from_db", return_value=manifest
-        ):
+        with patch.object(runtime, "_load_manifest_from_db", return_value=manifest):
             with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
                 runtime.review(self._request())
 
@@ -562,7 +564,9 @@ class TestLLMDSPyRuntime(TestCase):
             def __enter__(self) -> _FakeSession:
                 return _FakeSession(self._row)
 
-            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
+            def __exit__(
+                self, exc_type: object, exc: object, tb: object
+            ) -> bool | None:
                 return None
 
         runtime = DSPyReviewRuntime(
@@ -584,11 +588,12 @@ class TestLLMDSPyRuntime(TestCase):
             metadata_json={},
         )
 
-        with patch(
-            "app.db.SessionLocal", return_value=_FakeSessionContext(row)
-        ), patch(
-            "app.trading.llm.dspy_programs.runtime.hash_payload",
-            return_value=artifact_hash,
+        with (
+            patch("app.db.SessionLocal", return_value=_FakeSessionContext(row)),
+            patch(
+                "app.trading.llm.dspy_programs.runtime.hash_payload",
+                return_value=artifact_hash,
+            ),
         ):
             with self.assertRaises(DSPyRuntimeUnsupportedStateError) as exc:
                 runtime._load_manifest_from_db(artifact_hash)
@@ -777,14 +782,16 @@ class TestLLMDSPyRuntime(TestCase):
             )
 
             with patch.object(
-                runtime, "_load_manifest_from_db", return_value=DSPyArtifactManifest(
+                runtime,
+                "_load_manifest_from_db",
+                return_value=DSPyArtifactManifest(
                     artifact_hash="a" * 64,
                     program_name="trade-review-committee-v1",
                     signature_version="v1",
                     executor="dspy_live",
                     compiled_prompt={},
                     source="database",
-                )
+                ),
             ):
                 _, reasons = runtime.evaluate_live_readiness()
                 self.assertEqual(reasons, ())
@@ -801,7 +808,9 @@ class TestLLMDSPyRuntime(TestCase):
                 _resolve_dspy_api_base(),
                 "https://jangar.example/openai/v1",
             )
-            settings.jangar_base_url = "https://jangar.example/openai/v1/chat/completions"
+            settings.jangar_base_url = (
+                "https://jangar.example/openai/v1/chat/completions"
+            )
             self.assertEqual(
                 _resolve_dspy_api_base(),
                 "https://jangar.example/openai/v1",
@@ -894,9 +903,12 @@ class TestLLMDSPyRuntime(TestCase):
                 )
 
         try:
-            with patch.object(runtime, "_load_manifest_from_db", return_value=manifest), patch(
-                "app.trading.llm.dspy_programs.runtime.LiveDSPyCommitteeProgram",
-                _ProbeDSPyProgram,
+            with (
+                patch.object(runtime, "_load_manifest_from_db", return_value=manifest),
+                patch(
+                    "app.trading.llm.dspy_programs.runtime.LiveDSPyCommitteeProgram",
+                    _ProbeDSPyProgram,
+                ),
             ):
                 response, _metadata = runtime.review(self._request())
 

@@ -20,7 +20,9 @@ class OptionsLaneSettings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
-    http_host: str = Field("0.0.0.0", validation_alias=AliasChoices("OPTIONS_HTTP_HOST"))
+    http_host: str = Field(
+        "0.0.0.0", validation_alias=AliasChoices("OPTIONS_HTTP_HOST")
+    )
     http_port: int = Field(8080, validation_alias=AliasChoices("OPTIONS_HTTP_PORT"))
 
     sqlalchemy_dsn: str = Field(
@@ -48,7 +50,9 @@ class OptionsLaneSettings(BaseSettings):
         validation_alias=AliasChoices("KAFKA_SASL_PASSWORD"),
     )
     kafka_linger_ms: int = Field(30, validation_alias=AliasChoices("KAFKA_LINGER_MS"))
-    kafka_batch_size: int = Field(32768, validation_alias=AliasChoices("KAFKA_BATCH_SIZE"))
+    kafka_batch_size: int = Field(
+        32768, validation_alias=AliasChoices("KAFKA_BATCH_SIZE")
+    )
     kafka_request_timeout_ms: int = Field(
         15000, validation_alias=AliasChoices("KAFKA_REQUEST_TIMEOUT_MS")
     )
@@ -59,7 +63,9 @@ class OptionsLaneSettings(BaseSettings):
     )
     alpaca_secret_key: str = Field(
         ...,
-        validation_alias=AliasChoices("ALPACA_OPTIONS_SECRET_KEY", "APCA_API_SECRET_KEY"),
+        validation_alias=AliasChoices(
+            "ALPACA_OPTIONS_SECRET_KEY", "APCA_API_SECRET_KEY"
+        ),
     )
     alpaca_feed: str = Field(
         "opra",
@@ -67,11 +73,15 @@ class OptionsLaneSettings(BaseSettings):
     )
     alpaca_contracts_base_url: str = Field(
         "https://paper-api.alpaca.markets",
-        validation_alias=AliasChoices("ALPACA_OPTIONS_CONTRACTS_BASE_URL", "APCA_API_BASE_URL"),
+        validation_alias=AliasChoices(
+            "ALPACA_OPTIONS_CONTRACTS_BASE_URL", "APCA_API_BASE_URL"
+        ),
     )
     alpaca_data_base_url: str = Field(
         "https://data.alpaca.markets",
-        validation_alias=AliasChoices("ALPACA_OPTIONS_DATA_BASE_URL", "ALPACA_OPTIONS_BASE_URL"),
+        validation_alias=AliasChoices(
+            "ALPACA_OPTIONS_DATA_BASE_URL", "ALPACA_OPTIONS_BASE_URL"
+        ),
     )
     alpaca_stream_url: str = Field(
         "wss://stream.data.alpaca.markets",
@@ -84,7 +94,9 @@ class OptionsLaneSettings(BaseSettings):
     )
     options_contract_discovery_offsession_interval_sec: int = Field(
         3600,
-        validation_alias=AliasChoices("OPTIONS_CONTRACT_DISCOVERY_OFFSESSION_INTERVAL_SEC"),
+        validation_alias=AliasChoices(
+            "OPTIONS_CONTRACT_DISCOVERY_OFFSESSION_INTERVAL_SEC"
+        ),
     )
     options_contract_discovery_page_limit: int = Field(
         10000,
@@ -174,7 +186,9 @@ class OptionsLaneSettings(BaseSettings):
         validation_alias=AliasChoices("TOPIC_OPTIONS_STATUS"),
     )
 
-    @field_validator("options_market_holidays", "options_underlying_priority_symbols", mode="before")
+    @field_validator(
+        "options_market_holidays", "options_underlying_priority_symbols", mode="before"
+    )
     @classmethod
     def _normalize_csv_fields(cls, value: Any) -> list[str]:
         if isinstance(value, list):

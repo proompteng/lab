@@ -105,5 +105,7 @@ class TestTigerBeetleReconciliationCompactStatusMigration(TestCase):
         column_names = [call.args[1] for call in drop_column.call_args_list]
         self.assertEqual(
             column_names,
-            list(reversed((*module.COMPACT_JSON_COLUMNS, *module.COMPACT_COUNT_COLUMNS))),
+            list(
+                reversed((*module.COMPACT_JSON_COLUMNS, *module.COMPACT_COUNT_COLUMNS))
+            ),
         )

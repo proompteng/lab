@@ -12,36 +12,36 @@ from app.trading.autonomy.lane import run_autonomous_lane
 
 
 def _run_git_rev_parse() -> subprocess.CompletedProcess[str]:
-    if Path('/usr/bin/git').exists():
+    if Path("/usr/bin/git").exists():
         return subprocess.run(
-            ['/usr/bin/git', 'rev-parse', 'HEAD'],
+            ["/usr/bin/git", "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         )
-    if Path('/usr/local/bin/git').exists():
+    if Path("/usr/local/bin/git").exists():
         return subprocess.run(
-            ['/usr/local/bin/git', 'rev-parse', 'HEAD'],
+            ["/usr/local/bin/git", "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         )
-    if Path('/opt/homebrew/bin/git').exists():
+    if Path("/opt/homebrew/bin/git").exists():
         return subprocess.run(
-            ['/opt/homebrew/bin/git', 'rev-parse', 'HEAD'],
+            ["/opt/homebrew/bin/git", "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         )
-    raise FileNotFoundError('git not found in expected paths')
+    raise FileNotFoundError("git not found in expected paths")
 
 
 def _resolve_git_sha() -> str:
     try:
         result = _run_git_rev_parse()
     except (subprocess.SubprocessError, FileNotFoundError):
-        return 'unknown'
-    return result.stdout.strip() or 'unknown'
+        return "unknown"
+    return result.stdout.strip() or "unknown"
 
 
 def main() -> int:
@@ -67,9 +67,7 @@ def main() -> int:
         "--repository", type=str, default=None, help="Repository context for this run."
     )
     parser.add_argument("--base", type=str, default=None, help="Base reference.")
-    parser.add_argument(
-        "--head", type=str, default=None, help="Head reference."
-    )
+    parser.add_argument("--head", type=str, default=None, help="Head reference.")
     parser.add_argument(
         "--artifact-path",
         type=Path,
@@ -158,9 +156,7 @@ def main() -> int:
         artifact_path=str(args.artifact_path)
         if args.artifact_path is not None
         else None,
-        artifactPath=str(args.artifactPath)
-        if args.artifactPath is not None
-        else None,
+        artifactPath=str(args.artifactPath) if args.artifactPath is not None else None,
         priority_id=args.priority_id,
         priorityId=args.priorityId,
         design_doc=args.design_doc,

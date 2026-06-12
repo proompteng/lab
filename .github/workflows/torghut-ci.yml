@@ -389,11 +389,28 @@ jobs:
 
       - name: Bytecode check
         working-directory: services/torghut
-        run: uv run --frozen python -m compileall app
+        run: uv run --frozen python -m compileall app scripts
+
+      - name: Format check
+        working-directory: services/torghut
+        run: uv run --frozen ruff format --check app tests scripts migrations
 
       - name: Lint
         working-directory: services/torghut
         run: uv run --frozen ruff check app tests scripts migrations
+
+      - name: Pylint file length gate
+        working-directory: services/torghut
+        run: uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
+
+      - name: Pylint design complexity inventory (non-blocking)
+        continue-on-error: true
+        working-directory: services/torghut
+        run: >
+          uv run --frozen pylint app scripts
+          --disable=all
+          --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements
+          --score=n
 
       - name: Migration lineage guardrail
         working-directory: services/torghut

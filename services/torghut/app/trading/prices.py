@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -12,14 +11,31 @@ from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
 from time import monotonic
 from typing import Any, Optional, cast
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import SplitResult, urlencode, urlsplit
 
 from ..config import settings
 from .clickhouse import normalize_symbol, to_datetime64
 from .market_session import market_session_is_open
 from .models import SignalEnvelope
+from .prices_helpers import (
+    midpoint,
+    optional_decimal,
+    parse_ts,
+    qualified_table_name,
+    quote_literal,
+    quote_spread_bps,
+    quote_spread_bps_sql,
+    quote_spread_reject_reason,
+    select_price,
+    select_quote_spread,
+    snapshot_as_of,
+    split_table,
+)
 
 logger = logging.getLogger(__name__)
+
+_midpoint = midpoint
+_quote_spread_bps = quote_spread_bps
 
 
 @dataclass
@@ -34,6 +50,51 @@ class MarketSnapshot:
     quote_as_of: Optional[datetime] = None
     quote_source: Optional[str] = None
     quote_lookup_diagnostics: Optional[dict[str, object]] = None
+
+
+@dataclass(frozen=True)
+class _ResolvedQuoteRow:
+    row: dict[str, Any] | None
+    source: str
+    diagnostics: dict[str, object] | None
+
+
+_CLICKHOUSE_PRICE_FETCHER_OPTION_NAMES: tuple[str, ...] = (
+    "url",
+    "username",
+    "password",
+    "table",
+    "quote_table",
+    "lookback_minutes",
+    "quote_lookback_seconds",
+    "quote_forward_seconds",
+    "alpaca_quote_fallback_enabled",
+    "alpaca_data_api_base_url",
+    "alpaca_api_key_id",
+    "alpaca_api_secret_key",
+    "alpaca_quote_feed",
+    "alpaca_quote_timeout_seconds",
+    "alpaca_quote_max_age_seconds",
+    "alpaca_quote_fallback_market_session_required",
+    "alpaca_quote_fallback_backoff_seconds",
+)
+
+
+def _price_fetcher_options_from_args(
+    args: tuple[Any, ...],
+    overrides: Mapping[str, Any],
+) -> dict[str, Any]:
+    if len(args) > len(_CLICKHOUSE_PRICE_FETCHER_OPTION_NAMES):
+        raise TypeError("too many positional arguments for ClickHousePriceFetcher")
+    options = dict(overrides)
+    for name, value in zip(_CLICKHOUSE_PRICE_FETCHER_OPTION_NAMES, args):
+        if name in options:
+            raise TypeError(f"multiple values for argument '{name}'")
+        options[name] = value
+    unknown = sorted(set(options) - set(_CLICKHOUSE_PRICE_FETCHER_OPTION_NAMES))
+    if unknown:
+        raise TypeError(f"unexpected ClickHousePriceFetcher option: {unknown[0]}")
+    return options
 
 
 class PriceFetcher:
@@ -53,6 +114,25 @@ class PriceFetcher:
             spread=None,
             source="price_fetcher",
         )
+
+
+def _quote_row_reject_reason(row: Mapping[str, Any]) -> str | None:
+    bid = optional_decimal(row.get("imbalance_bid_px"))
+    ask = optional_decimal(row.get("imbalance_ask_px"))
+    for failed, reason in (
+        (bid is None and ask is None, "missing_executable_quote"),
+        (bid is None, "missing_bid"),
+        (ask is None, "missing_ask"),
+        (bid is not None and bid <= 0, "non_positive_bid"),
+        (ask is not None and ask <= 0, "non_positive_ask"),
+        (bid is not None and ask is not None and ask < bid, "crossed_quote"),
+    ):
+        if failed:
+            return reason
+    if bid is None or ask is None:
+        return "missing_executable_quote"
+    spread_bps = _quote_spread_bps(bid=bid, ask=ask)
+    return quote_spread_reject_reason(spread_bps)
 
 
 def resolve_execution_reference_price(
@@ -91,7 +171,7 @@ def resolve_execution_reference_price(
         fallback_price,
         params_payload.get("price"),
     ):
-        resolved = _optional_decimal(candidate)
+        resolved = optional_decimal(candidate)
         if resolved is not None and resolved > 0:
             return resolved
     return None
@@ -102,85 +182,86 @@ class ClickHousePriceFetcher(PriceFetcher):
 
     def __init__(
         self,
-        url: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        table: Optional[str] = None,
-        quote_table: Optional[str] = None,
-        lookback_minutes: Optional[int] = None,
-        quote_lookback_seconds: Optional[int] = None,
-        quote_forward_seconds: Optional[int] = None,
-        alpaca_quote_fallback_enabled: Optional[bool] = None,
-        alpaca_data_api_base_url: Optional[str] = None,
-        alpaca_api_key_id: Optional[str] = None,
-        alpaca_api_secret_key: Optional[str] = None,
-        alpaca_quote_feed: Optional[str] = None,
-        alpaca_quote_timeout_seconds: Optional[float] = None,
-        alpaca_quote_max_age_seconds: Optional[int] = None,
-        alpaca_quote_fallback_market_session_required: Optional[bool] = None,
-        alpaca_quote_fallback_backoff_seconds: Optional[int] = None,
+        *args: Any,
+        **overrides: Any,
     ) -> None:
-        self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
-        self.username = username or settings.trading_clickhouse_username
-        self.password = password or settings.trading_clickhouse_password
-        self.table = _qualified_table_name(table or settings.trading_price_table)
-        self.quote_table = _qualified_table_name(
-            quote_table or settings.trading_signal_table
+        options = _price_fetcher_options_from_args(args, overrides)
+        self.url = (options.get("url") or settings.trading_clickhouse_url or "").rstrip(
+            "/"
+        )
+        self.username = options.get("username") or settings.trading_clickhouse_username
+        self.password = options.get("password") or settings.trading_clickhouse_password
+        self.table = qualified_table_name(
+            options.get("table") or settings.trading_price_table
+        )
+        self.quote_table = qualified_table_name(
+            options.get("quote_table") or settings.trading_signal_table
         )
         self.lookback_minutes = (
-            lookback_minutes or settings.trading_price_lookback_minutes
+            options.get("lookback_minutes") or settings.trading_price_lookback_minutes
         )
         self.quote_lookback_seconds = max(
             1,
-            quote_lookback_seconds
-            or settings.trading_executable_quote_lookback_seconds,
+            int(
+                options.get("quote_lookback_seconds")
+                or settings.trading_executable_quote_lookback_seconds
+                or 0
+            ),
         )
         configured_forward_seconds = (
             settings.trading_executable_quote_forward_seconds
-            if quote_forward_seconds is None
-            else quote_forward_seconds
+            if options.get("quote_forward_seconds") is None
+            else options.get("quote_forward_seconds")
         )
-        self.quote_forward_seconds = max(0, configured_forward_seconds)
+        self.quote_forward_seconds = max(0, int(configured_forward_seconds or 0))
         self.alpaca_quote_fallback_enabled = (
             settings.trading_alpaca_quote_fallback_enabled
-            if alpaca_quote_fallback_enabled is None
-            else alpaca_quote_fallback_enabled
+            if options.get("alpaca_quote_fallback_enabled") is None
+            else options.get("alpaca_quote_fallback_enabled")
         )
         self.alpaca_data_api_base_url = (
-            alpaca_data_api_base_url
+            options.get("alpaca_data_api_base_url")
             or settings.apca_data_api_base_url
             or "https://data.alpaca.markets"
         ).rstrip("/")
-        self.alpaca_api_key_id = alpaca_api_key_id or settings.apca_api_key_id
-        self.alpaca_api_secret_key = (
-            alpaca_api_secret_key or settings.apca_api_secret_key
+        self.alpaca_api_key_id = (
+            options.get("alpaca_api_key_id") or settings.apca_api_key_id
         )
-        self.alpaca_quote_feed = (
-            alpaca_quote_feed
-            if alpaca_quote_feed is not None
+        self.alpaca_api_secret_key = (
+            options.get("alpaca_api_secret_key") or settings.apca_api_secret_key
+        )
+        self.alpaca_quote_feed = str(
+            options.get("alpaca_quote_feed")
+            if options.get("alpaca_quote_feed") is not None
             else settings.trading_alpaca_quote_feed
         ).strip()
         self.alpaca_quote_timeout_seconds = (
-            alpaca_quote_timeout_seconds
-            if alpaca_quote_timeout_seconds is not None
+            options.get("alpaca_quote_timeout_seconds")
+            if options.get("alpaca_quote_timeout_seconds") is not None
             else settings.trading_alpaca_quote_timeout_seconds
+        )
+        raw_alpaca_quote_max_age_seconds = (
+            options.get("alpaca_quote_max_age_seconds")
+            if options.get("alpaca_quote_max_age_seconds") is not None
+            else settings.trading_alpaca_quote_max_age_seconds
         )
         self.alpaca_quote_max_age_seconds = max(
             1,
-            alpaca_quote_max_age_seconds
-            if alpaca_quote_max_age_seconds is not None
-            else settings.trading_alpaca_quote_max_age_seconds,
+            int(raw_alpaca_quote_max_age_seconds or 0),
         )
         self.alpaca_quote_fallback_market_session_required = (
             settings.trading_alpaca_quote_fallback_market_session_required
-            if alpaca_quote_fallback_market_session_required is None
-            else alpaca_quote_fallback_market_session_required
+            if options.get("alpaca_quote_fallback_market_session_required") is None
+            else options.get("alpaca_quote_fallback_market_session_required")
+        )
+        raw_alpaca_quote_fallback_backoff_seconds = (
+            options.get("alpaca_quote_fallback_backoff_seconds")
+            if options.get("alpaca_quote_fallback_backoff_seconds") is not None
+            else settings.trading_alpaca_quote_fallback_backoff_seconds
         )
         self.alpaca_quote_fallback_backoff_seconds = max(
             0,
-            alpaca_quote_fallback_backoff_seconds
-            if alpaca_quote_fallback_backoff_seconds is not None
-            else settings.trading_alpaca_quote_fallback_backoff_seconds,
+            int(raw_alpaca_quote_fallback_backoff_seconds or 0),
         )
         self._columns: Optional[set[str]] = None
         self._alpaca_quote_fallback_backoff: dict[str, tuple[float, str]] = {}
@@ -203,7 +284,7 @@ class ClickHousePriceFetcher(PriceFetcher):
                 "FROM",
                 self.table,
                 "WHERE",
-                f"symbol = {_quote_literal(symbol)}",
+                f"symbol = {quote_literal(symbol)}",
                 "AND",
                 f"event_ts >= {to_datetime64(lookback)}",
                 "AND",
@@ -218,39 +299,47 @@ class ClickHousePriceFetcher(PriceFetcher):
         if not rows:
             return None
         row = rows[0]
-        return _select_price(row)
+        return select_price(row)
 
-    def fetch_market_snapshot(self, signal: SignalEnvelope) -> Optional[MarketSnapshot]:
-        symbol = normalize_symbol(signal.symbol)
-        if symbol is None:
-            logger.warning("Invalid symbol for price snapshot: %s", signal.symbol)
-            return None
-        target_ts = signal.event_ts
-        rows: list[dict[str, Any]] = []
-        if self.url:
-            lookback = target_ts - timedelta(minutes=self.lookback_minutes)
-            order_clause = "event_ts DESC"
-            if self._supports_seq():
-                order_clause = "event_ts DESC, seq DESC"
-            query = " ".join(
-                [
-                    "SELECT event_ts, c, vwap",
-                    "FROM",
-                    self.table,
-                    "WHERE",
-                    f"symbol = {_quote_literal(symbol)}",
-                    "AND",
-                    f"event_ts >= {to_datetime64(lookback)}",
-                    "AND",
-                    f"event_ts <= {to_datetime64(target_ts)}",
-                    "ORDER BY",
-                    order_clause,
-                    "LIMIT 1",
-                    "FORMAT JSONEachRow",
-                ]
-            )
-            rows = self._query_clickhouse(query)
-        row = rows[0] if rows else {}
+    def _fetch_microbar_price_row(
+        self,
+        *,
+        symbol: str,
+        target_ts: datetime,
+    ) -> dict[str, Any]:
+        if not self.url:
+            return {}
+        lookback = target_ts - timedelta(minutes=self.lookback_minutes)
+        order_clause = "event_ts DESC"
+        if self._supports_seq():
+            order_clause = "event_ts DESC, seq DESC"
+        query = " ".join(
+            [
+                "SELECT event_ts, c, vwap",
+                "FROM",
+                self.table,
+                "WHERE",
+                f"symbol = {quote_literal(symbol)}",
+                "AND",
+                f"event_ts >= {to_datetime64(lookback)}",
+                "AND",
+                f"event_ts <= {to_datetime64(target_ts)}",
+                "ORDER BY",
+                order_clause,
+                "LIMIT 1",
+                "FORMAT JSONEachRow",
+            ]
+        )
+        rows = self._query_clickhouse(query)
+        return rows[0] if rows else {}
+
+    def _resolve_quote_row(
+        self,
+        *,
+        symbol: str,
+        target_ts: datetime,
+    ) -> _ResolvedQuoteRow:
+        quote_source = "ta_signals_quote"
         quote_row = (
             self._fetch_recent_executable_quote_row(
                 symbol=symbol,
@@ -259,61 +348,98 @@ class ClickHousePriceFetcher(PriceFetcher):
             if self.url
             else None
         )
-        quote_source = "ta_signals_quote"
-        quote_lookup_diagnostics: dict[str, object] | None = None
-        if self.url:
-            if quote_row is not None:
-                quote_lookup_diagnostics = self._quote_lookup_diagnostics(
+        diagnostics = self._quote_row_diagnostics(
+            symbol=symbol,
+            target_ts=target_ts,
+            quote_row=quote_row,
+            quote_source=quote_source,
+        )
+        if quote_row is not None:
+            return _ResolvedQuoteRow(
+                row=quote_row,
+                source=quote_source,
+                diagnostics=diagnostics,
+            )
+
+        alpaca_row = self._fetch_alpaca_latest_quote_row(symbol=symbol)
+        if alpaca_row is not None:
+            return _ResolvedQuoteRow(
+                row=alpaca_row,
+                source="alpaca_latest_quote",
+                diagnostics=self._quote_lookup_diagnostics(
                     symbol=symbol,
                     target_ts=target_ts,
-                    source=quote_source,
-                    row=quote_row,
+                    source="alpaca_latest_quote",
+                    row=alpaca_row,
                     accepted=True,
-                )
-            else:
-                quote_lookup_diagnostics = self._quote_lookup_diagnostics(
-                    symbol=symbol,
-                    target_ts=target_ts,
-                    source=quote_source,
-                    row=self._fetch_latest_quote_diagnostic_row(
-                        symbol=symbol,
-                        target_ts=target_ts,
-                    ),
-                    accepted=False,
-                )
-        if quote_row is None:
-            quote_row = self._fetch_alpaca_latest_quote_row(symbol=symbol)
-            quote_source = "alpaca_latest_quote"
-            if quote_row is not None:
-                quote_lookup_diagnostics = self._quote_lookup_diagnostics(
-                    symbol=symbol,
-                    target_ts=target_ts,
-                    source=quote_source,
-                    row=quote_row,
-                    accepted=True,
-                )
-            elif quote_lookup_diagnostics is not None:
-                quote_lookup_diagnostics["alpaca_quote_fallback_attempted"] = (
-                    self.alpaca_quote_fallback_enabled
-                )
-        as_of = _snapshot_as_of(row, signal.event_ts)
-        price = _select_price(row)
-        spread = _optional_decimal(row.get("spread"))
+                ),
+            )
+        if diagnostics is not None:
+            diagnostics["alpaca_quote_fallback_attempted"] = (
+                self.alpaca_quote_fallback_enabled
+            )
+        return _ResolvedQuoteRow(
+            row=None, source="alpaca_latest_quote", diagnostics=diagnostics
+        )
+
+    def _quote_row_diagnostics(
+        self,
+        *,
+        symbol: str,
+        target_ts: datetime,
+        quote_row: dict[str, Any] | None,
+        quote_source: str,
+    ) -> dict[str, object] | None:
+        if not self.url:
+            return None
+        if quote_row is not None:
+            return self._quote_lookup_diagnostics(
+                symbol=symbol,
+                target_ts=target_ts,
+                source=quote_source,
+                row=quote_row,
+                accepted=True,
+            )
+        return self._quote_lookup_diagnostics(
+            symbol=symbol,
+            target_ts=target_ts,
+            source=quote_source,
+            row=self._fetch_latest_quote_diagnostic_row(
+                symbol=symbol,
+                target_ts=target_ts,
+            ),
+            accepted=False,
+        )
+
+    @staticmethod
+    def _snapshot_from_rows(
+        *,
+        signal: SignalEnvelope,
+        symbol: str,
+        row: Mapping[str, Any],
+        resolved_quote: _ResolvedQuoteRow,
+    ) -> MarketSnapshot | None:
+        as_of = snapshot_as_of(row, signal.event_ts)
+        price = select_price(dict(row))
+        spread = optional_decimal(row.get("spread"))
         source = "ta_microbars"
         bid: Decimal | None = None
         ask: Decimal | None = None
         quote_as_of: datetime | None = None
-        resolved_quote_source: str | None = None
+        quote_row = resolved_quote.row
         if quote_row is not None:
-            quote_as_of = _snapshot_as_of(quote_row, signal.event_ts)
-            bid = _optional_decimal(quote_row.get("imbalance_bid_px"))
-            ask = _optional_decimal(quote_row.get("imbalance_ask_px"))
-            quote_spread = _select_quote_spread(quote_row, bid=bid, ask=ask)
-            price = price or _select_price(quote_row) or _midpoint(bid=bid, ask=ask)
+            quote_as_of = snapshot_as_of(quote_row, signal.event_ts)
+            bid = optional_decimal(quote_row.get("imbalance_bid_px"))
+            ask = optional_decimal(quote_row.get("imbalance_ask_px"))
+            quote_spread = select_quote_spread(quote_row, bid=bid, ask=ask)
+            price = price or select_price(quote_row) or midpoint(bid=bid, ask=ask)
             spread = spread or quote_spread
             as_of = quote_as_of if not row else as_of
-            source = f"ta_microbars+{quote_source}" if row else quote_source
-            resolved_quote_source = quote_source
+            source = (
+                f"ta_microbars+{resolved_quote.source}"
+                if row
+                else resolved_quote.source
+            )
         if price is None and bid is None and ask is None:
             return None
         return MarketSnapshot(
@@ -325,8 +451,23 @@ class ClickHousePriceFetcher(PriceFetcher):
             bid=bid,
             ask=ask,
             quote_as_of=quote_as_of,
-            quote_source=resolved_quote_source,
-            quote_lookup_diagnostics=quote_lookup_diagnostics,
+            quote_source=resolved_quote.source if quote_row is not None else None,
+            quote_lookup_diagnostics=resolved_quote.diagnostics,
+        )
+
+    def fetch_market_snapshot(self, signal: SignalEnvelope) -> Optional[MarketSnapshot]:
+        symbol = normalize_symbol(signal.symbol)
+        if symbol is None:
+            logger.warning("Invalid symbol for price snapshot: %s", signal.symbol)
+            return None
+        target_ts = signal.event_ts
+        row = self._fetch_microbar_price_row(symbol=symbol, target_ts=target_ts)
+        resolved_quote = self._resolve_quote_row(symbol=symbol, target_ts=target_ts)
+        return self._snapshot_from_rows(
+            signal=signal,
+            symbol=symbol,
+            row=row,
+            resolved_quote=resolved_quote,
         )
 
     def _fetch_recent_executable_quote_row(
@@ -350,7 +491,7 @@ class ClickHousePriceFetcher(PriceFetcher):
                 "FROM",
                 self.quote_table,
                 "WHERE",
-                f"symbol = {_quote_literal(symbol)}",
+                f"symbol = {quote_literal(symbol)}",
                 "AND",
                 f"event_ts >= {to_datetime64(lookback)}",
                 "AND",
@@ -364,7 +505,7 @@ class ClickHousePriceFetcher(PriceFetcher):
                 "AND",
                 "imbalance_ask_px >= imbalance_bid_px",
                 "AND",
-                _quote_spread_bps_sql()
+                quote_spread_bps_sql()
                 + f" <= {settings.trading_signal_max_executable_spread_bps}",
                 "ORDER BY",
                 order_clause,
@@ -404,7 +545,7 @@ class ClickHousePriceFetcher(PriceFetcher):
                 "FROM",
                 self.quote_table,
                 "WHERE",
-                f"symbol = {_quote_literal(symbol)}",
+                f"symbol = {quote_literal(symbol)}",
                 "AND",
                 f"event_ts >= {to_datetime64(lookback)}",
                 "AND",
@@ -441,12 +582,12 @@ class ClickHousePriceFetcher(PriceFetcher):
         quote_as_of: datetime | None = None
         if row is not None:
             rejected_reason = None if accepted else _quote_row_reject_reason(row)
-            bid = _optional_decimal(row.get("imbalance_bid_px"))
-            ask = _optional_decimal(row.get("imbalance_ask_px"))
-            spread = _select_quote_spread(row, bid=bid, ask=ask)
+            bid = optional_decimal(row.get("imbalance_bid_px"))
+            ask = optional_decimal(row.get("imbalance_ask_px"))
+            spread = select_quote_spread(row, bid=bid, ask=ask)
             if bid is not None and ask is not None:
                 spread_bps = _quote_spread_bps(bid=bid, ask=ask)
-            quote_as_of = _snapshot_as_of(row, target_ts)
+            quote_as_of = snapshot_as_of(row, target_ts)
         return {
             "schema_version": "torghut.quote-lookup-diagnostics.v1",
             "symbol": symbol,
@@ -461,7 +602,7 @@ class ClickHousePriceFetcher(PriceFetcher):
             "latest_quote_bid": str(bid) if bid is not None else None,
             "latest_quote_ask": str(ask) if ask is not None else None,
             "latest_quote_spread": str(spread) if spread is not None else None,
-            "latest_quote_spread_bps": str(spread_bps)
+            "latestquote_spread_bps": str(spread_bps)
             if spread_bps is not None
             else None,
             "max_spread_bps": str(settings.trading_signal_max_executable_spread_bps),
@@ -469,11 +610,11 @@ class ClickHousePriceFetcher(PriceFetcher):
             "forward_seconds": self.quote_forward_seconds,
         }
 
-    def _fetch_alpaca_latest_quote_row(self, *, symbol: str) -> dict[str, Any] | None:
+    def _alpaca_quote_fallback_preflight(self, *, symbol: str) -> bool:
         if not self.alpaca_quote_fallback_enabled:
-            return None
+            return False
         if self._alpaca_quote_fallback_backoff_active(symbol=symbol):
-            return None
+            return False
         if (
             self.alpaca_quote_fallback_market_session_required
             and not market_session_is_open(None)
@@ -482,41 +623,36 @@ class ClickHousePriceFetcher(PriceFetcher):
                 symbol=symbol,
                 reason="market_session_closed",
             )
-            return None
-        if not self.alpaca_api_key_id or not self.alpaca_api_secret_key:
-            logger.warning(
-                "Alpaca latest quote fallback disabled by missing credentials symbol=%s",
-                symbol,
-            )
-            self._backoff_alpaca_quote_fallback(
-                symbol=symbol,
-                reason="missing_credentials",
-            )
-            return None
-        quote = self._fetch_alpaca_latest_quote(symbol=symbol)
-        if quote is None:
-            self._backoff_alpaca_quote_fallback(
-                symbol=symbol,
-                reason="quote_unavailable",
-            )
-            return None
-        bid = _optional_decimal(quote.get("bp") or quote.get("bid_price"))
-        ask = _optional_decimal(quote.get("ap") or quote.get("ask_price"))
+            return False
+        if self.alpaca_api_key_id and self.alpaca_api_secret_key:
+            return True
+        logger.warning(
+            "Alpaca latest quote fallback disabled by missing credentials symbol=%s",
+            symbol,
+        )
+        self._backoff_alpaca_quote_fallback(
+            symbol=symbol,
+            reason="missing_credentials",
+        )
+        return False
+
+    def _validated_alpaca_quote_prices(
+        self,
+        *,
+        symbol: str,
+        quote: Mapping[str, Any],
+    ) -> tuple[Decimal, Decimal] | None:
+        bid = optional_decimal(quote.get("bp") or quote.get("bid_price"))
+        ask = optional_decimal(quote.get("ap") or quote.get("ask_price"))
         if bid is None or ask is None or bid <= 0 or ask < bid:
             logger.info(
                 "Alpaca latest quote fallback rejected invalid quote symbol=%s", symbol
             )
-            self._backoff_alpaca_quote_fallback(
-                symbol=symbol,
-                reason="invalid_quote",
-            )
+            self._backoff_alpaca_quote_fallback(symbol=symbol, reason="invalid_quote")
             return None
         spread_bps = _quote_spread_bps(bid=bid, ask=ask)
         if spread_bps is None:
-            self._backoff_alpaca_quote_fallback(
-                symbol=symbol,
-                reason="invalid_spread",
-            )
+            self._backoff_alpaca_quote_fallback(symbol=symbol, reason="invalid_spread")
             return None
         if spread_bps > settings.trading_signal_max_executable_spread_bps:
             logger.info(
@@ -526,7 +662,15 @@ class ClickHousePriceFetcher(PriceFetcher):
             )
             self._backoff_alpaca_quote_fallback(symbol=symbol, reason="wide_quote")
             return None
-        quote_ts = _parse_ts(quote.get("t") or quote.get("timestamp"))
+        return bid, ask
+
+    def _validated_alpaca_quote_timestamp(
+        self,
+        *,
+        symbol: str,
+        quote: Mapping[str, Any],
+    ) -> datetime | None:
+        quote_ts = parse_ts(quote.get("t") or quote.get("timestamp"))
         if quote_ts is None:
             logger.info(
                 "Alpaca latest quote fallback rejected missing timestamp symbol=%s",
@@ -545,14 +689,33 @@ class ClickHousePriceFetcher(PriceFetcher):
                 datetime.now(timezone.utc) - quote_ts.astimezone(timezone.utc)
             ).total_seconds(),
         )
-        if quote_age > self.alpaca_quote_max_age_seconds:
-            logger.info(
-                "Alpaca latest quote fallback rejected stale quote symbol=%s age_seconds=%.3f",
-                symbol,
-                quote_age,
-            )
-            self._backoff_alpaca_quote_fallback(symbol=symbol, reason="stale_quote")
+        if quote_age <= self.alpaca_quote_max_age_seconds:
+            return quote_ts
+        logger.info(
+            "Alpaca latest quote fallback rejected stale quote symbol=%s age_seconds=%.3f",
+            symbol,
+            quote_age,
+        )
+        self._backoff_alpaca_quote_fallback(symbol=symbol, reason="stale_quote")
+        return None
+
+    def _fetch_alpaca_latest_quote_row(self, *, symbol: str) -> dict[str, Any] | None:
+        if not self._alpaca_quote_fallback_preflight(symbol=symbol):
             return None
+        quote = self._fetch_alpaca_latest_quote(symbol=symbol)
+        if quote is None:
+            self._backoff_alpaca_quote_fallback(
+                symbol=symbol,
+                reason="quote_unavailable",
+            )
+            return None
+        prices = self._validated_alpaca_quote_prices(symbol=symbol, quote=quote)
+        if prices is None:
+            return None
+        quote_ts = self._validated_alpaca_quote_timestamp(symbol=symbol, quote=quote)
+        if quote_ts is None:
+            return None
+        bid, ask = prices
         return {
             "event_ts": quote_ts.isoformat(),
             "imbalance_bid_px": bid,
@@ -588,16 +751,20 @@ class ClickHousePriceFetcher(PriceFetcher):
             self.alpaca_quote_fallback_backoff_seconds,
         )
 
-    def _fetch_alpaca_latest_quote(self, *, symbol: str) -> Mapping[str, Any] | None:
+    def _alpaca_latest_quote_url(self, *, symbol: str) -> str:
         params: dict[str, str] = {}
         if self.alpaca_quote_feed:
             params["feed"] = self.alpaca_quote_feed
-        query = urlencode(params)
         request_url = (
             f"{self.alpaca_data_api_base_url}/v2/stocks/{symbol}/quotes/latest"
         )
+        query = urlencode(params)
         if query:
-            request_url = f"{request_url}?{query}"
+            return f"{request_url}?{query}"
+        return request_url
+
+    @staticmethod
+    def _validated_alpaca_data_url(request_url: str) -> SplitResult | None:
         parsed = urlsplit(request_url)
         scheme = parsed.scheme.lower()
         if scheme not in {"http", "https"}:
@@ -608,7 +775,14 @@ class ClickHousePriceFetcher(PriceFetcher):
         if not parsed.hostname:
             logger.warning("Invalid Alpaca data API URL host")
             return None
+        return parsed
 
+    def _fetch_alpaca_latest_quote_body(
+        self,
+        *,
+        symbol: str,
+        parsed: SplitResult,
+    ) -> str | None:
         headers = {
             "Accept": "application/json",
             "APCA-API-KEY-ID": self.alpaca_api_key_id or "",
@@ -617,9 +791,15 @@ class ClickHousePriceFetcher(PriceFetcher):
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
-        connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
+        connection_class = (
+            HTTPSConnection if parsed.scheme.lower() == "https" else HTTPConnection
+        )
+        host = parsed.hostname
+        if not host:
+            logger.warning("Invalid Alpaca data API URL host")
+            return None
         connection = connection_class(
-            parsed.hostname,
+            host,
             parsed.port,
             timeout=self.alpaca_quote_timeout_seconds,
         )
@@ -636,14 +816,22 @@ class ClickHousePriceFetcher(PriceFetcher):
             return None
         finally:
             connection.close()
-        if response.status < 200 or response.status >= 300:
-            logger.warning(
-                "Alpaca latest quote fallback HTTP failure symbol=%s status=%s body=%s",
-                symbol,
-                response.status,
-                body[:200],
-            )
-            return None
+        if 200 <= response.status < 300:
+            return body
+        logger.warning(
+            "Alpaca latest quote fallback HTTP failure symbol=%s status=%s body=%s",
+            symbol,
+            response.status,
+            body[:200],
+        )
+        return None
+
+    @staticmethod
+    def _decode_alpaca_latest_quote(
+        *,
+        symbol: str,
+        body: str,
+    ) -> Mapping[str, Any] | None:
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
@@ -653,11 +841,21 @@ class ClickHousePriceFetcher(PriceFetcher):
             return None
         if not isinstance(payload, Mapping):
             return None
-        payload_mapping = cast(Mapping[str, Any], payload)
-        quote = payload_mapping.get("quote")
-        if not isinstance(quote, Mapping):
+        quote = cast(Mapping[str, Any], payload).get("quote")
+        if isinstance(quote, Mapping):
+            return cast(Mapping[str, Any], quote)
+        return None
+
+    def _fetch_alpaca_latest_quote(self, *, symbol: str) -> Mapping[str, Any] | None:
+        parsed = self._validated_alpaca_data_url(
+            self._alpaca_latest_quote_url(symbol=symbol)
+        )
+        if parsed is None:
             return None
-        return cast(Mapping[str, Any], quote)
+        body = self._fetch_alpaca_latest_quote_body(symbol=symbol, parsed=parsed)
+        if body is None:
+            return None
+        return self._decode_alpaca_latest_quote(symbol=symbol, body=body)
 
     def _query_clickhouse(self, query: str) -> list[dict[str, Any]]:
         params = {"query": query}
@@ -716,13 +914,13 @@ class ClickHousePriceFetcher(PriceFetcher):
     def _resolve_columns(self) -> Optional[set[str]]:
         if self._columns is not None:
             return self._columns
-        database, table = _split_table(self.table)
+        database, table = split_table(self.table)
         query = " ".join(
             [
                 "SELECT name FROM system.columns WHERE",
-                f"database = {_quote_literal(database)}",
+                f"database = {quote_literal(database)}",
                 "AND",
-                f"table = {_quote_literal(table)}",
+                f"table = {quote_literal(table)}",
                 "FORMAT JSONEachRow",
             ]
         )
@@ -740,135 +938,6 @@ class ClickHousePriceFetcher(PriceFetcher):
             self._columns = None
             return None
         return self._columns
-
-
-def _optional_decimal(value: Any) -> Optional[Decimal]:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except (ArithmeticError, ValueError):
-        return None
-
-
-def _parse_ts(value: Any) -> Optional[datetime]:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), tz=timezone.utc)
-    if isinstance(value, str):
-        cleaned = value.replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(cleaned)
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    return None
-
-
-def _snapshot_as_of(row: Mapping[str, Any], fallback: datetime) -> datetime:
-    return _parse_ts(row.get("event_ts")) or _parse_ts(row.get("ts")) or fallback
-
-
-def _select_price(row: dict[str, Any]) -> Optional[Decimal]:
-    return (
-        _optional_decimal(row.get("c"))
-        or _optional_decimal(row.get("vwap"))
-        or _optional_decimal(row.get("close"))
-        or _optional_decimal(row.get("price"))
-    )
-
-
-def _select_quote_spread(
-    row: Mapping[str, Any],
-    *,
-    bid: Decimal | None,
-    ask: Decimal | None,
-) -> Optional[Decimal]:
-    spread = _optional_decimal(row.get("spread"))
-    if spread is not None:
-        return spread
-    spread = _optional_decimal(row.get("imbalance_spread"))
-    if spread is not None:
-        return spread
-    if bid is None or ask is None:
-        return None
-    return ask - bid
-
-
-def _quote_row_reject_reason(row: Mapping[str, Any]) -> str | None:
-    bid = _optional_decimal(row.get("imbalance_bid_px"))
-    ask = _optional_decimal(row.get("imbalance_ask_px"))
-    if bid is None and ask is None:
-        return "missing_executable_quote"
-    if bid is None:
-        return "missing_bid"
-    if ask is None:
-        return "missing_ask"
-    if bid <= 0:
-        return "non_positive_bid"
-    if ask <= 0:
-        return "non_positive_ask"
-    if ask < bid:
-        return "crossed_quote"
-    spread_bps = _quote_spread_bps(bid=bid, ask=ask)
-    if spread_bps is None:
-        return "invalid_spread"
-    if spread_bps > settings.trading_signal_max_executable_spread_bps:
-        return "spread_bps_exceeded"
-    return None
-
-
-def _midpoint(*, bid: Decimal | None, ask: Decimal | None) -> Optional[Decimal]:
-    if bid is None or ask is None:
-        return None
-    return (bid + ask) / Decimal("2")
-
-
-def _quote_spread_bps(*, bid: Decimal, ask: Decimal) -> Optional[Decimal]:
-    midpoint = _midpoint(bid=bid, ask=ask)
-    if midpoint is None or midpoint <= 0:
-        return None
-    return ((ask - bid) / midpoint) * Decimal("10000")
-
-
-def _quote_spread_bps_sql() -> str:
-    return (
-        "((imbalance_ask_px - imbalance_bid_px) / "
-        "nullIf(((imbalance_ask_px + imbalance_bid_px) / 2), 0)) * 10000"
-    )
-
-
-def _split_table(table: str) -> tuple[str, str]:
-    if "." in table:
-        database, raw_table = table.split(".", 1)
-        return database, raw_table
-    return "default", table
-
-
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def _safe_identifier(value: str, *, kind: str) -> str:
-    cleaned = value.strip()
-    if not cleaned or not _IDENTIFIER_RE.fullmatch(cleaned):
-        raise ValueError(f"invalid_{kind}_identifier:{value}")
-    return cleaned
-
-
-def _qualified_table_name(table: str) -> str:
-    database, raw_table = _split_table(table)
-    safe_database = _safe_identifier(database, kind="database")
-    safe_table = _safe_identifier(raw_table, kind="table")
-    return f"{safe_database}.{safe_table}"
-
-
-def _quote_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
 
 
 __all__ = ["ClickHousePriceFetcher", "MarketSnapshot", "PriceFetcher"]

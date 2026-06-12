@@ -1,7 +1,11 @@
 """DSPy program scaffolding and runtime adapters for Torghut."""
 
 from .adapters import dspy_output_to_llm_response, review_request_to_dspy_input
-from .modules import DSPyCommitteeProgram, HeuristicCommitteeProgram, LiveDSPyCommitteeProgram
+from .modules import (
+    DSPyCommitteeProgram,
+    HeuristicCommitteeProgram,
+    LiveDSPyCommitteeProgram,
+)
 from .runtime import (
     DSPyReviewRuntime,
     DSPyRuntimeError,

@@ -12,7 +12,9 @@ def test_deprecated_evidence_builders_delegate_to_proofs_payload() -> None:
     proof_payload = {"schema_version": "torghut.proofs.v1", "proofs": []}
     session = cast(Session, object())
 
-    with patch.object(adapter, "build_proofs_payload", return_value=proof_payload) as build:
+    with patch.object(
+        adapter, "build_proofs_payload", return_value=proof_payload
+    ) as build:
         evidence = adapter.build_paper_route_evidence_audit(
             session,
             live_submission_gate={"gate": "ok"},
@@ -61,4 +63,3 @@ def test_legacy_target_summary_uses_quantity_and_symbol_fallbacks() -> None:
     assert summary["symbols"] == ["GOOG", "MSFT"]
     assert summary["symbol_quantities"] == {"GOOG": "3", "MSFT": "2"}
     assert summary["bounded_paper_collection_notional"] == "25"
-

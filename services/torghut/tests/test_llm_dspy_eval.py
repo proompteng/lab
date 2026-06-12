@@ -66,7 +66,9 @@ class TestLLMDSPyEval(TestCase):
             self.assertEqual(payload["schemaValidRate"], 0.998)
             self.assertEqual(payload["falseVetoRate"], 0.02)
             self.assertEqual(payload["latencyP95Ms"], 1200)
-            self.assertTrue(payload["metricBundle"]["gateChecks"]["deterministicCompatibility"])
+            self.assertTrue(
+                payload["metricBundle"]["gateChecks"]["deterministicCompatibility"]
+            )
             self.assertEqual(payload["metricBundle"]["gateFailures"], [])
 
     def test_eval_report_fails_when_schema_and_fallback_thresholds_fail(self) -> None:
@@ -111,8 +113,12 @@ class TestLLMDSPyEval(TestCase):
             self.assertEqual(result.eval_report.promotion_recommendation, "hold")
 
             payload = json.loads(result.eval_report_path.read_text(encoding="utf-8"))
-            self.assertIn("schema_valid_rate_below_min", payload["metricBundle"]["gateFailures"])
-            self.assertIn("fallback_rate_above_max", payload["metricBundle"]["gateFailures"])
+            self.assertIn(
+                "schema_valid_rate_below_min", payload["metricBundle"]["gateFailures"]
+            )
+            self.assertIn(
+                "fallback_rate_above_max", payload["metricBundle"]["gateFailures"]
+            )
 
     def test_eval_report_fails_when_deterministic_compatibility_fails(self) -> None:
         with TemporaryDirectory() as tmp:

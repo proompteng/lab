@@ -75,7 +75,7 @@ def run_tsmom_grid_search(
                     )
 
     if not candidates:
-        raise ValueError('no candidates generated')
+        raise ValueError("no candidates generated")
 
     best = _select_best(candidates)
     accepted, reason = _evaluate_acceptance(best)
@@ -104,45 +104,44 @@ def _evaluate_acceptance(result: CandidateResult) -> tuple[bool, str]:
     test_return = result.test.total_return
     test_sharpe = result.test.sharpe
     if test_return <= 0:
-        return False, 'test_total_return_non_positive'
+        return False, "test_total_return_non_positive"
     if (test_sharpe or 0.0) <= 0:
-        return False, 'test_sharpe_non_positive'
-    return True, 'accepted'
+        return False, "test_sharpe_non_positive"
+    return True, "accepted"
 
 
 def _safe(value: Optional[float]) -> float:
-    return float(value) if value is not None else float('-inf')
+    return float(value) if value is not None else float("-inf")
 
 
 def summary_to_jsonable(summary: PerformanceSummary) -> dict[str, object]:
     return {
-        'total_return': summary.total_return,
-        'cagr': summary.cagr,
-        'annualized_vol': summary.annualized_vol,
-        'sharpe': summary.sharpe,
-        'max_drawdown': summary.max_drawdown,
-        'days': summary.days,
+        "total_return": summary.total_return,
+        "cagr": summary.cagr,
+        "annualized_vol": summary.annualized_vol,
+        "sharpe": summary.sharpe,
+        "max_drawdown": summary.max_drawdown,
+        "days": summary.days,
     }
 
 
 def candidate_to_jsonable(candidate: CandidateResult) -> dict[str, object]:
     return {
-        'config': {
-            'lookback_days': candidate.config.lookback_days,
-            'vol_lookback_days': candidate.config.vol_lookback_days,
-            'target_daily_vol': candidate.config.target_daily_vol,
-            'max_gross_leverage': candidate.config.max_gross_leverage,
+        "config": {
+            "lookback_days": candidate.config.lookback_days,
+            "vol_lookback_days": candidate.config.vol_lookback_days,
+            "target_daily_vol": candidate.config.target_daily_vol,
+            "max_gross_leverage": candidate.config.max_gross_leverage,
         },
-        'train': summary_to_jsonable(candidate.train),
-        'test': summary_to_jsonable(candidate.test),
+        "train": summary_to_jsonable(candidate.train),
+        "test": summary_to_jsonable(candidate.test),
     }
 
 
 __all__ = [
-    'CandidateConfig',
-    'CandidateResult',
-    'SearchResult',
-    'candidate_to_jsonable',
-    'run_tsmom_grid_search',
+    "CandidateConfig",
+    "CandidateResult",
+    "SearchResult",
+    "candidate_to_jsonable",
+    "run_tsmom_grid_search",
 ]
-

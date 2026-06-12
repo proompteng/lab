@@ -15,56 +15,58 @@ from app.trading.scheduler.pipeline_helpers import (
 class TestSchedulerRegimeResolution(TestCase):
     def test_allocator_regime_label_is_preferred_when_present(self) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime_label': 'legacy-regime',
-                'allocator': {'regime_label': 'Vol=High|Trend=Flat|Liq=Liquid'},
+                "regime_label": "legacy-regime",
+                "allocator": {"regime_label": "Vol=High|Trend=Flat|Liq=Liquid"},
             },
         )
 
         regime_label = _resolve_decision_regime_label(decision)
 
-        self.assertEqual(regime_label, 'vol=high|trend=flat|liq=liquid')
+        self.assertEqual(regime_label, "vol=high|trend=flat|liq=liquid")
 
     def test_regime_resolution_falls_back_to_legacy_fields(self) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
-            params={'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'}},
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            params={"regime": {"label": "Vol=Mid|Trend=Up|Liq=Liquid"}},
         )
 
         regime_label = _resolve_decision_regime_label(decision)
 
-        self.assertEqual(regime_label, 'vol=mid|trend=up|liq=liquid')
+        self.assertEqual(regime_label, "vol=mid|trend=up|liq=liquid")
 
-    def test_regime_resolution_prefers_nested_legacy_label_when_hmm_unknown(self) -> None:
+    def test_regime_resolution_prefers_nested_legacy_label_when_hmm_unknown(
+        self,
+    ) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime': {'label': 'Vol=High|Trend=Flat|Liq=Liquid'},
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v1',
-                    'regime_id': 'not-a-regime-id',
-                    'posterior': {'R2': '0.75'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'guardrail': {'reason': 'unknown_model'},
+                "regime": {"label": "Vol=High|Trend=Flat|Liq=Liquid"},
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "not-a-regime-id",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "unknown_model"},
                 },
             },
         )
@@ -73,55 +75,55 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('vol=high|trend=flat|liq=liquid', 'legacy', 'hmm_unknown'),
+            ("vol=high|trend=flat|liq=liquid", "legacy", "hmm_unknown"),
         )
 
     def test_regime_resolution_prefers_hmm_when_allocator_missing(self) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'},
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v1',
-                    'regime_id': 'R2',
-                    'posterior': {'R2': '0.75'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'guardrail': {'reason': 'stable'},
+                "regime": {"label": "Vol=Mid|Trend=Up|Liq=Liquid"},
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "stable"},
                 },
             },
         )
 
         source_regime_label = _resolve_decision_regime_label_with_source(decision)
 
-        self.assertEqual(source_regime_label, ('r2', 'hmm', None))
+        self.assertEqual(source_regime_label, ("r2", "hmm", None))
 
     def test_regime_resolution_falls_back_to_legacy_when_hmm_regime_stale(self) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'},
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v1',
-                    'regime_id': 'R2',
-                    'posterior': {'R2': '0.75'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'guardrail': {'stale': True, 'reason': 'aging_output'},
+                "regime": {"label": "Vol=Mid|Trend=Up|Liq=Liquid"},
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"stale": True, "reason": "aging_output"},
                 },
             },
         )
@@ -130,28 +132,28 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('vol=mid|trend=up|liq=liquid', 'legacy', 'stale'),
+            ("vol=mid|trend=up|liq=liquid", "legacy", "stale"),
         )
 
     def test_regime_resolution_falls_back_to_legacy_when_hmm_unknown(self) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime_label': 'Vol=Mid|Trend=Up|Liq=Liquid',
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v1',
-                    'regime_id': 'unknown',
-                    'posterior': {'R2': '0.75'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'guardrail': {'reason': 'stable'},
+                "regime_label": "Vol=Mid|Trend=Up|Liq=Liquid",
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "unknown",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "stable"},
                 },
             },
         )
@@ -160,28 +162,30 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('vol=mid|trend=up|liq=liquid', 'legacy', 'hmm_unknown'),
+            ("vol=mid|trend=up|liq=liquid", "legacy", "hmm_unknown"),
         )
 
-    def test_regime_resolution_falls_back_to_legacy_when_hmm_schema_version_invalid(self) -> None:
+    def test_regime_resolution_falls_back_to_legacy_when_hmm_schema_version_invalid(
+        self,
+    ) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime_label': 'trend',
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v0',
-                    'regime_id': 'R2',
-                    'posterior': {'R2': '0.75'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'guardrail': {'reason': 'stable'},
+                "regime_label": "trend",
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v0",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"reason": "stable"},
                 },
             },
         )
@@ -190,29 +194,31 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('trend', 'legacy', 'hmm_schema_version_invalid'),
+            ("trend", "legacy", "hmm_schema_version_invalid"),
         )
 
-    def test_regime_resolution_falls_back_to_legacy_when_hmm_posterior_invalid(self) -> None:
+    def test_regime_resolution_falls_back_to_legacy_when_hmm_posterior_invalid(
+        self,
+    ) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime_label': 'trend',
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v1',
-                    'regime_id': 'R2',
-                    'posterior': {'R2': 'bad-posterior'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'transition_shock': False,
-                    'guardrail': {'stale': False, 'fallback_to_defensive': False},
+                "regime_label": "trend",
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "bad-posterior"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "transition_shock": False,
+                    "guardrail": {"stale": False, "fallback_to_defensive": False},
                 },
             },
         )
@@ -221,29 +227,31 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('trend', 'legacy', 'hmm_invalid_posterior'),
+            ("trend", "legacy", "hmm_invalid_posterior"),
         )
 
-    def test_regime_resolution_falls_back_to_legacy_when_hmm_transition_shock(self) -> None:
+    def test_regime_resolution_falls_back_to_legacy_when_hmm_transition_shock(
+        self,
+    ) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime_label': 'trend',
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v1',
-                    'regime_id': 'R2',
-                    'posterior': {'R2': '0.75'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'guardrail': {'stale': False, 'fallback_to_defensive': False},
-                    'transition_shock': True,
+                "regime_label": "trend",
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"stale": False, "fallback_to_defensive": False},
+                    "transition_shock": True,
                 },
             },
         )
@@ -252,28 +260,33 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('trend', 'legacy', 'transition_shock'),
+            ("trend", "legacy", "transition_shock"),
         )
 
-    def test_regime_resolution_falls_back_to_legacy_when_hmm_fallback_to_defensive(self) -> None:
+    def test_regime_resolution_falls_back_to_legacy_when_hmm_fallback_to_defensive(
+        self,
+    ) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'},
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v1',
-                    'regime_id': 'R2',
-                    'posterior': {'R2': '0.75'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'guardrail': {'fallback_to_defensive': True, 'reason': 'risk_override'},
+                "regime": {"label": "Vol=Mid|Trend=Up|Liq=Liquid"},
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {
+                        "fallback_to_defensive": True,
+                        "reason": "risk_override",
+                    },
                 },
             },
         )
@@ -282,29 +295,31 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('vol=mid|trend=up|liq=liquid', 'legacy', 'fallback_to_defensive'),
+            ("vol=mid|trend=up|liq=liquid", "legacy", "fallback_to_defensive"),
         )
 
-    def test_regime_resolution_prefers_nested_legacy_label_when_hmm_transition_shock(self) -> None:
+    def test_regime_resolution_prefers_nested_legacy_label_when_hmm_transition_shock(
+        self,
+    ) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime': {'label': 'Trend'},
-                'regime_hmm': {
-                    'schema_version': 'hmm_regime_context_v1',
-                    'regime_id': 'R2',
-                    'posterior': {'R2': '0.75'},
-                    'entropy': '1.23',
-                    'entropy_band': 'medium',
-                    'predicted_next': 'R3',
-                    'artifact': {'model_id': 'hmm-regime-v1.2.0'},
-                    'guardrail': {'stale': False, 'fallback_to_defensive': False},
-                    'transition_shock': True,
+                "regime": {"label": "Trend"},
+                "regime_hmm": {
+                    "schema_version": "hmm_regime_context_v1",
+                    "regime_id": "R2",
+                    "posterior": {"R2": "0.75"},
+                    "entropy": "1.23",
+                    "entropy_band": "medium",
+                    "predicted_next": "R3",
+                    "artifact": {"model_id": "hmm-regime-v1.2.0"},
+                    "guardrail": {"stale": False, "fallback_to_defensive": False},
+                    "transition_shock": True,
                 },
             },
         )
@@ -313,31 +328,33 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('trend', 'legacy', 'transition_shock'),
+            ("trend", "legacy", "transition_shock"),
         )
 
     def test_signal_regime_resolution_falls_back_to_legacy_regime(self) -> None:
         signal = SignalEnvelope(
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            symbol='AAPL',
-            payload={'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'}},
+            symbol="AAPL",
+            payload={"regime": {"label": "Vol=Mid|Trend=Up|Liq=Liquid"}},
         )
 
         regime_label = _resolve_signal_regime(signal)
 
-        self.assertEqual(regime_label, 'vol=mid|trend=up|liq=liquid')
+        self.assertEqual(regime_label, "vol=mid|trend=up|liq=liquid")
 
-    def test_decision_regime_resolution_uses_legacy_when_blank_regime_label(self) -> None:
+    def test_decision_regime_resolution_uses_legacy_when_blank_regime_label(
+        self,
+    ) -> None:
         decision = StrategyDecision(
-            strategy_id='strategy-1',
-            symbol='AAPL',
+            strategy_id="strategy-1",
+            symbol="AAPL",
             event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-            timeframe='1Min',
-            action='buy',
-            qty=Decimal('1'),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
             params={
-                'regime_label': '   ',
-                'regime': {'label': 'Vol=Mid|Trend=Up|Liq=Liquid'},
+                "regime_label": "   ",
+                "regime": {"label": "Vol=Mid|Trend=Up|Liq=Liquid"},
             },
         )
 
@@ -345,5 +362,5 @@ class TestSchedulerRegimeResolution(TestCase):
 
         self.assertEqual(
             source_regime_label,
-            ('vol=mid|trend=up|liq=liquid', 'legacy', None),
+            ("vol=mid|trend=up|liq=liquid", "legacy", None),
         )

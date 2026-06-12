@@ -26,18 +26,18 @@ def _session_signal(
     ask = price + (spread / 2)
     return SignalEnvelope(
         event_ts=event_ts,
-        symbol='META',
-        timeframe='1Sec',
+        symbol="META",
+        timeframe="1Sec",
         seq=1,
-        source='ta',
+        source="ta",
         payload={
-            'price': price,
-            'spread': ask - bid,
-            'imbalance_bid_px': bid,
-            'imbalance_ask_px': ask,
-            'imbalance_bid_sz': bid_sz,
-            'imbalance_ask_sz': ask_sz,
-            'vwap_w5m': price,
+            "price": price,
+            "spread": ask - bid,
+            "imbalance_bid_px": bid,
+            "imbalance_ask_px": ask,
+            "imbalance_bid_sz": bid_sz,
+            "imbalance_ask_sz": ask_sz,
+            "vwap_w5m": price,
         },
     )
 
@@ -49,53 +49,59 @@ def test_premarket_tick_never_sets_regular_session_open_anchor(
 ) -> None:
     tracker = SessionContextTracker()
     executable_previous_close_spread = max(
-        Decimal('0.0001'),
-        previous_close * Decimal('0.0005'),
+        Decimal("0.0001"),
+        previous_close * Decimal("0.0005"),
     )
     tracker.enrich_signal_payload(
         _session_signal(
             event_ts=datetime(2026, 3, 24, 19, 59, 0, tzinfo=timezone.utc),
             price=previous_close,
             spread=executable_previous_close_spread,
-            bid_sz=Decimal('4000'),
-            ask_sz=Decimal('3800'),
+            bid_sz=Decimal("4000"),
+            ask_sz=Decimal("3800"),
         )
     )
     premarket_payload = tracker.enrich_signal_payload(
         _session_signal(
             event_ts=datetime(2026, 3, 25, 12, 45, 0, tzinfo=timezone.utc),
             price=premarket_price,
-            spread=Decimal('0.02'),
-            bid_sz=Decimal('3900'),
-            ask_sz=Decimal('4200'),
+            spread=Decimal("0.02"),
+            bid_sz=Decimal("3900"),
+            ask_sz=Decimal("4200"),
         )
     )
 
-    assert 'session_open_price' not in premarket_payload
-    assert premarket_payload['prev_session_close_price'] == previous_close
+    assert "session_open_price" not in premarket_payload
+    assert premarket_payload["prev_session_close_price"] == previous_close
 
 
 @given(signals=regular_session_signal_series())
-def test_session_context_series_preserves_range_and_ratio_invariants(signals: list[SignalEnvelope]) -> None:
+def test_session_context_series_preserves_range_and_ratio_invariants(
+    signals: list[SignalEnvelope],
+) -> None:
     tracker = SessionContextTracker()
 
     for signal in signals:
         payload = tracker.enrich_signal_payload(signal)
-        if 'session_open_price' not in payload:
+        if "session_open_price" not in payload:
             continue
-        assert payload['session_high_price'] >= payload['session_low_price']
-        assert payload['opening_range_high'] >= payload['opening_range_low']
-        if 'price_position_in_session_range' in payload:
-            assert Decimal('0') <= payload['price_position_in_session_range'] <= Decimal('1')
+        assert payload["session_high_price"] >= payload["session_low_price"]
+        assert payload["opening_range_high"] >= payload["opening_range_low"]
+        if "price_position_in_session_range" in payload:
+            assert (
+                Decimal("0")
+                <= payload["price_position_in_session_range"]
+                <= Decimal("1")
+            )
         for ratio_key in (
-            'recent_above_opening_range_high_ratio',
-            'recent_above_opening_window_close_ratio',
-            'recent_above_vwap_w5m_ratio',
+            "recent_above_opening_range_high_ratio",
+            "recent_above_opening_window_close_ratio",
+            "recent_above_vwap_w5m_ratio",
         ):
             ratio = payload.get(ratio_key)
             if ratio is not None:
-                assert Decimal('0') <= ratio <= Decimal('1')
-        assert payload['session_minutes_elapsed'] >= 0
+                assert Decimal("0") <= ratio <= Decimal("1")
+        assert payload["session_minutes_elapsed"] >= 0
 
 
 @given(invalid_price=positive_prices(), valid_price=positive_prices())
@@ -109,21 +115,21 @@ def test_first_invalid_regular_quote_still_seeds_quote_instability_features(
         _session_signal(
             event_ts=datetime(2026, 3, 25, 13, 30, 5, tzinfo=timezone.utc),
             price=invalid_price,
-            spread=max(Decimal('0.01'), invalid_price * Decimal('0.01')),
-            bid_sz=Decimal('4000'),
-            ask_sz=Decimal('3800'),
+            spread=max(Decimal("0.01"), invalid_price * Decimal("0.01")),
+            bid_sz=Decimal("4000"),
+            ask_sz=Decimal("3800"),
         )
     )
     valid_payload = tracker.enrich_signal_payload(
         _session_signal(
             event_ts=datetime(2026, 3, 25, 13, 31, 0, tzinfo=timezone.utc),
             price=valid_price,
-            spread=max(Decimal('0.0001'), valid_price * Decimal('0.0001')),
-            bid_sz=Decimal('4200'),
-            ask_sz=Decimal('3900'),
+            spread=max(Decimal("0.0001"), valid_price * Decimal("0.0001")),
+            bid_sz=Decimal("4200"),
+            ask_sz=Decimal("3900"),
         )
     )
 
-    assert invalid_payload['recent_quote_invalid_ratio'] == Decimal('1')
-    assert valid_payload['recent_quote_invalid_ratio'] == Decimal('0.5')
-    assert valid_payload['session_open_price'] == valid_price
+    assert invalid_payload["recent_quote_invalid_ratio"] == Decimal("1")
+    assert valid_payload["recent_quote_invalid_ratio"] == Decimal("0.5")
+    assert valid_payload["session_open_price"] == valid_price

@@ -37,34 +37,34 @@ def _clamp_decimal(value: Decimal, low: Decimal, high: Decimal) -> Decimal:
 
 
 def _deterministic_latency_ms(seed: str, *, floor: int, span: int) -> int:
-    digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     bucket = int(digest[:8], 16)
     return floor + (bucket % max(1, span))
 
 
 def _coerce_horizon(value: str) -> str:
     cleaned = value.strip()
-    if cleaned.endswith('Min'):
-        return f'{cleaned[:-3]}m'
-    if cleaned.endswith('Sec'):
-        return f'{cleaned[:-3]}s'
-    if cleaned.endswith('Hour'):
-        return f'{cleaned[:-4]}h'
+    if cleaned.endswith("Min"):
+        return f"{cleaned[:-3]}m"
+    if cleaned.endswith("Sec"):
+        return f"{cleaned[:-3]}s"
+    if cleaned.endswith("Hour"):
+        return f"{cleaned[:-4]}h"
     return cleaned
 
 
 def _coerce_model_family(value: str) -> str:
-    normalized = value.strip().lower().replace('-', '_').replace(' ', '_')
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
     aliases = {
-        'timesfm': 'financial_tsfm',
-        'financial_tsfm': 'financial_tsfm',
-        'financialtsfm': 'financial_tsfm',
-        'financial_tsfm_v1': 'financial_tsfm',
-        'financial-tsfm-v1': 'financial_tsfm',
-        'baseline': 'baseline',
-        'deterministic_baseline': 'baseline',
-        'moment': 'moment',
-        'chronos': 'chronos',
+        "timesfm": "financial_tsfm",
+        "financial_tsfm": "financial_tsfm",
+        "financialtsfm": "financial_tsfm",
+        "financial_tsfm_v1": "financial_tsfm",
+        "financial-tsfm-v1": "financial_tsfm",
+        "baseline": "baseline",
+        "deterministic_baseline": "baseline",
+        "moment": "moment",
+        "chronos": "chronos",
     }
     return aliases.get(normalized, normalized)
 
@@ -77,18 +77,18 @@ def _forecast_artifact_authority(
     if override:
         return dict(override)
     normalized = _coerce_model_family(model_family)
-    if normalized in {'chronos', 'moment', 'financial_tsfm', 'baseline'}:
+    if normalized in {"chronos", "moment", "financial_tsfm", "baseline"}:
         return evidence_contract_payload(
             provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
             maturity=EvidenceMaturity.STUB,
             authoritative=False,
             placeholder=True,
-            notes='Forecast output is produced by deterministic scaffold adapters.',
+            notes="Forecast output is produced by deterministic scaffold adapters.",
         )
     return evidence_contract_payload(
         provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
         maturity=EvidenceMaturity.UNCALIBRATED,
-        calibration_summary={'status': 'pending_calibration'},
+        calibration_summary={"status": "pending_calibration"},
     )
 
 
@@ -102,7 +102,7 @@ class ForecastInterval:
         return self.p05 <= self.p50 <= self.p95
 
     def to_payload(self) -> dict[str, str]:
-        return {'p05': str(self.p05), 'p50': str(self.p50), 'p95': str(self.p95)}
+        return {"p05": str(self.p05), "p50": str(self.p50), "p95": str(self.p95)}
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,7 @@ class ForecastUncertainty:
     aleatoric: Decimal
 
     def to_payload(self) -> dict[str, str]:
-        return {'epistemic': str(self.epistemic), 'aleatoric': str(self.aleatoric)}
+        return {"epistemic": str(self.epistemic), "aleatoric": str(self.aleatoric)}
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,7 @@ class ForecastFallback:
     reason: str | None
 
     def to_payload(self) -> dict[str, object]:
-        return {'applied': self.applied, 'reason': self.reason}
+        return {"applied": self.applied, "reason": self.reason}
 
 
 @dataclass(frozen=True)
@@ -152,30 +152,30 @@ class ForecastContractV1:
 
     def to_payload(self) -> dict[str, object]:
         return {
-            'schema_version': self.schema_version,
-            'symbol': self.symbol,
-            'horizon': self.horizon,
-            'event_ts': self.event_ts.astimezone(timezone.utc).isoformat(),
-            'model_family': self.model_family,
-            'model_version': self.model_version,
-            'route_key': self.route_key,
-            'point_forecast': str(self.point_forecast),
-            'interval': self.interval.to_payload(),
-            'uncertainty': self.uncertainty.to_payload(),
-            'calibration_score': str(self.calibration_score),
-            'fallback': self.fallback.to_payload(),
-            'inference_latency_ms': self.inference_latency_ms,
-            'regime_id': self.regime_id,
-            'regime_entropy_band': self.regime_entropy_band,
-            'regime_entropy': self.regime_entropy,
-            'regime_predicted_next': self.regime_predicted_next,
-            'regime_inference_version': self.regime_inference_version,
-            'model_registry_ref': self.model_registry_ref,
-            'training_run_ref': self.training_run_ref,
-            'dataset_snapshot_ref': self.dataset_snapshot_ref,
-            'calibration_ref': self.calibration_ref,
-            'promotion_authority_eligible': self.promotion_authority_eligible,
-            'artifact_authority': _forecast_artifact_authority(
+            "schema_version": self.schema_version,
+            "symbol": self.symbol,
+            "horizon": self.horizon,
+            "event_ts": self.event_ts.astimezone(timezone.utc).isoformat(),
+            "model_family": self.model_family,
+            "model_version": self.model_version,
+            "route_key": self.route_key,
+            "point_forecast": str(self.point_forecast),
+            "interval": self.interval.to_payload(),
+            "uncertainty": self.uncertainty.to_payload(),
+            "calibration_score": str(self.calibration_score),
+            "fallback": self.fallback.to_payload(),
+            "inference_latency_ms": self.inference_latency_ms,
+            "regime_id": self.regime_id,
+            "regime_entropy_band": self.regime_entropy_band,
+            "regime_entropy": self.regime_entropy,
+            "regime_predicted_next": self.regime_predicted_next,
+            "regime_inference_version": self.regime_inference_version,
+            "model_registry_ref": self.model_registry_ref,
+            "training_run_ref": self.training_run_ref,
+            "dataset_snapshot_ref": self.dataset_snapshot_ref,
+            "calibration_ref": self.calibration_ref,
+            "promotion_authority_eligible": self.promotion_authority_eligible,
+            "artifact_authority": _forecast_artifact_authority(
                 self.model_family,
                 override=self.artifact_authority,
             ),
@@ -210,29 +210,29 @@ class ForecastDecisionAudit:
 
     def to_payload(self) -> dict[str, object]:
         return {
-            'schema_version': self.schema_version,
-            'event_ts': self.event_ts.astimezone(timezone.utc).isoformat(),
-            'route_key': self.route_key,
-            'selected_model_family': self.selected_model_family,
-            'selected_model_version': self.selected_model_version,
-            'final_model_family': self.final_model_family,
-            'final_model_version': self.final_model_version,
-            'calibration_score': str(self.calibration_score),
-            'inference_latency_ms': self.inference_latency_ms,
-            'fallback_applied': self.fallback_applied,
-            'fallback_reason': self.fallback_reason,
-            'policy_version': self.policy_version,
-            'regime_id': self.regime_id,
-            'regime_entropy_band': self.regime_entropy_band,
-            'regime_entropy': self.regime_entropy,
-            'regime_predicted_next': self.regime_predicted_next,
-            'regime_inference_version': self.regime_inference_version,
-            'model_registry_ref': self.model_registry_ref,
-            'training_run_ref': self.training_run_ref,
-            'dataset_snapshot_ref': self.dataset_snapshot_ref,
-            'calibration_ref': self.calibration_ref,
-            'promotion_authority_eligible': self.promotion_authority_eligible,
-            'artifact_authority': _forecast_artifact_authority(
+            "schema_version": self.schema_version,
+            "event_ts": self.event_ts.astimezone(timezone.utc).isoformat(),
+            "route_key": self.route_key,
+            "selected_model_family": self.selected_model_family,
+            "selected_model_version": self.selected_model_version,
+            "final_model_family": self.final_model_family,
+            "final_model_version": self.final_model_version,
+            "calibration_score": str(self.calibration_score),
+            "inference_latency_ms": self.inference_latency_ms,
+            "fallback_applied": self.fallback_applied,
+            "fallback_reason": self.fallback_reason,
+            "policy_version": self.policy_version,
+            "regime_id": self.regime_id,
+            "regime_entropy_band": self.regime_entropy_band,
+            "regime_entropy": self.regime_entropy,
+            "regime_predicted_next": self.regime_predicted_next,
+            "regime_inference_version": self.regime_inference_version,
+            "model_registry_ref": self.model_registry_ref,
+            "training_run_ref": self.training_run_ref,
+            "dataset_snapshot_ref": self.dataset_snapshot_ref,
+            "calibration_ref": self.calibration_ref,
+            "promotion_authority_eligible": self.promotion_authority_eligible,
+            "artifact_authority": _forecast_artifact_authority(
                 self.final_model_family,
                 override=self.artifact_authority,
             ),
@@ -251,13 +251,13 @@ class ForecastRoutingTelemetry:
 
     def to_payload(self) -> dict[str, object]:
         return {
-            'model_family': self.model_family,
-            'route_key': self.route_key,
-            'symbol': self.symbol,
-            'horizon': self.horizon,
-            'inference_latency_ms': self.inference_latency_ms,
-            'calibration_error': str(self.calibration_error),
-            'fallback_reason': self.fallback_reason,
+            "model_family": self.model_family,
+            "route_key": self.route_key,
+            "symbol": self.symbol,
+            "horizon": self.horizon,
+            "inference_latency_ms": self.inference_latency_ms,
+            "calibration_error": str(self.calibration_error),
+            "fallback_reason": self.fallback_reason,
         }
 
 
@@ -275,11 +275,8 @@ class ForecastRouterPolicyEntry:
     def matches(self, *, symbol: str, horizon: str, regime: str) -> bool:
         return (
             fnmatch.fnmatch(symbol, self.symbol_glob)
-            and (self.horizon == '*' or self.horizon == horizon)
-            and (
-                self.regime == '*'
-                or self.regime.lower() == regime.lower()
-            )
+            and (self.horizon == "*" or self.horizon == horizon)
+            and (self.regime == "*" or self.regime.lower() == regime.lower())
         )
 
 
@@ -289,20 +286,20 @@ class ForecastRouterPolicyV1:
     entries: tuple[ForecastRouterPolicyEntry, ...]
 
     @classmethod
-    def from_path(cls, path: Path) -> 'ForecastRouterPolicyV1':
-        payload = json.loads(path.read_text(encoding='utf-8'))
+    def from_path(cls, path: Path) -> "ForecastRouterPolicyV1":
+        payload = json.loads(path.read_text(encoding="utf-8"))
         return cls.from_payload(cast(dict[str, Any], payload))
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> 'ForecastRouterPolicyV1':
+    def from_payload(cls, payload: dict[str, Any]) -> "ForecastRouterPolicyV1":
         entries: list[ForecastRouterPolicyEntry] = []
-        routes_raw = payload.get('routes')
+        routes_raw = payload.get("routes")
         if isinstance(routes_raw, list):
             for raw_item in cast(list[Any], routes_raw):
                 if not isinstance(raw_item, dict):
                     continue
                 item = cast(dict[str, Any], raw_item)
-                fallback_items = item.get('candidate_fallbacks', [])
+                fallback_items = item.get("candidate_fallbacks", [])
                 fallbacks = tuple(
                     str(fallback).strip()
                     for fallback in fallback_items
@@ -310,44 +307,50 @@ class ForecastRouterPolicyV1:
                 )
                 entries.append(
                     ForecastRouterPolicyEntry(
-                        symbol_glob=str(item.get('symbol_glob', '*')).strip() or '*',
-                        horizon=_coerce_horizon(str(item.get('horizon', '*')).strip() or '*'),
-                        regime=str(item.get('regime', '*')).strip() or '*',
+                        symbol_glob=str(item.get("symbol_glob", "*")).strip() or "*",
+                        horizon=_coerce_horizon(
+                            str(item.get("horizon", "*")).strip() or "*"
+                        ),
+                        regime=str(item.get("regime", "*")).strip() or "*",
                         preferred_model_family=(
-                            str(item.get('preferred_model_family', 'chronos')).strip()
-                            or 'chronos'
+                            str(item.get("preferred_model_family", "chronos")).strip()
+                            or "chronos"
                         ),
                         candidate_fallbacks=fallbacks,
                         min_calibration_score=_decimal_or_default(
-                            item.get('min_calibration_score'), Decimal('0.85')
+                            item.get("min_calibration_score"), Decimal("0.85")
                         ),
                         max_inference_latency_ms=max(
-                            1, int(item.get('max_inference_latency_ms', 200))
+                            1, int(item.get("max_inference_latency_ms", 200))
                         ),
-                        disable_refinement=bool(item.get('disable_refinement', False)),
+                        disable_refinement=bool(item.get("disable_refinement", False)),
                     )
                 )
 
         if not entries:
             entries.append(
                 ForecastRouterPolicyEntry(
-                    symbol_glob='*',
-                    horizon='*',
-                    regime='*',
-                    preferred_model_family='chronos',
-                    candidate_fallbacks=('moment', 'financial_tsfm'),
-                    min_calibration_score=Decimal('0.85'),
+                    symbol_glob="*",
+                    horizon="*",
+                    regime="*",
+                    preferred_model_family="chronos",
+                    candidate_fallbacks=("moment", "financial_tsfm"),
+                    min_calibration_score=Decimal("0.85"),
                     max_inference_latency_ms=200,
                     disable_refinement=False,
                 )
             )
 
         return cls(
-            policy_version=str(payload.get('policy_version', 'forecast_router_policy_v1')),
+            policy_version=str(
+                payload.get("policy_version", "forecast_router_policy_v1")
+            ),
             entries=tuple(entries),
         )
 
-    def resolve(self, *, symbol: str, horizon: str, regime: str) -> ForecastRouterPolicyEntry:
+    def resolve(
+        self, *, symbol: str, horizon: str, regime: str
+    ) -> ForecastRouterPolicyEntry:
         for route in self.entries:
             if route.matches(symbol=symbol, horizon=horizon, regime=regime):
                 return route
@@ -379,18 +382,17 @@ class ForecastAdapter(Protocol):
         *,
         feature_vector: FeatureVectorV3,
         horizon: str,
-    ) -> ForecastAdapterOutput:
-        ...
+    ) -> ForecastAdapterOutput: ...
 
 
 class _DeterministicAdapter:
-    model_family = 'unknown'
-    model_version = 'unknown'
+    model_family = "unknown"
+    model_version = "unknown"
     _latency_floor = 30
     _latency_span = 45
-    _bias = Decimal('0')
-    _volatility_scale = Decimal('0.75')
-    _epistemic_offset = Decimal('0.08')
+    _bias = Decimal("0")
+    _volatility_scale = Decimal("0.75")
+    _epistemic_offset = Decimal("0.08")
 
     def forecast(
         self,
@@ -398,33 +400,45 @@ class _DeterministicAdapter:
         feature_vector: FeatureVectorV3,
         horizon: str,
     ) -> ForecastAdapterOutput:
-        price = optional_decimal(feature_vector.values.get('price')) or Decimal('0')
-        macd = optional_decimal(feature_vector.values.get('macd')) or Decimal('0')
-        macd_signal = optional_decimal(feature_vector.values.get('macd_signal')) or Decimal('0')
-        vol = optional_decimal(feature_vector.values.get('vol_realized_w60s')) or Decimal('0.004')
-        spread = optional_decimal(feature_vector.values.get('spread')) or Decimal('0.01')
+        price = optional_decimal(feature_vector.values.get("price")) or Decimal("0")
+        macd = optional_decimal(feature_vector.values.get("macd")) or Decimal("0")
+        macd_signal = optional_decimal(
+            feature_vector.values.get("macd_signal")
+        ) or Decimal("0")
+        vol = optional_decimal(
+            feature_vector.values.get("vol_realized_w60s")
+        ) or Decimal("0.004")
+        spread = optional_decimal(feature_vector.values.get("spread")) or Decimal(
+            "0.01"
+        )
 
-        drift = (macd - macd_signal) * Decimal('0.8') + self._bias
+        drift = (macd - macd_signal) * Decimal("0.8") + self._bias
         point = price + drift
-        half_width = max(Decimal('0.01'), (vol * price * self._volatility_scale) + spread)
+        half_width = max(
+            Decimal("0.01"), (vol * price * self._volatility_scale) + spread
+        )
 
         interval = ForecastInterval(
-            p05=(point - half_width).quantize(Decimal('0.0001')),
-            p50=point.quantize(Decimal('0.0001')),
-            p95=(point + half_width).quantize(Decimal('0.0001')),
+            p05=(point - half_width).quantize(Decimal("0.0001")),
+            p50=point.quantize(Decimal("0.0001")),
+            p95=(point + half_width).quantize(Decimal("0.0001")),
         )
         uncertainty = ForecastUncertainty(
             epistemic=_clamp_decimal(
-                (abs(drift) / max(Decimal('1'), price)) + self._epistemic_offset,
-                Decimal('0.01'),
-                Decimal('0.99'),
-            ).quantize(Decimal('0.0001')),
+                (abs(drift) / max(Decimal("1"), price)) + self._epistemic_offset,
+                Decimal("0.01"),
+                Decimal("0.99"),
+            ).quantize(Decimal("0.0001")),
             aleatoric=_clamp_decimal(
-                (vol * Decimal('18')) + Decimal('0.05'), Decimal('0.01'), Decimal('0.99')
-            ).quantize(Decimal('0.0001')),
+                (vol * Decimal("18")) + Decimal("0.05"),
+                Decimal("0.01"),
+                Decimal("0.99"),
+            ).quantize(Decimal("0.0001")),
         )
-        seed = f'{feature_vector.normalization_hash}:{self.model_family}:{horizon}'
-        latency = _deterministic_latency_ms(seed, floor=self._latency_floor, span=self._latency_span)
+        seed = f"{feature_vector.normalization_hash}:{self.model_family}:{horizon}"
+        latency = _deterministic_latency_ms(
+            seed, floor=self._latency_floor, span=self._latency_span
+        )
         return ForecastAdapterOutput(
             model_family=self.model_family,
             model_version=self.model_version,
@@ -436,43 +450,43 @@ class _DeterministicAdapter:
 
 
 class ChronosForecastAdapter(_DeterministicAdapter):
-    model_family = 'chronos'
-    model_version = 'chronos-ft-fin-v1'
+    model_family = "chronos"
+    model_version = "chronos-ft-fin-v1"
     _latency_floor = 45
     _latency_span = 70
-    _bias = Decimal('0.03')
-    _volatility_scale = Decimal('0.82')
-    _epistemic_offset = Decimal('0.06')
+    _bias = Decimal("0.03")
+    _volatility_scale = Decimal("0.82")
+    _epistemic_offset = Decimal("0.06")
 
 
 class MomentForecastAdapter(_DeterministicAdapter):
-    model_family = 'moment'
-    model_version = 'moment-fin-v1'
+    model_family = "moment"
+    model_version = "moment-fin-v1"
     _latency_floor = 35
     _latency_span = 55
-    _bias = Decimal('0.02')
-    _volatility_scale = Decimal('0.78')
-    _epistemic_offset = Decimal('0.07')
+    _bias = Decimal("0.02")
+    _volatility_scale = Decimal("0.78")
+    _epistemic_offset = Decimal("0.07")
 
 
 class FinancialTsfmForecastAdapter(_DeterministicAdapter):
-    model_family = 'financial_tsfm'
-    model_version = 'financial-tsfm-v1'
+    model_family = "financial_tsfm"
+    model_version = "financial-tsfm-v1"
     _latency_floor = 55
     _latency_span = 85
-    _bias = Decimal('0.04')
-    _volatility_scale = Decimal('0.88')
-    _epistemic_offset = Decimal('0.05')
+    _bias = Decimal("0.04")
+    _volatility_scale = Decimal("0.88")
+    _epistemic_offset = Decimal("0.05")
 
 
 class DeterministicBaselineAdapter(_DeterministicAdapter):
-    model_family = 'baseline'
-    model_version = 'baseline-deterministic-v1'
+    model_family = "baseline"
+    model_version = "baseline-deterministic-v1"
     _latency_floor = 8
     _latency_span = 12
-    _bias = Decimal('0')
-    _volatility_scale = Decimal('0.60')
-    _epistemic_offset = Decimal('0.10')
+    _bias = Decimal("0")
+    _volatility_scale = Decimal("0.60")
+    _epistemic_offset = Decimal("0.10")
 
 
 class HttpForecastAdapter:
@@ -485,10 +499,10 @@ class HttpForecastAdapter:
         api_key: str | None,
     ) -> None:
         self.model_family = _coerce_model_family(model_family)
-        self.model_version = 'external-http'
-        self._base_url = base_url.rstrip('/')
+        self.model_version = "external-http"
+        self._base_url = base_url.rstrip("/")
         self._timeout_seconds = max(timeout_seconds, 1)
-        self._api_key = (api_key or '').strip() or None
+        self._api_key = (api_key or "").strip() or None
 
     def forecast(
         self,
@@ -497,13 +511,13 @@ class HttpForecastAdapter:
         horizon: str,
     ) -> ForecastAdapterOutput:
         payload = {
-            'symbol': feature_vector.symbol,
-            'horizon': horizon,
-            'timeframe': feature_vector.timeframe,
-            'event_ts': feature_vector.event_ts.astimezone(timezone.utc).isoformat(),
-            'model_family': self.model_family,
-            'normalization_hash': feature_vector.normalization_hash,
-            'values': dict(feature_vector.values),
+            "symbol": feature_vector.symbol,
+            "horizon": horizon,
+            "timeframe": feature_vector.timeframe,
+            "event_ts": feature_vector.event_ts.astimezone(timezone.utc).isoformat(),
+            "model_family": self.model_family,
+            "normalization_hash": feature_vector.normalization_hash,
+            "values": dict(feature_vector.values),
         }
         raw = _post_forecast_request(
             base_url=self._base_url,
@@ -526,36 +540,36 @@ def _post_forecast_request(
 ) -> dict[str, Any]:
     body = json.dumps(
         _json_safe_payload(payload),
-        separators=(',', ':'),
-    ).encode('utf-8')
+        separators=(",", ":"),
+    ).encode("utf-8")
     headers = {
-        'accept': 'application/json',
-        'content-type': 'application/json',
+        "accept": "application/json",
+        "content-type": "application/json",
     }
     if api_key:
-        headers['authorization'] = f'Bearer {api_key}'
+        headers["authorization"] = f"Bearer {api_key}"
     request = Request(
-        f'{base_url}/v1/forecasts',
+        f"{base_url}/v1/forecasts",
         data=body,
         headers=headers,
-        method='POST',
+        method="POST",
     )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
-            raw_body = response.read().decode('utf-8')
+            raw_body = response.read().decode("utf-8")
     except HTTPError as exc:
-        detail = exc.read().decode('utf-8', errors='ignore')[:200]
-        raise RuntimeError(f'forecast_provider_http_{exc.code}:{detail}') from exc
+        detail = exc.read().decode("utf-8", errors="ignore")[:200]
+        raise RuntimeError(f"forecast_provider_http_{exc.code}:{detail}") from exc
     except URLError as exc:
-        raise RuntimeError(f'forecast_provider_network_error:{exc.reason}') from exc
+        raise RuntimeError(f"forecast_provider_network_error:{exc.reason}") from exc
     except TimeoutError as exc:
-        raise RuntimeError('forecast_provider_timeout') from exc
+        raise RuntimeError("forecast_provider_timeout") from exc
     try:
         loaded = json.loads(raw_body)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f'forecast_provider_invalid_json:{raw_body[:200]}') from exc
+        raise RuntimeError(f"forecast_provider_invalid_json:{raw_body[:200]}") from exc
     if not isinstance(loaded, dict):
-        raise RuntimeError('forecast_provider_invalid_payload')
+        raise RuntimeError("forecast_provider_invalid_payload")
     return cast(dict[str, Any], loaded)
 
 
@@ -582,42 +596,50 @@ def _coerce_http_forecast_output(
     response: dict[str, Any],
     requested_model_family: str,
 ) -> ForecastAdapterOutput:
-    interval_payload = cast(dict[str, Any], response.get('interval') or {})
-    uncertainty_payload = cast(dict[str, Any], response.get('uncertainty') or {})
-    artifact_authority_raw = response.get('artifact_authority')
+    interval_payload = cast(dict[str, Any], response.get("interval") or {})
+    uncertainty_payload = cast(dict[str, Any], response.get("uncertainty") or {})
+    artifact_authority_raw = response.get("artifact_authority")
     artifact_authority = (
         cast(dict[str, Any], artifact_authority_raw)
         if isinstance(artifact_authority_raw, dict)
         else evidence_contract_payload(
             provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
             maturity=EvidenceMaturity.EMPIRICALLY_VALIDATED,
-            calibration_summary={'status': 'externally_validated'},
-            notes='Forecast output loaded from configured external empirical provider.',
+            calibration_summary={"status": "externally_validated"},
+            notes="Forecast output loaded from configured external empirical provider.",
         )
     )
     return ForecastAdapterOutput(
         model_family=_coerce_model_family(
-            str(response.get('model_family') or requested_model_family)
+            str(response.get("model_family") or requested_model_family)
         ),
-        model_version=str(response.get('model_version') or 'external-http').strip()
-        or 'external-http',
-        point_forecast=_decimal_or_default(response.get('point_forecast'), Decimal('0')),
+        model_version=str(response.get("model_version") or "external-http").strip()
+        or "external-http",
+        point_forecast=_decimal_or_default(
+            response.get("point_forecast"), Decimal("0")
+        ),
         interval=ForecastInterval(
-            p05=_decimal_or_default(interval_payload.get('p05'), Decimal('0')),
-            p50=_decimal_or_default(interval_payload.get('p50'), Decimal('0')),
-            p95=_decimal_or_default(interval_payload.get('p95'), Decimal('0')),
+            p05=_decimal_or_default(interval_payload.get("p05"), Decimal("0")),
+            p50=_decimal_or_default(interval_payload.get("p50"), Decimal("0")),
+            p95=_decimal_or_default(interval_payload.get("p95"), Decimal("0")),
         ),
         uncertainty=ForecastUncertainty(
-            epistemic=_decimal_or_default(uncertainty_payload.get('epistemic'), Decimal('0.5')),
-            aleatoric=_decimal_or_default(uncertainty_payload.get('aleatoric'), Decimal('0.5')),
+            epistemic=_decimal_or_default(
+                uncertainty_payload.get("epistemic"), Decimal("0.5")
+            ),
+            aleatoric=_decimal_or_default(
+                uncertainty_payload.get("aleatoric"), Decimal("0.5")
+            ),
         ),
-        inference_latency_ms=max(1, int(response.get('inference_latency_ms', 1))),
-        model_registry_ref=str(response.get('model_registry_ref') or '').strip() or None,
-        training_run_ref=str(response.get('training_run_ref') or '').strip() or None,
-        dataset_snapshot_ref=str(response.get('dataset_snapshot_ref') or '').strip() or None,
-        calibration_ref=str(response.get('calibration_ref') or '').strip() or None,
+        inference_latency_ms=max(1, int(response.get("inference_latency_ms", 1))),
+        model_registry_ref=str(response.get("model_registry_ref") or "").strip()
+        or None,
+        training_run_ref=str(response.get("training_run_ref") or "").strip() or None,
+        dataset_snapshot_ref=str(response.get("dataset_snapshot_ref") or "").strip()
+        or None,
+        calibration_ref=str(response.get("calibration_ref") or "").strip() or None,
         promotion_authority_eligible=bool(
-            response.get('promotion_authority_eligible', False)
+            response.get("promotion_authority_eligible", False)
         ),
         artifact_authority=artifact_authority,
     )
@@ -629,16 +651,18 @@ class ForecastCalibrationStore:
     route_overrides: dict[str, dict[str, Decimal]] = field(default_factory=_empty_dict)
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> 'ForecastCalibrationStore':
+    def from_payload(cls, payload: dict[str, Any]) -> "ForecastCalibrationStore":
         defaults: dict[str, Decimal] = {}
-        defaults_raw = payload.get('default_calibration_score_by_model_family')
+        defaults_raw = payload.get("default_calibration_score_by_model_family")
         if isinstance(defaults_raw, dict):
             for family, score in cast(dict[str, Any], defaults_raw).items():
                 normalized_family = _coerce_model_family(str(family))
-                defaults[normalized_family] = _decimal_or_default(score, Decimal('0.90'))
+                defaults[normalized_family] = _decimal_or_default(
+                    score, Decimal("0.90")
+                )
 
         overrides: dict[str, dict[str, Decimal]] = {}
-        overrides_raw = payload.get('route_calibration_scores')
+        overrides_raw = payload.get("route_calibration_scores")
         if isinstance(overrides_raw, dict):
             for route_key, family_map in cast(dict[str, Any], overrides_raw).items():
                 if not isinstance(family_map, dict):
@@ -646,7 +670,7 @@ class ForecastCalibrationStore:
                 normalized: dict[str, Decimal] = {}
                 for family, score in cast(dict[str, Any], family_map).items():
                     normalized[_coerce_model_family(str(family))] = _decimal_or_default(
-                        score, Decimal('0.90')
+                        score, Decimal("0.90")
                     )
                 overrides[route_key] = normalized
 
@@ -659,7 +683,7 @@ class ForecastCalibrationStore:
             return route_map[canonical_model_family]
         if canonical_model_family in self.defaults_by_family:
             return self.defaults_by_family[canonical_model_family]
-        return Decimal('0.90')
+        return Decimal("0.90")
 
 
 class ForecastRefinerV5:
@@ -671,30 +695,38 @@ class ForecastRefinerV5:
         *,
         feature_vector: FeatureVectorV3,
     ) -> ForecastAdapterOutput:
-        quality = str(feature_vector.values.get('signal_quality_flag') or '').strip().lower()
-        shrink = Decimal('0.92') if quality in {'high', 'ok', 'healthy'} else Decimal('0.97')
+        quality = (
+            str(feature_vector.values.get("signal_quality_flag") or "").strip().lower()
+        )
+        shrink = (
+            Decimal("0.92") if quality in {"high", "ok", "healthy"} else Decimal("0.97")
+        )
         midpoint = contract.interval.p50
         low_delta = midpoint - contract.interval.p05
         high_delta = contract.interval.p95 - midpoint
 
         refined_interval = ForecastInterval(
-            p05=(midpoint - (low_delta * shrink)).quantize(Decimal('0.0001')),
-            p50=midpoint.quantize(Decimal('0.0001')),
-            p95=(midpoint + (high_delta * shrink)).quantize(Decimal('0.0001')),
+            p05=(midpoint - (low_delta * shrink)).quantize(Decimal("0.0001")),
+            p50=midpoint.quantize(Decimal("0.0001")),
+            p95=(midpoint + (high_delta * shrink)).quantize(Decimal("0.0001")),
         )
         refined_uncertainty = ForecastUncertainty(
             epistemic=_clamp_decimal(
-                contract.uncertainty.epistemic * Decimal('0.97'), Decimal('0.01'), Decimal('0.99')
-            ).quantize(Decimal('0.0001')),
+                contract.uncertainty.epistemic * Decimal("0.97"),
+                Decimal("0.01"),
+                Decimal("0.99"),
+            ).quantize(Decimal("0.0001")),
             aleatoric=_clamp_decimal(
-                contract.uncertainty.aleatoric * shrink, Decimal('0.01'), Decimal('0.99')
-            ).quantize(Decimal('0.0001')),
+                contract.uncertainty.aleatoric * shrink,
+                Decimal("0.01"),
+                Decimal("0.99"),
+            ).quantize(Decimal("0.0001")),
         )
 
         return ForecastAdapterOutput(
             model_family=contract.model_family,
             model_version=contract.model_version,
-            point_forecast=contract.point_forecast.quantize(Decimal('0.0001')),
+            point_forecast=contract.point_forecast.quantize(Decimal("0.0001")),
             interval=refined_interval,
             uncertainty=refined_uncertainty,
             inference_latency_ms=contract.inference_latency_ms,
@@ -729,7 +761,7 @@ class ForecastRouterV5:
         self.adapters = dict(adapters)
         self.calibration_store = calibration_store
         self.refiner = refiner
-        self._baseline_family = 'baseline'
+        self._baseline_family = "baseline"
 
     def route_and_forecast(
         self,
@@ -742,31 +774,37 @@ class ForecastRouterV5:
         resolved_horizon = _coerce_horizon(horizon)
         regime_context = resolve_hmm_context(feature_vector.values)
         regime = self._resolve_regime(feature_vector)
-        route_key = f'{symbol}|{resolved_horizon}|{regime}'
-        route = self.policy.resolve(symbol=symbol, horizon=resolved_horizon, regime=regime)
+        route_key = f"{symbol}|{resolved_horizon}|{regime}"
+        route = self.policy.resolve(
+            symbol=symbol, horizon=resolved_horizon, regime=regime
+        )
 
         selected_family = route.preferred_model_family
         selected_adapter = self.adapters.get(selected_family)
-        calibration = self.calibration_store.score(route_key=route_key, model_family=selected_family)
+        calibration = self.calibration_store.score(
+            route_key=route_key, model_family=selected_family
+        )
         fallback_reason: str | None = None
 
         if selected_adapter is None:
-            fallback_reason = 'preferred_adapter_missing'
+            fallback_reason = "preferred_adapter_missing"
 
         if fallback_reason is None and calibration < route.min_calibration_score:
-            fallback_reason = 'calibration_below_threshold'
+            fallback_reason = "calibration_below_threshold"
 
         output: ForecastAdapterOutput | None = None
         if fallback_reason is None and selected_adapter is not None:
             try:
-                output = selected_adapter.forecast(feature_vector=feature_vector, horizon=resolved_horizon)
+                output = selected_adapter.forecast(
+                    feature_vector=feature_vector, horizon=resolved_horizon
+                )
             except Exception:
-                fallback_reason = 'provider_error'
+                fallback_reason = "provider_error"
             else:
                 if output.inference_latency_ms > route.max_inference_latency_ms:
-                    fallback_reason = 'latency_slo_breach'
+                    fallback_reason = "latency_slo_breach"
                 elif not output.interval.is_valid():
-                    fallback_reason = 'invalid_interval_contract'
+                    fallback_reason = "invalid_interval_contract"
 
         final_family = selected_family
         if fallback_reason is not None:
@@ -778,25 +816,29 @@ class ForecastRouterV5:
             )
 
         if output is None:
-            raise RuntimeError('forecast_router_missing_output')
+            raise RuntimeError("forecast_router_missing_output")
         if self.refiner is not None and not route.disable_refinement:
             output = self.refiner.refine(output, feature_vector=feature_vector)
 
-        final_calibration = self.calibration_store.score(route_key=route_key, model_family=final_family)
-        fallback = ForecastFallback(applied=fallback_reason is not None, reason=fallback_reason)
+        final_calibration = self.calibration_store.score(
+            route_key=route_key, model_family=final_family
+        )
+        fallback = ForecastFallback(
+            applied=fallback_reason is not None, reason=fallback_reason
+        )
 
         contract = ForecastContractV1(
-            schema_version='forecast_contract_v1',
+            schema_version="forecast_contract_v1",
             symbol=symbol,
             horizon=resolved_horizon,
             event_ts=event_ts.astimezone(timezone.utc),
             model_family=output.model_family,
             model_version=output.model_version,
             route_key=route_key,
-            point_forecast=output.point_forecast.quantize(Decimal('0.0001')),
+            point_forecast=output.point_forecast.quantize(Decimal("0.0001")),
             interval=output.interval,
             uncertainty=output.uncertainty,
-            calibration_score=final_calibration.quantize(Decimal('0.0001')),
+            calibration_score=final_calibration.quantize(Decimal("0.0001")),
             fallback=fallback,
             inference_latency_ms=output.inference_latency_ms,
             regime_id=regime_context.regime_id,
@@ -811,16 +853,20 @@ class ForecastRouterV5:
             promotion_authority_eligible=output.promotion_authority_eligible,
             artifact_authority=output.artifact_authority,
         )
-        selected_version = selected_adapter.model_version if selected_adapter is not None else 'missing'
+        selected_version = (
+            selected_adapter.model_version
+            if selected_adapter is not None
+            else "missing"
+        )
         audit = ForecastDecisionAudit(
-            schema_version='forecast_decision_audit_v1',
+            schema_version="forecast_decision_audit_v1",
             event_ts=event_ts.astimezone(timezone.utc),
             route_key=route_key,
             selected_model_family=selected_family,
             selected_model_version=selected_version,
             final_model_family=output.model_family,
             final_model_version=output.model_version,
-            calibration_score=final_calibration.quantize(Decimal('0.0001')),
+            calibration_score=final_calibration.quantize(Decimal("0.0001")),
             inference_latency_ms=output.inference_latency_ms,
             fallback_applied=fallback.applied,
             fallback_reason=fallback.reason,
@@ -843,21 +889,23 @@ class ForecastRouterV5:
             symbol=symbol,
             horizon=resolved_horizon,
             inference_latency_ms=output.inference_latency_ms,
-            calibration_error=(Decimal('1') - final_calibration).quantize(Decimal('0.0001')),
+            calibration_error=(Decimal("1") - final_calibration).quantize(
+                Decimal("0.0001")
+            ),
             fallback_reason=fallback.reason,
         )
         return ForecastRouterResult(contract=contract, audit=audit, telemetry=telemetry)
 
     def _resolve_regime(self, feature_vector: FeatureVectorV3) -> str:
-        route_regime_label = feature_vector.values.get('route_regime_label')
+        route_regime_label = feature_vector.values.get("route_regime_label")
         if isinstance(route_regime_label, str):
             normalized = route_regime_label.strip().lower()
             if normalized:
                 return normalized
         resolved_regime: str = resolve_regime_route_label(
             feature_vector.values,
-            macd=optional_decimal(feature_vector.values.get('macd')),
-            macd_signal=optional_decimal(feature_vector.values.get('macd_signal')),
+            macd=optional_decimal(feature_vector.values.get("macd")),
+            macd_signal=optional_decimal(feature_vector.values.get("macd_signal")),
         )
         if resolved_regime == "unknown":
             return "range"
@@ -875,11 +923,16 @@ class ForecastRouterV5:
             adapter = self.adapters.get(family)
             if adapter is None:
                 continue
-            score = self.calibration_store.score(route_key=route_key, model_family=family)
+            score = self.calibration_store.score(
+                route_key=route_key, model_family=family
+            )
             if score < route.min_calibration_score:
                 continue
             output = adapter.forecast(feature_vector=feature_vector, horizon=horizon)
-            if output.interval.is_valid() and output.inference_latency_ms <= route.max_inference_latency_ms:
+            if (
+                output.interval.is_valid()
+                and output.inference_latency_ms <= route.max_inference_latency_ms
+            ):
                 return family, output
 
         baseline_adapter = self.adapters[self._baseline_family]
@@ -889,12 +942,14 @@ class ForecastRouterV5:
         )
 
 
-def build_default_forecast_router(*, policy_path: str | None, refinement_enabled: bool) -> ForecastRouterV5:
+def build_default_forecast_router(
+    *, policy_path: str | None, refinement_enabled: bool
+) -> ForecastRouterV5:
     policy_payload: dict[str, Any] = {}
     if policy_path:
         path = Path(policy_path)
         if path.exists():
-            loaded = json.loads(path.read_text(encoding='utf-8'))
+            loaded = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 policy_payload = cast(dict[str, Any], loaded)
 
@@ -902,12 +957,12 @@ def build_default_forecast_router(*, policy_path: str | None, refinement_enabled
     calibration_store = ForecastCalibrationStore.from_payload(policy_payload)
     allowed_families = settings.trading_forecast_service_allowed_model_families
     adapters: dict[str, ForecastAdapter] = {
-        'baseline': DeterministicBaselineAdapter(),
+        "baseline": DeterministicBaselineAdapter(),
     }
     family_adapters: dict[str, ForecastAdapter] = {
-        'chronos': ChronosForecastAdapter(),
-        'moment': MomentForecastAdapter(),
-        'financial_tsfm': FinancialTsfmForecastAdapter(),
+        "chronos": ChronosForecastAdapter(),
+        "moment": MomentForecastAdapter(),
+        "financial_tsfm": FinancialTsfmForecastAdapter(),
     }
     for family, adapter in family_adapters.items():
         if family in allowed_families:
@@ -922,10 +977,10 @@ def build_default_forecast_router(*, policy_path: str | None, refinement_enabled
 
 
 __all__ = [
-    'ForecastContractV1',
-    'ForecastDecisionAudit',
-    'ForecastRouterResult',
-    'ForecastRouterV5',
-    'ForecastRoutingTelemetry',
-    'build_default_forecast_router',
+    "ForecastContractV1",
+    "ForecastDecisionAudit",
+    "ForecastRouterResult",
+    "ForecastRouterV5",
+    "ForecastRoutingTelemetry",
+    "build_default_forecast_router",
 ]

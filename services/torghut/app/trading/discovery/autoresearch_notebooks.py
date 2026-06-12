@@ -9,38 +9,38 @@ from typing import Any
 
 def _markdown_cell(source: str) -> dict[str, Any]:
     return {
-        'cell_type': 'markdown',
-        'metadata': {},
-        'source': source.splitlines(keepends=True),
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": source.splitlines(keepends=True),
     }
 
 
 def _code_cell(source: str) -> dict[str, Any]:
     return {
-        'cell_type': 'code',
-        'metadata': {},
-        'execution_count': None,
-        'outputs': [],
-        'source': source.splitlines(keepends=True),
+        "cell_type": "code",
+        "metadata": {},
+        "execution_count": None,
+        "outputs": [],
+        "source": source.splitlines(keepends=True),
     }
 
 
 def _notebook(cells: list[dict[str, Any]]) -> dict[str, Any]:
     return {
-        'cells': cells,
-        'metadata': {
-            'kernelspec': {
-                'display_name': 'Python 3',
-                'language': 'python',
-                'name': 'python3',
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
             },
-            'language_info': {
-                'name': 'python',
-                'version': '3.11',
+            "language_info": {
+                "name": "python",
+                "version": "3.11",
             },
         },
-        'nbformat': 4,
-        'nbformat_minor': 5,
+        "nbformat": 4,
+        "nbformat_minor": 5,
     }
 
 
@@ -194,11 +194,11 @@ if pd is None:
 def build_strategy_discovery_history_notebook(run_root: Path) -> dict[str, Any]:
     cells = [
         _markdown_cell(
-            '# Strategy Discovery History\n\n'
-            'This notebook shows the autoresearch loop over time: which candidates were kept, '
-            'how the frontier improved, and where concentration or inactivity still remains.\n\n'
-            '> Results in this notebook are research candidates only. They are not promotable until '
-            'the same family passes runtime parity, scheduler-v3 approval replay, and shadow validation.'
+            "# Strategy Discovery History\n\n"
+            "This notebook shows the autoresearch loop over time: which candidates were kept, "
+            "how the frontier improved, and where concentration or inactivity still remains.\n\n"
+            "> Results in this notebook are research candidates only. They are not promotable until "
+            "the same family passes runtime parity, scheduler-v3 approval replay, and shadow validation."
         ),
         _code_cell(_shared_loader_code(run_root)),
         _code_cell(
@@ -383,10 +383,10 @@ if daily_net:
 def build_strategy_research_dossier_notebook(run_root: Path) -> dict[str, Any]:
     cells = [
         _markdown_cell(
-            '# Strategy Research Dossier\n\n'
-            'This notebook focuses on the paper claims and family plans that drove the discovery loop.\n\n'
-            '> Discovery evidence is not promotion evidence. Use runtime parity and scheduler-v3 approval replay '
-            'before calling any candidate a winner.'
+            "# Strategy Research Dossier\n\n"
+            "This notebook focuses on the paper claims and family plans that drove the discovery loop.\n\n"
+            "> Discovery evidence is not promotion evidence. Use runtime parity and scheduler-v3 approval replay "
+            "before calling any candidate a winner."
         ),
         _code_cell(_shared_loader_code(run_root)),
         _code_cell(
@@ -463,10 +463,10 @@ def build_mlx_autoresearch_diagnostics_notebook(run_root: Path) -> dict[str, Any
     resolved = run_root.resolve().as_posix()
     cells = [
         _markdown_cell(
-            '# MLX Autoresearch Diagnostics\n\n'
-            'This notebook visualizes MLX proposal metadata, snapshot health, runtime replay outcomes, '
-            'and promotion blocking for one autoresearch run.\n\n'
-            '> MLX proposal scores are diagnostic only. Scheduler-v3 replay remains the authority.'
+            "# MLX Autoresearch Diagnostics\n\n"
+            "This notebook visualizes MLX proposal metadata, snapshot health, runtime replay outcomes, "
+            "and promotion blocking for one autoresearch run.\n\n"
+            "> MLX proposal scores are diagnostic only. Scheduler-v3 replay remains the authority."
         ),
         _code_cell(
             f"""from __future__ import annotations
@@ -811,20 +811,20 @@ if RUNTIME_CLOSURE:
 
 
 def write_autoresearch_notebooks(run_root: Path) -> tuple[Path, ...]:
-    history_path = run_root / 'strategy-discovery-history.ipynb'
-    dossier_path = run_root / 'strategy-research-dossier.ipynb'
-    mlx_path = run_root / 'mlx-autoresearch-diagnostics.ipynb'
+    history_path = run_root / "strategy-discovery-history.ipynb"
+    dossier_path = run_root / "strategy-research-dossier.ipynb"
+    mlx_path = run_root / "mlx-autoresearch-diagnostics.ipynb"
     history_path.write_text(
         json.dumps(build_strategy_discovery_history_notebook(run_root), indent=2),
-        encoding='utf-8',
+        encoding="utf-8",
     )
     dossier_path.write_text(
         json.dumps(build_strategy_research_dossier_notebook(run_root), indent=2),
-        encoding='utf-8',
+        encoding="utf-8",
     )
     mlx_path.write_text(
         json.dumps(build_mlx_autoresearch_diagnostics_notebook(run_root), indent=2),
-        encoding='utf-8',
+        encoding="utf-8",
     )
     return history_path, dossier_path, mlx_path
 
@@ -832,8 +832,8 @@ def write_autoresearch_notebooks(run_root: Path) -> tuple[Path, ...]:
 def build_strategy_factory_history_notebook(run_root: Path) -> dict[str, Any]:
     cells = [
         _markdown_cell(
-            '# Strategy Factory History\n\n'
-            'This notebook shows claim-linked factory experiments, candidate ranking, and the best-candidate decomposition.'
+            "# Strategy Factory History\n\n"
+            "This notebook shows claim-linked factory experiments, candidate ranking, and the best-candidate decomposition."
         ),
         _code_cell(_shared_loader_code(run_root)),
         _code_cell(
@@ -915,8 +915,8 @@ if decomposition:
 def build_strategy_factory_research_dossier_notebook(run_root: Path) -> dict[str, Any]:
     cells = [
         _markdown_cell(
-            '# Strategy Factory Research Dossier\n\n'
-            'This notebook shows the source whitepaper-linked experiments, hypotheses, and promotion contracts driving the factory run.'
+            "# Strategy Factory Research Dossier\n\n"
+            "This notebook shows the source whitepaper-linked experiments, hypotheses, and promotion contracts driving the factory run."
         ),
         _code_cell(_shared_loader_code(run_root)),
         _code_cell(
@@ -969,14 +969,16 @@ if snapshots:
 
 
 def write_strategy_factory_notebooks(run_root: Path) -> tuple[Path, Path]:
-    history_path = run_root / 'strategy-factory-history.ipynb'
-    dossier_path = run_root / 'strategy-factory-research-dossier.ipynb'
+    history_path = run_root / "strategy-factory-history.ipynb"
+    dossier_path = run_root / "strategy-factory-research-dossier.ipynb"
     history_path.write_text(
         json.dumps(build_strategy_factory_history_notebook(run_root), indent=2),
-        encoding='utf-8',
+        encoding="utf-8",
     )
     dossier_path.write_text(
-        json.dumps(build_strategy_factory_research_dossier_notebook(run_root), indent=2),
-        encoding='utf-8',
+        json.dumps(
+            build_strategy_factory_research_dossier_notebook(run_root), indent=2
+        ),
+        encoding="utf-8",
     )
     return history_path, dossier_path

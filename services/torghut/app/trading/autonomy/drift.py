@@ -395,7 +395,9 @@ def _regime_drift_signals(
 
     transition_shock_samples = _to_int(hmm_payload.get("transition_shock_samples"))
     if transition_shock_samples is not None and transition_shock_samples >= 0:
-        transition_shock_ratio = Decimal(transition_shock_samples) / Decimal(samples_total)
+        transition_shock_ratio = Decimal(transition_shock_samples) / Decimal(
+            samples_total
+        )
         if transition_shock_ratio > thresholds.max_regime_transition_shock_ratio:
             signals.append(
                 _drift_signal(

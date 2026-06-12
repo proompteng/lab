@@ -30,7 +30,9 @@ class TradingTimeSnapshot:
             "mode": self.mode,
             "now": self.now.isoformat(),
             "source": self.source,
-            "cursor_at": self.cursor_at.isoformat() if self.cursor_at is not None else None,
+            "cursor_at": self.cursor_at.isoformat()
+            if self.cursor_at is not None
+            else None,
         }
 
 
@@ -57,12 +59,14 @@ class TradingTimeSource:
             return TradingTimeSnapshot(mode="live", now=now, source="wall_clock")
 
         runtime_context = active_simulation_runtime_context()
-        active_run_id = (runtime_context or {}).get('run_id')
+        active_run_id = (runtime_context or {}).get("run_id")
         if active_run_id != self._active_run_id:
             self._cache_by_account.clear()
             self._active_run_id = active_run_id
 
-        effective_account_label = self._effective_account_label(account_label=account_label)
+        effective_account_label = self._effective_account_label(
+            account_label=account_label
+        )
         cache_ttl = max(settings.trading_simulation_clock_cache_seconds, 0)
         current_monotonic = time.monotonic()
         cached_entry = self._cache_by_account.get(effective_account_label)
@@ -71,7 +75,9 @@ class TradingTimeSource:
             if current_monotonic - loaded_at <= cache_ttl:
                 return cached_snapshot
 
-        resolved = self._resolve_simulation_snapshot(account_label=effective_account_label)
+        resolved = self._resolve_simulation_snapshot(
+            account_label=effective_account_label
+        )
         self._cache_by_account[effective_account_label] = (resolved, current_monotonic)
         return resolved
 
@@ -87,7 +93,11 @@ class TradingTimeSource:
         account = self._effective_account_label(account_label=account_label)
         raw_cursor_at = self._load_clickhouse_cursor(account_label=account)
         cursor_at = normalize_simulation_cursor(raw_cursor_at)
-        if raw_cursor_at is not None and cursor_at is not None and cursor_at == raw_cursor_at:
+        if (
+            raw_cursor_at is not None
+            and cursor_at is not None
+            and cursor_at == raw_cursor_at
+        ):
             return TradingTimeSnapshot(
                 mode="simulation_cursor",
                 now=cursor_at,
@@ -127,7 +137,10 @@ class TradingTimeSource:
             if row is None:
                 return None
             cursor_at = row.cursor_at.astimezone(timezone.utc)
-            if settings.trading_simulation_enabled and cursor_at <= _SIMULATION_CURSOR_BASELINE:
+            if (
+                settings.trading_simulation_enabled
+                and cursor_at <= _SIMULATION_CURSOR_BASELINE
+            ):
                 return None
             return cursor_at
 
@@ -147,4 +160,9 @@ def trading_time_status(*, account_label: str | None = None) -> dict[str, Any]:
     return _TIME_SOURCE.snapshot(account_label=account_label).to_payload()
 
 
-__all__ = ["TradingTimeSource", "trading_monotonic", "trading_now", "trading_time_status"]
+__all__ = [
+    "TradingTimeSource",
+    "trading_monotonic",
+    "trading_now",
+    "trading_time_status",
+]

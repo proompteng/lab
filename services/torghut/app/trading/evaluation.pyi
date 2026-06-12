@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# ruff: noqa: F401,F403,F405,F811,F821
+from typing import Any
+import json
+import hashlib
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Iterable, Protocol, cast
+from ..models import Strategy
+from .decisions import DecisionEngine
+from .evidence_contracts import (
+    ArtifactProvenance,
+    EvidenceMaturity,
+    evidence_contract_payload,
+)
+from .features import SignalFeatures, extract_signal_features
+from .models import SignalEnvelope, StrategyDecision
+
+class SignalSource(Protocol):
+    def fetch_signals(*args: Any, **kwargs: Any) -> Any: ...
+
+class WalkForwardFold:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    name: str
+    train_start: datetime
+    train_end: datetime
+    test_start: datetime
+    test_end: datetime
+
+class WalkForwardDecision:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    decision: StrategyDecision
+    features: SignalFeatures
+
+def _empty_decisions(*args: Any, **kwargs: Any) -> Any: ...
+
+class FoldResult:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    fold: WalkForwardFold
+    decisions: list[WalkForwardDecision]
+    signals_count: int
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+    def fold_metrics(*args: Any, **kwargs: Any) -> Any: ...
+    def _decision_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class WalkForwardResults:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    generated_at: datetime
+    folds: list[FoldResult]
+    feature_spec: str
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class FixtureSignalSource:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    signals: list[SignalEnvelope]
+    def from_path(*args: Any, **kwargs: Any) -> Any: ...
+    def fetch_signals(*args: Any, **kwargs: Any) -> Any: ...
+
+def generate_walk_forward_folds(*args: Any, **kwargs: Any) -> Any: ...
+def run_walk_forward(*args: Any, **kwargs: Any) -> Any: ...
+def write_walk_forward_results(*args: Any, **kwargs: Any) -> Any: ...
+def _fold_payload(*args: Any, **kwargs: Any) -> Any: ...
+def _decimal_str(*args: Any, **kwargs: Any) -> Any: ...
+def _fold_regime_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class ProfitabilityBenchmarkSliceV4:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    slice_key: str
+    slice_type: str
+    candidate_metrics: dict[str, str]
+    baseline_metrics: dict[str, str]
+    deltas: dict[str, str]
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class ProfitabilityBenchmarkV4:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    schema_version: str
+    executed_at: datetime
+    candidate_id: str
+    baseline_id: str
+    slices: list[ProfitabilityBenchmarkSliceV4]
+    required_slice_keys: list[str]
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class ProfitabilityEvidenceV4:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    schema_version: str
+    generated_at: datetime
+    run_id: str
+    candidate_id: str
+    baseline_id: str
+    risk_adjusted_metrics: dict[str, str]
+    cost_fill_realism: dict[str, object]
+    confidence_calibration: dict[str, object]
+    significance: dict[str, object]
+    reproducibility: dict[str, object]
+    benchmark: ProfitabilityBenchmarkV4
+    artifact_refs: list[str]
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class SimulationCalibrationReportV1:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    schema_version: str
+    generated_at: datetime
+    run_id: str
+    candidate_id: str
+    order_count: int
+    expected_shortfall_sample_count: int
+    expected_shortfall_coverage: Decimal
+    avg_expected_shortfall_bps_p50: Decimal
+    avg_expected_shortfall_bps_p95: Decimal
+    avg_realized_shortfall_bps: Decimal
+    avg_calibration_error_bps: Decimal
+    confidence_sample_count: int
+    confidence_calibration_error: Decimal
+    confidence_coverage_error: Decimal
+    confidence_shift_score: Decimal
+    confidence_gate_action: str
+    thresholds: dict[str, object]
+    status: str
+    artifact_authority: dict[str, object]
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class ShadowLiveDeviationReportV1:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    schema_version: str
+    generated_at: datetime
+    run_id: str
+    candidate_id: str
+    order_count: int
+    decision_count: int
+    trade_count: int
+    trade_to_decision_ratio: Decimal
+    avg_abs_slippage_bps: Decimal
+    avg_abs_divergence_bps: Decimal
+    avg_realized_shortfall_bps_abs: Decimal
+    deviation_budget_utilization: Decimal
+    thresholds: dict[str, object]
+    status: str
+    artifact_authority: dict[str, object]
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class FillPriceErrorBudgetReportV1:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    schema_version: str
+    generated_at: datetime
+    run_id: str
+    venue: str
+    order_count: int
+    metric_observation_complete: bool
+    median_abs_slippage_bps: Decimal
+    p95_abs_slippage_bps: Decimal
+    max_abs_slippage_bps: Decimal
+    budget_median_abs_slippage_bps: Decimal
+    budget_p95_abs_slippage_bps: Decimal
+    status: str
+    artifact_authority: dict[str, object]
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class ProfitabilityEvidenceThresholdsV4:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    min_market_net_pnl_delta: Decimal
+    min_risk_adjusted_return_over_drawdown: Decimal
+    min_regime_slice_pass_ratio: Decimal
+    max_cost_bps: Decimal
+    min_confidence_samples: int
+    min_significance_samples: int
+    max_calibration_error: Decimal
+    min_reproducibility_hashes: int
+    required_hash_keys: tuple[str, ...]
+    def from_payload(*args: Any, **kwargs: Any) -> Any: ...
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+class ProfitabilityEvidenceValidationResultV4:
+    def __init__(*args: Any, **kwargs: Any) -> None: ...
+    passed: bool
+    reasons: list[str]
+    reason_details: list[dict[str, object]]
+    artifact_refs: list[str]
+    checked_at: datetime
+    thresholds: ProfitabilityEvidenceThresholdsV4
+    def to_payload(*args: Any, **kwargs: Any) -> Any: ...
+
+def execute_profitability_benchmark_v4(*args: Any, **kwargs: Any) -> Any: ...
+def build_profitability_evidence_v4(*args: Any, **kwargs: Any) -> Any: ...
+def validate_profitability_evidence_v4(*args: Any, **kwargs: Any) -> Any: ...
+def build_simulation_calibration_report_v1(*args: Any, **kwargs: Any) -> Any: ...
+def build_shadow_live_deviation_report_v1(*args: Any, **kwargs: Any) -> Any: ...
+def build_fill_price_error_budget_report_v1(*args: Any, **kwargs: Any) -> Any: ...
+def _append_profitability_reason(*args: Any, **kwargs: Any) -> Any: ...
+def _validate_profitability_schema_versions(*args: Any, **kwargs: Any) -> Any: ...
+def _validate_profitability_risk_metrics(*args: Any, **kwargs: Any) -> Any: ...
+def _validate_profitability_cost_metrics(*args: Any, **kwargs: Any) -> Any: ...
+def _validate_profitability_confidence_metrics(*args: Any, **kwargs: Any) -> Any: ...
+def _validate_profitability_significance_metrics(*args: Any, **kwargs: Any) -> Any: ...
+def _validate_profitability_reproducibility(*args: Any, **kwargs: Any) -> Any: ...
+def _extract_report_slices(*args: Any, **kwargs: Any) -> Any: ...
+def _slice_metrics(*args: Any, **kwargs: Any) -> Any: ...
+def _empty_slice_metrics(*args: Any, **kwargs: Any) -> Any: ...
+def _slice_deltas(*args: Any, **kwargs: Any) -> Any: ...
+def _benchmark_summary(*args: Any, **kwargs: Any) -> Any: ...
+def _confidence_summary(*args: Any, **kwargs: Any) -> Any: ...
+def _significance_summary(*args: Any, **kwargs: Any) -> Any: ...
+def _bootstrap_mean_samples(*args: Any, **kwargs: Any) -> Any: ...
+def _quantile_decimal(*args: Any, **kwargs: Any) -> Any: ...
+def _reproducibility_payload(*args: Any, **kwargs: Any) -> Any: ...
+def _report_fold_net_pnls(*args: Any, **kwargs: Any) -> Any: ...
+def _decimal(*args: Any, **kwargs: Any) -> Any: ...
+def _decimal_mean(*args: Any, **kwargs: Any) -> Any: ...
+def _decimal_std(*args: Any, **kwargs: Any) -> Any: ...
+def _safe_ratio(*args: Any, **kwargs: Any) -> Any: ...
+def _as_dict(*args: Any, **kwargs: Any) -> Any: ...
+def _as_int(*args: Any, **kwargs: Any) -> Any: ...
+
+__all__: Any

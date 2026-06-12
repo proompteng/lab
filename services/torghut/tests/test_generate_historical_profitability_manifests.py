@@ -23,63 +23,72 @@ class TestGenerateHistoricalProfitabilityManifests(TestCase):
             summary = generate_profitability_manifests(
                 start_day=date(2026, 3, 2),
                 end_day=date(2026, 3, 8),
-                digest='sha256:a9c60e5ed5ddd06253e3126d363d4f6c82c1ef4fc5ea809e21c012ee39d438a5',
+                digest="sha256:a9c60e5ed5ddd06253e3126d363d4f6c82c1ef4fc5ea809e21c012ee39d438a5",
                 output_dir=output_dir,
-                cache_policy='refresh',
-                candidate_id='intraday_tsmom_v1@prod',
-                baseline_candidate_id='intraday_tsmom_v1@baseline',
-                strategy_spec_ref='strategy-specs/intraday_tsmom_v1@1.1.0.json',
-                model_refs=['rules/intraday_tsmom_v1'],
+                cache_policy="refresh",
+                candidate_id="intraday_tsmom_v1@prod",
+                baseline_candidate_id="intraday_tsmom_v1@baseline",
+                strategy_spec_ref="strategy-specs/intraday_tsmom_v1@1.1.0.json",
+                model_refs=["rules/intraday_tsmom_v1"],
                 generated_at=datetime(2026, 3, 16, 12, 0, 0),
             )
 
-            manifests = summary['manifests']
+            manifests = summary["manifests"]
             self.assertEqual(len(manifests), 5)
             self.assertEqual(
-                [item['trading_day'] for item in manifests],
-                ['2026-03-02', '2026-03-03', '2026-03-04', '2026-03-05', '2026-03-06'],
+                [item["trading_day"] for item in manifests],
+                ["2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06"],
             )
 
-            first_manifest_path = Path(manifests[0]['manifest_path'])
-            payload = yaml.safe_load(first_manifest_path.read_text(encoding='utf-8'))
-            self.assertEqual(payload['dataset_id'], 'torghut-full-day-20260302-a9c60e5e')
-            self.assertEqual(payload['cachePolicy'], 'refresh')
+            first_manifest_path = Path(manifests[0]["manifest_path"])
+            payload = yaml.safe_load(first_manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(
-                payload['runtime_version_refs'],
+                payload["dataset_id"], "torghut-full-day-20260302-a9c60e5e"
+            )
+            self.assertEqual(payload["cachePolicy"], "refresh")
+            self.assertEqual(
+                payload["runtime_version_refs"],
                 [
-                    'services/torghut@sha256:a9c60e5ed5ddd06253e3126d363d4f6c82c1ef4fc5ea809e21c012ee39d438a5',
+                    "services/torghut@sha256:a9c60e5ed5ddd06253e3126d363d4f6c82c1ef4fc5ea809e21c012ee39d438a5",
                 ],
             )
-            self.assertEqual(payload['window']['start'], '2026-03-02T14:30:00Z')
-            self.assertEqual(payload['window']['end'], '2026-03-02T21:00:00Z')
+            self.assertEqual(payload["window"]["start"], "2026-03-02T14:30:00Z")
+            self.assertEqual(payload["window"]["end"], "2026-03-02T21:00:00Z")
             self.assertEqual(
-                payload['clickhouse']['simulation_database'],
-                'torghut_sim_2026_03_02_full_day_a9c60e5e',
+                payload["clickhouse"]["simulation_database"],
+                "torghut_sim_2026_03_02_full_day_a9c60e5e",
             )
-            self.assertEqual(payload['model_refs'], ['rules/intraday_tsmom_v1'])
+            self.assertEqual(payload["model_refs"], ["rules/intraday_tsmom_v1"])
             self.assertEqual(
-                payload['torghut_env_overrides']['TRADING_SIMULATION_FETCH_WINDOW_SECONDS'],
-                '20',
+                payload["torghut_env_overrides"][
+                    "TRADING_SIMULATION_FETCH_WINDOW_SECONDS"
+                ],
+                "20",
             )
 
-            index_payload = json.loads((output_dir / 'manifest-index.json').read_text(encoding='utf-8'))
-            self.assertEqual(index_payload['schema_version'], 'torghut.historical-profitability-manifest-index.v1')
-            self.assertEqual(index_payload['cache_policy'], 'refresh')
+            index_payload = json.loads(
+                (output_dir / "manifest-index.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                index_payload["schema_version"],
+                "torghut.historical-profitability-manifest-index.v1",
+            )
+            self.assertEqual(index_payload["cache_policy"], "refresh")
 
     def test_trading_session_bounds_follow_new_york_market_hours(self) -> None:
         self.assertEqual(
             _trading_session_window_bounds_utc(trading_day=date(2026, 3, 2)),
-            ('2026-03-02T14:30:00Z', '2026-03-02T21:00:00Z'),
+            ("2026-03-02T14:30:00Z", "2026-03-02T21:00:00Z"),
         )
         self.assertEqual(
             _trading_session_window_bounds_utc(trading_day=date(2026, 3, 10)),
-            ('2026-03-10T13:30:00Z', '2026-03-10T20:00:00Z'),
+            ("2026-03-10T13:30:00Z", "2026-03-10T20:00:00Z"),
         )
 
     def test_model_refs_default_and_override(self) -> None:
-        self.assertEqual(_resolve_model_refs(None), ['rules/intraday_tsmom_v1'])
-        self.assertEqual(_resolve_model_refs([]), ['rules/intraday_tsmom_v1'])
+        self.assertEqual(_resolve_model_refs(None), ["rules/intraday_tsmom_v1"])
+        self.assertEqual(_resolve_model_refs([]), ["rules/intraday_tsmom_v1"])
         self.assertEqual(
-            _resolve_model_refs(['rules/intraday_tsmom_v2']),
-            ['rules/intraday_tsmom_v2'],
+            _resolve_model_refs(["rules/intraday_tsmom_v2"]),
+            ["rules/intraday_tsmom_v2"],
         )

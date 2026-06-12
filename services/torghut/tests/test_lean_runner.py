@@ -16,7 +16,9 @@ from app.trading.lean_runtime import (
 
 class TestLeanRuntime(TestCase):
     def setUp(self) -> None:
-        self.original_backtest_upstream_url = settings.trading_lean_backtest_upstream_url
+        self.original_backtest_upstream_url = (
+            settings.trading_lean_backtest_upstream_url
+        )
         self.original_shadow_upstream_url = settings.trading_lean_shadow_upstream_url
         self.original_strategy_shadow_upstream_url = (
             settings.trading_lean_strategy_shadow_upstream_url
@@ -25,7 +27,9 @@ class TestLeanRuntime(TestCase):
         _backtests.clear()
 
     def tearDown(self) -> None:
-        settings.trading_lean_backtest_upstream_url = self.original_backtest_upstream_url
+        settings.trading_lean_backtest_upstream_url = (
+            self.original_backtest_upstream_url
+        )
         settings.trading_lean_shadow_upstream_url = self.original_shadow_upstream_url
         settings.trading_lean_strategy_shadow_upstream_url = (
             self.original_strategy_shadow_upstream_url

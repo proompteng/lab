@@ -92,7 +92,9 @@ class _NoCountRepository:
     def __init__(self, _: str) -> None:
         pass
 
-    def ensure_rate_bucket_defaults(self, defaults: dict[str, tuple[float, int]]) -> None:
+    def ensure_rate_bucket_defaults(
+        self, defaults: dict[str, tuple[float, int]]
+    ) -> None:
         self.defaults = defaults
 
     def count_active_contracts(self) -> int:

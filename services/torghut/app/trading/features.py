@@ -13,140 +13,142 @@ from .models import SignalEnvelope
 from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
 from .simulation import simulation_context_enabled
 
-FEATURE_SCHEMA_VERSION_V3 = '3.0.0'
-FEATURE_VECTOR_V3_REQUIRED_FIELDS = ('price', 'macd', 'macd_signal', 'rsi14')
+FEATURE_SCHEMA_VERSION_V3 = "3.0.0"
+FEATURE_VECTOR_V3_REQUIRED_FIELDS = ("price", "macd", "macd_signal", "rsi14")
 FEATURE_VECTOR_V3_VALUE_FIELDS = (
-    'price',
-    'mid_price',
-    'ema12',
-    'ema26',
-    'macd',
-    'macd_signal',
-    'macd_hist',
-    'vwap_session',
-    'vwap_w5m',
-    'rsi14',
-    'boll_mid',
-    'boll_upper',
-    'boll_lower',
-    'vol_realized_w60s',
-    'imbalance_spread',
-    'imbalance_bid_px',
-    'imbalance_ask_px',
-    'imbalance_bid_sz',
-    'imbalance_ask_sz',
-    'imbalance_pressure',
-    'spread',
-    'spread_bps',
-    'vwap_w5m_vs_session_bps',
-    'price_vs_vwap_w5m_bps',
-    'session_open_price',
-    'prev_session_close_price',
-    'session_high_price',
-    'session_low_price',
-    'opening_range_high',
-    'opening_range_low',
-    'opening_window_close_price',
-    'opening_range_width_bps',
-    'session_range_bps',
-    'price_vs_session_open_bps',
-    'price_vs_prev_session_close_bps',
-    'opening_window_return_bps',
-    'opening_window_return_from_prev_close_bps',
-    'price_vs_session_high_bps',
-    'price_vs_session_low_bps',
-    'price_vs_opening_range_high_bps',
-    'price_vs_opening_range_low_bps',
-    'price_vs_opening_window_close_bps',
-    'price_position_in_session_range',
-    'recent_spread_bps_avg',
-    'recent_spread_bps_max',
-    'recent_imbalance_pressure_avg',
-    'recent_quote_invalid_ratio',
-    'recent_quote_jump_bps_avg',
-    'recent_quote_jump_bps_max',
-    'recent_microprice_bias_bps_avg',
-    'recent_above_opening_range_high_ratio',
-    'recent_above_opening_window_close_ratio',
-    'recent_above_vwap_w5m_ratio',
-    'recent_15m_return_bps',
-    'microbar_volume',
-    'clusterlob_directional_ofi',
-    'clusterlob_opportunistic_ofi',
-    'clusterlob_market_making_ofi',
-    'clusterlob_event_cluster_stability_score',
-    'cross_section_session_open_rank',
-    'cross_section_session_open_rank_universe_size',
-    'cross_section_prev_session_close_rank',
-    'cross_section_prev_session_close_rank_universe_size',
-    'cross_section_opening_window_return_rank',
-    'cross_section_opening_window_return_rank_universe_size',
-    'cross_section_opening_window_return_from_prev_close_rank',
-    'cross_section_opening_window_return_from_prev_close_rank_universe_size',
-    'cross_section_prev_day_open45_return_rank',
-    'cross_section_prev_day_open45_return_rank_universe_size',
-    'cross_section_prev_day_open60_return_rank',
-    'cross_section_prev_day_open60_return_rank_universe_size',
-    'cross_section_range_position_rank',
-    'cross_section_range_position_rank_universe_size',
-    'cross_section_vwap_w5m_rank',
-    'cross_section_vwap_w5m_rank_universe_size',
-    'cross_section_vwap_w5m_stretch_rank',
-    'cross_section_vwap_w5m_stretch_rank_universe_size',
-    'cross_section_recent_15m_return_rank',
-    'cross_section_recent_15m_return_rank_universe_size',
-    'cross_section_microbar_volume_rank',
-    'cross_section_microbar_volume_rank_universe_size',
-    'cross_section_clusterlob_directional_ofi_rank',
-    'cross_section_clusterlob_directional_ofi_rank_universe_size',
-    'cross_section_recent_imbalance_rank',
-    'cross_section_recent_imbalance_rank_universe_size',
-    'cross_section_rsi14_rank',
-    'cross_section_rsi14_rank_universe_size',
-    'cross_section_macd_hist_rank',
-    'cross_section_macd_hist_rank_universe_size',
-    'cross_section_positive_session_open_ratio',
-    'cross_section_positive_prev_session_close_ratio',
-    'cross_section_positive_opening_window_return_ratio',
-    'cross_section_positive_opening_window_return_from_prev_close_ratio',
-    'cross_section_positive_prev_day_open45_return_ratio',
-    'cross_section_positive_prev_day_open60_return_ratio',
-    'cross_section_above_vwap_w5m_ratio',
-    'cross_section_positive_recent_imbalance_ratio',
-    'cross_section_continuation_breadth',
-    'cross_section_continuation_rank',
-    'cross_section_continuation_rank_universe_size',
-    'cross_section_reversal_rank',
-    'cross_section_reversal_rank_universe_size',
-    'cross_section_factor_neutral_residual_rank',
-    'cross_section_factor_neutral_residual_rank_universe_size',
-    'cross_section_pair_relative_return_rank',
-    'cross_section_pair_relative_return_rank_universe_size',
-    'cross_section_residual_spread_zscore_rank',
-    'cross_section_residual_spread_zscore_rank_universe_size',
-    'session_minutes_elapsed',
-    'signal_quality_flag',
-    'hmm_state_posterior',
-    'hmm_entropy',
-    'hmm_entropy_band',
-    'hmm_regime_id',
-    'hmm_transition_shock',
-    'hmm_guardrail',
-    'hmm_artifact_model_id',
-    'hmm_artifact_feature_schema',
-    'hmm_artifact_training_run_id',
-    'route_regime_label',
-    'staleness_ms',
+    "price",
+    "mid_price",
+    "ema12",
+    "ema26",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "vwap_session",
+    "vwap_w5m",
+    "rsi14",
+    "boll_mid",
+    "boll_upper",
+    "boll_lower",
+    "vol_realized_w60s",
+    "imbalance_spread",
+    "imbalance_bid_px",
+    "imbalance_ask_px",
+    "imbalance_bid_sz",
+    "imbalance_ask_sz",
+    "imbalance_pressure",
+    "spread",
+    "spread_bps",
+    "vwap_w5m_vs_session_bps",
+    "price_vs_vwap_w5m_bps",
+    "session_open_price",
+    "prev_session_close_price",
+    "session_high_price",
+    "session_low_price",
+    "opening_range_high",
+    "opening_range_low",
+    "opening_window_close_price",
+    "opening_range_width_bps",
+    "session_range_bps",
+    "price_vs_session_open_bps",
+    "price_vs_prev_session_close_bps",
+    "opening_window_return_bps",
+    "opening_window_return_from_prev_close_bps",
+    "price_vs_session_high_bps",
+    "price_vs_session_low_bps",
+    "price_vs_opening_range_high_bps",
+    "price_vs_opening_range_low_bps",
+    "price_vs_opening_window_close_bps",
+    "price_position_in_session_range",
+    "recent_spread_bps_avg",
+    "recent_spread_bps_max",
+    "recent_imbalance_pressure_avg",
+    "recent_quote_invalid_ratio",
+    "recent_quote_jump_bps_avg",
+    "recent_quote_jump_bps_max",
+    "recent_microprice_bias_bps_avg",
+    "recent_above_opening_range_high_ratio",
+    "recent_above_opening_window_close_ratio",
+    "recent_above_vwap_w5m_ratio",
+    "recent_15m_return_bps",
+    "microbar_volume",
+    "clusterlob_directional_ofi",
+    "clusterlob_opportunistic_ofi",
+    "clusterlob_market_making_ofi",
+    "clusterlob_event_cluster_stability_score",
+    "cross_section_session_open_rank",
+    "cross_section_session_open_rank_universe_size",
+    "cross_section_prev_session_close_rank",
+    "cross_section_prev_session_close_rank_universe_size",
+    "cross_section_opening_window_return_rank",
+    "cross_section_opening_window_return_rank_universe_size",
+    "cross_section_opening_window_return_from_prev_close_rank",
+    "cross_section_opening_window_return_from_prev_close_rank_universe_size",
+    "cross_section_prev_day_open45_return_rank",
+    "cross_section_prev_day_open45_return_rank_universe_size",
+    "cross_section_prev_day_open60_return_rank",
+    "cross_section_prev_day_open60_return_rank_universe_size",
+    "cross_section_range_position_rank",
+    "cross_section_range_position_rank_universe_size",
+    "cross_section_vwap_w5m_rank",
+    "cross_section_vwap_w5m_rank_universe_size",
+    "cross_section_vwap_w5m_stretch_rank",
+    "cross_section_vwap_w5m_stretch_rank_universe_size",
+    "cross_section_recent_15m_return_rank",
+    "cross_section_recent_15m_return_rank_universe_size",
+    "cross_section_microbar_volume_rank",
+    "cross_section_microbar_volume_rank_universe_size",
+    "cross_section_clusterlob_directional_ofi_rank",
+    "cross_section_clusterlob_directional_ofi_rank_universe_size",
+    "cross_section_recent_imbalance_rank",
+    "cross_section_recent_imbalance_rank_universe_size",
+    "cross_section_rsi14_rank",
+    "cross_section_rsi14_rank_universe_size",
+    "cross_section_macd_hist_rank",
+    "cross_section_macd_hist_rank_universe_size",
+    "cross_section_positive_session_open_ratio",
+    "cross_section_positive_prev_session_close_ratio",
+    "cross_section_positive_opening_window_return_ratio",
+    "cross_section_positive_opening_window_return_from_prev_close_ratio",
+    "cross_section_positive_prev_day_open45_return_ratio",
+    "cross_section_positive_prev_day_open60_return_ratio",
+    "cross_section_above_vwap_w5m_ratio",
+    "cross_section_positive_recent_imbalance_ratio",
+    "cross_section_continuation_breadth",
+    "cross_section_continuation_rank",
+    "cross_section_continuation_rank_universe_size",
+    "cross_section_reversal_rank",
+    "cross_section_reversal_rank_universe_size",
+    "cross_section_factor_neutral_residual_rank",
+    "cross_section_factor_neutral_residual_rank_universe_size",
+    "cross_section_pair_relative_return_rank",
+    "cross_section_pair_relative_return_rank_universe_size",
+    "cross_section_residual_spread_zscore_rank",
+    "cross_section_residual_spread_zscore_rank_universe_size",
+    "session_minutes_elapsed",
+    "signal_quality_flag",
+    "hmm_state_posterior",
+    "hmm_entropy",
+    "hmm_entropy_band",
+    "hmm_regime_id",
+    "hmm_transition_shock",
+    "hmm_guardrail",
+    "hmm_artifact_model_id",
+    "hmm_artifact_feature_schema",
+    "hmm_artifact_training_run_id",
+    "route_regime_label",
+    "staleness_ms",
 )
 FEATURE_VECTOR_V3_IDENTITY_FIELDS = (
-    'event_ts',
-    'symbol',
-    'timeframe',
-    'seq',
-    'source',
-    'feature_schema_version',
+    "event_ts",
+    "symbol",
+    "timeframe",
+    "seq",
+    "source",
+    "feature_schema_version",
 )
-FEATURE_VECTOR_V3_ALL_FIELDS = FEATURE_VECTOR_V3_IDENTITY_FIELDS + FEATURE_VECTOR_V3_VALUE_FIELDS
+FEATURE_VECTOR_V3_ALL_FIELDS = (
+    FEATURE_VECTOR_V3_IDENTITY_FIELDS + FEATURE_VECTOR_V3_VALUE_FIELDS
+)
 
 
 @dataclass(frozen=True)
@@ -193,23 +195,27 @@ def extract_signal_features(signal: SignalEnvelope) -> SignalFeatures:
     rsi = extract_rsi(payload)
     price = extract_price(payload)
     volatility = extract_volatility(payload)
-    return SignalFeatures(macd=macd, macd_signal=macd_signal, rsi=rsi, price=price, volatility=volatility)
+    return SignalFeatures(
+        macd=macd, macd_signal=macd_signal, rsi=rsi, price=price, volatility=volatility
+    )
 
 
-def extract_macd(payload: dict[str, Any]) -> tuple[Optional[Decimal], Optional[Decimal]]:
-    macd_block = payload.get('macd')
+def extract_macd(
+    payload: dict[str, Any],
+) -> tuple[Optional[Decimal], Optional[Decimal]]:
+    macd_block = payload.get("macd")
     if isinstance(macd_block, dict):
         macd_dict = cast(dict[str, Any], macd_block)
-        macd_val = macd_dict.get('macd')
-        signal_val = macd_dict.get('signal')
+        macd_val = macd_dict.get("macd")
+        signal_val = macd_dict.get("signal")
     else:
-        macd_val = payload.get('macd')
-        signal_val = payload.get('macd_signal')
+        macd_val = payload.get("macd")
+        signal_val = payload.get("macd_signal")
     return optional_decimal(macd_val), optional_decimal(signal_val)
 
 
 def extract_rsi(payload: dict[str, Any]) -> Optional[Decimal]:
-    return optional_decimal(payload_value(payload, 'rsi14', nested_key='rsi'))
+    return optional_decimal(payload_value(payload, "rsi14", nested_key="rsi"))
 
 
 def extract_price(payload: dict[str, Any]) -> Optional[Decimal]:
@@ -232,11 +238,11 @@ def extract_executable_price(payload: dict[str, Any]) -> Optional[Decimal]:
 
 
 def _extract_price_from_vwap(payload: dict[str, Any]) -> Decimal | None:
-    vwap = payload.get('vwap')
+    vwap = payload.get("vwap")
     if not isinstance(vwap, dict):
         return None
     vwap_map = cast(dict[str, Any], vwap)
-    for key in ('session', 'w5m'):
+    for key in ("session", "w5m"):
         if key not in vwap_map:
             continue
         value = optional_decimal(vwap_map.get(key))
@@ -246,14 +252,14 @@ def _extract_price_from_vwap(payload: dict[str, Any]) -> Decimal | None:
 
 
 def _extract_price_from_trade_keys(payload: dict[str, Any]) -> Decimal | None:
-    for key in ('price', 'close', 'c', 'last'):
+    for key in ("price", "close", "c", "last"):
         if key in payload:
             return optional_decimal(payload.get(key))
     return None
 
 
 def _extract_price_from_vwap_keys(payload: dict[str, Any]) -> Decimal | None:
-    for key in ('vwap', 'vwap_session', 'vwap_w5m'):
+    for key in ("vwap", "vwap_session", "vwap_w5m"):
         if key in payload:
             return optional_decimal(payload.get(key))
     return None
@@ -261,10 +267,14 @@ def _extract_price_from_vwap_keys(payload: dict[str, Any]) -> Decimal | None:
 
 def _extract_price_from_imbalance(payload: dict[str, Any]) -> Decimal | None:
     bid = optional_decimal(
-        payload_value(payload, 'imbalance_bid_px', block='imbalance', nested_key='bid_px')
+        payload_value(
+            payload, "imbalance_bid_px", block="imbalance", nested_key="bid_px"
+        )
     )
     ask = optional_decimal(
-        payload_value(payload, 'imbalance_ask_px', block='imbalance', nested_key='ask_px')
+        payload_value(
+            payload, "imbalance_ask_px", block="imbalance", nested_key="ask_px"
+        )
     )
     if bid is None or ask is None:
         return None
@@ -272,55 +282,69 @@ def _extract_price_from_imbalance(payload: dict[str, Any]) -> Decimal | None:
 
 
 def extract_volatility(payload: dict[str, Any]) -> Optional[Decimal]:
-    vol_realized = payload.get('vol_realized')
+    vol_realized = payload.get("vol_realized")
     if isinstance(vol_realized, dict):
-        nested = optional_decimal(cast(dict[str, Any], vol_realized).get('w60s'))
+        nested = optional_decimal(cast(dict[str, Any], vol_realized).get("w60s"))
         if nested is not None:
             return nested
-    for key in ('vol_realized_w60s', 'volatility', 'vol', 'sigma'):
+    for key in ("vol_realized_w60s", "volatility", "vol", "sigma"):
         if key in payload:
             return optional_decimal(payload.get(key))
     return None
 
 
-def extract_microstructure_features_v1(signal: SignalEnvelope) -> MicrostructureFeaturesV1:
+def extract_microstructure_features_v1(
+    signal: SignalEnvelope,
+) -> MicrostructureFeaturesV1:
     payload = signal.payload or {}
-    spread_bps = optional_decimal(payload.get('spread_bps'))
+    spread_bps = optional_decimal(payload.get("spread_bps"))
     if spread_bps is None:
-        spread = optional_decimal(payload_value(payload, 'spread', block='imbalance', nested_key='spread'))
+        spread = optional_decimal(
+            payload_value(payload, "spread", block="imbalance", nested_key="spread")
+        )
         price = extract_price(payload)
         if spread is not None and price is not None and price > 0:
-            spread_bps = (spread / price) * Decimal('10000')
+            spread_bps = (spread / price) * Decimal("10000")
         else:
-            spread_bps = Decimal('0')
+            spread_bps = Decimal("0")
 
-    depth_top5_usd = optional_decimal(payload.get('depth_top5_usd'))
+    depth_top5_usd = optional_decimal(payload.get("depth_top5_usd"))
     if depth_top5_usd is None:
-        depth_top5_usd = optional_decimal(nested_payload_value(payload, 'depth', 'top5_usd')) or Decimal('0')
+        depth_top5_usd = optional_decimal(
+            nested_payload_value(payload, "depth", "top5_usd")
+        ) or Decimal("0")
 
-    imbalance = optional_decimal(payload.get('order_flow_imbalance'))
+    imbalance = optional_decimal(payload.get("order_flow_imbalance"))
     if imbalance is None:
         imbalance = optional_decimal(
-            payload_value(payload, 'imbalance_spread', block='imbalance', nested_key='value')
+            payload_value(
+                payload, "imbalance_spread", block="imbalance", nested_key="value"
+            )
         )
-    order_flow_imbalance = imbalance or Decimal('0')
+    order_flow_imbalance = imbalance or Decimal("0")
 
     latency_ms_estimate = (
-        _optional_int(payload_value(payload, 'latency_ms_estimate', nested_key='latency_ms'))
+        _optional_int(
+            payload_value(payload, "latency_ms_estimate", nested_key="latency_ms")
+        )
         or 0
     )
     fill_hazard = optional_decimal(
-        payload_value(payload, 'fill_hazard', block='execution', nested_key='fill_hazard')
+        payload_value(
+            payload, "fill_hazard", block="execution", nested_key="fill_hazard"
+        )
     )
     if fill_hazard is None:
-        fill_hazard = optional_decimal(payload.get('signal_quality_flag')) or Decimal('0.5')
+        fill_hazard = optional_decimal(payload.get("signal_quality_flag")) or Decimal(
+            "0.5"
+        )
 
-    liquidity_regime = str(payload.get('liquidity_regime') or '').strip().lower()
-    if liquidity_regime not in {'normal', 'compressed', 'stressed'}:
-        liquidity_regime = 'normal'
+    liquidity_regime = str(payload.get("liquidity_regime") or "").strip().lower()
+    if liquidity_regime not in {"normal", "compressed", "stressed"}:
+        liquidity_regime = "normal"
 
     return MicrostructureFeaturesV1(
-        schema_version='microstructure_state_v1',
+        schema_version="microstructure_state_v1",
         symbol=signal.symbol.upper(),
         event_ts=signal.event_ts,
         spread_bps=spread_bps,
@@ -335,23 +359,29 @@ def extract_microstructure_features_v1(signal: SignalEnvelope) -> Microstructure
 def normalize_feature_vector_v3(signal: SignalEnvelope) -> FeatureVectorV3:
     _validate_signal_schema_version(signal)
     values = map_feature_values_v3(signal)
-    timeframe = signal.timeframe or '1Min'
+    timeframe = signal.timeframe or "1Min"
 
-    missing = [name for name in FEATURE_VECTOR_V3_REQUIRED_FIELDS if values.get(name) is None]
+    missing = [
+        name for name in FEATURE_VECTOR_V3_REQUIRED_FIELDS if values.get(name) is None
+    ]
     if missing:
-        raise FeatureNormalizationError(f"missing_required_features:{'|'.join(sorted(missing))}")
+        raise FeatureNormalizationError(
+            f"missing_required_features:{'|'.join(sorted(missing))}"
+        )
 
     normalized_payload = {
-        'event_ts': signal.event_ts.isoformat(),
-        'symbol': signal.symbol,
-        'timeframe': timeframe,
-        'seq': signal.seq or 0,
-        'source': signal.source or 'unknown',
-        'feature_schema_version': FEATURE_SCHEMA_VERSION_V3,
-        'values': {key: _jsonable(values[key]) for key in sorted(values)},
+        "event_ts": signal.event_ts.isoformat(),
+        "symbol": signal.symbol,
+        "timeframe": timeframe,
+        "seq": signal.seq or 0,
+        "source": signal.source or "unknown",
+        "feature_schema_version": FEATURE_SCHEMA_VERSION_V3,
+        "values": {key: _jsonable(values[key]) for key in sorted(values)},
     }
     normalization_hash = hashlib.sha256(
-        json.dumps(normalized_payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        json.dumps(normalized_payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
     return FeatureVectorV3(
@@ -359,7 +389,7 @@ def normalize_feature_vector_v3(signal: SignalEnvelope) -> FeatureVectorV3:
         symbol=signal.symbol,
         timeframe=timeframe,
         seq=signal.seq or 0,
-        source=signal.source or 'unknown',
+        source=signal.source or "unknown",
         feature_schema_version=FEATURE_SCHEMA_VERSION_V3,
         values=values,
         normalization_hash=normalization_hash,
@@ -371,211 +401,311 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
     macd, macd_signal = extract_macd(payload)
     regime_context = resolve_hmm_context(payload)
     price = extract_price(payload)
-    vwap_session = optional_decimal(payload_value(payload, 'vwap_session', block='vwap', nested_key='session'))
-    vwap_w5m = optional_decimal(payload_value(payload, 'vwap_w5m', block='vwap', nested_key='w5m'))
+    vwap_session = optional_decimal(
+        payload_value(payload, "vwap_session", block="vwap", nested_key="session")
+    )
+    vwap_w5m = optional_decimal(
+        payload_value(payload, "vwap_w5m", block="vwap", nested_key="w5m")
+    )
 
     return {
-        'price': price,
-        'mid_price': _extract_mid_price(payload),
-        'ema12': optional_decimal(payload_value(payload, 'ema12', block='ema', nested_key='ema12')),
-        'ema26': optional_decimal(payload_value(payload, 'ema26', block='ema', nested_key='ema26')),
-        'macd': macd,
-        'macd_signal': macd_signal,
-        'macd_hist': optional_decimal(payload_value(payload, 'macd_hist', block='macd', nested_key='hist')),
-        'vwap_session': vwap_session,
-        'vwap_w5m': vwap_w5m,
-        'rsi14': extract_rsi(payload),
-        'boll_mid': optional_decimal(payload_value(payload, 'boll_mid', block='boll', nested_key='mid')),
-        'boll_upper': optional_decimal(payload_value(payload, 'boll_upper', block='boll', nested_key='upper')),
-        'boll_lower': optional_decimal(payload_value(payload, 'boll_lower', block='boll', nested_key='lower')),
-        'vol_realized_w60s': extract_volatility(payload),
-        'imbalance_spread': optional_decimal(
-            payload_value(payload, 'imbalance_spread', block='imbalance', nested_key='spread')
+        "price": price,
+        "mid_price": _extract_mid_price(payload),
+        "ema12": optional_decimal(
+            payload_value(payload, "ema12", block="ema", nested_key="ema12")
         ),
-        'imbalance_bid_px': optional_decimal(
-            payload_value(payload, 'imbalance_bid_px', block='imbalance', nested_key='bid_px')
+        "ema26": optional_decimal(
+            payload_value(payload, "ema26", block="ema", nested_key="ema26")
         ),
-        'imbalance_ask_px': optional_decimal(
-            payload_value(payload, 'imbalance_ask_px', block='imbalance', nested_key='ask_px')
+        "macd": macd,
+        "macd_signal": macd_signal,
+        "macd_hist": optional_decimal(
+            payload_value(payload, "macd_hist", block="macd", nested_key="hist")
         ),
-        'imbalance_bid_sz': optional_decimal(
-            payload_value(payload, 'imbalance_bid_sz', block='imbalance', nested_key='bid_sz')
+        "vwap_session": vwap_session,
+        "vwap_w5m": vwap_w5m,
+        "rsi14": extract_rsi(payload),
+        "boll_mid": optional_decimal(
+            payload_value(payload, "boll_mid", block="boll", nested_key="mid")
         ),
-        'imbalance_ask_sz': optional_decimal(
-            payload_value(payload, 'imbalance_ask_sz', block='imbalance', nested_key='ask_sz')
+        "boll_upper": optional_decimal(
+            payload_value(payload, "boll_upper", block="boll", nested_key="upper")
         ),
-        'imbalance_pressure': _imbalance_pressure(payload),
-        'spread': optional_decimal(payload.get('spread')),
-        'spread_bps': _spread_bps(payload),
-        'vwap_w5m_vs_session_bps': _bps_delta(vwap_w5m, vwap_session),
-        'price_vs_vwap_w5m_bps': _bps_delta(price, vwap_w5m),
-        'session_open_price': optional_decimal(payload.get('session_open_price')),
-        'prev_session_close_price': optional_decimal(payload.get('prev_session_close_price')),
-        'session_high_price': optional_decimal(payload.get('session_high_price')),
-        'session_low_price': optional_decimal(payload.get('session_low_price')),
-        'opening_range_high': optional_decimal(payload.get('opening_range_high')),
-        'opening_range_low': optional_decimal(payload.get('opening_range_low')),
-        'opening_window_close_price': optional_decimal(payload.get('opening_window_close_price')),
-        'opening_range_width_bps': optional_decimal(payload.get('opening_range_width_bps')),
-        'session_range_bps': optional_decimal(payload.get('session_range_bps')),
-        'price_vs_session_open_bps': optional_decimal(payload.get('price_vs_session_open_bps')),
-        'price_vs_prev_session_close_bps': optional_decimal(payload.get('price_vs_prev_session_close_bps')),
-        'opening_window_return_bps': optional_decimal(payload.get('opening_window_return_bps')),
-        'opening_window_return_from_prev_close_bps': optional_decimal(
-            payload.get('opening_window_return_from_prev_close_bps')
+        "boll_lower": optional_decimal(
+            payload_value(payload, "boll_lower", block="boll", nested_key="lower")
         ),
-        'price_vs_session_high_bps': optional_decimal(payload.get('price_vs_session_high_bps')),
-        'price_vs_session_low_bps': optional_decimal(payload.get('price_vs_session_low_bps')),
-        'price_vs_opening_range_high_bps': optional_decimal(payload.get('price_vs_opening_range_high_bps')),
-        'price_vs_opening_range_low_bps': optional_decimal(payload.get('price_vs_opening_range_low_bps')),
-        'price_vs_opening_window_close_bps': optional_decimal(payload.get('price_vs_opening_window_close_bps')),
-        'price_position_in_session_range': optional_decimal(payload.get('price_position_in_session_range')),
-        'recent_spread_bps_avg': optional_decimal(payload.get('recent_spread_bps_avg')),
-        'recent_spread_bps_max': optional_decimal(payload.get('recent_spread_bps_max')),
-        'recent_imbalance_pressure_avg': optional_decimal(payload.get('recent_imbalance_pressure_avg')),
-        'recent_quote_invalid_ratio': optional_decimal(payload.get('recent_quote_invalid_ratio')),
-        'recent_quote_jump_bps_avg': optional_decimal(payload.get('recent_quote_jump_bps_avg')),
-        'recent_quote_jump_bps_max': optional_decimal(payload.get('recent_quote_jump_bps_max')),
-        'recent_microprice_bias_bps_avg': optional_decimal(payload.get('recent_microprice_bias_bps_avg')),
-        'recent_above_opening_range_high_ratio': optional_decimal(
-            payload.get('recent_above_opening_range_high_ratio')
+        "vol_realized_w60s": extract_volatility(payload),
+        "imbalance_spread": optional_decimal(
+            payload_value(
+                payload, "imbalance_spread", block="imbalance", nested_key="spread"
+            )
         ),
-        'recent_above_opening_window_close_ratio': optional_decimal(
-            payload.get('recent_above_opening_window_close_ratio')
+        "imbalance_bid_px": optional_decimal(
+            payload_value(
+                payload, "imbalance_bid_px", block="imbalance", nested_key="bid_px"
+            )
         ),
-        'recent_above_vwap_w5m_ratio': optional_decimal(
-            payload.get('recent_above_vwap_w5m_ratio')
+        "imbalance_ask_px": optional_decimal(
+            payload_value(
+                payload, "imbalance_ask_px", block="imbalance", nested_key="ask_px"
+            )
         ),
-        'recent_15m_return_bps': optional_decimal(payload.get('recent_15m_return_bps')),
-        'microbar_volume': optional_decimal(payload.get('microbar_volume')),
-        'clusterlob_directional_ofi': optional_decimal(payload.get('clusterlob_directional_ofi')),
-        'clusterlob_opportunistic_ofi': optional_decimal(payload.get('clusterlob_opportunistic_ofi')),
-        'clusterlob_market_making_ofi': optional_decimal(payload.get('clusterlob_market_making_ofi')),
-        'clusterlob_event_cluster_stability_score': optional_decimal(
-            payload.get('clusterlob_event_cluster_stability_score')
+        "imbalance_bid_sz": optional_decimal(
+            payload_value(
+                payload, "imbalance_bid_sz", block="imbalance", nested_key="bid_sz"
+            )
         ),
-        'cross_section_session_open_rank': optional_decimal(payload.get('cross_section_session_open_rank')),
-        'cross_section_session_open_rank_universe_size': optional_decimal(
-            payload.get('cross_section_session_open_rank_universe_size')
+        "imbalance_ask_sz": optional_decimal(
+            payload_value(
+                payload, "imbalance_ask_sz", block="imbalance", nested_key="ask_sz"
+            )
         ),
-        'cross_section_prev_session_close_rank': optional_decimal(
-            payload.get('cross_section_prev_session_close_rank')
+        "imbalance_pressure": _imbalance_pressure(payload),
+        "spread": optional_decimal(payload.get("spread")),
+        "spread_bps": _spread_bps(payload),
+        "vwap_w5m_vs_session_bps": _bps_delta(vwap_w5m, vwap_session),
+        "price_vs_vwap_w5m_bps": _bps_delta(price, vwap_w5m),
+        "session_open_price": optional_decimal(payload.get("session_open_price")),
+        "prev_session_close_price": optional_decimal(
+            payload.get("prev_session_close_price")
         ),
-        'cross_section_prev_session_close_rank_universe_size': optional_decimal(
-            payload.get('cross_section_prev_session_close_rank_universe_size')
+        "session_high_price": optional_decimal(payload.get("session_high_price")),
+        "session_low_price": optional_decimal(payload.get("session_low_price")),
+        "opening_range_high": optional_decimal(payload.get("opening_range_high")),
+        "opening_range_low": optional_decimal(payload.get("opening_range_low")),
+        "opening_window_close_price": optional_decimal(
+            payload.get("opening_window_close_price")
         ),
-        'cross_section_opening_window_return_rank': optional_decimal(payload.get('cross_section_opening_window_return_rank')),
-        'cross_section_opening_window_return_rank_universe_size': optional_decimal(
-            payload.get('cross_section_opening_window_return_rank_universe_size')
+        "opening_range_width_bps": optional_decimal(
+            payload.get("opening_range_width_bps")
         ),
-        'cross_section_opening_window_return_from_prev_close_rank': optional_decimal(
-            payload.get('cross_section_opening_window_return_from_prev_close_rank')
+        "session_range_bps": optional_decimal(payload.get("session_range_bps")),
+        "price_vs_session_open_bps": optional_decimal(
+            payload.get("price_vs_session_open_bps")
         ),
-        'cross_section_opening_window_return_from_prev_close_rank_universe_size': optional_decimal(
-            payload.get('cross_section_opening_window_return_from_prev_close_rank_universe_size')
+        "price_vs_prev_session_close_bps": optional_decimal(
+            payload.get("price_vs_prev_session_close_bps")
         ),
-        'cross_section_prev_day_open45_return_rank': optional_decimal(
-            payload.get('cross_section_prev_day_open45_return_rank')
+        "opening_window_return_bps": optional_decimal(
+            payload.get("opening_window_return_bps")
         ),
-        'cross_section_prev_day_open45_return_rank_universe_size': optional_decimal(
-            payload.get('cross_section_prev_day_open45_return_rank_universe_size')
+        "opening_window_return_from_prev_close_bps": optional_decimal(
+            payload.get("opening_window_return_from_prev_close_bps")
         ),
-        'cross_section_prev_day_open60_return_rank': optional_decimal(
-            payload.get('cross_section_prev_day_open60_return_rank')
+        "price_vs_session_high_bps": optional_decimal(
+            payload.get("price_vs_session_high_bps")
         ),
-        'cross_section_prev_day_open60_return_rank_universe_size': optional_decimal(
-            payload.get('cross_section_prev_day_open60_return_rank_universe_size')
+        "price_vs_session_low_bps": optional_decimal(
+            payload.get("price_vs_session_low_bps")
         ),
-        'cross_section_range_position_rank': optional_decimal(payload.get('cross_section_range_position_rank')),
-        'cross_section_range_position_rank_universe_size': optional_decimal(
-            payload.get('cross_section_range_position_rank_universe_size')
+        "price_vs_opening_range_high_bps": optional_decimal(
+            payload.get("price_vs_opening_range_high_bps")
         ),
-        'cross_section_vwap_w5m_rank': optional_decimal(payload.get('cross_section_vwap_w5m_rank')),
-        'cross_section_vwap_w5m_rank_universe_size': optional_decimal(
-            payload.get('cross_section_vwap_w5m_rank_universe_size')
+        "price_vs_opening_range_low_bps": optional_decimal(
+            payload.get("price_vs_opening_range_low_bps")
         ),
-        'cross_section_vwap_w5m_stretch_rank': optional_decimal(
-            payload.get('cross_section_vwap_w5m_stretch_rank')
+        "price_vs_opening_window_close_bps": optional_decimal(
+            payload.get("price_vs_opening_window_close_bps")
         ),
-        'cross_section_vwap_w5m_stretch_rank_universe_size': optional_decimal(
-            payload.get('cross_section_vwap_w5m_stretch_rank_universe_size')
+        "price_position_in_session_range": optional_decimal(
+            payload.get("price_position_in_session_range")
         ),
-        'cross_section_recent_15m_return_rank': optional_decimal(
-            payload.get('cross_section_recent_15m_return_rank')
+        "recent_spread_bps_avg": optional_decimal(payload.get("recent_spread_bps_avg")),
+        "recent_spread_bps_max": optional_decimal(payload.get("recent_spread_bps_max")),
+        "recent_imbalance_pressure_avg": optional_decimal(
+            payload.get("recent_imbalance_pressure_avg")
         ),
-        'cross_section_recent_15m_return_rank_universe_size': optional_decimal(
-            payload.get('cross_section_recent_15m_return_rank_universe_size')
+        "recent_quote_invalid_ratio": optional_decimal(
+            payload.get("recent_quote_invalid_ratio")
         ),
-        'cross_section_microbar_volume_rank': optional_decimal(
-            payload.get('cross_section_microbar_volume_rank')
+        "recent_quote_jump_bps_avg": optional_decimal(
+            payload.get("recent_quote_jump_bps_avg")
         ),
-        'cross_section_microbar_volume_rank_universe_size': optional_decimal(
-            payload.get('cross_section_microbar_volume_rank_universe_size')
+        "recent_quote_jump_bps_max": optional_decimal(
+            payload.get("recent_quote_jump_bps_max")
         ),
-        'cross_section_clusterlob_directional_ofi_rank': optional_decimal(
-            payload.get('cross_section_clusterlob_directional_ofi_rank')
+        "recent_microprice_bias_bps_avg": optional_decimal(
+            payload.get("recent_microprice_bias_bps_avg")
         ),
-        'cross_section_clusterlob_directional_ofi_rank_universe_size': optional_decimal(
-            payload.get('cross_section_clusterlob_directional_ofi_rank_universe_size')
+        "recent_above_opening_range_high_ratio": optional_decimal(
+            payload.get("recent_above_opening_range_high_ratio")
         ),
-        'cross_section_recent_imbalance_rank': optional_decimal(payload.get('cross_section_recent_imbalance_rank')),
-        'cross_section_recent_imbalance_rank_universe_size': optional_decimal(
-            payload.get('cross_section_recent_imbalance_rank_universe_size')
+        "recent_above_opening_window_close_ratio": optional_decimal(
+            payload.get("recent_above_opening_window_close_ratio")
         ),
-        'cross_section_rsi14_rank': optional_decimal(payload.get('cross_section_rsi14_rank')),
-        'cross_section_rsi14_rank_universe_size': optional_decimal(
-            payload.get('cross_section_rsi14_rank_universe_size')
+        "recent_above_vwap_w5m_ratio": optional_decimal(
+            payload.get("recent_above_vwap_w5m_ratio")
         ),
-        'cross_section_macd_hist_rank': optional_decimal(payload.get('cross_section_macd_hist_rank')),
-        'cross_section_macd_hist_rank_universe_size': optional_decimal(
-            payload.get('cross_section_macd_hist_rank_universe_size')
+        "recent_15m_return_bps": optional_decimal(payload.get("recent_15m_return_bps")),
+        "microbar_volume": optional_decimal(payload.get("microbar_volume")),
+        "clusterlob_directional_ofi": optional_decimal(
+            payload.get("clusterlob_directional_ofi")
         ),
-        'cross_section_positive_session_open_ratio': optional_decimal(payload.get('cross_section_positive_session_open_ratio')),
-        'cross_section_positive_prev_session_close_ratio': optional_decimal(
-            payload.get('cross_section_positive_prev_session_close_ratio')
+        "clusterlob_opportunistic_ofi": optional_decimal(
+            payload.get("clusterlob_opportunistic_ofi")
         ),
-        'cross_section_positive_opening_window_return_ratio': optional_decimal(
-            payload.get('cross_section_positive_opening_window_return_ratio')
+        "clusterlob_market_making_ofi": optional_decimal(
+            payload.get("clusterlob_market_making_ofi")
         ),
-        'cross_section_positive_opening_window_return_from_prev_close_ratio': optional_decimal(
-            payload.get('cross_section_positive_opening_window_return_from_prev_close_ratio')
+        "clusterlob_event_cluster_stability_score": optional_decimal(
+            payload.get("clusterlob_event_cluster_stability_score")
         ),
-        'cross_section_positive_prev_day_open45_return_ratio': optional_decimal(
-            payload.get('cross_section_positive_prev_day_open45_return_ratio')
+        "cross_section_session_open_rank": optional_decimal(
+            payload.get("cross_section_session_open_rank")
         ),
-        'cross_section_positive_prev_day_open60_return_ratio': optional_decimal(
-            payload.get('cross_section_positive_prev_day_open60_return_ratio')
+        "cross_section_session_open_rank_universe_size": optional_decimal(
+            payload.get("cross_section_session_open_rank_universe_size")
         ),
-        'cross_section_above_vwap_w5m_ratio': optional_decimal(payload.get('cross_section_above_vwap_w5m_ratio')),
-        'cross_section_positive_recent_imbalance_ratio': optional_decimal(
-            payload.get('cross_section_positive_recent_imbalance_ratio')
+        "cross_section_prev_session_close_rank": optional_decimal(
+            payload.get("cross_section_prev_session_close_rank")
         ),
-        'cross_section_continuation_breadth': optional_decimal(payload.get('cross_section_continuation_breadth')),
-        'cross_section_continuation_rank': optional_decimal(payload.get('cross_section_continuation_rank')),
-        'cross_section_continuation_rank_universe_size': optional_decimal(
-            payload.get('cross_section_continuation_rank_universe_size')
+        "cross_section_prev_session_close_rank_universe_size": optional_decimal(
+            payload.get("cross_section_prev_session_close_rank_universe_size")
         ),
-        'cross_section_reversal_rank': optional_decimal(payload.get('cross_section_reversal_rank')),
-        'cross_section_reversal_rank_universe_size': optional_decimal(
-            payload.get('cross_section_reversal_rank_universe_size')
+        "cross_section_opening_window_return_rank": optional_decimal(
+            payload.get("cross_section_opening_window_return_rank")
         ),
-        'session_minutes_elapsed': _optional_int(payload.get('session_minutes_elapsed')),
-        'signal_quality_flag': payload.get('signal_quality_flag'),
-        'hmm_state_posterior': regime_context.posterior,
-        'hmm_entropy': regime_context.entropy,
-        'hmm_entropy_band': regime_context.entropy_band,
-        'hmm_regime_id': regime_context.regime_id,
-        'hmm_transition_shock': regime_context.transition_shock,
-        'hmm_guardrail': regime_context.guardrail.to_payload(),
-        'hmm_artifact_model_id': regime_context.artifact.model_id,
-        'hmm_artifact_feature_schema': regime_context.artifact.feature_schema,
-        'hmm_artifact_training_run_id': regime_context.artifact.training_run_id,
-        'route_regime_label': _route_regime_label(payload, macd=macd, macd_signal=macd_signal),
-        'staleness_ms': _staleness_ms(signal.event_ts, signal.ingest_ts),
+        "cross_section_opening_window_return_rank_universe_size": optional_decimal(
+            payload.get("cross_section_opening_window_return_rank_universe_size")
+        ),
+        "cross_section_opening_window_return_from_prev_close_rank": optional_decimal(
+            payload.get("cross_section_opening_window_return_from_prev_close_rank")
+        ),
+        "cross_section_opening_window_return_from_prev_close_rank_universe_size": optional_decimal(
+            payload.get(
+                "cross_section_opening_window_return_from_prev_close_rank_universe_size"
+            )
+        ),
+        "cross_section_prev_day_open45_return_rank": optional_decimal(
+            payload.get("cross_section_prev_day_open45_return_rank")
+        ),
+        "cross_section_prev_day_open45_return_rank_universe_size": optional_decimal(
+            payload.get("cross_section_prev_day_open45_return_rank_universe_size")
+        ),
+        "cross_section_prev_day_open60_return_rank": optional_decimal(
+            payload.get("cross_section_prev_day_open60_return_rank")
+        ),
+        "cross_section_prev_day_open60_return_rank_universe_size": optional_decimal(
+            payload.get("cross_section_prev_day_open60_return_rank_universe_size")
+        ),
+        "cross_section_range_position_rank": optional_decimal(
+            payload.get("cross_section_range_position_rank")
+        ),
+        "cross_section_range_position_rank_universe_size": optional_decimal(
+            payload.get("cross_section_range_position_rank_universe_size")
+        ),
+        "cross_section_vwap_w5m_rank": optional_decimal(
+            payload.get("cross_section_vwap_w5m_rank")
+        ),
+        "cross_section_vwap_w5m_rank_universe_size": optional_decimal(
+            payload.get("cross_section_vwap_w5m_rank_universe_size")
+        ),
+        "cross_section_vwap_w5m_stretch_rank": optional_decimal(
+            payload.get("cross_section_vwap_w5m_stretch_rank")
+        ),
+        "cross_section_vwap_w5m_stretch_rank_universe_size": optional_decimal(
+            payload.get("cross_section_vwap_w5m_stretch_rank_universe_size")
+        ),
+        "cross_section_recent_15m_return_rank": optional_decimal(
+            payload.get("cross_section_recent_15m_return_rank")
+        ),
+        "cross_section_recent_15m_return_rank_universe_size": optional_decimal(
+            payload.get("cross_section_recent_15m_return_rank_universe_size")
+        ),
+        "cross_section_microbar_volume_rank": optional_decimal(
+            payload.get("cross_section_microbar_volume_rank")
+        ),
+        "cross_section_microbar_volume_rank_universe_size": optional_decimal(
+            payload.get("cross_section_microbar_volume_rank_universe_size")
+        ),
+        "cross_section_clusterlob_directional_ofi_rank": optional_decimal(
+            payload.get("cross_section_clusterlob_directional_ofi_rank")
+        ),
+        "cross_section_clusterlob_directional_ofi_rank_universe_size": optional_decimal(
+            payload.get("cross_section_clusterlob_directional_ofi_rank_universe_size")
+        ),
+        "cross_section_recent_imbalance_rank": optional_decimal(
+            payload.get("cross_section_recent_imbalance_rank")
+        ),
+        "cross_section_recent_imbalance_rank_universe_size": optional_decimal(
+            payload.get("cross_section_recent_imbalance_rank_universe_size")
+        ),
+        "cross_section_rsi14_rank": optional_decimal(
+            payload.get("cross_section_rsi14_rank")
+        ),
+        "cross_section_rsi14_rank_universe_size": optional_decimal(
+            payload.get("cross_section_rsi14_rank_universe_size")
+        ),
+        "cross_section_macd_hist_rank": optional_decimal(
+            payload.get("cross_section_macd_hist_rank")
+        ),
+        "cross_section_macd_hist_rank_universe_size": optional_decimal(
+            payload.get("cross_section_macd_hist_rank_universe_size")
+        ),
+        "cross_section_positive_session_open_ratio": optional_decimal(
+            payload.get("cross_section_positive_session_open_ratio")
+        ),
+        "cross_section_positive_prev_session_close_ratio": optional_decimal(
+            payload.get("cross_section_positive_prev_session_close_ratio")
+        ),
+        "cross_section_positive_opening_window_return_ratio": optional_decimal(
+            payload.get("cross_section_positive_opening_window_return_ratio")
+        ),
+        "cross_section_positive_opening_window_return_from_prev_close_ratio": optional_decimal(
+            payload.get(
+                "cross_section_positive_opening_window_return_from_prev_close_ratio"
+            )
+        ),
+        "cross_section_positive_prev_day_open45_return_ratio": optional_decimal(
+            payload.get("cross_section_positive_prev_day_open45_return_ratio")
+        ),
+        "cross_section_positive_prev_day_open60_return_ratio": optional_decimal(
+            payload.get("cross_section_positive_prev_day_open60_return_ratio")
+        ),
+        "cross_section_above_vwap_w5m_ratio": optional_decimal(
+            payload.get("cross_section_above_vwap_w5m_ratio")
+        ),
+        "cross_section_positive_recent_imbalance_ratio": optional_decimal(
+            payload.get("cross_section_positive_recent_imbalance_ratio")
+        ),
+        "cross_section_continuation_breadth": optional_decimal(
+            payload.get("cross_section_continuation_breadth")
+        ),
+        "cross_section_continuation_rank": optional_decimal(
+            payload.get("cross_section_continuation_rank")
+        ),
+        "cross_section_continuation_rank_universe_size": optional_decimal(
+            payload.get("cross_section_continuation_rank_universe_size")
+        ),
+        "cross_section_reversal_rank": optional_decimal(
+            payload.get("cross_section_reversal_rank")
+        ),
+        "cross_section_reversal_rank_universe_size": optional_decimal(
+            payload.get("cross_section_reversal_rank_universe_size")
+        ),
+        "session_minutes_elapsed": _optional_int(
+            payload.get("session_minutes_elapsed")
+        ),
+        "signal_quality_flag": payload.get("signal_quality_flag"),
+        "hmm_state_posterior": regime_context.posterior,
+        "hmm_entropy": regime_context.entropy,
+        "hmm_entropy_band": regime_context.entropy_band,
+        "hmm_regime_id": regime_context.regime_id,
+        "hmm_transition_shock": regime_context.transition_shock,
+        "hmm_guardrail": regime_context.guardrail.to_payload(),
+        "hmm_artifact_model_id": regime_context.artifact.model_id,
+        "hmm_artifact_feature_schema": regime_context.artifact.feature_schema,
+        "hmm_artifact_training_run_id": regime_context.artifact.training_run_id,
+        "route_regime_label": _route_regime_label(
+            payload, macd=macd, macd_signal=macd_signal
+        ),
+        "staleness_ms": _staleness_ms(signal.event_ts, signal.ingest_ts),
     }
 
 
-def validate_declared_features(declared_features: Iterable[str]) -> tuple[bool, list[str]]:
+def validate_declared_features(
+    declared_features: Iterable[str],
+) -> tuple[bool, list[str]]:
     declared = {item.strip() for item in declared_features if item.strip()}
     allowed = set(FEATURE_VECTOR_V3_VALUE_FIELDS)
     unknown = sorted([item for item in declared if item not in allowed])
@@ -584,7 +714,7 @@ def validate_declared_features(declared_features: Iterable[str]) -> tuple[bool, 
 
 def signal_declares_compatible_schema(signal: SignalEnvelope) -> bool:
     payload = signal.payload or {}
-    declared = payload.get('feature_schema_version')
+    declared = payload.get("feature_schema_version")
     if declared is None:
         return True
     major = _extract_major_version(str(declared))
@@ -663,37 +793,55 @@ def _route_regime_label(
 
 
 def _extract_mid_price(payload: dict[str, Any]) -> Decimal | None:
-    bid = optional_decimal(payload_value(payload, 'imbalance_bid_px', block='imbalance', nested_key='bid_px'))
-    ask = optional_decimal(payload_value(payload, 'imbalance_ask_px', block='imbalance', nested_key='ask_px'))
+    bid = optional_decimal(
+        payload_value(
+            payload, "imbalance_bid_px", block="imbalance", nested_key="bid_px"
+        )
+    )
+    ask = optional_decimal(
+        payload_value(
+            payload, "imbalance_ask_px", block="imbalance", nested_key="ask_px"
+        )
+    )
     if bid is None or ask is None:
         return None
     return (bid + ask) / 2
 
 
 def _spread_bps(payload: dict[str, Any]) -> Decimal | None:
-    direct_spread_bps = optional_decimal(payload.get('spread_bps'))
+    direct_spread_bps = optional_decimal(payload.get("spread_bps"))
     if direct_spread_bps is not None:
         return abs(direct_spread_bps)
-    spread = optional_decimal(payload_value(payload, 'spread'))
+    spread = optional_decimal(payload_value(payload, "spread"))
     if spread is None:
         spread = optional_decimal(
-            payload_value(payload, 'imbalance_spread', block='imbalance', nested_key='spread')
+            payload_value(
+                payload, "imbalance_spread", block="imbalance", nested_key="spread"
+            )
         )
     price = extract_price(payload)
     if spread is None or price is None or price <= 0:
         return None
-    return (spread / price) * Decimal('10000')
+    return (spread / price) * Decimal("10000")
 
 
 def _bps_delta(price: Decimal | None, reference: Decimal | None) -> Decimal | None:
     if price is None or reference is None or reference == 0:
         return None
-    return ((price - reference) / reference) * Decimal('10000')
+    return ((price - reference) / reference) * Decimal("10000")
 
 
 def _imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
-    bid_sz = optional_decimal(payload_value(payload, 'imbalance_bid_sz', block='imbalance', nested_key='bid_sz'))
-    ask_sz = optional_decimal(payload_value(payload, 'imbalance_ask_sz', block='imbalance', nested_key='ask_sz'))
+    bid_sz = optional_decimal(
+        payload_value(
+            payload, "imbalance_bid_sz", block="imbalance", nested_key="bid_sz"
+        )
+    )
+    ask_sz = optional_decimal(
+        payload_value(
+            payload, "imbalance_ask_sz", block="imbalance", nested_key="ask_sz"
+        )
+    )
     if bid_sz is None or ask_sz is None:
         return None
     total = bid_sz + ask_sz
@@ -706,15 +854,15 @@ def _validate_signal_schema_version(signal: SignalEnvelope) -> None:
     if signal_declares_compatible_schema(signal):
         return
     payload = signal.payload or {}
-    declared = payload.get('feature_schema_version')
-    raise FeatureNormalizationError(f'incompatible_feature_schema:{declared}')
+    declared = payload.get("feature_schema_version")
+    raise FeatureNormalizationError(f"incompatible_feature_schema:{declared}")
 
 
 def _extract_major_version(raw: str) -> int | None:
     cleaned = raw.strip().lower()
-    if cleaned.startswith('v'):
+    if cleaned.startswith("v"):
         cleaned = cleaned[1:]
-    head = cleaned.split('.', 1)[0]
+    head = cleaned.split(".", 1)[0]
     if head.isdigit():
         return int(head)
     return None
@@ -727,27 +875,27 @@ def _jsonable(value: Any) -> Any:
 
 
 __all__ = [
-    'FEATURE_SCHEMA_VERSION_V3',
-    'FEATURE_VECTOR_V3_ALL_FIELDS',
-    'FEATURE_VECTOR_V3_IDENTITY_FIELDS',
-    'FEATURE_VECTOR_V3_REQUIRED_FIELDS',
-    'FEATURE_VECTOR_V3_VALUE_FIELDS',
-    'FeatureNormalizationError',
-    'FeatureVectorV3',
-    'MicrostructureFeaturesV1',
-    'SignalFeatures',
-    'extract_microstructure_features_v1',
-    'extract_signal_features',
-    'extract_macd',
-    'extract_executable_price',
-    'extract_price',
-    'extract_rsi',
-    'extract_volatility',
-    'map_feature_values_v3',
-    'normalize_feature_vector_v3',
-    'optional_decimal',
-    'payload_value',
-    'signal_declares_compatible_schema',
-    'nested_payload_value',
-    'validate_declared_features',
+    "FEATURE_SCHEMA_VERSION_V3",
+    "FEATURE_VECTOR_V3_ALL_FIELDS",
+    "FEATURE_VECTOR_V3_IDENTITY_FIELDS",
+    "FEATURE_VECTOR_V3_REQUIRED_FIELDS",
+    "FEATURE_VECTOR_V3_VALUE_FIELDS",
+    "FeatureNormalizationError",
+    "FeatureVectorV3",
+    "MicrostructureFeaturesV1",
+    "SignalFeatures",
+    "extract_microstructure_features_v1",
+    "extract_signal_features",
+    "extract_macd",
+    "extract_executable_price",
+    "extract_price",
+    "extract_rsi",
+    "extract_volatility",
+    "map_feature_values_v3",
+    "normalize_feature_vector_v3",
+    "optional_decimal",
+    "payload_value",
+    "signal_declares_compatible_schema",
+    "nested_payload_value",
+    "validate_declared_features",
 ]

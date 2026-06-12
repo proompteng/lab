@@ -1,0 +1,788 @@
+from __future__ import annotations
+
+# ruff: noqa: F401,F403,F405
+from tests.prices.support import *
+
+
+class TestClickHousePriceFetcherPart1(_TestClickHousePriceFetcherBase):
+    def test_fetch_price_prefers_close_c(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={},
+        )
+        fetcher = FakeClickHousePriceFetcher(
+            [{"event_ts": "2026-01-01T00:00:00Z", "c": "101.25", "vwap": "99.9"}]
+        )
+        price = fetcher.fetch_price(signal)
+        self.assertEqual(price, Decimal("101.25"))
+
+    def test_fetch_market_snapshot_prefers_close_c(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={},
+        )
+        fetcher = FakeClickHousePriceFetcher(
+            [{"event_ts": "2026-01-01T00:00:00Z", "c": 102.5, "price": 100}]
+        )
+        snapshot = fetcher.fetch_market_snapshot(signal)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("102.5"))
+
+    def test_fetch_market_snapshot_backfills_recent_executable_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29Z", "c": "125.75", "vwap": "125.70"}
+            ],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:28Z",
+                    "imbalance_bid_px": "125.70",
+                    "imbalance_ask_px": "125.80",
+                    "imbalance_spread": "0.10",
+                }
+            ],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("125.75"))
+        self.assertEqual(snapshot.bid, Decimal("125.70"))
+        self.assertEqual(snapshot.ask, Decimal("125.80"))
+        self.assertEqual(snapshot.spread, Decimal("0.10"))
+        self.assertEqual(snapshot.source, "ta_microbars+ta_signals_quote")
+        self.assertEqual(len(fetcher.queries), 2)
+        self.assertIn("FROM torghut.ta_signals", fetcher.queries[1])
+        self.assertIn("imbalance_bid_px IS NOT NULL", fetcher.queries[1])
+        self.assertIn("imbalance_ask_px >= imbalance_bid_px", fetcher.queries[1])
+
+    def test_fetch_market_snapshot_uses_recent_quote_midpoint_without_price_row(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:28Z",
+                    "imbalance_bid_px": "200.10",
+                    "imbalance_ask_px": "200.30",
+                }
+            ],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.20"))
+        self.assertEqual(snapshot.spread, Decimal("0.20"))
+        self.assertEqual(snapshot.source, "ta_signals_quote")
+
+    def test_fetch_market_snapshot_can_use_runtime_forward_quote_window(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:45Z",
+                    "imbalance_bid_px": "200.10",
+                    "imbalance_ask_px": "200.30",
+                }
+            ],
+            quote_forward_seconds=30,
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.20"))
+        self.assertEqual(snapshot.bid, Decimal("200.10"))
+        self.assertEqual(snapshot.ask, Decimal("200.30"))
+        self.assertEqual(
+            snapshot.as_of, datetime(2026, 1, 1, 12, 0, 45, tzinfo=timezone.utc)
+        )
+        self.assertEqual(snapshot.source, "ta_signals_quote")
+        self.assertIn(
+            "event_ts <= toDateTime64('2026-01-01 12:01:00", fetcher.queries[1]
+        )
+
+    def test_fetch_market_snapshot_records_forward_naive_quote_diagnostics(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29", "c": "200.25", "spread": "0.03"}
+            ],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:45",
+                    "imbalance_bid_px": "100.00",
+                    "imbalance_ask_px": "101.00",
+                }
+            ],
+            quote_forward_seconds=30,
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.25"))
+        diagnostics = snapshot.quote_lookup_diagnostics or {}
+        self.assertEqual(
+            diagnostics.get("latest_quote_rejected_reason"),
+            "spread_bps_exceeded",
+        )
+        self.assertIn(
+            "event_ts <= toDateTime64('2026-01-01 12:01:00", fetcher.queries[-1]
+        )
+
+    def test_quote_row_reject_reason_records_invalid_quote_shapes(self) -> None:
+        cases = [
+            ({"imbalance_ask_px": "101.00"}, "missing_bid"),
+            ({"imbalance_bid_px": "100.00"}, "missing_ask"),
+            (
+                {"imbalance_bid_px": "0", "imbalance_ask_px": "101.00"},
+                "non_positive_bid",
+            ),
+            (
+                {"imbalance_bid_px": "100.00", "imbalance_ask_px": "0"},
+                "non_positive_ask",
+            ),
+            (
+                {"imbalance_bid_px": "102.00", "imbalance_ask_px": "101.00"},
+                "crossed_quote",
+            ),
+        ]
+
+        for row, expected_reason in cases:
+            with self.subTest(expected_reason=expected_reason):
+                self.assertEqual(_quote_row_reject_reason(row), expected_reason)
+
+        with patch("app.trading.prices._quote_spread_bps", return_value=None):
+            self.assertEqual(
+                _quote_row_reject_reason(
+                    {"imbalance_bid_px": "100.00", "imbalance_ask_px": "101.00"}
+                ),
+                "invalid_spread",
+            )
+
+    def test_fetch_market_snapshot_returns_none_without_price_or_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(price_rows=[], quote_rows=[])
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+
+    def test_fetch_market_snapshot_uses_alpaca_latest_quote_when_signal_quote_missing(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        quote_ts = datetime.now(timezone.utc)
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": quote_ts.isoformat(),
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("185.12"))
+        self.assertEqual(snapshot.bid, Decimal("185.10"))
+        self.assertEqual(snapshot.ask, Decimal("185.14"))
+        self.assertEqual(snapshot.spread, Decimal("0.04"))
+        self.assertEqual(snapshot.as_of, quote_ts)
+        self.assertEqual(snapshot.source, "alpaca_latest_quote")
+        self.assertEqual(snapshot.quote_as_of, quote_ts)
+        self.assertEqual(snapshot.quote_source, "alpaca_latest_quote")
+
+    def test_fetch_market_snapshot_uses_alpaca_latest_quote_without_clickhouse_url(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={},
+        )
+        quote_ts = datetime.now(timezone.utc)
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": quote_ts.isoformat(),
+                "bp": "190.10",
+                "ap": "190.14",
+            },
+        )
+        fetcher.url = ""
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("190.12"))
+        self.assertEqual(snapshot.bid, Decimal("190.10"))
+        self.assertEqual(snapshot.ask, Decimal("190.14"))
+        self.assertEqual(snapshot.source, "alpaca_latest_quote")
+        self.assertEqual(fetcher.queries, [])
+
+    def test_fetch_market_snapshot_rejects_wide_alpaca_latest_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": datetime.now(timezone.utc).isoformat(),
+                "bp": "100.00",
+                "ap": "101.00",
+            },
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+
+    def test_fetch_market_snapshot_disables_alpaca_latest_quote_without_credentials(
+        self,
+    ) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://example",
+            table="torghut.ta_microbars",
+            alpaca_quote_fallback_enabled=True,
+        )
+        fetcher.alpaca_api_key_id = None
+        fetcher.alpaca_api_secret_key = None
+
+        quote = fetcher._fetch_alpaca_latest_quote_row(symbol="AMZN")
+
+        self.assertIsNone(quote)
+
+    def test_fetch_market_snapshot_backs_off_missing_alpaca_credentials(
+        self,
+    ) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://example",
+            table="torghut.ta_microbars",
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=60,
+        )
+        fetcher.alpaca_api_key_id = None
+        fetcher.alpaca_api_secret_key = None
+
+        quote = fetcher._fetch_alpaca_latest_quote_row(symbol="AMZN")
+
+        self.assertIsNone(quote)
+        self.assertTrue(fetcher._alpaca_quote_fallback_backoff_active(symbol="AMZN"))
+
+    def test_fetch_market_snapshot_ignores_empty_alpaca_latest_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+        self.assertEqual(fetcher.alpaca_quote_calls, 1)
+
+    def test_fetch_market_snapshot_backs_off_empty_alpaca_latest_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=60,
+        )
+
+        self.assertIsNone(fetcher.fetch_market_snapshot(signal))
+        self.assertIsNone(fetcher.fetch_market_snapshot(signal))
+
+        self.assertEqual(fetcher.alpaca_quote_calls, 1)
+
+    def test_fetch_market_snapshot_skips_alpaca_latest_quote_when_market_closed(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": datetime.now(timezone.utc).isoformat(),
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+            alpaca_quote_fallback_market_session_required=True,
+        )
+
+        with patch("app.trading.prices.market_session_is_open", return_value=False):
+            snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+        self.assertEqual(fetcher.alpaca_quote_calls, 0)
+
+    def test_fetch_market_snapshot_reuses_active_market_closed_backoff(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": datetime.now(timezone.utc).isoformat(),
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+            alpaca_quote_fallback_market_session_required=True,
+        )
+
+        with patch("app.trading.prices.market_session_is_open", return_value=False):
+            self.assertIsNone(fetcher.fetch_market_snapshot(signal))
+            self.assertIsNone(fetcher.fetch_market_snapshot(signal))
+
+        self.assertEqual(fetcher.alpaca_quote_calls, 0)
+        self.assertTrue(fetcher._alpaca_quote_fallback_backoff_active(symbol="AMZN"))
+
+    def test_fetch_market_snapshot_rejects_invalid_alpaca_latest_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": datetime.now(timezone.utc).isoformat(),
+                "bp": "185.14",
+                "ap": "185.10",
+            },
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+
+    def test_fetch_market_snapshot_rejects_invalid_alpaca_quote_spread(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": datetime.now(timezone.utc).isoformat(),
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+        )
+
+        with patch("app.trading.prices._quote_spread_bps", return_value=None):
+            snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+        self.assertTrue(fetcher._alpaca_quote_fallback_backoff_active(symbol="AMZN"))
+
+    def test_alpaca_quote_fallback_backoff_expires_and_can_be_disabled(
+        self,
+    ) -> None:
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=60,
+        )
+        fetcher._alpaca_quote_fallback_backoff["AMZN"] = (0.0, "expired")
+
+        self.assertFalse(fetcher._alpaca_quote_fallback_backoff_active(symbol="AMZN"))
+        self.assertNotIn("AMZN", fetcher._alpaca_quote_fallback_backoff)
+
+        disabled_fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=0,
+        )
+        disabled_fetcher._backoff_alpaca_quote_fallback(
+            symbol="AMZN",
+            reason="quote_unavailable",
+        )
+
+        self.assertNotIn("AMZN", disabled_fetcher._alpaca_quote_fallback_backoff)
+
+    def test_alpaca_quote_fallback_backoff_refreshes_active_entry_quietly(
+        self,
+    ) -> None:
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=60,
+        )
+
+        fetcher._backoff_alpaca_quote_fallback(
+            symbol="AMZN",
+            reason="quote_unavailable",
+        )
+        first_expires_at, _first_reason = fetcher._alpaca_quote_fallback_backoff["AMZN"]
+        fetcher._backoff_alpaca_quote_fallback(
+            symbol="AMZN",
+            reason="wide_quote",
+        )
+        second_expires_at, second_reason = fetcher._alpaca_quote_fallback_backoff[
+            "AMZN"
+        ]
+
+        self.assertGreaterEqual(second_expires_at, first_expires_at)
+        self.assertEqual(second_reason, "wide_quote")
+
+    def test_fetch_market_snapshot_rejects_alpaca_latest_quote_without_timestamp(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+
+    def test_fetch_market_snapshot_accepts_naive_alpaca_latest_quote_timestamp(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        quote_ts = datetime.now(timezone.utc).replace(tzinfo=None)
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "timestamp": quote_ts.isoformat(),
+                "bid_price": "185.10",
+                "ask_price": "185.14",
+            },
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.as_of, quote_ts.replace(tzinfo=timezone.utc))
+
+    def test_fetch_market_snapshot_rejects_stale_alpaca_latest_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": "2020-01-01T00:00:00Z",
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+
+    def test_fetch_market_snapshot_keeps_price_when_quote_lookup_empty(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29Z", "c": "200.25", "spread": "0.03"}
+            ],
+            quote_rows=[],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.25"))
+        self.assertEqual(snapshot.spread, Decimal("0.03"))
+        self.assertEqual(snapshot.source, "ta_microbars")
+
+    def test_fetch_market_snapshot_records_wide_quote_diagnostics(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[
+                {"event_ts": "2026-01-01T12:00:29Z", "c": "200.25", "spread": "0.03"}
+            ],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:28Z",
+                    "imbalance_bid_px": "100.00",
+                    "imbalance_ask_px": "101.00",
+                }
+            ],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.25"))
+        self.assertIsNone(snapshot.bid)
+        self.assertIsNone(snapshot.ask)
+        diagnostics = snapshot.quote_lookup_diagnostics or {}
+        self.assertEqual(diagnostics.get("latest_quote_present"), True)
+        self.assertEqual(diagnostics.get("latest_quote_accepted"), False)
+        self.assertEqual(
+            diagnostics.get("latest_quote_rejected_reason"),
+            "spread_bps_exceeded",
+        )
+        self.assertEqual(diagnostics.get("latest_quote_bid"), "100.00")
+        self.assertEqual(diagnostics.get("latest_quote_ask"), "101.00")
+
+    def test_fetch_market_snapshot_keeps_price_when_quote_lookup_fails(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[{"event_ts": "2026-01-01T12:00:29Z", "c": "200.25"}],
+            quote_rows=[],
+            fail_quote_query=True,
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("200.25"))
+        self.assertEqual(snapshot.source, "ta_microbars")
+
+    def test_fetch_market_snapshot_prefers_explicit_quote_spread(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[
+                {
+                    "event_ts": "2026-01-01T12:00:28Z",
+                    "imbalance_bid_px": "200.10",
+                    "imbalance_ask_px": "200.30",
+                    "spread": "0.01",
+                    "imbalance_spread": "0.20",
+                }
+            ],
+        )
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.spread, Decimal("0.01"))
+
+    def test_quote_midpoint_requires_complete_quote(self) -> None:
+        self.assertIsNone(_midpoint(bid=None, ask=Decimal("100.20")))
+
+    def test_quote_spread_bps_rejects_zero_midpoint(self) -> None:
+        self.assertIsNone(_quote_spread_bps(bid=Decimal("0"), ask=Decimal("0")))
+
+    def test_fetch_alpaca_latest_quote_sends_data_api_request(self) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://clickhouse.example",
+            table="torghut.ta_microbars",
+            alpaca_quote_fallback_enabled=True,
+            alpaca_data_api_base_url="https://data.example:8443",
+            alpaca_api_key_id="key",
+            alpaca_api_secret_key="secret",
+            alpaca_quote_feed="iex",
+            alpaca_quote_timeout_seconds=1.5,
+        )
+        CapturingHTTPConnection.response = FakeHTTPResponse(
+            200,
+            '{"quote": {"t": "2026-01-01T00:00:00Z", "bp": "100.10", "ap": "100.20"}}',
+        )
+
+        with patch("app.trading.prices.HTTPSConnection", CapturingHTTPConnection):
+            quote = fetcher._fetch_alpaca_latest_quote(symbol="AAPL")
+
+        self.assertEqual(
+            quote,
+            {"t": "2026-01-01T00:00:00Z", "bp": "100.10", "ap": "100.20"},
+        )
+        self.assertEqual(len(CapturingHTTPConnection.instances), 1)
+        connection = CapturingHTTPConnection.instances[0]
+        self.assertEqual(connection.host, "data.example")
+        self.assertEqual(connection.port, 8443)
+        self.assertEqual(connection.timeout, 1.5)
+        self.assertTrue(connection.closed)
+        self.assertEqual(len(connection.requests), 1)
+        method, path, headers = connection.requests[0]
+        self.assertEqual(method, "GET")
+        self.assertEqual(path, "/v2/stocks/AAPL/quotes/latest?feed=iex")
+        self.assertEqual(headers["APCA-API-KEY-ID"], "key")
+        self.assertEqual(headers["APCA-API-SECRET-KEY"], "secret")
+
+    def test_fetch_alpaca_latest_quote_rejects_bad_url(self) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://clickhouse.example",
+            table="torghut.ta_microbars",
+            alpaca_quote_fallback_enabled=True,
+            alpaca_data_api_base_url="ftp://data.example",
+            alpaca_api_key_id="key",
+            alpaca_api_secret_key="secret",
+        )
+
+        self.assertIsNone(fetcher._fetch_alpaca_latest_quote(symbol="AAPL"))
+
+    def test_fetch_alpaca_latest_quote_rejects_missing_host(self) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://clickhouse.example",
+            table="torghut.ta_microbars",
+            alpaca_quote_fallback_enabled=True,
+            alpaca_data_api_base_url="https://",
+            alpaca_api_key_id="key",
+            alpaca_api_secret_key="secret",
+        )
+
+        self.assertIsNone(fetcher._fetch_alpaca_latest_quote(symbol="AAPL"))
+
+    def test_fetch_alpaca_latest_quote_returns_none_on_request_failure(
+        self,
+    ) -> None:
+        class FailingHTTPConnection(CapturingHTTPConnection):
+            def request(
+                self, method: str, path: str, *, headers: dict[str, str]
+            ) -> None:
+                super().request(method, path, headers=headers)
+                raise TimeoutError("timeout")
+
+        fetcher = ClickHousePriceFetcher(
+            url="http://clickhouse.example",
+            table="torghut.ta_microbars",
+            alpaca_quote_fallback_enabled=True,
+            alpaca_data_api_base_url="https://data.example",
+            alpaca_api_key_id="key",
+            alpaca_api_secret_key="secret",
+        )
+
+        with patch("app.trading.prices.HTTPSConnection", FailingHTTPConnection):
+            quote = fetcher._fetch_alpaca_latest_quote(symbol="AAPL")
+
+        self.assertIsNone(quote)
+        self.assertTrue(FailingHTTPConnection.instances[0].closed)

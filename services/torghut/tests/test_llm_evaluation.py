@@ -16,9 +16,13 @@ class TestLlmEvaluation(TestCase):
     def setUp(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
-        self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self.session_local = sessionmaker(
+            bind=engine, expire_on_commit=False, future=True
+        )
 
-    def test_evaluation_includes_calibration_quality_and_decision_contribution(self) -> None:
+    def test_evaluation_includes_calibration_quality_and_decision_contribution(
+        self,
+    ) -> None:
         with self.session_local() as session:
             strategy = Strategy(
                 name="llm-eval",
@@ -113,9 +117,15 @@ class TestLlmEvaluation(TestCase):
         self.assertIsInstance(decision_contribution, dict)
         if isinstance(calibration_quality, dict):
             self.assertEqual(calibration_quality.get("samples"), 2)
-            self.assertGreater(float(calibration_quality.get("mean_confidence_gap") or 0), 0)
-            self.assertGreater(float(calibration_quality.get("high_uncertainty_rate") or 0), 0)
+            self.assertGreater(
+                float(calibration_quality.get("mean_confidence_gap") or 0), 0
+            )
+            self.assertGreater(
+                float(calibration_quality.get("high_uncertainty_rate") or 0), 0
+            )
         if isinstance(decision_contribution, dict):
             self.assertEqual(decision_contribution.get("contribution_events"), 2)
             self.assertEqual(decision_contribution.get("fallback_total"), 1)
-            self.assertEqual(decision_contribution.get("deterministic_guardrail_total"), 1)
+            self.assertEqual(
+                decision_contribution.get("deterministic_guardrail_total"), 1
+            )

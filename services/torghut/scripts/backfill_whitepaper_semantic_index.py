@@ -119,7 +119,11 @@ def _process_run(
             return {"run_id": run_id, "status": "missing"}
 
         full_text = _load_or_extract_full_text(workflow, session, run=run_row)
-        full_text_chunk_count = len(workflow._build_chunks(full_text, source_scope="full_text")) if full_text.strip() else 0
+        full_text_chunk_count = (
+            len(workflow._build_chunks(full_text, source_scope="full_text"))
+            if full_text.strip()
+            else 0
+        )
 
         synthesis_chunk_count = 0
         if run_row.synthesis is not None:
@@ -137,7 +141,10 @@ def _process_run(
                 candidate_sections.append(value)
             for value in workflow._coerce_string_list(synthesis.novelty_claims_json):
                 candidate_sections.append(value)
-            synthesis_chunk_count = sum(len(workflow._build_chunks(section, source_scope="synthesis")) for section in candidate_sections)
+            synthesis_chunk_count = sum(
+                len(workflow._build_chunks(section, source_scope="synthesis"))
+                for section in candidate_sections
+            )
 
         if dry_run:
             session.rollback()
@@ -146,14 +153,17 @@ def _process_run(
                 "status": "dry_run",
                 "full_text_chunks": full_text_chunk_count,
                 "synthesis_chunks": synthesis_chunk_count,
-                "claim_graph_synced": include_claim_graph and run_row.synthesis is not None,
+                "claim_graph_synced": include_claim_graph
+                and run_row.synthesis is not None,
             }
 
         claim_graph_synced = False
         work_completed: list[str] = []
         errors: list[str] = []
 
-        synthesis_json = run_row.synthesis.synthesis_json if run_row.synthesis is not None else None
+        synthesis_json = (
+            run_row.synthesis.synthesis_json if run_row.synthesis is not None else None
+        )
         if include_claim_graph and isinstance(synthesis_json, dict):
             workflow._sync_structured_research_outputs(  # type: ignore[attr-defined]
                 session,
@@ -213,7 +223,7 @@ def run_backfill_whitepaper_semantic_index(
 ) -> dict[str, Any]:
     started_at = datetime.now(timezone.utc)
     if not statuses:
-        raise ValueError('at least one status is required')
+        raise ValueError("at least one status is required")
 
     if selected_run_ids:
         run_ids = selected_run_ids
@@ -227,11 +237,11 @@ def run_backfill_whitepaper_semantic_index(
 
     if not run_ids:
         return {
-            'mode': 'dry_run' if dry_run else 'apply',
-            'started_at': started_at.isoformat(),
-            'statuses': statuses,
-            'candidates': 0,
-            'results': [],
+            "mode": "dry_run" if dry_run else "apply",
+            "started_at": started_at.isoformat(),
+            "statuses": statuses,
+            "candidates": 0,
+            "results": [],
         }
 
     results: list[dict[str, Any]] = []
@@ -250,24 +260,32 @@ def run_backfill_whitepaper_semantic_index(
             try:
                 results.append(future.result())
             except Exception as exc:
-                results.append({'status': 'failed', 'error': str(exc)})
+                results.append({"status": "failed", "error": str(exc)})
 
     ended_at = datetime.now(timezone.utc)
     return {
-        'mode': 'dry_run' if dry_run else 'apply',
-        'started_at': started_at.isoformat(),
-        'ended_at': ended_at.isoformat(),
-        'statuses': statuses,
-        'candidates': len(run_ids),
-        'processed': len(results),
-        'succeeded': len([item for item in results if item.get('status') in {'indexed', 'partial', 'dry_run'}]),
-        'failed': len([item for item in results if item.get('status') == 'failed']),
-        'results': results,
+        "mode": "dry_run" if dry_run else "apply",
+        "started_at": started_at.isoformat(),
+        "ended_at": ended_at.isoformat(),
+        "statuses": statuses,
+        "candidates": len(run_ids),
+        "processed": len(results),
+        "succeeded": len(
+            [
+                item
+                for item in results
+                if item.get("status") in {"indexed", "partial", "dry_run"}
+            ]
+        ),
+        "failed": len([item for item in results if item.get("status") == "failed"]),
+        "results": results,
     }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Backfill semantic chunks/embeddings for whitepaper runs.")
+    parser = argparse.ArgumentParser(
+        description="Backfill semantic chunks/embeddings for whitepaper runs."
+    )
     parser.add_argument(
         "--statuses",
         type=str,
@@ -280,9 +298,17 @@ def main() -> int:
         default=[],
         help="Specific run id(s) to process. Can be passed multiple times.",
     )
-    parser.add_argument("--limit", type=int, default=200, help="Max candidate runs to process.")
-    parser.add_argument("--concurrency", type=int, default=2, help="Worker concurrency.")
-    parser.add_argument("--dry-run", action="store_true", help="Preview candidates and chunk counts without writing.")
+    parser.add_argument(
+        "--limit", type=int, default=200, help="Max candidate runs to process."
+    )
+    parser.add_argument(
+        "--concurrency", type=int, default=2, help="Worker concurrency."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview candidates and chunk counts without writing.",
+    )
     parser.add_argument(
         "--include-claim-graph",
         action="store_true",

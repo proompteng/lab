@@ -10,139 +10,152 @@ from scripts.run_simulation_analysis import _resources_from_args, main
 
 
 class TestRunSimulationAnalysis(TestCase):
-    def test_runtime_ready_resources_include_run_scoped_order_updates_topic(self) -> None:
+    def test_runtime_ready_resources_include_run_scoped_order_updates_topic(
+        self,
+    ) -> None:
         class _Args:
-            run_id = 'sim-2026-03-06-open-30m-r3'
-            dataset_id = 'torghut-smoke-open-30m-20260306'
-            namespace = 'torghut'
-            ta_configmap = 'torghut-ta-sim-config'
-            ta_deployment = 'torghut-ta-sim'
-            torghut_service = 'torghut-sim'
-            signal_table = 'torghut_sim_2026_03_06_open_30m.ta_signals'
-            price_table = 'torghut_sim_2026_03_06_open_30m.ta_microbars'
+            run_id = "sim-2026-03-06-open-30m-r3"
+            dataset_id = "torghut-smoke-open-30m-20260306"
+            namespace = "torghut"
+            ta_configmap = "torghut-ta-sim-config"
+            ta_deployment = "torghut-ta-sim"
+            torghut_service = "torghut-sim"
+            signal_table = "torghut_sim_2026_03_06_open_30m.ta_signals"
+            price_table = "torghut_sim_2026_03_06_open_30m.ta_microbars"
 
         resources = _resources_from_args(_Args())
         self.assertEqual(
-            resources.simulation_topic_by_role['order_updates'],
-            'torghut.sim.trade-updates.v1.sim_2026_03_06_open_30m_r3',
+            resources.simulation_topic_by_role["order_updates"],
+            "torghut.sim.trade-updates.v1.sim_2026_03_06_open_30m_r3",
         )
-        self.assertEqual(resources.clickhouse_db, 'torghut_sim_2026_03_06_open_30m')
+        self.assertEqual(resources.clickhouse_db, "torghut_sim_2026_03_06_open_30m")
 
-    def test_runtime_ready_warm_lane_resources_use_lane_stable_order_updates_topic(self) -> None:
+    def test_runtime_ready_warm_lane_resources_use_lane_stable_order_updates_topic(
+        self,
+    ) -> None:
         class _Args:
-            run_id = 'sim-platform-proof-compact-20260313-r23'
-            dataset_id = 'torghut-tsmom-compact-20260311'
-            namespace = 'torghut'
-            ta_configmap = 'torghut-ta-sim-config'
-            ta_deployment = 'torghut-ta-sim'
-            torghut_service = 'torghut-sim'
-            signal_table = 'torghut_sim_default.ta_signals'
-            price_table = 'torghut_sim_default.ta_microbars'
+            run_id = "sim-platform-proof-compact-20260313-r23"
+            dataset_id = "torghut-tsmom-compact-20260311"
+            namespace = "torghut"
+            ta_configmap = "torghut-ta-sim-config"
+            ta_deployment = "torghut-ta-sim"
+            torghut_service = "torghut-sim"
+            signal_table = "torghut_sim_default.ta_signals"
+            price_table = "torghut_sim_default.ta_microbars"
 
         resources = _resources_from_args(_Args())
         self.assertTrue(resources.warm_lane_enabled)
-        self.assertEqual(resources.order_feed_group_id, 'torghut-order-feed-sim-default')
-        self.assertEqual(resources.ta_group_id, 'torghut-ta-sim-default')
         self.assertEqual(
-            resources.simulation_topic_by_role['order_updates'],
-            'torghut.sim.trade-updates.v1',
+            resources.order_feed_group_id, "torghut-order-feed-sim-default"
+        )
+        self.assertEqual(resources.ta_group_id, "torghut-ta-sim-default")
+        self.assertEqual(
+            resources.simulation_topic_by_role["order_updates"],
+            "torghut.sim.trade-updates.v1",
         )
 
-    def test_runtime_ready_resources_derive_clickhouse_db_from_price_table_when_signal_table_missing(self) -> None:
+    def test_runtime_ready_resources_derive_clickhouse_db_from_price_table_when_signal_table_missing(
+        self,
+    ) -> None:
         class _Args:
-            run_id = 'sim-2026-03-06-open-30m-r3'
-            dataset_id = 'torghut-smoke-open-30m-20260306'
-            namespace = 'torghut'
-            ta_configmap = 'torghut-ta-sim-config'
-            ta_deployment = 'torghut-ta-sim'
-            torghut_service = 'torghut-sim'
-            signal_table = ''
-            price_table = 'torghut_sim_2026_03_06_open_30m.ta_microbars'
+            run_id = "sim-2026-03-06-open-30m-r3"
+            dataset_id = "torghut-smoke-open-30m-20260306"
+            namespace = "torghut"
+            ta_configmap = "torghut-ta-sim-config"
+            ta_deployment = "torghut-ta-sim"
+            torghut_service = "torghut-sim"
+            signal_table = ""
+            price_table = "torghut_sim_2026_03_06_open_30m.ta_microbars"
 
         resources = _resources_from_args(_Args())
-        self.assertEqual(resources.clickhouse_db, 'torghut_sim_2026_03_06_open_30m')
+        self.assertEqual(resources.clickhouse_db, "torghut_sim_2026_03_06_open_30m")
 
     def test_runtime_ready_exits_zero_with_json_payload(self) -> None:
         stdout = io.StringIO()
         with (
             patch(
-                'sys.argv',
+                "sys.argv",
                 [
-                    'run_simulation_analysis.py',
-                    'runtime-ready',
-                    '--run-id',
-                    'sim-1',
-                    '--dataset-id',
-                    'dataset-a',
-                    '--namespace',
-                    'torghut',
-                    '--torghut-service',
-                    'torghut-sim',
-                    '--ta-deployment',
-                    'torghut-ta-sim',
-                    '--window-start',
-                    '2026-03-06T14:30:00Z',
-                    '--window-end',
-                    '2026-03-06T15:30:00Z',
-                    '--signal-table',
-                    'torghut_sim_2026_03_06_open_30m.ta_signals',
-                    '--price-table',
-                    'torghut_sim_2026_03_06_open_30m.ta_microbars',
-                    '--json',
+                    "run_simulation_analysis.py",
+                    "runtime-ready",
+                    "--run-id",
+                    "sim-1",
+                    "--dataset-id",
+                    "dataset-a",
+                    "--namespace",
+                    "torghut",
+                    "--torghut-service",
+                    "torghut-sim",
+                    "--ta-deployment",
+                    "torghut-ta-sim",
+                    "--window-start",
+                    "2026-03-06T14:30:00Z",
+                    "--window-end",
+                    "2026-03-06T15:30:00Z",
+                    "--signal-table",
+                    "torghut_sim_2026_03_06_open_30m.ta_signals",
+                    "--price-table",
+                    "torghut_sim_2026_03_06_open_30m.ta_microbars",
+                    "--json",
                 ],
             ),
             patch(
-                'scripts.run_simulation_analysis._runtime_verify',
-                return_value={'runtime_state': 'ready', 'environment_state': 'complete'},
+                "scripts.run_simulation_analysis._runtime_verify",
+                return_value={
+                    "runtime_state": "ready",
+                    "environment_state": "complete",
+                },
             ),
             redirect_stdout(stdout),
         ):
             main()
 
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload['runtime_state'], 'ready')
+        self.assertEqual(payload["runtime_state"], "ready")
 
     def test_runtime_ready_waits_until_runtime_is_ready(self) -> None:
         stdout = io.StringIO()
         with (
             patch(
-                'sys.argv',
+                "sys.argv",
                 [
-                    'run_simulation_analysis.py',
-                    'runtime-ready',
-                    '--run-id',
-                    'sim-1',
-                    '--dataset-id',
-                    'dataset-a',
-                    '--namespace',
-                    'torghut',
-                    '--torghut-service',
-                    'torghut-sim',
-                    '--ta-deployment',
-                    'torghut-ta-sim',
-                    '--window-start',
-                    '2026-03-06T14:30:00Z',
-                    '--window-end',
-                    '2026-03-06T15:30:00Z',
-                    '--signal-table',
-                    'torghut_sim_2026_03_06_open_30m.ta_signals',
-                    '--price-table',
-                    'torghut_sim_2026_03_06_open_30m.ta_microbars',
-                    '--runtime-timeout-seconds',
-                    '30',
-                    '--runtime-poll-seconds',
-                    '1',
-                    '--json',
+                    "run_simulation_analysis.py",
+                    "runtime-ready",
+                    "--run-id",
+                    "sim-1",
+                    "--dataset-id",
+                    "dataset-a",
+                    "--namespace",
+                    "torghut",
+                    "--torghut-service",
+                    "torghut-sim",
+                    "--ta-deployment",
+                    "torghut-ta-sim",
+                    "--window-start",
+                    "2026-03-06T14:30:00Z",
+                    "--window-end",
+                    "2026-03-06T15:30:00Z",
+                    "--signal-table",
+                    "torghut_sim_2026_03_06_open_30m.ta_signals",
+                    "--price-table",
+                    "torghut_sim_2026_03_06_open_30m.ta_microbars",
+                    "--runtime-timeout-seconds",
+                    "30",
+                    "--runtime-poll-seconds",
+                    "1",
+                    "--json",
                 ],
             ),
             patch(
-                'scripts.run_simulation_analysis._runtime_verify',
+                "scripts.run_simulation_analysis._runtime_verify",
                 side_effect=[
-                    {'runtime_state': 'not_ready', 'environment_state': 'complete'},
-                    {'runtime_state': 'ready', 'environment_state': 'complete'},
+                    {"runtime_state": "not_ready", "environment_state": "complete"},
+                    {"runtime_state": "ready", "environment_state": "complete"},
                 ],
             ) as verify_mock,
-            patch('scripts.run_simulation_analysis.time.sleep', return_value=None) as sleep_mock,
+            patch(
+                "scripts.run_simulation_analysis.time.sleep", return_value=None
+            ) as sleep_mock,
             redirect_stdout(stdout),
         ):
             main()
@@ -150,29 +163,29 @@ class TestRunSimulationAnalysis(TestCase):
         self.assertEqual(verify_mock.call_count, 2)
         sleep_mock.assert_called_once_with(1)
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload['runtime_state'], 'ready')
+        self.assertEqual(payload["runtime_state"], "ready")
 
     def test_runtime_ready_requires_signal_and_price_tables(self) -> None:
         with patch(
-            'sys.argv',
+            "sys.argv",
             [
-                'run_simulation_analysis.py',
-                'runtime-ready',
-                '--run-id',
-                'sim-1',
-                '--dataset-id',
-                'dataset-a',
-                '--namespace',
-                'torghut',
-                '--torghut-service',
-                'torghut-sim',
-                '--ta-deployment',
-                'torghut-ta-sim',
-                '--window-start',
-                '2026-03-06T14:30:00Z',
-                '--window-end',
-                '2026-03-06T15:30:00Z',
-                '--json',
+                "run_simulation_analysis.py",
+                "runtime-ready",
+                "--run-id",
+                "sim-1",
+                "--dataset-id",
+                "dataset-a",
+                "--namespace",
+                "torghut",
+                "--torghut-service",
+                "torghut-sim",
+                "--ta-deployment",
+                "torghut-ta-sim",
+                "--window-start",
+                "2026-03-06T14:30:00Z",
+                "--window-end",
+                "2026-03-06T15:30:00Z",
+                "--json",
             ],
         ):
             with self.assertRaises(SystemExit) as ctx:
@@ -184,46 +197,52 @@ class TestRunSimulationAnalysis(TestCase):
         stdout = io.StringIO()
         with (
             patch(
-                'sys.argv',
+                "sys.argv",
                 [
-                    'run_simulation_analysis.py',
-                    'activity',
-                    '--run-id',
-                    'sim-1',
-                    '--dataset-id',
-                    'dataset-a',
-                    '--namespace',
-                    'torghut',
-                    '--torghut-service',
-                    'torghut-sim',
-                    '--ta-deployment',
-                    'torghut-ta-sim',
-                    '--window-start',
-                    '2026-03-06T14:30:00Z',
-                    '--window-end',
-                    '2026-03-06T15:30:00Z',
-                    '--signal-table',
-                    'torghut_sim_sim_1.ta_signals',
-                    '--price-table',
-                    'torghut_sim_sim_1.ta_microbars',
-                    '--postgres-base-dsn',
-                    'postgresql://torghut:secret@localhost:5432/postgres',
-                    '--postgres-database',
-                    'torghut_sim_sim_1',
-                    '--clickhouse-http-url',
-                    'http://clickhouse:8123',
-                    '--clickhouse-username',
-                    'torghut',
-                    '--json',
+                    "run_simulation_analysis.py",
+                    "activity",
+                    "--run-id",
+                    "sim-1",
+                    "--dataset-id",
+                    "dataset-a",
+                    "--namespace",
+                    "torghut",
+                    "--torghut-service",
+                    "torghut-sim",
+                    "--ta-deployment",
+                    "torghut-ta-sim",
+                    "--window-start",
+                    "2026-03-06T14:30:00Z",
+                    "--window-end",
+                    "2026-03-06T15:30:00Z",
+                    "--signal-table",
+                    "torghut_sim_sim_1.ta_signals",
+                    "--price-table",
+                    "torghut_sim_sim_1.ta_microbars",
+                    "--postgres-base-dsn",
+                    "postgresql://torghut:secret@localhost:5432/postgres",
+                    "--postgres-database",
+                    "torghut_sim_sim_1",
+                    "--clickhouse-http-url",
+                    "http://clickhouse:8123",
+                    "--clickhouse-username",
+                    "torghut",
+                    "--json",
                 ],
             ),
             patch(
-                'scripts.run_simulation_analysis._runtime_verify',
-                return_value={'runtime_state': 'ready', 'environment_state': 'complete'},
+                "scripts.run_simulation_analysis._runtime_verify",
+                return_value={
+                    "runtime_state": "ready",
+                    "environment_state": "complete",
+                },
             ),
             patch(
-                'scripts.run_simulation_analysis._monitor_run_completion',
-                return_value={'status': 'degraded', 'activity_classification': 'executions_absent'},
+                "scripts.run_simulation_analysis._monitor_run_completion",
+                return_value={
+                    "status": "degraded",
+                    "activity_classification": "executions_absent",
+                },
             ),
             redirect_stdout(stdout),
         ):
@@ -232,56 +251,61 @@ class TestRunSimulationAnalysis(TestCase):
 
         self.assertEqual(ctx.exception.code, 1)
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload['activity_classification'], 'executions_absent')
+        self.assertEqual(payload["activity_classification"], "executions_absent")
 
-    def test_activity_uses_completion_monitor_and_exits_zero_when_successful(self) -> None:
+    def test_activity_uses_completion_monitor_and_exits_zero_when_successful(
+        self,
+    ) -> None:
         stdout = io.StringIO()
         with (
             patch(
-                'sys.argv',
+                "sys.argv",
                 [
-                    'run_simulation_analysis.py',
-                    'activity',
-                    '--run-id',
-                    'sim-1',
-                    '--dataset-id',
-                    'dataset-a',
-                    '--namespace',
-                    'torghut',
-                    '--torghut-service',
-                    'torghut-sim',
-                    '--ta-deployment',
-                    'torghut-ta-sim',
-                    '--window-start',
-                    '2026-03-06T14:30:00Z',
-                    '--window-end',
-                    '2026-03-06T15:30:00Z',
-                    '--signal-table',
-                    'torghut_sim_sim_1.ta_signals',
-                    '--price-table',
-                    'torghut_sim_sim_1.ta_microbars',
-                    '--postgres-base-dsn',
-                    'postgresql://torghut:secret@localhost:5432/postgres',
-                    '--postgres-database',
-                    'torghut_sim_sim_1',
-                    '--clickhouse-http-url',
-                    'http://clickhouse:8123',
-                    '--clickhouse-username',
-                    'torghut',
-                    '--json',
+                    "run_simulation_analysis.py",
+                    "activity",
+                    "--run-id",
+                    "sim-1",
+                    "--dataset-id",
+                    "dataset-a",
+                    "--namespace",
+                    "torghut",
+                    "--torghut-service",
+                    "torghut-sim",
+                    "--ta-deployment",
+                    "torghut-ta-sim",
+                    "--window-start",
+                    "2026-03-06T14:30:00Z",
+                    "--window-end",
+                    "2026-03-06T15:30:00Z",
+                    "--signal-table",
+                    "torghut_sim_sim_1.ta_signals",
+                    "--price-table",
+                    "torghut_sim_sim_1.ta_microbars",
+                    "--postgres-base-dsn",
+                    "postgresql://torghut:secret@localhost:5432/postgres",
+                    "--postgres-database",
+                    "torghut_sim_sim_1",
+                    "--clickhouse-http-url",
+                    "http://clickhouse:8123",
+                    "--clickhouse-username",
+                    "torghut",
+                    "--json",
                 ],
             ),
             patch(
-                'scripts.run_simulation_analysis._runtime_verify',
-                return_value={'runtime_state': 'ready', 'environment_state': 'complete'},
+                "scripts.run_simulation_analysis._runtime_verify",
+                return_value={
+                    "runtime_state": "ready",
+                    "environment_state": "complete",
+                },
             ),
             patch(
-                'scripts.run_simulation_analysis._monitor_run_completion',
+                "scripts.run_simulation_analysis._monitor_run_completion",
                 return_value={
-                    'status': 'ok',
-                    'activity_classification': 'success',
-                    'trade_decisions': 3,
-                    'executions': 2,
+                    "status": "ok",
+                    "activity_classification": "success",
+                    "trade_decisions": 3,
+                    "executions": 2,
                 },
             ) as monitor_mock,
             redirect_stdout(stdout),
@@ -290,48 +314,52 @@ class TestRunSimulationAnalysis(TestCase):
 
         monitor_mock.assert_called_once()
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload['activity_classification'], 'success')
-        self.assertEqual(payload['trade_decisions'], 3)
+        self.assertEqual(payload["activity_classification"], "success")
+        self.assertEqual(payload["trade_decisions"], 3)
 
     def test_teardown_clean_does_not_require_window_arguments(self) -> None:
         stdout = io.StringIO()
         with (
             patch(
-                'sys.argv',
+                "sys.argv",
                 [
-                    'run_simulation_analysis.py',
-                    'teardown-clean',
-                    '--run-id',
-                    'sim-1',
-                    '--dataset-id',
-                    'dataset-a',
-                    '--namespace',
-                    'torghut',
-                    '--ta-configmap',
-                    'torghut-ta-sim-config',
-                    '--ta-deployment',
-                    'torghut-ta-sim',
-                    '--torghut-service',
-                    'torghut-sim',
-                    '--signal-table',
-                    'torghut_sim_sim_1.ta_signals',
-                    '--price-table',
-                    'torghut_sim_sim_1.ta_microbars',
-                    '--postgres-base-dsn',
-                    'postgresql://torghut:secret@localhost:5432/postgres',
-                    '--postgres-database',
-                    'torghut_sim_sim_1',
-                    '--json',
+                    "run_simulation_analysis.py",
+                    "teardown-clean",
+                    "--run-id",
+                    "sim-1",
+                    "--dataset-id",
+                    "dataset-a",
+                    "--namespace",
+                    "torghut",
+                    "--ta-configmap",
+                    "torghut-ta-sim-config",
+                    "--ta-deployment",
+                    "torghut-ta-sim",
+                    "--torghut-service",
+                    "torghut-sim",
+                    "--signal-table",
+                    "torghut_sim_sim_1.ta_signals",
+                    "--price-table",
+                    "torghut_sim_sim_1.ta_microbars",
+                    "--postgres-base-dsn",
+                    "postgresql://torghut:secret@localhost:5432/postgres",
+                    "--postgres-database",
+                    "torghut_sim_sim_1",
+                    "--json",
                 ],
             ),
             patch(
-                'scripts.run_simulation_analysis._teardown_clean',
-                return_value={'status': 'ok', 'activity_classification': 'success', 'restored': True},
+                "scripts.run_simulation_analysis._teardown_clean",
+                return_value={
+                    "status": "ok",
+                    "activity_classification": "success",
+                    "restored": True,
+                },
             ),
             redirect_stdout(stdout),
         ):
             main()
 
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload['status'], 'ok')
-        self.assertTrue(payload['restored'])
+        self.assertEqual(payload["status"], "ok")
+        self.assertTrue(payload["restored"])

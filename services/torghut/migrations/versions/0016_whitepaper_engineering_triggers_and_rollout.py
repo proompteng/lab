@@ -23,19 +23,38 @@ def upgrade() -> None:
         sa.Column("hypothesis_id", sa.String(length=128), nullable=True),
         sa.Column("implementation_grade", sa.String(length=32), nullable=False),
         sa.Column("decision", sa.String(length=32), nullable=False),
-        sa.Column("reason_codes_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "reason_codes_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
         sa.Column("approval_token", sa.String(length=128), nullable=True),
         sa.Column("dispatched_agentrun_name", sa.String(length=128), nullable=True),
-        sa.Column("rollout_profile", sa.String(length=32), nullable=False, server_default=sa.text("'manual'")),
+        sa.Column(
+            "rollout_profile",
+            sa.String(length=32),
+            nullable=False,
+            server_default=sa.text("'manual'"),
+        ),
         sa.Column("approval_source", sa.String(length=32), nullable=True),
         sa.Column("approved_by", sa.String(length=128), nullable=True),
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("approval_reason", sa.Text(), nullable=True),
         sa.Column("policy_ref", sa.String(length=255), nullable=True),
         sa.Column("gate_snapshot_hash", sa.String(length=64), nullable=True),
-        sa.Column("gate_snapshot_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "gate_snapshot_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
         sa.ForeignKeyConstraint(
             ["analysis_run_id"],
             ["whitepaper_analysis_runs.id"],
@@ -49,9 +68,16 @@ def upgrade() -> None:
             ondelete="SET NULL",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_whitepaper_engineering_triggers"),
-        sa.UniqueConstraint("trigger_id", name="uq_whitepaper_engineering_triggers_trigger_id"),
-        sa.UniqueConstraint("whitepaper_run_id", name="uq_whitepaper_engineering_triggers_whitepaper_run_id"),
-        sa.UniqueConstraint("analysis_run_id", name="uq_whitepaper_engineering_triggers_analysis_run_id"),
+        sa.UniqueConstraint(
+            "trigger_id", name="uq_whitepaper_engineering_triggers_trigger_id"
+        ),
+        sa.UniqueConstraint(
+            "whitepaper_run_id",
+            name="uq_whitepaper_engineering_triggers_whitepaper_run_id",
+        ),
+        sa.UniqueConstraint(
+            "analysis_run_id", name="uq_whitepaper_engineering_triggers_analysis_run_id"
+        ),
     )
     op.create_index(
         "ix_whitepaper_engineering_triggers_run_id",
@@ -89,11 +115,20 @@ def upgrade() -> None:
         sa.Column("to_stage", sa.String(length=32), nullable=True),
         sa.Column("transition_type", sa.String(length=32), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
-        sa.Column("gate_results_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("reason_codes_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "gate_results_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column(
+            "reason_codes_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
         sa.Column("blocking_gate", sa.String(length=64), nullable=True),
         sa.Column("evidence_hash", sa.String(length=64), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
         sa.ForeignKeyConstraint(
             ["trigger_id"],
             ["whitepaper_engineering_triggers.id"],
@@ -101,7 +136,9 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_whitepaper_rollout_transitions"),
-        sa.UniqueConstraint("transition_id", name="uq_whitepaper_rollout_transitions_transition_id"),
+        sa.UniqueConstraint(
+            "transition_id", name="uq_whitepaper_rollout_transitions_transition_id"
+        ),
     )
     op.create_index(
         "ix_whitepaper_rollout_transitions_trigger_id",

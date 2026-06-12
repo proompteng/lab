@@ -34,7 +34,9 @@ class OptionsRepository:
     """Postgres-backed control-plane repository for the options lane."""
 
     def __init__(self, sqlalchemy_dsn: str) -> None:
-        self._engine: Engine = create_engine(sqlalchemy_dsn, future=True, pool_pre_ping=True)
+        self._engine: Engine = create_engine(
+            sqlalchemy_dsn, future=True, pool_pre_ping=True
+        )
         self._session_factory = sessionmaker(
             bind=self._engine,
             expire_on_commit=False,
@@ -52,7 +54,9 @@ class OptionsRepository:
     def close(self) -> None:
         self._engine.dispose()
 
-    def ensure_rate_bucket_defaults(self, defaults: dict[str, tuple[float, int]]) -> None:
+    def ensure_rate_bucket_defaults(
+        self, defaults: dict[str, tuple[float, int]]
+    ) -> None:
         now = _utc_now()
         with self.session() as session, session.begin():
             for bucket_name, (refill_per_second, burst_capacity) in defaults.items():
@@ -87,20 +91,28 @@ class OptionsRepository:
                     },
                 )
 
-    def acquire_rate_bucket(self, bucket_name: str, refill_per_second: float, burst_capacity: int) -> bool:
+    def acquire_rate_bucket(
+        self, bucket_name: str, refill_per_second: float, burst_capacity: int
+    ) -> bool:
         now = _utc_now()
-        self.ensure_rate_bucket_defaults({bucket_name: (refill_per_second, burst_capacity)})
+        self.ensure_rate_bucket_defaults(
+            {bucket_name: (refill_per_second, burst_capacity)}
+        )
         with self.session() as session, session.begin():
-            row = session.execute(
-                text(
-                    """
+            row = (
+                session.execute(
+                    text(
+                        """
                     SELECT bucket_name, refill_per_second, burst_capacity, tokens_available, last_refill_ts
                     FROM torghut_options_rate_limit_state
                     WHERE bucket_name = :bucket_name
                     """
-                ),
-                {"bucket_name": bucket_name},
-            ).mappings().first()
+                    ),
+                    {"bucket_name": bucket_name},
+                )
+                .mappings()
+                .first()
+            )
 
             if row is None:
                 return False
@@ -110,7 +122,8 @@ class OptionsRepository:
             active_refill = float(row["refill_per_second"] or refill_per_second)
             active_burst = int(row["burst_capacity"] or burst_capacity)
             tokens_available = min(
-                float(row["tokens_available"] or 0.0) + (elapsed_seconds * active_refill),
+                float(row["tokens_available"] or 0.0)
+                + (elapsed_seconds * active_refill),
                 float(active_burst),
             )
             if tokens_available < 1.0:
@@ -173,7 +186,9 @@ class OptionsRepository:
 
         if not contracts:
             return []
-        seen_symbols = {row["contract_symbol"] for row in contracts if row.get("contract_symbol")}
+        seen_symbols = {
+            row["contract_symbol"] for row in contracts if row.get("contract_symbol")
+        }
         published_rows: list[dict[str, Any]] = []
 
         with self.session() as session, session.begin():
@@ -195,7 +210,11 @@ class OptionsRepository:
             for contract in contracts:
                 contract_symbol = cast(str, contract["contract_symbol"])
                 current = existing_rows.get(contract_symbol)
-                first_seen_ts = current.get("first_seen_ts") if current else contract["first_seen_ts"]
+                first_seen_ts = (
+                    current.get("first_seen_ts")
+                    if current
+                    else contract["first_seen_ts"]
+                )
                 payload = dict(contract)
                 payload["first_seen_ts"] = first_seen_ts
 
@@ -322,7 +341,9 @@ class OptionsRepository:
 
             for row in stale_rows:
                 expiration_date = cast(date, row["expiration_date"])
-                next_status = "expired" if expiration_date < observed_at.date() else "inactive"
+                next_status = (
+                    "expired" if expiration_date < observed_at.date() else "inactive"
+                )
                 session.execute(
                     text(
                         """
@@ -354,12 +375,18 @@ class OptionsRepository:
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Upsert the active contract set and return changed rows plus inactive transitions."""
 
-        published_rows = self.sync_contract_catalog_page(contracts, observed_at=observed_at)
-        seen_symbols = {row["contract_symbol"] for row in contracts if row.get("contract_symbol")}
+        published_rows = self.sync_contract_catalog_page(
+            contracts, observed_at=observed_at
+        )
+        seen_symbols = {
+            row["contract_symbol"] for row in contracts if row.get("contract_symbol")
+        }
         transition_rows: list[dict[str, Any]] = []
 
         if not seen_symbols:
-            return published_rows, self.mark_contracts_missing_from_cycle(observed_at=observed_at)
+            return published_rows, self.mark_contracts_missing_from_cycle(
+                observed_at=observed_at
+            )
 
         with self.session() as session, session.begin():
             stale_rows = session.execute(
@@ -376,7 +403,9 @@ class OptionsRepository:
 
             for row in stale_rows:
                 expiration_date = cast(date, row["expiration_date"])
-                next_status = "expired" if expiration_date < observed_at.date() else "inactive"
+                next_status = (
+                    "expired" if expiration_date < observed_at.date() else "inactive"
+                )
                 session.execute(
                     text(
                         """
@@ -423,7 +452,9 @@ class OptionsRepository:
             ).mappings()
             return [dict(row) for row in rows]
 
-    def iter_active_contracts_for_ranking(self, *, batch_size: int = 5000) -> Iterator[dict[str, Any]]:
+    def iter_active_contracts_for_ranking(
+        self, *, batch_size: int = 5000
+    ) -> Iterator[dict[str, Any]]:
         with self.session() as session:
             rows = session.execute(
                 text(
@@ -660,7 +691,9 @@ class OptionsRepository:
                 },
             )
 
-    def _bounded_count(self, sql: str, *, timeout_ms: int = OPTIONS_STATUS_COUNT_TIMEOUT_MS) -> int | None:
+    def _bounded_count(
+        self, sql: str, *, timeout_ms: int = OPTIONS_STATUS_COUNT_TIMEOUT_MS
+    ) -> int | None:
         bounded_timeout_ms = max(1, int(timeout_ms))
         try:
             with self.session() as session, session.begin():
@@ -728,7 +761,10 @@ def ranked_contract_rows(
     active_contracts = [row for row in contracts if row.get("status") == "active"]
     if not active_contracts:
         return []
-    max_open_interest = max(int(contract.get("open_interest") or 0) for contract in active_contracts) or 1
+    max_open_interest = (
+        max(int(contract.get("open_interest") or 0) for contract in active_contracts)
+        or 1
+    )
     ranked = [
         _build_ranked_contract_row(
             row,
@@ -739,7 +775,9 @@ def ranked_contract_rows(
         )
         for row in active_contracts
     ]
-    ranked.sort(key=lambda row: (-float(row["ranking_score"]), str(row["contract_symbol"])))
+    ranked.sort(
+        key=lambda row: (-float(row["ranking_score"]), str(row["contract_symbol"]))
+    )
     hot_count, warm_count = _tier_limits(
         hot_cap=hot_cap,
         warm_cap=warm_cap,
@@ -799,7 +837,9 @@ def top_ranked_contract_rows(
             heapq.heapreplace(heap, heap_item)
 
     ranked = [item[2] for item in heap]
-    ranked.sort(key=lambda row: (-float(row["ranking_score"]), str(row["contract_symbol"])))
+    ranked.sort(
+        key=lambda row: (-float(row["ranking_score"]), str(row["contract_symbol"]))
+    )
     for index, row in enumerate(ranked):
         row["tier"] = "hot" if index < hot_count else "warm"
     return ranked
@@ -829,7 +869,9 @@ def merge_top_ranked_contract_rows(
     )
 
 
-def _tier_limits(*, hot_cap: int, warm_cap: int, provider_cap_bootstrap: int) -> tuple[int, int]:
+def _tier_limits(
+    *, hot_cap: int, warm_cap: int, provider_cap_bootstrap: int
+) -> tuple[int, int]:
     hot_count = min(hot_cap, max(int(provider_cap_bootstrap * 0.8), 0))
     warm_count = min(warm_cap, hot_count * 5 if hot_count > 0 else warm_cap)
     return hot_count, warm_count
@@ -878,7 +920,11 @@ def _parsed_ranking_inputs(row: dict[str, Any]) -> dict[str, object]:
             loaded_ranking_inputs = json.loads(ranking_inputs)
         except json.JSONDecodeError:
             return {}
-        return cast(dict[str, object], loaded_ranking_inputs) if isinstance(loaded_ranking_inputs, dict) else {}
+        return (
+            cast(dict[str, object], loaded_ranking_inputs)
+            if isinstance(loaded_ranking_inputs, dict)
+            else {}
+        )
     if isinstance(ranking_inputs, dict):
         return cast(dict[str, object], ranking_inputs)
     return {}
@@ -895,8 +941,12 @@ def _build_ranked_contract_row(
     open_interest = int(row.get("open_interest") or 0)
     parsed_ranking_inputs = _parsed_ranking_inputs(row)
     liquidity_score = min(open_interest / max(max_open_interest, 1), 1.0)
-    quote_recency_score = _score_or_default(parsed_ranking_inputs, "quote_recency_score", 0.5)
-    trade_recency_score = _score_or_default(parsed_ranking_inputs, "trade_recency_score", 0.5)
+    quote_recency_score = _score_or_default(
+        parsed_ranking_inputs, "quote_recency_score", 0.5
+    )
+    trade_recency_score = _score_or_default(
+        parsed_ranking_inputs, "trade_recency_score", 0.5
+    )
     underlying_activity_score = _score_or_default(
         parsed_ranking_inputs,
         "underlying_activity_score",
@@ -909,7 +959,9 @@ def _build_ranked_contract_row(
         observed_at=observed_at,
         expiration_date=cast(date, row["expiration_date"]),
     )
-    moneyness_score = _score_or_default(parsed_ranking_inputs, "moneyness_score", _moneyness_score(row))
+    moneyness_score = _score_or_default(
+        parsed_ranking_inputs, "moneyness_score", _moneyness_score(row)
+    )
     ranking_score = (
         0.30 * liquidity_score
         + 0.20 * quote_recency_score
