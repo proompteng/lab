@@ -7,8 +7,10 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...models import Strategy
 from .account_state import load_account_state
 from .health import build_health_payload
 from .ledger import load_runtime_ledger
@@ -32,6 +34,7 @@ from .targets import (
     isoformat,
     latest_closed_regular_equities_session_window,
     next_regular_equities_session_window,
+    proof_target_strategy_lookup_names_from_payloads,
     select_proof_targets,
 )
 
@@ -50,12 +53,18 @@ def build_proofs_payload(
 ) -> ProofsPayload:
     resolved_generated_at = generated_at or datetime.now(timezone.utc)
     bounded_limit = max(1, min(int(limit or DEFAULT_PROOFS_LIMIT), MAX_PROOFS_LIMIT))
+    strategy_universe_by_name = _load_strategy_universe_by_name(
+        session,
+        live_submission_gate=live_submission_gate,
+        route_reacquisition_book=route_reacquisition_book,
+    )
     targets = select_proof_targets(
         live_submission_gate=live_submission_gate,
         route_reacquisition_book=route_reacquisition_book,
         limit=bounded_limit,
         window=window,
         generated_at=resolved_generated_at,
+        strategy_universe_by_name=strategy_universe_by_name,
     )
     proofs = [
         _build_proof(
@@ -97,6 +106,28 @@ def build_proofs_payload(
             "reason": "proof_collection_only",
             "blockers": ["live_runtime_ledger_authority_required"],
         },
+    }
+
+
+def _load_strategy_universe_by_name(
+    session: Session,
+    *,
+    live_submission_gate: Mapping[str, Any],
+    route_reacquisition_book: Mapping[str, Any],
+) -> dict[str, object]:
+    names = proof_target_strategy_lookup_names_from_payloads(
+        live_submission_gate=live_submission_gate,
+        route_reacquisition_book=route_reacquisition_book,
+    )
+    if not names:
+        return {}
+    rows = session.execute(
+        select(Strategy.name, Strategy.universe_symbols).where(Strategy.name.in_(names))
+    ).all()
+    return {
+        str(name): universe_symbols
+        for name, universe_symbols in rows
+        if str(name or "").strip()
     }
 
 

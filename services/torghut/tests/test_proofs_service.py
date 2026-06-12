@@ -91,6 +91,34 @@ def test_build_proofs_payload_reports_no_target() -> None:
     assert payload["promotion_authority"]["allowed"] is False
 
 
+def test_build_proofs_payload_fills_missing_symbols_from_strategy_universe() -> None:
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    window_end = datetime(2026, 6, 8, 20, 0, tzinfo=timezone.utc)
+    target = _target(window_start, window_end)
+    target.pop("paper_route_probe_symbols")
+    target.pop("paper_route_probe_symbol_actions")
+
+    with _session() as session:
+        session.add(
+            Strategy(
+                name="pairs-v1",
+                description="proof fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=[" amzn ", "", "AAPL", "AMZN"],
+            )
+        )
+        session.commit()
+        payload = _build(
+            session,
+            target=target,
+            generated_at=window_start - timedelta(minutes=1),
+        )
+
+    assert payload["proofs"][0]["symbols"] == ["AAPL", "AMZN"]
+
+
 def test_build_proofs_payload_waiting_and_collecting_states() -> None:
     window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
     window_end = datetime(2026, 6, 8, 20, 0, tzinfo=timezone.utc)

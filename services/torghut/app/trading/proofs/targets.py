@@ -183,13 +183,12 @@ def select_proof_targets(
     limit: int,
     window: ProofWindowSelector,
     generated_at: datetime,
+    strategy_universe_by_name: Mapping[str, object] | None = None,
 ) -> list[ProofTarget]:
-    plan = mapping_value(
-        live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
+    raw_targets = _proof_target_mappings(
+        live_submission_gate=live_submission_gate,
+        route_reacquisition_book=route_reacquisition_book,
     )
-    raw_targets = mapping_items(plan.get("targets"))
-    if not raw_targets:
-        raw_targets = mapping_items(route_reacquisition_book.get("targets"))
 
     selected_start, selected_end = selected_window_bounds(
         "latest_closed" if window == "latest_closed" else "next",
@@ -203,6 +202,7 @@ def select_proof_targets(
             selector=window,
             selected_start=selected_start,
             selected_end=selected_end,
+            strategy_universe_by_name=strategy_universe_by_name or {},
         )
         if target is None:
             continue
@@ -221,6 +221,7 @@ def proof_target_from_mapping(
     selector: ProofWindowSelector,
     selected_start: datetime,
     selected_end: datetime,
+    strategy_universe_by_name: Mapping[str, object] | None = None,
 ) -> ProofTarget | None:
     raw = {str(key): value for key, value in target.items()}
     if selector == "auto":
@@ -244,6 +245,13 @@ def proof_target_from_mapping(
             *symbol_quantities.keys(),
         }
     )
+    if not symbols and strategy_universe_by_name:
+        strategy_symbols: set[str] = set()
+        for name in proof_target_strategy_lookup_names(raw):
+            strategy_symbols.update(_symbol_values(strategy_universe_by_name.get(name)))
+        symbols = sorted(strategy_symbols)
+    if not symbols:
+        return None
     account_label = text_value(raw.get("account_label")) or PROOFS_RUNTIME_ACCOUNT_LABEL
     strategy_name = text_value(raw.get("strategy_name"))
     runtime_strategy_name = (
@@ -270,6 +278,58 @@ def proof_target_from_mapping(
         window_start=window_start,
         window_end=window_end,
     )
+
+
+def proof_target_strategy_lookup_names(target: Mapping[str, Any]) -> tuple[str, ...]:
+    names: list[str] = []
+    for raw_value in (
+        target.get("strategy_lookup_names"),
+        target.get("runtime_strategy_name"),
+        target.get("strategy_name"),
+    ):
+        values: Sequence[object]
+        if isinstance(raw_value, Sequence) and not isinstance(
+            raw_value,
+            (str, bytes, bytearray),
+        ):
+            values = cast(Sequence[object], raw_value)
+        else:
+            values = (raw_value,)
+        for value in values:
+            name = str(value or "").strip()
+            if name and name not in names:
+                names.append(name)
+    return tuple(names)
+
+
+def proof_target_strategy_lookup_names_from_payloads(
+    *,
+    live_submission_gate: Mapping[str, Any],
+    route_reacquisition_book: Mapping[str, Any],
+) -> tuple[str, ...]:
+    names: list[str] = []
+    for target in _proof_target_mappings(
+        live_submission_gate=live_submission_gate,
+        route_reacquisition_book=route_reacquisition_book,
+    ):
+        for name in proof_target_strategy_lookup_names(target):
+            if name not in names:
+                names.append(name)
+    return tuple(names)
+
+
+def _proof_target_mappings(
+    *,
+    live_submission_gate: Mapping[str, Any],
+    route_reacquisition_book: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    plan = mapping_value(
+        live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
+    )
+    raw_targets = mapping_items(plan.get("targets"))
+    if not raw_targets:
+        raw_targets = mapping_items(route_reacquisition_book.get("targets"))
+    return raw_targets
 
 
 def _symbol_values(value: object) -> set[str]:
