@@ -41,27 +41,43 @@ def _confirmed_dynamic_target_indexes(
 ) -> list[int]:
     if not filters:
         return []
-    indexes: list[int] = []
-    for summary in summaries:
-        matched = True
-        for field, expected in filters.items():
-            if field == "runtime_strategy_name":
-                confirmation_names = summary.get("runtime_strategy_confirmation_names")
-                if not isinstance(confirmation_names, Sequence) or isinstance(
-                    confirmation_names, (str, bytes)
-                ):
-                    confirmation_names = []
-                allowed_names = {_safe_text(summary.get(field))}
-                allowed_names.update(_safe_text(value) for value in confirmation_names)
-                if expected not in {value for value in allowed_names if value}:
-                    matched = False
-                    break
-            elif _safe_text(summary.get(field)) != expected:
-                matched = False
-                break
-        if matched:
-            indexes.append(int(summary.get("target_index", 0)))
-    return indexes
+    return [
+        int(summary.get("target_index", 0))
+        for summary in summaries
+        if _summary_matches_dynamic_target_filters(summary, filters)
+    ]
+
+
+def _summary_matches_dynamic_target_filters(
+    summary: Mapping[str, Any],
+    filters: Mapping[str, str],
+) -> bool:
+    return all(
+        _summary_dynamic_target_filter_matches(summary, field, expected)
+        for field, expected in filters.items()
+    )
+
+
+def _summary_dynamic_target_filter_matches(
+    summary: Mapping[str, Any],
+    field: str,
+    expected: str,
+) -> bool:
+    if field == "runtime_strategy_name":
+        return expected in _runtime_strategy_confirmation_names(summary)
+    return _safe_text(summary.get(field)) == expected
+
+
+def _runtime_strategy_confirmation_names(summary: Mapping[str, Any]) -> set[str]:
+    confirmation_names = summary.get("runtime_strategy_confirmation_names")
+    if not isinstance(confirmation_names, Sequence) or isinstance(
+        confirmation_names,
+        (str, bytes),
+    ):
+        confirmation_names = []
+    allowed_names = {_safe_text(summary.get("runtime_strategy_name"))}
+    allowed_names.update(_safe_text(value) for value in confirmation_names)
+    return {value for value in allowed_names if value}
 
 
 def _plan_flag_blockers(plan: Mapping[str, Any]) -> list[str]:
@@ -89,8 +105,34 @@ def _confirmation_blockers(
         return []
 
     blockers: list[str] = []
-    dynamic_target_plan = bool(args.allow_dynamic_target_plan)
-    confirmations = {
+    blockers.extend(
+        _confirmation_pair_blockers(_base_confirmations(args, summaries, dsn_env))
+    )
+    if not _runtime_strategy_confirmation_matches(args, summaries):
+        blockers.append(
+            "paper_route_materialization_commit_confirm_runtime_strategy_name_missing"
+        )
+
+    if not bool(args.allow_dynamic_target_plan):
+        blockers.extend(
+            _confirmation_pair_blockers(_exact_target_confirmations(args, summaries))
+        )
+    else:
+        blockers.extend(
+            _dynamic_target_confirmation_blockers(args, summaries, plan_source)
+        )
+
+    if _safe_text(args.operator_confirmation) != OPERATOR_CONFIRMATION:
+        blockers.append("paper_route_materialization_operator_confirmation_missing")
+    return blockers
+
+
+def _base_confirmations(
+    args: argparse.Namespace,
+    summaries: Sequence[Mapping[str, Any]],
+    dsn_env: str,
+) -> dict[str, tuple[str | None, str | None]]:
+    return {
         "account_label": (
             _safe_text(args.confirm_account_label),
             PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL,
@@ -98,79 +140,87 @@ def _confirmation_blockers(
         "dsn_env": (_safe_text(args.confirm_dsn_env), dsn_env),
         "hypothesis_id": (
             _safe_text(args.confirm_hypothesis_id),
-            ",".join(_unique_texts([item.get("hypothesis_id") for item in summaries])),
+            _joined_summary_values(summaries, "hypothesis_id"),
         ),
         "max_notional": (
             _safe_text(args.confirm_max_notional),
             _safe_text(args.max_notional),
         ),
     }
-    for name, (observed, expected) in confirmations.items():
-        if expected is None or not observed or observed != expected:
-            blockers.append(
-                f"paper_route_materialization_commit_confirm_{name}_missing"
-            )
+
+
+def _exact_target_confirmations(
+    args: argparse.Namespace,
+    summaries: Sequence[Mapping[str, Any]],
+) -> dict[str, tuple[str | None, str | None]]:
+    return {
+        "candidate_id": (
+            _safe_text(args.confirm_candidate_id),
+            _joined_summary_values(summaries, "candidate_id"),
+        ),
+        "target_plan_ref": (
+            _safe_text(args.confirm_target_plan_ref),
+            _joined_summary_values(summaries, "target_plan_ref"),
+        ),
+    }
+
+
+def _joined_summary_values(
+    summaries: Sequence[Mapping[str, Any]],
+    field: str,
+) -> str:
+    return ",".join(_unique_texts([item.get(field) for item in summaries]))
+
+
+def _confirmation_pair_blockers(
+    confirmations: Mapping[str, tuple[str | None, str | None]],
+) -> list[str]:
+    return [
+        f"paper_route_materialization_commit_confirm_{name}_missing"
+        for name, (observed, expected) in confirmations.items()
+        if expected is None or not observed or observed != expected
+    ]
+
+
+def _runtime_strategy_confirmation_matches(
+    args: argparse.Namespace,
+    summaries: Sequence[Mapping[str, Any]],
+) -> bool:
     runtime_strategy_confirmation = _safe_text(args.confirm_runtime_strategy_name)
-    runtime_strategy_confirmed = bool(summaries) and bool(runtime_strategy_confirmation)
-    for item in summaries:
-        confirmation_names = item.get("runtime_strategy_confirmation_names")
-        if not isinstance(confirmation_names, Sequence) or isinstance(
-            confirmation_names, (str, bytes)
-        ):
-            confirmation_names = []
-        allowed_names = {_safe_text(item.get("runtime_strategy_name"))}
-        allowed_names.update(_safe_text(value) for value in confirmation_names)
-        if runtime_strategy_confirmation not in {
-            value for value in allowed_names if value
-        }:
-            runtime_strategy_confirmed = False
-            break
-    if not runtime_strategy_confirmed:
+    return (
+        bool(summaries)
+        and bool(runtime_strategy_confirmation)
+        and all(
+            runtime_strategy_confirmation
+            in _runtime_strategy_confirmation_names(summary)
+            for summary in summaries
+        )
+    )
+
+
+def _dynamic_target_confirmation_blockers(
+    args: argparse.Namespace,
+    summaries: Sequence[Mapping[str, Any]],
+    plan_source: Mapping[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    selected_plan = _safe_text(plan_source.get("selected_plan"))
+    confirmed_selected_plans = _confirmed_selected_plan_sources(
+        args.confirm_selected_plan_source
+    )
+    if (
+        not selected_plan
+        or not confirmed_selected_plans
+        or selected_plan not in confirmed_selected_plans
+    ):
         blockers.append(
-            "paper_route_materialization_commit_confirm_runtime_strategy_name_missing"
+            "paper_route_materialization_commit_confirm_selected_plan_source_missing"
         )
-
-    if not dynamic_target_plan:
-        exact_confirmations = {
-            "candidate_id": (
-                _safe_text(args.confirm_candidate_id),
-                ",".join(
-                    _unique_texts([item.get("candidate_id") for item in summaries])
-                ),
-            ),
-            "target_plan_ref": (
-                _safe_text(args.confirm_target_plan_ref),
-                ",".join(
-                    _unique_texts([item.get("target_plan_ref") for item in summaries])
-                ),
-            ),
-        }
-        for name, (observed, expected) in exact_confirmations.items():
-            if expected is None or not observed or observed != expected:
-                blockers.append(
-                    f"paper_route_materialization_commit_confirm_{name}_missing"
-                )
-    else:
-        selected_plan = _safe_text(plan_source.get("selected_plan"))
-        confirmed_selected_plans = _confirmed_selected_plan_sources(
-            args.confirm_selected_plan_source
+    minimum_target_count = int(args.confirm_target_count_min or 0)
+    if minimum_target_count <= 0 or len(summaries) < minimum_target_count:
+        blockers.append(
+            "paper_route_materialization_commit_confirm_target_count_min_missing"
         )
-        if (
-            not selected_plan
-            or not confirmed_selected_plans
-            or selected_plan not in confirmed_selected_plans
-        ):
-            blockers.append(
-                "paper_route_materialization_commit_confirm_selected_plan_source_missing"
-            )
-        minimum_target_count = int(args.confirm_target_count_min or 0)
-        if minimum_target_count <= 0 or len(summaries) < minimum_target_count:
-            blockers.append(
-                "paper_route_materialization_commit_confirm_target_count_min_missing"
-            )
-
-    if _safe_text(args.operator_confirmation) != OPERATOR_CONFIRMATION:
-        blockers.append("paper_route_materialization_operator_confirmation_missing")
     return blockers
 
 
@@ -184,95 +234,15 @@ def _safety_blockers(
     dsn_env: str,
 ) -> list[str]:
     blockers: list[str] = []
-    account_label = _safe_text(args.account_label)
-    if account_label != PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL:
-        blockers.append("paper_route_materialization_account_label_must_be_torghut_sim")
-    if account_label and any(
-        marker in account_label.upper() for marker in LIVE_LABEL_MARKERS
-    ):
-        blockers.append("paper_route_materialization_live_account_label_rejected")
-    if not dsn:
-        blockers.append("paper_route_materialization_database_dsn_env_missing")
-
     max_notional = _safe_decimal(args.max_notional)
-    if max_notional <= 0:
-        blockers.append("paper_route_materialization_bounded_max_notional_required")
-
-    capital_mode = _safe_text(args.capital_mode) or ""
-    if capital_mode.lower() in {"live", "prod", "production", "real"}:
-        blockers.append("paper_route_materialization_non_live_capital_mode_required")
-    for flag_name in (
-        "promotion_allowed",
-        "final_promotion_allowed",
-        "final_authority_ok",
-        "capital_promotion_allowed",
-    ):
-        if bool(getattr(args, flag_name)):
-            blockers.append(
-                f"paper_route_materialization_request_{flag_name}_must_be_false"
-            )
-
+    blockers.extend(
+        _request_safety_blockers(args=args, dsn=dsn, max_notional=max_notional)
+    )
     blockers.extend(_plan_flag_blockers(plan))
     if not summaries:
         blockers.append("paper_route_materialization_target_plan_targets_missing")
-
     for summary in summaries:
-        index = int(summary.get("target_index", 0))
-        target_account_label = _safe_text(summary.get("account_label"))
-        if target_account_label != PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL:
-            blockers.append(
-                f"paper_route_materialization_target_{index}_account_label_must_be_torghut_sim"
-            )
-        if target_account_label and any(
-            marker in target_account_label.upper() for marker in LIVE_LABEL_MARKERS
-        ):
-            blockers.append(
-                f"paper_route_materialization_target_{index}_live_account_label_rejected"
-            )
-        for field in (
-            "hypothesis_id",
-            "candidate_id",
-            "runtime_strategy_name",
-            "target_plan_ref",
-            "bounded_collection_stage",
-        ):
-            if not _safe_text(summary.get(field)):
-                blockers.append(
-                    f"paper_route_materialization_target_{index}_{field}_missing"
-                )
-        target_notional = _safe_decimal(summary.get("target_notional"))
-        if target_notional <= 0:
-            blockers.append(
-                f"paper_route_materialization_target_{index}_target_notional_missing"
-            )
-        elif max_notional > 0 and target_notional > max_notional:
-            blockers.append(
-                f"paper_route_materialization_target_{index}_target_notional_exceeds_max"
-            )
-        if _safe_decimal(summary.get("target_quantity")) <= 0 and target_notional <= 0:
-            blockers.append(
-                f"paper_route_materialization_target_{index}_target_quantity_missing"
-            )
-        if not _truthy(summary.get("evidence_collection_ok")):
-            blockers.append(
-                f"paper_route_materialization_target_{index}_evidence_collection_ok_required"
-            )
-        if not _truthy(summary.get("bounded_evidence_collection_authorized")):
-            blockers.append(
-                f"paper_route_materialization_target_{index}_bounded_evidence_collection_authorized_required"
-            )
-        if not cast(Sequence[object], summary.get("symbols", [])):
-            blockers.append(
-                f"paper_route_materialization_target_{index}_symbol_actions_missing"
-            )
-        for capacity_blocker in cast(
-            Sequence[object], summary.get("execution_capacity_blockers", [])
-        ):
-            if capacity_blocker_text := _safe_text(capacity_blocker):
-                blockers.append(
-                    f"paper_route_materialization_target_{index}_{capacity_blocker_text}"
-                )
-
+        blockers.extend(_target_summary_safety_blockers(summary, max_notional))
     blockers.extend(
         _confirmation_blockers(
             args=args,
@@ -282,6 +252,153 @@ def _safety_blockers(
         )
     )
     return sorted(dict.fromkeys(blockers))
+
+
+def _request_safety_blockers(
+    *,
+    args: argparse.Namespace,
+    dsn: str | None,
+    max_notional: Decimal,
+) -> list[str]:
+    blockers: list[str] = []
+    blockers.extend(_account_label_blockers(_safe_text(args.account_label)))
+    if not dsn:
+        blockers.append("paper_route_materialization_database_dsn_env_missing")
+    if max_notional <= 0:
+        blockers.append("paper_route_materialization_bounded_max_notional_required")
+    capital_mode = _safe_text(args.capital_mode) or ""
+    if capital_mode.lower() in {"live", "prod", "production", "real"}:
+        blockers.append("paper_route_materialization_non_live_capital_mode_required")
+    blockers.extend(_request_flag_blockers(args))
+    return blockers
+
+
+def _account_label_blockers(account_label: str | None) -> list[str]:
+    blockers: list[str] = []
+    if account_label != PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL:
+        blockers.append("paper_route_materialization_account_label_must_be_torghut_sim")
+    if account_label and any(
+        marker in account_label.upper() for marker in LIVE_LABEL_MARKERS
+    ):
+        blockers.append("paper_route_materialization_live_account_label_rejected")
+    return blockers
+
+
+def _request_flag_blockers(args: argparse.Namespace) -> list[str]:
+    return [
+        f"paper_route_materialization_request_{flag_name}_must_be_false"
+        for flag_name in (
+            "promotion_allowed",
+            "final_promotion_allowed",
+            "final_authority_ok",
+            "capital_promotion_allowed",
+        )
+        if bool(getattr(args, flag_name))
+    ]
+
+
+def _target_summary_safety_blockers(
+    summary: Mapping[str, Any],
+    max_notional: Decimal,
+) -> list[str]:
+    index = int(summary.get("target_index", 0))
+    blockers = _target_account_blockers(summary, index)
+    blockers.extend(_target_required_field_blockers(summary, index))
+    target_notional = _safe_decimal(summary.get("target_notional"))
+    blockers.extend(
+        _target_notional_blockers(summary, index, target_notional, max_notional)
+    )
+    blockers.extend(_target_authorization_blockers(summary, index))
+    blockers.extend(_target_capacity_blockers(summary, index))
+    return blockers
+
+
+def _target_account_blockers(summary: Mapping[str, Any], index: int) -> list[str]:
+    blockers: list[str] = []
+    target_account_label = _safe_text(summary.get("account_label"))
+    if target_account_label != PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL:
+        blockers.append(
+            f"paper_route_materialization_target_{index}_account_label_must_be_torghut_sim"
+        )
+    if target_account_label and any(
+        marker in target_account_label.upper() for marker in LIVE_LABEL_MARKERS
+    ):
+        blockers.append(
+            f"paper_route_materialization_target_{index}_live_account_label_rejected"
+        )
+    return blockers
+
+
+def _target_required_field_blockers(
+    summary: Mapping[str, Any],
+    index: int,
+) -> list[str]:
+    return [
+        f"paper_route_materialization_target_{index}_{field}_missing"
+        for field in (
+            "hypothesis_id",
+            "candidate_id",
+            "runtime_strategy_name",
+            "target_plan_ref",
+            "bounded_collection_stage",
+        )
+        if not _safe_text(summary.get(field))
+    ]
+
+
+def _target_notional_blockers(
+    summary: Mapping[str, Any],
+    index: int,
+    target_notional: Decimal,
+    max_notional: Decimal,
+) -> list[str]:
+    blockers: list[str] = []
+    if target_notional <= 0:
+        blockers.append(
+            f"paper_route_materialization_target_{index}_target_notional_missing"
+        )
+    elif max_notional > 0 and target_notional > max_notional:
+        blockers.append(
+            f"paper_route_materialization_target_{index}_target_notional_exceeds_max"
+        )
+    if _safe_decimal(summary.get("target_quantity")) <= 0 and target_notional <= 0:
+        blockers.append(
+            f"paper_route_materialization_target_{index}_target_quantity_missing"
+        )
+    return blockers
+
+
+def _target_authorization_blockers(
+    summary: Mapping[str, Any],
+    index: int,
+) -> list[str]:
+    blockers: list[str] = []
+    if not _truthy(summary.get("evidence_collection_ok")):
+        blockers.append(
+            f"paper_route_materialization_target_{index}_evidence_collection_ok_required"
+        )
+    if not _truthy(summary.get("bounded_evidence_collection_authorized")):
+        blockers.append(
+            f"paper_route_materialization_target_{index}_bounded_evidence_collection_authorized_required"
+        )
+    if not cast(Sequence[object], summary.get("symbols", [])):
+        blockers.append(
+            f"paper_route_materialization_target_{index}_symbol_actions_missing"
+        )
+    return blockers
+
+
+def _target_capacity_blockers(
+    summary: Mapping[str, Any],
+    index: int,
+) -> list[str]:
+    return [
+        f"paper_route_materialization_target_{index}_{capacity_blocker_text}"
+        for capacity_blocker in cast(
+            Sequence[object], summary.get("execution_capacity_blockers", [])
+        )
+        if (capacity_blocker_text := _safe_text(capacity_blocker))
+    ]
 
 
 def _session_factory(dsn: str) -> sessionmaker[Session]:
