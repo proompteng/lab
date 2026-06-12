@@ -52,6 +52,60 @@ def test_select_proof_targets_dedupes_identity_window() -> None:
     assert targets[0].symbols == ("AAPL", "AMZN")
 
 
+def test_select_proof_targets_uses_strategy_universe_when_target_symbols_missing() -> (
+    None
+):
+    generated_at = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+
+    targets = select_proof_targets(
+        live_submission_gate={
+            "runtime_ledger_paper_probation_import_plan": {
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "candidate-1",
+                        "runtime_strategy_name": "pairs-v1",
+                        "account_label": "TORGHUT_SIM",
+                    }
+                ]
+            }
+        },
+        route_reacquisition_book={},
+        limit=20,
+        window="next",
+        generated_at=generated_at,
+        strategy_universe_by_name={"pairs-v1": [" amzn ", "", "AAPL", "AMZN"]},
+    )
+
+    assert len(targets) == 1
+    assert targets[0].symbols == ("AAPL", "AMZN")
+
+
+def test_select_proof_targets_skips_symbolless_targets() -> None:
+    generated_at = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+
+    targets = select_proof_targets(
+        live_submission_gate={
+            "runtime_ledger_paper_probation_import_plan": {
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "candidate-1",
+                        "runtime_strategy_name": "missing-symbols-v1",
+                        "account_label": "TORGHUT_SIM",
+                    }
+                ]
+            }
+        },
+        route_reacquisition_book={},
+        limit=20,
+        window="next",
+        generated_at=generated_at,
+    )
+
+    assert targets == []
+
+
 def test_target_plan_parser_accepts_proofs_payload() -> None:
     plan = paper_route_target_plan_from_payload(
         {
