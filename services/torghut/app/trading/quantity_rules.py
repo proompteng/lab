@@ -178,15 +178,14 @@ def fractional_equities_enabled_for_trade(
     normalized_action = action.strip().lower()
     if normalized_action == "buy":
         return True
-    if normalized_action != "sell":
-        return False
-    if position_qty is None:
-        return False
-    if position_qty <= 0:
-        return False
-    if requested_qty is None or requested_qty <= 0:
-        return True
-    return requested_qty <= position_qty
+    return (
+        normalized_action == "sell"
+        and position_qty is not None
+        and position_qty > 0
+        and (
+            requested_qty is None or requested_qty <= 0 or requested_qty <= position_qty
+        )
+    )
 
 
 __all__ = [

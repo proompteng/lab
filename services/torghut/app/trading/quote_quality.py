@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -62,6 +62,18 @@ class QuoteQualityStatus:
         }
 
 
+@dataclass(frozen=True)
+class _QuoteQualityContext:
+    signal: SignalEnvelope
+    policy: QuoteQualityPolicy
+    price: Decimal | None
+    bid: Decimal | None
+    ask: Decimal | None
+    source: str | None
+    quote_age_seconds: Decimal | None
+    has_snapshot_fallback: bool
+
+
 class SignalQuoteQualityTracker:
     """Track last executable prices and reject non-executable quote states."""
 
@@ -90,153 +102,135 @@ def assess_signal_quote_quality(
     previous_price: Decimal | None,
     policy: QuoteQualityPolicy | None = None,
 ) -> QuoteQualityStatus:
-    effective_policy = policy or QuoteQualityPolicy()
-    price = _extract_price(signal)
-    bid = _extract_bid(signal)
-    ask = _extract_ask(signal)
-    source = _extract_quote_source(signal)
-    quote_age_seconds = _signal_quote_age_seconds(signal)
-    has_snapshot_fallback = _has_quote_snapshot_fallback(signal) or source is not None
-    if price is None and bid is None and ask is None and not has_snapshot_fallback:
-        return _status(
+    context = _quote_quality_context(signal=signal, policy=policy)
+    reason = _base_quote_reject_reason(context)
+    if reason is not None:
+        return _status_from_context(context, valid=False, reason=reason)
+
+    spread_bps = _signal_spread_bps(signal=signal, price=context.price)
+    reason = _policy_quote_reject_reason(context, spread_bps)
+    if reason is not None:
+        return _status_from_context(
+            context,
             valid=False,
-            reason="absent_snapshot_fallback",
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-    if price is None or price <= 0:
-        return _status(
-            valid=False,
-            reason="non_positive_price",
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-    if bid is None and ask is None:
-        return _status(
-            valid=False,
-            reason="missing_executable_quote",
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-    if bid is None:
-        return _status(
-            valid=False,
-            reason="missing_bid",
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-    if ask is None:
-        return _status(
-            valid=False,
-            reason="missing_ask",
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-    if bid <= 0:
-        return _status(
-            valid=False,
-            reason="non_positive_bid",
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-    if ask <= 0:
-        return _status(
-            valid=False,
-            reason="non_positive_ask",
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-    if ask < bid:
-        return _status(
-            valid=False,
-            reason="crossed_quote",
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
+            reason=reason,
+            spread_bps=spread_bps,
         )
 
-    spread_bps = _signal_spread_bps(signal=signal, price=price)
-    if (
-        quote_age_seconds is not None
-        and effective_policy.max_executable_quote_age_seconds is not None
-        and quote_age_seconds
-        > Decimal(str(effective_policy.max_executable_quote_age_seconds))
-    ):
-        return _status(
-            valid=False,
-            reason="stale_quote",
-            spread_bps=spread_bps,
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-    if (
-        spread_bps is not None
-        and spread_bps > effective_policy.max_executable_spread_bps
-    ):
-        return _status(
-            valid=False,
-            reason="spread_bps_exceeded",
-            spread_bps=spread_bps,
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
-        )
-
-    jump_bps = _signal_mid_jump_bps(price=price, reference_price=previous_price)
-    if (
-        jump_bps is not None
-        and jump_bps > effective_policy.max_quote_mid_jump_bps
-        and spread_bps is not None
-        and spread_bps > effective_policy.max_jump_with_wide_spread_bps
-    ):
-        return _status(
+    jump_bps = _signal_mid_jump_bps(
+        price=context.price,
+        reference_price=previous_price,
+    )
+    if _has_wide_spread_midpoint_jump(context, spread_bps, jump_bps):
+        return _status_from_context(
+            context,
             valid=False,
             reason="wide_spread_midpoint_jump",
             spread_bps=spread_bps,
             jump_bps=jump_bps,
-            quote_age_seconds=quote_age_seconds,
-            source=source,
-            price=price,
-            bid=bid,
-            ask=ask,
         )
-    return _status(
+    return _status_from_context(
+        context,
         valid=True,
         spread_bps=spread_bps,
         jump_bps=jump_bps,
-        quote_age_seconds=quote_age_seconds,
+    )
+
+
+def _quote_quality_context(
+    *,
+    signal: SignalEnvelope,
+    policy: QuoteQualityPolicy | None,
+) -> _QuoteQualityContext:
+    source = _extract_quote_source(signal)
+    return _QuoteQualityContext(
+        signal=signal,
+        policy=policy or QuoteQualityPolicy(),
+        price=_extract_price(signal),
+        bid=_extract_bid(signal),
+        ask=_extract_ask(signal),
         source=source,
-        price=price,
-        bid=bid,
-        ask=ask,
+        quote_age_seconds=_signal_quote_age_seconds(signal),
+        has_snapshot_fallback=_has_quote_snapshot_fallback(signal)
+        or source is not None,
+    )
+
+
+def _base_quote_reject_reason(context: _QuoteQualityContext) -> str | None:
+    checks: tuple[tuple[Callable[[], bool], str], ...] = (
+        (
+            lambda: (
+                context.price is None
+                and context.bid is None
+                and context.ask is None
+                and not context.has_snapshot_fallback
+            ),
+            "absent_snapshot_fallback",
+        ),
+        (lambda: context.price is None or context.price <= 0, "non_positive_price"),
+        (
+            lambda: context.bid is None and context.ask is None,
+            "missing_executable_quote",
+        ),
+        (lambda: context.bid is None, "missing_bid"),
+        (lambda: context.ask is None, "missing_ask"),
+        (lambda: cast(Decimal, context.bid) <= 0, "non_positive_bid"),
+        (lambda: cast(Decimal, context.ask) <= 0, "non_positive_ask"),
+        (
+            lambda: cast(Decimal, context.ask) < cast(Decimal, context.bid),
+            "crossed_quote",
+        ),
+    )
+    return next((reason for failed, reason in checks if failed()), None)
+
+
+def _policy_quote_reject_reason(
+    context: _QuoteQualityContext,
+    spread_bps: Decimal | None,
+) -> str | None:
+    if (
+        context.quote_age_seconds is not None
+        and context.policy.max_executable_quote_age_seconds is not None
+        and context.quote_age_seconds
+        > Decimal(str(context.policy.max_executable_quote_age_seconds))
+    ):
+        return "stale_quote"
+    if spread_bps is not None and spread_bps > context.policy.max_executable_spread_bps:
+        return "spread_bps_exceeded"
+    return None
+
+
+def _has_wide_spread_midpoint_jump(
+    context: _QuoteQualityContext,
+    spread_bps: Decimal | None,
+    jump_bps: Decimal | None,
+) -> bool:
+    return (
+        jump_bps is not None
+        and jump_bps > context.policy.max_quote_mid_jump_bps
+        and spread_bps is not None
+        and spread_bps > context.policy.max_jump_with_wide_spread_bps
+    )
+
+
+def _status_from_context(
+    context: _QuoteQualityContext,
+    *,
+    valid: bool,
+    reason: str | None = None,
+    spread_bps: Decimal | None = None,
+    jump_bps: Decimal | None = None,
+) -> QuoteQualityStatus:
+    return _status(
+        valid=valid,
+        reason=reason,
+        spread_bps=spread_bps,
+        jump_bps=jump_bps,
+        quote_age_seconds=context.quote_age_seconds,
+        source=context.source,
+        price=context.price,
+        bid=context.bid,
+        ask=context.ask,
     )
 
 
