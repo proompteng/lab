@@ -44,6 +44,18 @@ spec:
                   PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json
                   HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT=/tmp/torghut-empirical-renewal/hpairs-source-proof-census.json
                   mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")" "$(dirname "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}")"
+                  WINDOW_END="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                  WINDOW_START="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)"
+                  /opt/venv/bin/python scripts/reconcile_cross_dsn_order_feed_links.py \
+                    --event-dsn-env DB_DSN \
+                    --canonical-dsn-env SIM_DB_DSN \
+                    --source-account-label PA3SX7FYNUTF \
+                    --canonical-account-label TORGHUT_SIM \
+                    --window-start "${WINDOW_START}" \
+                    --window-end "${WINDOW_END}" \
+                    --limit 5000 \
+                    --apply \
+                    --json
                   /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \

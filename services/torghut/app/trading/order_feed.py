@@ -3006,6 +3006,40 @@ def _isoformat_datetime(value: datetime | None) -> str | None:
     return _ensure_aware_utc(value).isoformat()
 
 
+def _cross_dsn_linkage_counts_for_source_window(
+    session: Session,
+    source_window_id: object,
+) -> dict[str, int]:
+    rows = session.execute(
+        select(ExecutionOrderEvent.raw_event).where(
+            ExecutionOrderEvent.source_window_id == source_window_id
+        )
+    ).all()
+    execution_refs = 0
+    decision_refs = 0
+    tca_refs = 0
+    for (raw_event,) in rows:
+        payload = coerce_json_payload(raw_event)
+        if not isinstance(payload, Mapping):
+            continue
+        payload_mapping = cast(Mapping[object, Any], payload)
+        raw_linkage = payload_mapping.get("_torghut_cross_dsn_linkage")
+        if not isinstance(raw_linkage, Mapping):
+            continue
+        linkage = cast(Mapping[object, Any], raw_linkage)
+        if linkage.get("canonical_execution_id"):
+            execution_refs += 1
+        if linkage.get("canonical_trade_decision_id"):
+            decision_refs += 1
+        if linkage.get("canonical_execution_tca_metric_id"):
+            tca_refs += 1
+    return {
+        "cross_dsn_execution_ref_count": execution_refs,
+        "cross_dsn_trade_decision_ref_count": decision_refs,
+        "cross_dsn_tca_ref_count": tca_refs,
+    }
+
+
 def _refresh_source_window_linkage_counts(
     session: Session, event: ExecutionOrderEvent
 ) -> None:
@@ -3081,6 +3115,16 @@ def _refresh_source_window_linkage_counts(
         )
     else:
         classification_counts.pop("unlinked_decision", None)
+    cross_dsn_counts = _cross_dsn_linkage_counts_for_source_window(
+        session,
+        event.source_window_id,
+    )
+    for count_key, count_value in cross_dsn_counts.items():
+        payload_dict[count_key] = count_value
+        if count_value:
+            classification_counts[count_key] = count_value
+        else:
+            classification_counts.pop(count_key, None)
     payload_dict["classification_counts"] = classification_counts
     source_window.classification_counts = classification_counts
     source_window_complete = bool(

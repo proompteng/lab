@@ -79,7 +79,9 @@ _SIMPLE_ALLOWED_REJECT_REASONS = {
     "invalid_qty_increment",
     "qty_below_min_after_clamp",
     "insufficient_buying_power",
+    "equity_required_for_exposure_increase",
     "max_notional_exceeded",
+    "max_gross_exposure_exceeded",
     "max_symbol_exposure_exceeded",
     "shorting_not_allowed_for_asset",
     "broker_precheck_failed",
@@ -5152,6 +5154,16 @@ class SimpleTradingPipeline(TradingPipeline):
                 settings.trading_simple_buying_power_reserve_bps
             )
             or Decimal("0"),
+            max_order_pct_equity=_optional_decimal(
+                settings.trading_simple_max_order_pct_equity
+            ),
+            max_gross_exposure_pct_equity=_optional_decimal(
+                settings.trading_simple_max_gross_exposure_pct_equity
+            ),
+            require_equity_for_exposure_increase=(
+                settings.trading_simple_submit_enabled
+                or settings.trading_simple_paper_route_probe_enabled
+            ),
         )
         target_notional_sizing = _target_notional_sizing_audit_from_params(
             decision.params

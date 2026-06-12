@@ -133,13 +133,13 @@ spec:
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
-              value: "1000000"
+              value: "25000"
+            - name: TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY
+              value: "0.25"
+            - name: TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY
+              value: "1.0"
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
-            - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL
-              value: "http://agents.agents.svc.cluster.local/ready"
-            - name: TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS
-              value: "30"
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
               value: "5"
             - name: TRADING_MARKET_CONTEXT_REQUIRED
@@ -333,6 +333,10 @@ spec:
               value: http://agents.agents.svc.cluster.local/v1/agent-runs
             - name: AGENTS_BASE_URL
               value: http://agents.agents.svc.cluster.local
+            - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL
+              value: http://agents.agents.svc.cluster.local/ready
+            - name: TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS
+              value: "30"
             - name: INNGEST_APP_ID
               value: torghut
             - name: INNGEST_BASE_URL

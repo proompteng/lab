@@ -8737,7 +8737,9 @@ _SIMPLE_LANE_ALLOWED_REJECT_REASONS = {
     "invalid_qty_increment",
     "qty_below_min_after_clamp",
     "insufficient_buying_power",
+    "equity_required_for_exposure_increase",
     "max_notional_exceeded",
+    "max_gross_exposure_exceeded",
     "max_symbol_exposure_exceeded",
     "shorting_not_allowed_for_asset",
     "broker_precheck_failed",
@@ -8777,6 +8779,10 @@ def _build_simple_lane_status_payload() -> dict[str, object]:
         "route_symbol_filter_enabled": settings.trading_pipeline_mode == "simple",
         "max_notional_per_order": settings.trading_simple_max_notional_per_order,
         "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
+        "max_order_pct_equity": settings.trading_simple_max_order_pct_equity,
+        "max_gross_exposure_pct_equity": (
+            settings.trading_simple_max_gross_exposure_pct_equity
+        ),
         "allowed_reject_reasons": sorted(_SIMPLE_LANE_ALLOWED_REJECT_REASONS),
     }
 
