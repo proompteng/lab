@@ -1,14 +1,35 @@
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
+"""Whitepaper claim compilation public API."""
+
 from __future__ import annotations
 
-from importlib import import_module as _import_module
-import sys as _sys
+from app.whitepapers.claim_compiler_modules import (
+    FEATURE_BLOCKER_CLAIM_TYPES as FEATURE_BLOCKER_CLAIM_TYPES,
+    FEATURE_BLOCKER_RELATION_TYPES as FEATURE_BLOCKER_RELATION_TYPES,
+    FEATURE_FIELD_KEYS as FEATURE_FIELD_KEYS,
+    FEATURE_RECIPE_CLAIM_TYPES as FEATURE_RECIPE_CLAIM_TYPES,
+    MECHANISM_CLAIM_TYPES as MECHANISM_CLAIM_TYPES,
+    RECENT_WHITEPAPER_SEEDS as RECENT_WHITEPAPER_SEEDS,
+    RISK_VALIDATION_CLAIM_TYPES as RISK_VALIDATION_CLAIM_TYPES,
+    RISK_VALIDATION_RELATION_TYPES as RISK_VALIDATION_RELATION_TYPES,
+    WhitepaperResearchSource as WhitepaperResearchSource,
+    claim_subgraph_blockers as claim_subgraph_blockers,
+    compile_sources_to_hypothesis_cards as compile_sources_to_hypothesis_cards,
+    source_from_payload as source_from_payload,
+    sources_from_jsonl as sources_from_jsonl,
+)
 
-_module_name = __name__
-_parent_name, _, _module_attr = _module_name.rpartition(".")
-_impl = _import_module("app.whitepapers.claim_compiler_modules")
-globals().update(_impl.__dict__)
-_sys.modules[_module_name] = _impl
-_parent = _sys.modules.get(_parent_name)
-if _parent is not None:
-    setattr(_parent, _module_attr, _impl)
+__all__ = [
+    "FEATURE_BLOCKER_CLAIM_TYPES",
+    "FEATURE_BLOCKER_RELATION_TYPES",
+    "FEATURE_FIELD_KEYS",
+    "FEATURE_RECIPE_CLAIM_TYPES",
+    "MECHANISM_CLAIM_TYPES",
+    "RISK_VALIDATION_CLAIM_TYPES",
+    "RISK_VALIDATION_RELATION_TYPES",
+    "RECENT_WHITEPAPER_SEEDS",
+    "WhitepaperResearchSource",
+    "claim_subgraph_blockers",
+    "compile_sources_to_hypothesis_cards",
+    "source_from_payload",
+    "sources_from_jsonl",
+]
