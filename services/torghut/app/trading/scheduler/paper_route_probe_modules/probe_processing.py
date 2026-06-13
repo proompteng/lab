@@ -1,24 +1,18 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Literal, NamedTuple, cast
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
-from sqlalchemy import select  # pyright: ignore[reportUnknownVariableType]
 from sqlalchemy.orm import Session
 
 from ....config import settings
 from ....models import (
-    Execution,
     Strategy,
     TradeDecision,
 )
-from ....strategies.catalog import extract_catalog_metadata
 from ...models import StrategyDecision
 from ...runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -30,32 +24,45 @@ from ...simple_risk import (
     position_qty_for_symbol,
 )
 from ..submission_preparation import SimplePipelineSubmissionPreparationMixin
-from ..target_plan_helpers import (
-    _FLATTEN_CLOSE_DECISION_SCHEMA_VERSION,
-    _PAPER_ROUTE_PROBE_EXIT_PENDING_GRACE_SECONDS,
-    _PAPER_ROUTE_PROBE_QTY_STEP,
-    _PAPER_ROUTE_PROBE_REASONS,
-    _PAPER_ROUTE_RETRY_KINDS,
-    _PaperRouteRetryKind,
-    _PaperRouteRetryTransition,
-    _REGULAR_SESSION_MINUTES,
-    _bounded_paper_route_collection_entry_metadata,
-    _merge_paper_route_probe_lineage,
-    _optional_decimal,
-    _paper_route_probe_entry_metadata,
-    _paper_route_probe_lineage_from_params,
-    _safe_int,
-    _safe_text,
-    _strategy_signal_paper_entry_metadata,
-    _target_bool,
-    _target_notional_sizing_audit_from_params,
-    _target_plan_lineage,
+from ..target_plan_helpers_modules import (
+    PAPER_ROUTE_PROBE_QTY_STEP as _PAPER_ROUTE_PROBE_QTY_STEP,
+    PAPER_ROUTE_PROBE_REASONS as _PAPER_ROUTE_PROBE_REASONS,
+    PAPER_ROUTE_RETRY_KINDS as _PAPER_ROUTE_RETRY_KINDS,
+    REGULAR_SESSION_MINUTES as _REGULAR_SESSION_MINUTES,
+    PaperRouteRetryKind as _PaperRouteRetryKind,
+    PaperRouteRetryTransition as _PaperRouteRetryTransition,
+    merge_paper_route_probe_lineage as _merge_paper_route_probe_lineage,
+    optional_decimal as _optional_decimal,
+    paper_route_probe_entry_metadata as _paper_route_probe_entry_metadata,
+    paper_route_probe_lineage_from_params as _paper_route_probe_lineage_from_params,
+    safe_int as _safe_int,
+    safe_text as _safe_text,
+    target_bool as _target_bool,
+    target_notional_sizing_audit_from_params as _target_notional_sizing_audit_from_params,
+    target_plan_lineage as _target_plan_lineage,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+from .retry_decisions import (
+    paper_route_probe_exit_metadata,
+    paper_route_target_price_retry_metadata,
+)
+from .probe_types import (
+    PaperRouteProbeContextPayloadParts,
+    PaperRouteProbeContextRequest,
+    PaperRouteProbeExitPositionRestoreContext,
+    PaperRouteProbeRunContext,
+    PaperRouteProbeTargetLookup,
+)
 
-from .part_01_statements_55 import *
-from .part_02_simplepipelinepaperrouteprobemixinmethodsp import *
+if TYPE_CHECKING:
+    from .probe_types import PaperRouteProbeRuntime
+else:
+
+    class PaperRouteProbeRuntime:
+        pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class _PaperRouteProbeExitTiming(NamedTuple):
@@ -85,7 +92,58 @@ class _PaperRouteProbeMode(NamedTuple):
     bounded_submit_path: str | None
 
 
-class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
+def _paper_route_probe_run_context(
+    context: PaperRouteProbeRunContext | None,
+    kwargs: Mapping[str, Any],
+) -> PaperRouteProbeRunContext:
+    if context is not None:
+        return context
+    return PaperRouteProbeRunContext(
+        session=cast(Session, kwargs["session"]),
+        strategies=cast(list[Strategy], kwargs["strategies"]),
+        account=cast(dict[str, str], kwargs["account"]),
+        positions=cast(list[dict[str, Any]], kwargs["positions"]),
+        allowed_symbols=cast(set[str], kwargs["allowed_symbols"]),
+    )
+
+
+def _paper_route_probe_context_request(
+    kwargs: Mapping[str, Any],
+) -> PaperRouteProbeContextRequest:
+    target_lookup = cast(
+        PaperRouteProbeTargetLookup | None,
+        kwargs.get("target_lookup"),
+    )
+    if target_lookup is None:
+        target_lookup = PaperRouteProbeTargetLookup(
+            session=cast(Session | None, kwargs.get("session")),
+            strategies=cast(Sequence[Strategy] | None, kwargs.get("strategies")),
+        )
+    return PaperRouteProbeContextRequest(
+        proof_floor=cast(Mapping[str, object], kwargs["proof_floor"]),
+        decision=cast(StrategyDecision, kwargs["decision"]),
+        strategy=cast(Strategy | None, kwargs.get("strategy")),
+        target_lookup=target_lookup,
+    )
+
+
+def _paper_route_probe_exit_restore_context(
+    context: PaperRouteProbeExitPositionRestoreContext | None,
+    kwargs: Mapping[str, Any],
+) -> PaperRouteProbeExitPositionRestoreContext:
+    if context is not None:
+        return context
+    return PaperRouteProbeExitPositionRestoreContext(
+        positions=cast(list[dict[str, Any]], kwargs["positions"]),
+        decision=cast(StrategyDecision, kwargs["decision"]),
+        metadata=cast(Mapping[str, Any], kwargs["metadata"]),
+        price=cast(Decimal | None, kwargs.get("price")),
+        execution_adapter=kwargs.get("execution_adapter"),
+        trading_mode=cast(str | None, kwargs.get("trading_mode")),
+    )
+
+
+class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
     @staticmethod
     def _paper_route_retry_transition(
         decision_row: TradeDecision,
@@ -102,7 +160,7 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
                     metadata=quote_routeability_metadata,
                 )
         if "target_price" in allowed_kinds:
-            target_price_metadata = SimplePipelinePaperRouteProbeMixin._paper_route_target_price_retry_metadata(
+            target_price_metadata = paper_route_target_price_retry_metadata(
                 decision_row
             )
             if target_price_metadata is not None:
@@ -111,10 +169,8 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
                     metadata=target_price_metadata,
                 )
         if "bounded_probe" in allowed_kinds:
-            probe_metadata = (
-                SimplePipelinePaperRouteProbeMixin._paper_route_probe_retry_metadata(
-                    decision_row
-                )
+            probe_metadata = SimplePipelinePaperRouteProbeProcessingMixin._paper_route_probe_retry_metadata(
+                decision_row
             )
             if probe_metadata is not None:
                 return _PaperRouteRetryTransition(
@@ -185,49 +241,47 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
 
     @staticmethod
     def _restore_simulation_paper_route_probe_exit_position(
-        *,
-        positions: list[dict[str, Any]],
-        decision: StrategyDecision,
-        metadata: Mapping[str, Any],
-        price: Decimal | None,
-        execution_adapter: Any | None,
-        trading_mode: str | None,
+        context: PaperRouteProbeExitPositionRestoreContext | None = None,
+        **kwargs: Any,
     ) -> Decimal | None:
+        context = _paper_route_probe_exit_restore_context(context, kwargs)
         seed_missing = _simulation_probe_exit_seed_missing(
-            execution_adapter=execution_adapter,
-            trading_mode=trading_mode,
+            execution_adapter=context.execution_adapter,
+            trading_mode=context.trading_mode,
         )
         if seed_missing is None:
             return None
-        db_open_qty = _optional_decimal(metadata.get("db_open_qty"))
+        db_open_qty = _optional_decimal(context.metadata.get("db_open_qty"))
         if db_open_qty is None or db_open_qty <= 0:
             return None
-        open_side = str(metadata.get("db_open_side") or "long").strip().lower()
+        open_side = str(context.metadata.get("db_open_side") or "long").strip().lower()
         if open_side not in {"long", "short"}:
             open_side = "long"
 
         restored_qty = (
-            min(db_open_qty, decision.qty) if decision.qty > 0 else db_open_qty
+            min(db_open_qty, context.decision.qty)
+            if context.decision.qty > 0
+            else db_open_qty
         )
         position: dict[str, Any] = {
-            "symbol": decision.symbol,
+            "symbol": context.decision.symbol,
             "qty": str(restored_qty),
             "side": open_side,
         }
-        if price is not None and price > 0:
-            position["market_value"] = str(restored_qty * price)
+        if context.price is not None and context.price > 0:
+            position["market_value"] = str(restored_qty * context.price)
         try:
             seeded = bool(seed_missing(position))
         except Exception as exc:
             logger.warning(
                 "Failed to restore simulation paper route probe exit position symbol=%s error=%s",
-                decision.symbol,
+                context.decision.symbol,
                 exc,
             )
             return None
         if not seeded:
             return None
-        positions.append(dict(position))
+        context.positions.append(dict(position))
         return restored_qty
 
     @staticmethod
@@ -269,15 +323,10 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
         execution_adapter: Any | None = None,
         trading_mode: str | None = None,
     ) -> StrategyDecision | None:
-        if (
-            SimplePipelinePaperRouteProbeMixin._paper_route_probe_exit_metadata(
-                decision
-            )
-            is None
-        ):
+        if paper_route_probe_exit_metadata(decision) is None:
             return decision
         broker_positions = (
-            SimplePipelinePaperRouteProbeMixin._execution_adapter_positions(
+            SimplePipelinePaperRouteProbeProcessingMixin._execution_adapter_positions(
                 execution_adapter
             )
         )
@@ -297,13 +346,15 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
         if position_missing:
             price = _optional_decimal(params.get("price"))
             restored_qty = (
-                SimplePipelinePaperRouteProbeMixin._restore_simulation_paper_route_probe_exit_position(
-                    positions=positions,
-                    decision=decision,
-                    metadata=metadata,
-                    price=price,
-                    execution_adapter=execution_adapter,
-                    trading_mode=trading_mode,
+                SimplePipelinePaperRouteProbeProcessingMixin._restore_simulation_paper_route_probe_exit_position(
+                    PaperRouteProbeExitPositionRestoreContext(
+                        positions=positions,
+                        decision=decision,
+                        metadata=metadata,
+                        price=price,
+                        execution_adapter=execution_adapter,
+                        trading_mode=trading_mode,
+                    )
                 )
                 if current_qty == 0
                 else None
@@ -337,63 +388,26 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
 
     def _process_paper_route_probe_retry_decisions(
         self,
-        *,
-        session: Session,
-        strategies: list[Strategy],
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        allowed_symbols: set[str],
+        context: PaperRouteProbeRunContext | None = None,
+        **kwargs: Any,
     ) -> None:
-        decisions = self._paper_route_probe_retry_decisions(session=session)
+        context = _paper_route_probe_run_context(context, kwargs)
+        decisions = self._paper_route_probe_retry_decisions(session=context.session)
         for decision in decisions:
-            prepared_decision = self._prepare_paper_route_probe_exit_position(
-                positions,
-                decision,
-                execution_adapter=self.execution_adapter,
-                trading_mode=settings.trading_mode,
+            self._handle_paper_route_probe_decision(
+                context=context,
+                decision=decision,
+                failure_label="retry",
             )
-            if prepared_decision is None:
-                continue
-            self.state.metrics.decisions_total += 1
-            try:
-                submitted = self._handle_decision(
-                    session,
-                    prepared_decision,
-                    strategies,
-                    account,
-                    positions,
-                    allowed_symbols,
-                )
-                if submitted is not None:
-                    self._apply_simple_projected_buying_power(
-                        account,
-                        positions,
-                        submitted,
-                    )
-                    self._apply_simple_projected_position(positions, submitted)
-            except Exception:
-                logger.exception(
-                    "Paper route probe retry handling failed strategy_id=%s symbol=%s timeframe=%s",
-                    prepared_decision.strategy_id,
-                    prepared_decision.symbol,
-                    prepared_decision.timeframe,
-                )
-                self.state.metrics.orders_rejected_total += 1
-                self.state.metrics.record_decision_rejection_reasons(
-                    ["broker_submit_failed"]
-                )
 
     def _process_paper_route_probe_retry_decisions_unless_target_reserved(
         self,
-        *,
-        session: Session,
-        strategies: list[Strategy],
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        allowed_symbols: set[str],
+        context: PaperRouteProbeRunContext | None = None,
+        **kwargs: Any,
     ) -> None:
+        context = _paper_route_probe_run_context(context, kwargs)
         if self._paper_route_target_plan_reserves_account(
-            allowed_symbols=allowed_symbols
+            allowed_symbols=context.allowed_symbols
         ):
             logger.info(
                 "Skipping generic paper-route probe retries while bounded target-plan "
@@ -401,61 +415,66 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
                 self.account_label,
             )
             return
-        self._process_paper_route_probe_retry_decisions(
-            session=session,
-            strategies=strategies,
-            account=account,
-            positions=positions,
-            allowed_symbols=allowed_symbols,
-        )
+        self._process_paper_route_probe_retry_decisions(context)
 
     def _process_paper_route_probe_exit_decisions(
         self,
-        *,
-        session: Session,
-        strategies: list[Strategy],
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        allowed_symbols: set[str],
+        context: PaperRouteProbeRunContext | None = None,
+        **kwargs: Any,
     ) -> None:
-        decisions = self._paper_route_probe_exit_decisions(session=session)
+        context = _paper_route_probe_run_context(context, kwargs)
+        decisions = self._paper_route_probe_exit_decisions(session=context.session)
         for decision in decisions:
-            prepared_decision = self._prepare_paper_route_probe_exit_position(
-                positions,
-                decision,
-                execution_adapter=self.execution_adapter,
-                trading_mode=settings.trading_mode,
+            self._handle_paper_route_probe_decision(
+                context=context,
+                decision=decision,
+                failure_label="exit",
             )
-            if prepared_decision is None:
-                continue
-            self.state.metrics.decisions_total += 1
-            try:
-                submitted = self._handle_decision(
-                    session,
-                    prepared_decision,
-                    strategies,
-                    account,
-                    positions,
-                    allowed_symbols,
+
+    def _handle_paper_route_probe_decision(
+        self,
+        *,
+        context: PaperRouteProbeRunContext,
+        decision: StrategyDecision,
+        failure_label: str,
+    ) -> None:
+        prepared_decision = self._prepare_paper_route_probe_exit_position(
+            context.positions,
+            decision,
+            execution_adapter=self.execution_adapter,
+            trading_mode=settings.trading_mode,
+        )
+        if prepared_decision is None:
+            return
+        self.state.metrics.decisions_total += 1
+        try:
+            submitted = self._handle_decision(
+                context.session,
+                prepared_decision,
+                context.strategies,
+                context.account,
+                context.positions,
+                context.allowed_symbols,
+            )
+            if submitted is not None:
+                self._apply_simple_projected_buying_power(
+                    context.account,
+                    context.positions,
+                    submitted,
                 )
-                if submitted is not None:
-                    self._apply_simple_projected_buying_power(
-                        account,
-                        positions,
-                        submitted,
-                    )
-                    self._apply_simple_projected_position(positions, submitted)
-            except Exception:
-                logger.exception(
-                    "Paper route probe exit handling failed strategy_id=%s symbol=%s timeframe=%s",
-                    prepared_decision.strategy_id,
-                    prepared_decision.symbol,
-                    prepared_decision.timeframe,
-                )
-                self.state.metrics.orders_rejected_total += 1
-                self.state.metrics.record_decision_rejection_reasons(
-                    ["broker_submit_failed"]
-                )
+                self._apply_simple_projected_position(context.positions, submitted)
+        except Exception:
+            logger.exception(
+                "Paper route probe %s handling failed strategy_id=%s symbol=%s timeframe=%s",
+                failure_label,
+                prepared_decision.strategy_id,
+                prepared_decision.symbol,
+                prepared_decision.timeframe,
+            )
+            self.state.metrics.orders_rejected_total += 1
+            self.state.metrics.record_decision_rejection_reasons(
+                ["broker_submit_failed"]
+            )
 
     @staticmethod
     def _paper_route_probe_reference_price(
@@ -482,6 +501,12 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
 
     @staticmethod
     def _paper_route_probe_short_increasing_sell(decision: StrategyDecision) -> bool:
+        return SimplePipelinePaperRouteProbeProcessingMixin.paper_route_probe_short_increasing_sell(
+            decision
+        )
+
+    @staticmethod
+    def paper_route_probe_short_increasing_sell(decision: StrategyDecision) -> bool:
         if decision.action != "sell":
             return False
         for key in ("simple_lane", "sizing"):
@@ -502,56 +527,53 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
 
     def _paper_route_probe_context(
         self,
-        *,
-        proof_floor: Mapping[str, object],
-        decision: StrategyDecision,
-        strategy: Strategy | None = None,
-        session: Session | None = None,
-        strategies: Sequence[Strategy] | None = None,
+        **kwargs: Any,
     ) -> dict[str, object] | None:
+        request = _paper_route_probe_context_request(kwargs)
         cap = _paper_route_probe_cap(
-            self._paper_route_target_source_cap(decision.params)
+            self._paper_route_target_source_cap(request.decision.params)
         )
         if not self._paper_route_probe_context_preconditions(
-            proof_floor=proof_floor,
-            decision=decision,
-            strategy=strategy,
+            proof_floor=request.proof_floor,
+            decision=request.decision,
+            strategy=request.strategy,
             cap=cap,
         ):
             return None
         exit_timing = self._paper_route_probe_exit_timing(
-            decision=decision,
-            strategy=strategy,
+            decision=request.decision,
+            strategy=request.strategy,
         )
-        symbol = decision.symbol.strip().upper()
+        symbol = request.decision.symbol.strip().upper()
         target_context = self._paper_route_probe_target_plan_context(
-            decision=decision,
+            decision=request.decision,
             symbol=symbol,
-            session=session,
-            strategies=strategies,
+            target_lookup=request.target_lookup,
         )
         if target_context is None:
             return None
         eligibility = self._paper_route_probe_eligibility(
-            proof_floor=proof_floor,
+            proof_floor=request.proof_floor,
             symbol=symbol,
             target_source_authorized=target_context.target_source_authorized,
         )
         if eligibility is None:
             return None
         mode = _paper_route_probe_mode(
-            decision,
+            request.decision,
             target_source_authorized=target_context.target_source_authorized,
         )
         return _paper_route_probe_context_payload(
-            proof_floor=proof_floor,
-            decision=decision,
-            symbol=symbol,
-            cap=cast(Decimal, cap),
-            target_context=target_context,
-            eligibility=eligibility,
-            exit_timing=exit_timing,
-            mode=mode,
+            PaperRouteProbeContextPayloadParts(
+                proof_floor=request.proof_floor,
+                decision=request.decision,
+                symbol=symbol,
+                cap=cast(Decimal, cap),
+                target_context=target_context,
+                eligibility=eligibility,
+                exit_timing=exit_timing,
+                mode=mode,
+            )
         )
 
     def _paper_route_probe_context_preconditions(
@@ -608,13 +630,12 @@ class _SimplePipelinePaperRouteProbeMixinMethodsPart2:
         *,
         decision: StrategyDecision,
         symbol: str,
-        session: Session | None,
-        strategies: Sequence[Strategy] | None,
+        target_lookup: PaperRouteProbeTargetLookup,
     ) -> _PaperRouteProbeTargetPlanContext | None:
         target_symbols, target_error, target_targets = (
             self._external_paper_route_target_probe_symbols_cached(
-                session=session,
-                strategies=strategies,
+                session=target_lookup.session,
+                strategies=target_lookup.strategies,
             )
         )
         if target_error:
@@ -864,7 +885,7 @@ def _paper_route_probe_blocked_by_short_policy(decision: StrategyDecision) -> bo
     return (
         decision.action == "sell"
         and not settings.trading_allow_shorts
-        and SimplePipelinePaperRouteProbeMixin._paper_route_probe_short_increasing_sell(
+        and SimplePipelinePaperRouteProbeProcessingMixin.paper_route_probe_short_increasing_sell(
             decision
         )
     )
@@ -925,50 +946,45 @@ def _paper_route_probe_mode(
 
 
 def _paper_route_probe_context_payload(
-    *,
-    proof_floor: Mapping[str, object],
-    decision: StrategyDecision,
-    symbol: str,
-    cap: Decimal,
-    target_context: _PaperRouteProbeTargetPlanContext,
-    eligibility: _PaperRouteProbeEligibility,
-    exit_timing: _PaperRouteProbeExitTiming,
-    mode: _PaperRouteProbeMode,
+    parts: PaperRouteProbeContextPayloadParts,
 ) -> dict[str, object]:
     context: dict[str, object] = {
         "enabled": True,
-        "mode": mode.context_mode,
-        "source_decision_mode": mode.source_decision_mode,
-        "profit_proof_eligible": mode.profit_proof_eligible,
-        "max_notional": str(cap),
-        "symbol": symbol,
-        "side": decision.action,
+        "mode": parts.mode.context_mode,
+        "source_decision_mode": parts.mode.source_decision_mode,
+        "profit_proof_eligible": parts.mode.profit_proof_eligible,
+        "max_notional": str(parts.cap),
+        "symbol": parts.symbol,
+        "side": parts.decision.action,
         "blocking_reasons": sorted(
-            eligibility.blocking_reasons | eligibility.symbol_route_probe_reasons
+            parts.eligibility.blocking_reasons
+            | parts.eligibility.symbol_route_probe_reasons
         ),
-        "target_source_authorized": target_context.target_source_authorized,
-        "route_repair_symbols": sorted(eligibility.repair_symbols),
-        "paper_route_probe_symbols": sorted(eligibility.paper_route_probe_symbols),
-        "paper_route_target_plan_symbols": sorted(target_context.target_symbols),
+        "target_source_authorized": parts.target_context.target_source_authorized,
+        "route_repair_symbols": sorted(parts.eligibility.repair_symbols),
+        "paper_route_probe_symbols": sorted(
+            parts.eligibility.paper_route_probe_symbols
+        ),
+        "paper_route_target_plan_symbols": sorted(parts.target_context.target_symbols),
         "paper_route_target_plan_source": "external_target_plan_url"
-        if target_context.target_symbols
+        if parts.target_context.target_symbols
         else None,
-        **_target_plan_lineage(target_context.target_targets, symbol),
-        "exit_minute_after_open": exit_timing.exit_minute,
-        "effective_exit_minute_after_open": exit_timing.effective_exit_minute,
-        "exit_due_at": exit_timing.exit_due_at,
+        **_target_plan_lineage(parts.target_context.target_targets, parts.symbol),
+        "exit_minute_after_open": parts.exit_timing.exit_minute,
+        "effective_exit_minute_after_open": parts.exit_timing.effective_exit_minute,
+        "exit_due_at": parts.exit_timing.exit_due_at,
         "simple_submit_enabled": settings.trading_simple_submit_enabled,
         "simple_submit_bypass_scope": "paper_route_probe_only"
         if not settings.trading_simple_submit_enabled
         else None,
     }
-    if mode.bounded_execution_policy is not None:
+    if parts.mode.bounded_execution_policy is not None:
         context["bounded_paper_route_execution_policy"] = dict(
-            mode.bounded_execution_policy
+            parts.mode.bounded_execution_policy
         )
-    if mode.bounded_submit_path is not None:
-        context["bounded_paper_route_submit_path"] = mode.bounded_submit_path
+    if parts.mode.bounded_submit_path is not None:
+        context["bounded_paper_route_submit_path"] = parts.mode.bounded_submit_path
     return context
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ["SimplePipelinePaperRouteProbeProcessingMixin"]
