@@ -1,7 +1,32 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.order_feed.support import *
+from tests.order_feed.support import (
+    ORDER_FEED_SOURCE_REVISION,
+    Decimal,
+    Execution,
+    ExecutionOrderEvent,
+    FakeConsumer,
+    FakeManualConsumer,
+    FakeRecord,
+    OrderFeedConsumerCursor,
+    OrderFeedIngestor,
+    OrderFeedSourceWindow,
+    OrderFeedTestCase,
+    Session,
+    SimpleNamespace,
+    backfill_order_feed_events_from_executions,
+    datetime,
+    func,
+    order_feed_module,
+    patch,
+    repair_order_feed_execution_links,
+    repair_order_feed_execution_states,
+    repair_order_feed_fill_deltas,
+    select,
+    settings,
+    timedelta,
+    timezone,
+)
 
 
 class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
@@ -732,7 +757,10 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
 
         with Session(self.engine) as session:
             with patch(
-                "app.trading.order_feed.persist_order_event",
+                (
+                    "app.trading.order_feed_modules.part_01_statements_32"
+                    ".persist_order_event"
+                ),
                 side_effect=RuntimeError("store failed"),
             ):
                 counters = ingestor.ingest_once(session)
@@ -766,7 +794,10 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
         with Session(self.engine) as session:
             self._seed_execution(session)
             with patch(
-                "app.trading.order_feed.apply_order_event_to_execution",
+                (
+                    "app.trading.order_feed_modules.part_01_statements_32"
+                    ".apply_order_event_to_execution"
+                ),
                 side_effect=RuntimeError("apply failed"),
             ):
                 counters = ingestor.ingest_once(session)

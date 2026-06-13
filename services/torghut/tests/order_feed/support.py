@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
-
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -29,7 +27,7 @@ from app.models import (
     TigerBeetleTransferRef,
     TradeDecision,
 )
-from app.trading import order_feed as order_feed_module
+from app.trading import order_feed_modules as order_feed_module
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION,
@@ -236,4 +234,58 @@ class OrderFeedTestCase(TestCase):
         return execution
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "Base",
+    "Decimal",
+    "EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION",
+    "Execution",
+    "ExecutionOrderEvent",
+    "ExecutionTCAMetric",
+    "FakeConsumer",
+    "FakeManualConsumer",
+    "FakeManualConsumerWithoutEndSeek",
+    "FakeRecord",
+    "FakeTigerBeetleClient",
+    "HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION",
+    "NormalizedOrderEvent",
+    "ORDER_FEED_SOURCE_REVISION",
+    "OrderFeedConsumerCursor",
+    "OrderFeedIngestor",
+    "OrderFeedSourceWindow",
+    "OrderFeedTestCase",
+    "RejectedSignalOutcomeEvent",
+    "SOURCE_TYPE_EXECUTION",
+    "SOURCE_TYPE_EXECUTION_ORDER_EVENT",
+    "Session",
+    "SimpleNamespace",
+    "Strategy",
+    "TRANSFER_KIND_EXECUTION_FILL",
+    "TRANSFER_KIND_FILL_POST",
+    "TestCase",
+    "TigerBeetleReconciliationRun",
+    "TigerBeetleTransferRef",
+    "TopicPartition",
+    "TradeDecision",
+    "apply_order_event_to_execution",
+    "backfill_order_feed_events_from_executions",
+    "backfill_order_feed_source_windows",
+    "create_engine",
+    "dataclass",
+    "datetime",
+    "func",
+    "latest_order_event_for_execution",
+    "link_order_events_to_execution",
+    "merge_execution_raw_order_update",
+    "normalize_order_feed_record",
+    "order_feed_module",
+    "patch",
+    "persist_order_event",
+    "repair_order_feed_execution_links",
+    "repair_order_feed_execution_states",
+    "repair_order_feed_fill_deltas",
+    "select",
+    "settings",
+    "timedelta",
+    "timezone",
+    "uuid",
+]
