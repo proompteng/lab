@@ -1,47 +1,91 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
+from .liveness_core import (
+    DEFAULT_HPAIRS_ACCOUNT_LABEL,
+    DEFAULT_HPAIRS_CANDIDATE_ID,
+    DEFAULT_HPAIRS_HYPOTHESIS_ID,
+    DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+    DEFAULT_OBSERVED_STAGE,
+    HPAIRS_SIGNAL_LIVENESS_SCHEMA_VERSION,
+    NEXT_ACTIONS,
+    AuditExpectations,
+    _availability_for_symbol,
+    _availability_report,
+    _bool_or_none,
+    _candidate_identity,
+    _first_mapping_from_keys,
+    _first_value_from_keys,
+    _float_or_none,
+    _json_default,
+    _mapping,
+    _merge_inputs,
+    _normalize_symbols,
+    _read_json_path,
+    _read_status_url,
+    _runtime_materialization_count,
+    _runtime_materialization_report,
+    _sequence,
+    _signal_drift_readiness_report,
+    _signal_threshold_report,
+    _symbol_payload,
+    _symbols_from_target,
+    _target_from_source,
+    _target_matches,
+    _text,
+    _unique_text_items,
+    stable_json,
+)
+from .veto_report import (
+    _choose_next_action,
+    _flag_report,
+    _load_cli_source,
+    _nested_flag_containers,
+    _veto_report,
+    build_liveness_report,
+    main,
+    parse_args,
+)
 
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_21")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_veto_report")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
-del __compat_module__
+__all__ = (
+    "DEFAULT_HPAIRS_ACCOUNT_LABEL",
+    "DEFAULT_HPAIRS_CANDIDATE_ID",
+    "DEFAULT_HPAIRS_HYPOTHESIS_ID",
+    "DEFAULT_HPAIRS_RUNTIME_STRATEGY",
+    "DEFAULT_OBSERVED_STAGE",
+    "HPAIRS_SIGNAL_LIVENESS_SCHEMA_VERSION",
+    "NEXT_ACTIONS",
+    "AuditExpectations",
+    "_availability_for_symbol",
+    "_availability_report",
+    "_bool_or_none",
+    "_candidate_identity",
+    "_choose_next_action",
+    "_first_mapping_from_keys",
+    "_first_value_from_keys",
+    "_flag_report",
+    "_float_or_none",
+    "_json_default",
+    "_load_cli_source",
+    "_mapping",
+    "_merge_inputs",
+    "_nested_flag_containers",
+    "_normalize_symbols",
+    "_read_json_path",
+    "_read_status_url",
+    "_runtime_materialization_count",
+    "_runtime_materialization_report",
+    "_sequence",
+    "_signal_drift_readiness_report",
+    "_signal_threshold_report",
+    "_symbol_payload",
+    "_symbols_from_target",
+    "_target_from_source",
+    "_target_matches",
+    "_text",
+    "_unique_text_items",
+    "_veto_report",
+    "build_liveness_report",
+    "main",
+    "parse_args",
+    "stable_json",
+)

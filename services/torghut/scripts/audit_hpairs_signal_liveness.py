@@ -1,17 +1,34 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
 
-from importlib import import_module as _import_module
-import sys as _sys
+from scripts.audit_hpairs_signal_liveness_modules import (
+    DEFAULT_HPAIRS_ACCOUNT_LABEL,
+    DEFAULT_HPAIRS_CANDIDATE_ID,
+    DEFAULT_HPAIRS_HYPOTHESIS_ID,
+    DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+    DEFAULT_OBSERVED_STAGE,
+    HPAIRS_SIGNAL_LIVENESS_SCHEMA_VERSION,
+    NEXT_ACTIONS,
+    AuditExpectations,
+    build_liveness_report,
+    main,
+    parse_args,
+    stable_json,
+)
 
-_module_name = __name__
-_parent_name, _, _module_attr = _module_name.rpartition(".")
-_impl = _import_module("scripts.audit_hpairs_signal_liveness_modules")
-globals().update(_impl.__dict__)
-_sys.modules[_module_name] = _impl
-_parent = _sys.modules.get(_parent_name)
-if _parent is not None:
-    setattr(_parent, _module_attr, _impl)
+__all__ = (
+    "DEFAULT_HPAIRS_ACCOUNT_LABEL",
+    "DEFAULT_HPAIRS_CANDIDATE_ID",
+    "DEFAULT_HPAIRS_HYPOTHESIS_ID",
+    "DEFAULT_HPAIRS_RUNTIME_STRATEGY",
+    "DEFAULT_OBSERVED_STAGE",
+    "HPAIRS_SIGNAL_LIVENESS_SCHEMA_VERSION",
+    "NEXT_ACTIONS",
+    "AuditExpectations",
+    "build_liveness_report",
+    "main",
+    "parse_args",
+    "stable_json",
+)
 
 if __name__ == "__main__":
-    raise SystemExit(_impl.main())
+    raise SystemExit(main())
