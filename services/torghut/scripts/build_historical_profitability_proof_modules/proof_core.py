@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Build profitability proof artifacts from historical simulation run directories."""
 
@@ -9,20 +8,11 @@ import csv
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
-
-from app.trading.evaluation import (
-    build_profitability_evidence_v4,
-    execute_profitability_benchmark_v4,
-    validate_profitability_evidence_v4,
-)
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 _SERVICE_ROOT = Path(__file__).resolve().parent.parent
@@ -686,6 +676,3 @@ def _build_report_payload(
             },
         },
     }
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
