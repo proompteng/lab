@@ -1,33 +1,47 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Prometheus-formatted metrics for Torghut trading counters."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import cast
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_escape_label_value import *
+from .core import (
+    AUTONOMY_WINDOW_GAUGES,
+    DIRECT_GAUGES,
+    EVIDENCE_CONTINUITY_KEYS,
+    SERVICE_LABEL_GAUGES,
+    SIMPLE_MAP_METRICS,
+    STRATEGY_RUNTIME_METRICS,
+    coerce_int,
+    metric_headers,
+    render_execution_fallback_total_map,
+    render_forecast_calibration_error_map,
+    render_labeled_metric,
+    render_lean_failure_taxonomy_total_map,
+    render_route_provenance_map,
+    render_simple_map_metric,
+    render_universe_resolution_total_map,
+    sorted_metric_items,
+)
 
 
 def _render_forecast_route_selection_total_map(
     values: Mapping[str, object],
 ) -> list[str]:
     metric_name = "torghut_forecast_route_selection_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of forecast route selections by model family and route key.",
         "counter",
     )
-    for route_key, count in _sorted_metric_items(values, numeric_kind="int"):
+    for route_key, count in sorted_metric_items(values, numeric_kind="int"):
         parts = route_key.split("|", 1)
         if len(parts) != 2:
             continue
         family, route_label = parts
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={
                     "model_family": family,
@@ -41,11 +55,11 @@ def _render_forecast_route_selection_total_map(
 
 def _render_llm_committee_verdict_total_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_trading_llm_committee_verdict_total"
-    lines = _metric_headers(metric_name, "Count of committee role verdicts.", "counter")
-    for label, count in _sorted_metric_items(values, numeric_kind="int"):
+    lines = metric_headers(metric_name, "Count of committee role verdicts.", "counter")
+    for label, count in sorted_metric_items(values, numeric_kind="int"):
         role, verdict = (label.split(":", 1) + ["unknown"])[:2]
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"role": role, "verdict": verdict},
                 value=count,
@@ -56,12 +70,12 @@ def _render_llm_committee_verdict_total_map(values: Mapping[str, object]) -> lis
 
 def _render_allocator_multiplier_total_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_trading_allocation_multiplier_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Allocator multiplier applications by regime and fragility state.",
         "counter",
     )
-    for label, count in _sorted_metric_items(values, numeric_kind="int"):
+    for label, count in sorted_metric_items(values, numeric_kind="int"):
         parts = label.rsplit("|", 2)
         if len(parts) == 3:
             regime, fragility_state, multiplier = parts
@@ -73,7 +87,7 @@ def _render_allocator_multiplier_total_map(values: Mapping[str, object]) -> list
             fragility_state = "elevated"
             multiplier = "unknown"
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={
                     "regime": regime,
@@ -88,12 +102,12 @@ def _render_allocator_multiplier_total_map(values: Mapping[str, object]) -> list
 
 def _render_qty_resolution_total_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_trading_qty_resolution_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of quantity-resolution outcomes by stage, outcome, and reason.",
         "counter",
     )
-    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+    for key, count in sorted_metric_items(values, numeric_kind="int"):
         stage = "unknown"
         outcome = "unknown"
         reason = "unknown"
@@ -101,7 +115,7 @@ def _render_qty_resolution_total_map(values: Mapping[str, object]) -> list[str]:
         if len(parts) == 3:
             stage, outcome, reason = parts
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"stage": stage, "outcome": outcome, "reason": reason},
                 value=count,
@@ -112,19 +126,19 @@ def _render_qty_resolution_total_map(values: Mapping[str, object]) -> list[str]:
 
 def _render_sell_inventory_context_total_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_trading_sell_inventory_context_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of sell inventory context observations by stage and context.",
         "counter",
     )
-    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+    for key, count in sorted_metric_items(values, numeric_kind="int"):
         stage = "unknown"
         context = "unknown"
         parts = key.split("|", 1)
         if len(parts) == 2:
             stage, context = parts
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"stage": stage, "context": context},
                 value=count,
@@ -135,19 +149,19 @@ def _render_sell_inventory_context_total_map(values: Mapping[str, object]) -> li
 
 def _render_execution_local_reject_total_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_trading_execution_local_reject_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of local execution rejects by code and reason.",
         "counter",
     )
-    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+    for key, count in sorted_metric_items(values, numeric_kind="int"):
         code = "unknown"
         reason = "unknown"
         parts = key.split("|", 1)
         if len(parts) == 2:
             code, reason = parts
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"code": code, "reason": reason},
                 value=count,
@@ -160,12 +174,12 @@ def _render_execution_submit_attempt_total_map(
     values: Mapping[str, object],
 ) -> list[str]:
     metric_name = "torghut_trading_execution_submit_attempt_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of execution submit attempts by adapter, side, and asset class.",
         "counter",
     )
-    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+    for key, count in sorted_metric_items(values, numeric_kind="int"):
         adapter = "unknown"
         side = "unknown"
         asset_class = "unknown"
@@ -173,7 +187,7 @@ def _render_execution_submit_attempt_total_map(
         if len(parts) == 3:
             adapter, side, asset_class = parts
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={
                     "adapter": adapter,
@@ -190,19 +204,19 @@ def _render_execution_submit_result_total_map(
     values: Mapping[str, object],
 ) -> list[str]:
     metric_name = "torghut_trading_execution_submit_result_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of execution submit results by status and adapter.",
         "counter",
     )
-    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+    for key, count in sorted_metric_items(values, numeric_kind="int"):
         status = "unknown"
         adapter = "unknown"
         parts = key.split("|", 1)
         if len(parts) == 2:
             status, adapter = parts
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"status": status, "adapter": adapter},
                 value=count,
@@ -258,7 +272,7 @@ def _render_tca_summary_map(values: Mapping[str, object]) -> list[str]:
         numeric_value = float(metric_value)
         metric_type = "counter" if summary_key == "order_count" else "gauge"
         lines.extend(
-            _metric_headers(
+            metric_headers(
                 metric_name,
                 f"Torghut TCA summary metric {summary_key}.",
                 metric_type,
@@ -269,11 +283,11 @@ def _render_tca_summary_map(values: Mapping[str, object]) -> list[str]:
 
 
 def _render_strategy_runtime_map(key: str, values: Mapping[str, object]) -> list[str]:
-    metric_name, metric_type = _STRATEGY_RUNTIME_METRICS[key]
-    lines = _metric_headers(metric_name, f"Strategy runtime metric {key}.", metric_type)
-    for strategy_id, count in _sorted_metric_items(values, numeric_kind="int"):
+    metric_name, metric_type = STRATEGY_RUNTIME_METRICS[key]
+    lines = metric_headers(metric_name, f"Strategy runtime metric {key}.", metric_type)
+    for strategy_id, count in sorted_metric_items(values, numeric_kind="int"):
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"strategy_id": strategy_id},
                 value=count,
@@ -286,15 +300,15 @@ def _render_strategy_intent_suppression_total_map(
     values: Mapping[str, object],
 ) -> list[str]:
     metric_name = "torghut_trading_strategy_intent_suppression_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of runtime intents suppressed before decision creation.",
         "counter",
     )
-    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+    for key, count in sorted_metric_items(values, numeric_kind="int"):
         strategy_id, reason = (key.split("|", 1) + ["unknown"])[:2]
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"strategy_id": strategy_id, "reason": reason or "unknown"},
                 value=count,
@@ -304,28 +318,28 @@ def _render_strategy_intent_suppression_total_map(
 
 
 _SPECIAL_MAP_RENDERERS = {
-    "execution_fallback_total": _render_execution_fallback_total_map,
+    "execution_fallback_total": render_execution_fallback_total_map,
     "execution_local_reject_total": _render_execution_local_reject_total_map,
     "execution_submit_attempt_total": _render_execution_submit_attempt_total_map,
     "execution_submit_result_total": _render_execution_submit_result_total_map,
     "strategy_intent_suppression_total": _render_strategy_intent_suppression_total_map,
-    "lean_failure_taxonomy_total": _render_lean_failure_taxonomy_total_map,
-    "route_provenance": _render_route_provenance_map,
-    "forecast_calibration_error": _render_forecast_calibration_error_map,
+    "lean_failure_taxonomy_total": render_lean_failure_taxonomy_total_map,
+    "route_provenance": render_route_provenance_map,
+    "forecast_calibration_error": render_forecast_calibration_error_map,
     "forecast_route_selection_total": _render_forecast_route_selection_total_map,
     "llm_committee_verdict_total": _render_llm_committee_verdict_total_map,
     "allocator_multiplier_total": _render_allocator_multiplier_total_map,
     "qty_resolution_total": _render_qty_resolution_total_map,
     "sell_inventory_context_total": _render_sell_inventory_context_total_map,
-    "universe_resolution_total": _render_universe_resolution_total_map,
+    "universe_resolution_total": render_universe_resolution_total_map,
     "tca_summary": _render_tca_summary_map,
 }
 
 
 def _render_mapping_metric(key: str, values: Mapping[str, object]) -> list[str]:
-    if key in _SIMPLE_MAP_METRICS:
-        return _render_simple_map_metric(key, values)
-    if key in _STRATEGY_RUNTIME_METRICS:
+    if key in SIMPLE_MAP_METRICS:
+        return render_simple_map_metric(key, values)
+    if key in STRATEGY_RUNTIME_METRICS:
         return _render_strategy_runtime_map(key, values)
     renderer = _SPECIAL_MAP_RENDERERS.get(key)
     if renderer is None:
@@ -333,132 +347,192 @@ def _render_mapping_metric(key: str, values: Mapping[str, object]) -> list[str]:
     return renderer(values)
 
 
-def _render_scalar_metric(
-    key: str,
+ScalarRenderer = Callable[[str, int | float, Mapping[str, object]], list[str]]
+
+
+def _render_service_label_scalar(
+    metric_name: str,
+    help_text: str,
+    value: int | float,
+) -> list[str]:
+    lines = metric_headers(metric_name, help_text, "gauge")
+    lines.extend(
+        render_labeled_metric(
+            metric_name=metric_name,
+            labels={"service": "torghut"},
+            value=value,
+        )
+    )
+    return lines
+
+
+def _render_direct_gauge_scalar(
+    metric_name: str, help_text: str, value: int | float
+) -> list[str]:
+    lines = metric_headers(metric_name, help_text, "gauge")
+    lines.append(f"{metric_name} {value}")
+    return lines
+
+
+def _render_evidence_continuity_scalar(key: str, value: int | float) -> list[str]:
+    metric_name = f"torghut_trading_{key}"
+    lines = metric_headers(
+        metric_name,
+        f"Torghut trading metric {key.replace('_', ' ')}.",
+        "gauge",
+    )
+    lines.append(f"{metric_name} {value}")
+    return lines
+
+
+def _render_autonomy_window_scalar(
+    metric_name: str, help_text: str, value: int | float
+) -> list[str]:
+    lines = metric_headers(metric_name, help_text, "gauge")
+    lines.extend(
+        render_labeled_metric(
+            metric_name=metric_name,
+            labels={"symbol": "all", "horizon": "autonomy"},
+            value=value,
+        )
+    )
+    return lines
+
+
+def _render_llm_committee_veto_alignment_scalar(
+    _key: str,
     value: int | float,
     metrics: Mapping[str, object],
 ) -> list[str]:
-    service_spec = _SERVICE_LABEL_GAUGES.get(key)
-    if service_spec is not None:
-        metric_name, help_text = service_spec
-        lines = _metric_headers(metric_name, help_text, "gauge")
-        lines.extend(
-            _render_labeled_metric(
-                metric_name=metric_name,
-                labels={"service": "torghut"},
-                value=value,
-            )
-        )
-        return lines
-
-    direct_spec = _DIRECT_GAUGES.get(key)
-    if direct_spec is not None:
-        metric_name, help_text = direct_spec
-        lines = _metric_headers(metric_name, help_text, "gauge")
-        lines.append(f"{metric_name} {value}")
-        return lines
-
-    if key in _EVIDENCE_CONTINUITY_KEYS:
-        metric_name = f"torghut_trading_{key}"
-        lines = _metric_headers(
-            metric_name,
-            f"Torghut trading metric {key.replace('_', ' ')}.",
+    metric_name = "torghut_trading_llm_committee_veto_alignment_total"
+    rate_name = "torghut_trading_llm_committee_veto_alignment_rate"
+    veto_total = coerce_int(metrics.get("llm_committee_veto_total"))
+    lines = metric_headers(
+        metric_name,
+        "Count of committee vetoes aligned with deterministic veto outcomes.",
+        "counter",
+    )
+    lines.append(f"{metric_name} {value}")
+    lines.extend(
+        metric_headers(
+            rate_name,
+            "Ratio of committee vetoes aligned with deterministic veto outcomes.",
             "gauge",
         )
-        lines.append(f"{metric_name} {value}")
-        return lines
+    )
+    rate = float(value) / veto_total if veto_total > 0 else 1.0
+    lines.append(f"{rate_name} {rate}")
+    return lines
 
-    autonomy_spec = _AUTONOMY_WINDOW_GAUGES.get(key)
-    if autonomy_spec is not None:
-        metric_name, help_text = autonomy_spec
-        lines = _metric_headers(metric_name, help_text, "gauge")
-        lines.extend(
-            _render_labeled_metric(
-                metric_name=metric_name,
-                labels={"symbol": "all", "horizon": "autonomy"},
-                value=value,
-            )
-        )
-        return lines
 
-    if key == "llm_committee_veto_alignment_total":
-        metric_name = "torghut_trading_llm_committee_veto_alignment_total"
-        rate_name = "torghut_trading_llm_committee_veto_alignment_rate"
-        veto_total = _coerce_int(metrics.get("llm_committee_veto_total"))
-        lines = _metric_headers(
-            metric_name,
-            "Count of committee vetoes aligned with deterministic veto outcomes.",
-            "counter",
-        )
-        lines.append(f"{metric_name} {value}")
-        lines.extend(
-            _metric_headers(
-                rate_name,
-                "Ratio of committee vetoes aligned with deterministic veto outcomes.",
-                "gauge",
-            )
-        )
-        rate = float(value) / veto_total if veto_total > 0 else 1.0
-        lines.append(f"{rate_name} {rate}")
-        return lines
-
-    if key == "orders_rejected_total":
-        submitted_total = _coerce_int(metrics.get("orders_submitted_total"))
-        total = submitted_total + int(value)
-        clean_ratio = float(submitted_total) / total if total > 0 else 1.0
-        reject_ratio = float(value) / total if total > 0 else 0.0
-        lines = _metric_headers(
-            "torghut_trading_execution_clean_ratio",
-            "Ratio of submitted orders to total submit/reject outcomes.",
+def _render_orders_rejected_scalar(
+    _key: str,
+    value: int | float,
+    metrics: Mapping[str, object],
+) -> list[str]:
+    submitted_total = coerce_int(metrics.get("orders_submitted_total"))
+    total = submitted_total + int(value)
+    clean_ratio = float(submitted_total) / total if total > 0 else 1.0
+    reject_ratio = float(value) / total if total > 0 else 0.0
+    lines = metric_headers(
+        "torghut_trading_execution_clean_ratio",
+        "Ratio of submitted orders to total submit/reject outcomes.",
+        "gauge",
+    )
+    lines.append(f"torghut_trading_execution_clean_ratio {clean_ratio}")
+    lines.extend(
+        metric_headers(
+            "torghut_trading_execution_reject_ratio",
+            "Ratio of rejected orders to total submit/reject outcomes.",
             "gauge",
         )
-        lines.append(f"torghut_trading_execution_clean_ratio {clean_ratio}")
-        lines.extend(
-            _metric_headers(
-                "torghut_trading_execution_reject_ratio",
-                "Ratio of rejected orders to total submit/reject outcomes.",
-                "gauge",
-            )
-        )
-        lines.append(f"torghut_trading_execution_reject_ratio {reject_ratio}")
-        lines.extend(
-            _metric_headers(
-                "torghut_trading_orders_rejected_total",
-                "Torghut trading metric orders rejected total.",
-                "counter",
-            )
-        )
-        lines.append(f"torghut_trading_orders_rejected_total {value}")
-        return lines
-
-    if key == "signal_batch_order_violation_total":
-        metric_name = "torghut_trading_signal_batch_order_violation_total"
-        lines = _metric_headers(
-            metric_name,
-            "Count of signal batch ordering violations detected by the feature-quality gate.",
+    )
+    lines.append(f"torghut_trading_execution_reject_ratio {reject_ratio}")
+    lines.extend(
+        metric_headers(
+            "torghut_trading_orders_rejected_total",
+            "Torghut trading metric orders rejected total.",
             "counter",
         )
-        lines.append(f"{metric_name} {value}")
-        return lines
+    )
+    lines.append(f"torghut_trading_orders_rejected_total {value}")
+    return lines
 
-    if key == "execution_validation_mismatch_total":
-        metric_name = "torghut_trading_execution_validation_mismatch_total"
-        lines = _metric_headers(
-            metric_name,
-            "Count of mismatches between earlier quantity planning and execution validation.",
-            "counter",
-        )
-        lines.append(f"{metric_name} {value}")
-        return lines
 
+def _render_signal_batch_order_violation_scalar(
+    _key: str,
+    value: int | float,
+    _metrics: Mapping[str, object],
+) -> list[str]:
+    metric_name = "torghut_trading_signal_batch_order_violation_total"
+    lines = metric_headers(
+        metric_name,
+        "Count of signal batch ordering violations detected by the feature-quality gate.",
+        "counter",
+    )
+    lines.append(f"{metric_name} {value}")
+    return lines
+
+
+def _render_execution_validation_mismatch_scalar(
+    _key: str,
+    value: int | float,
+    _metrics: Mapping[str, object],
+) -> list[str]:
+    metric_name = "torghut_trading_execution_validation_mismatch_total"
+    lines = metric_headers(
+        metric_name,
+        "Count of mismatches between earlier quantity planning and execution validation.",
+        "counter",
+    )
+    lines.append(f"{metric_name} {value}")
+    return lines
+
+
+def _render_default_scalar(key: str, value: int | float) -> list[str]:
     metric_name = f"torghut_trading_{key}"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         f"Torghut trading metric {key.replace('_', ' ')}.",
         "counter",
     )
     lines.append(f"{metric_name} {value}")
     return lines
+
+
+_SPECIAL_SCALAR_RENDERERS: dict[str, ScalarRenderer] = {
+    "llm_committee_veto_alignment_total": _render_llm_committee_veto_alignment_scalar,
+    "orders_rejected_total": _render_orders_rejected_scalar,
+    "signal_batch_order_violation_total": _render_signal_batch_order_violation_scalar,
+    "execution_validation_mismatch_total": _render_execution_validation_mismatch_scalar,
+}
+
+
+def _render_scalar_metric(
+    key: str,
+    value: int | float,
+    metrics: Mapping[str, object],
+) -> list[str]:
+    service_spec = SERVICE_LABEL_GAUGES.get(key)
+    if service_spec is not None:
+        return _render_service_label_scalar(*service_spec, value)
+
+    direct_spec = DIRECT_GAUGES.get(key)
+    if direct_spec is not None:
+        return _render_direct_gauge_scalar(*direct_spec, value)
+
+    if key in EVIDENCE_CONTINUITY_KEYS:
+        return _render_evidence_continuity_scalar(key, value)
+
+    autonomy_spec = AUTONOMY_WINDOW_GAUGES.get(key)
+    if autonomy_spec is not None:
+        return _render_autonomy_window_scalar(*autonomy_spec, value)
+
+    renderer = _SPECIAL_SCALAR_RENDERERS.get(key)
+    if renderer is not None:
+        return renderer(key, value, metrics)
+
+    return _render_default_scalar(key, value)
 
 
 def render_trading_metrics(metrics: Mapping[str, object]) -> str:
@@ -476,6 +550,3 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
 
 
 __all__ = ["render_trading_metrics"]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

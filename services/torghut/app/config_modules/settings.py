@@ -1,34 +1,25 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-"""Application configuration for the torghut service."""
+"""Concrete Torghut settings model and derived accessors."""
 
 import json
-import logging
-import tempfile
 import os
-from decimal import Decimal
 from functools import lru_cache
-from http.client import HTTPConnection, HTTPSConnection
-from pathlib import Path
 import string
-from typing import Any, List, Literal, Optional, cast
+from typing import Any, List, cast
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import ValidationError
+from pydantic_settings import SettingsConfigDict
 
-from ..logging_config import configure_logging
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_20 import *
-from .part_02_settingsfieldspart1 import *
-from .part_03_settingsfieldspart2 import *
-from .part_04_settingsfieldspart3 import *
-from .part_05_settingsfieldspart4 import *
-from .part_06_settingsmethodspart1 import *
+from .common import (
+    LLM_COMMITTEE_ROLES,
+    TradingAccountLane,
+    dspy_bootstrap_artifact_hash,
+    logger,
+)
+from .normalization import SettingsNormalizationMixin
 
 
-class _SettingsMethodsPart2:
+class SettingsAccessorsMixin(SettingsNormalizationMixin):
     def _validate_tigerbeetle_settings(self) -> None:
         if self.tigerbeetle_cluster_id <= 0:
             raise ValueError("TORGHUT_TIGERBEETLE_CLUSTER_ID must be > 0")
@@ -377,54 +368,62 @@ class _SettingsMethodsPart2:
             if item.strip()
         ]
 
-    def llm_dspy_live_runtime_gate(self) -> tuple[bool, tuple[str, ...]]:
-        normalized_stage = self._normalize_rollout_stage(self.llm_rollout_stage)
-        reasons: list[str] = []
-
+    def _append_dspy_runtime_mode_reasons(
+        self, reasons: list[str], normalized_stage: str
+    ) -> None:
         if self.trading_mode != "live":
             reasons.append("dspy_live_requires_live_trading_mode")
         if self.llm_dspy_runtime_mode != "active":
             reasons.append("dspy_live_runtime_mode_not_active")
         if normalized_stage != "stage3":
             reasons.append("dspy_live_rollout_stage_not_stage3")
+
+    def _append_dspy_jangar_url_reasons(self, reasons: list[str]) -> None:
         if not self.jangar_base_url:
             reasons.append("dspy_jangar_base_url_missing")
-        else:
-            parsed_base_url = urlsplit(self.jangar_base_url)
-            normalized_base_path = parsed_base_url.path.rstrip("/")
-            if not parsed_base_url.scheme:
-                reasons.append("dspy_jangar_base_url_invalid")
-            elif parsed_base_url.scheme not in {"http", "https"}:
-                reasons.append("dspy_jangar_base_url_invalid")
-            elif not parsed_base_url.hostname:
-                reasons.append("dspy_jangar_base_url_invalid")
-            elif parsed_base_url.query or parsed_base_url.fragment:
-                reasons.append("dspy_jangar_base_url_invalid")
-            elif normalized_base_path and normalized_base_path not in (
-                "/openai/v1",
-                "/openai/v1/chat/completions",
-            ):
-                reasons.append("dspy_jangar_base_url_invalid")
+            return
 
+        parsed_base_url = urlsplit(self.jangar_base_url)
+        normalized_base_path = parsed_base_url.path.rstrip("/")
+        if not parsed_base_url.scheme:
+            reasons.append("dspy_jangar_base_url_invalid")
+        elif parsed_base_url.scheme not in {"http", "https"}:
+            reasons.append("dspy_jangar_base_url_invalid")
+        elif not parsed_base_url.hostname:
+            reasons.append("dspy_jangar_base_url_invalid")
+        elif parsed_base_url.query or parsed_base_url.fragment:
+            reasons.append("dspy_jangar_base_url_invalid")
+        elif normalized_base_path and normalized_base_path not in (
+            "/openai/v1",
+            "/openai/v1/chat/completions",
+        ):
+            reasons.append("dspy_jangar_base_url_invalid")
+
+    def _append_dspy_artifact_reasons(self, reasons: list[str]) -> None:
         if not self.llm_dspy_artifact_hash:
             reasons.append("dspy_artifact_hash_missing")
-        else:
-            normalized_hash = self.llm_dspy_artifact_hash.strip().lower()
-            if len(normalized_hash) != 64:
-                reasons.append("dspy_artifact_hash_invalid_length")
-            elif any(ch not in string.hexdigits for ch in normalized_hash):
-                reasons.append("dspy_artifact_hash_not_hex")
-            elif (
-                normalized_hash == (_dspy_bootstrap_artifact_hash() or "")
-                and self.llm_dspy_runtime_mode == "active"
-            ):
-                reasons.append("dspy_bootstrap_artifact_forbidden")
+            return
 
+        normalized_hash = self.llm_dspy_artifact_hash.strip().lower()
+        if len(normalized_hash) != 64:
+            reasons.append("dspy_artifact_hash_invalid_length")
+        elif any(ch not in string.hexdigits for ch in normalized_hash):
+            reasons.append("dspy_artifact_hash_not_hex")
+        elif (
+            normalized_hash == (dspy_bootstrap_artifact_hash() or "")
+            and self.llm_dspy_runtime_mode == "active"
+        ):
+            reasons.append("dspy_bootstrap_artifact_forbidden")
+
+    def _append_dspy_model_inventory_reasons(self, reasons: list[str]) -> None:
         if not self.llm_allowed_models:
             reasons.append("llm_model_inventory_missing")
         elif self.llm_model not in self.llm_allowed_models:
             reasons.append("llm_model_not_in_inventory")
 
+    def _append_dspy_stage_evidence_reasons(
+        self, reasons: list[str], normalized_stage: str
+    ) -> None:
         if normalized_stage in {"stage2", "stage3"}:
             if not self.llm_evaluation_report:
                 reasons.append("llm_evaluation_report_missing")
@@ -439,16 +438,27 @@ class _SettingsMethodsPart2:
             ):
                 reasons.append("llm_model_version_lock_mismatch")
 
+    def _append_dspy_committee_reasons(self, reasons: list[str]) -> None:
         if not self.llm_committee_enabled:
             reasons.append("llm_committee_disabled")
         if self.llm_committee_roles and not all(
-            role in _LLM_COMMITTEE_ROLES for role in self.llm_committee_roles
+            role in LLM_COMMITTEE_ROLES for role in self.llm_committee_roles
         ):
             reasons.append("llm_committee_roles_invalid")
         if self.llm_committee_mandatory_roles and not all(
-            role in _LLM_COMMITTEE_ROLES for role in self.llm_committee_mandatory_roles
+            role in LLM_COMMITTEE_ROLES for role in self.llm_committee_mandatory_roles
         ):
             reasons.append("llm_committee_mandatory_roles_invalid")
+
+    def llm_dspy_live_runtime_gate(self) -> tuple[bool, tuple[str, ...]]:
+        normalized_stage = self._normalize_rollout_stage(self.llm_rollout_stage)
+        reasons: list[str] = []
+        self._append_dspy_runtime_mode_reasons(reasons, normalized_stage)
+        self._append_dspy_jangar_url_reasons(reasons)
+        self._append_dspy_artifact_reasons(reasons)
+        self._append_dspy_model_inventory_reasons(reasons)
+        self._append_dspy_stage_evidence_reasons(reasons, normalized_stage)
+        self._append_dspy_committee_reasons(reasons)
 
         migration_allowed, migration_reasons = self.llm_dspy_cutover_migration_guard()
         if not migration_allowed:
@@ -486,76 +496,9 @@ class _SettingsMethodsPart2:
         allowed, _ = self.llm_dspy_live_runtime_gate()
         return allowed
 
-    @property
-    def llm_live_fail_open_requested(self) -> bool:
-        return self.llm_live_fail_open_requested_for_stage(self.llm_rollout_stage)
-
-    def llm_live_fail_open_requested_for_stage(self, rollout_stage: str) -> bool:
-        if self.trading_mode != "live":
-            return False
-        normalized_stage = self._normalize_rollout_stage(rollout_stage)
-        if normalized_stage in {"stage1", "stage2"}:
-            return (
-                self.llm_effective_fail_mode(rollout_stage=normalized_stage)
-                == "pass_through"
-            )
-        return self.llm_effective_fail_mode() == "pass_through"
-
-    def llm_effective_fail_mode_for_current_rollout(
-        self,
-    ) -> Literal["veto", "pass_through"]:
-        rollout_stage = self._normalize_rollout_stage(self.llm_rollout_stage)
-        if rollout_stage in {"stage1", "stage2"}:
-            return self.llm_effective_fail_mode(rollout_stage=rollout_stage)
-        return self.llm_effective_fail_mode()
-
-    def llm_effective_fail_mode(
-        self, *, rollout_stage: Optional[str] = None
-    ) -> Literal["veto", "pass_through"]:
-        if rollout_stage == "stage1":
-            if self.llm_fail_mode_enforcement == "strict_veto":
-                return "veto"
-            return "pass_through"
-
-        if rollout_stage == "stage2":
-            return "pass_through"
-
-        if self.llm_fail_mode_enforcement == "strict_veto":
-            return "veto"
-        return self.llm_fail_mode
-
-    @staticmethod
-    def _normalize_rollout_stage(stage: str) -> str:
-        if stage.startswith("stage0"):
-            return "stage0"
-        if stage.startswith("stage1"):
-            return "stage1"
-        if stage.startswith("stage2"):
-            return "stage2"
-        if stage.startswith("stage3"):
-            return "stage3"
-        return "stage3"
-
-    @staticmethod
-    def _matches_model_version_lock(model: str, version_lock: str) -> bool:
-        if not version_lock:
-            return False
-        if model == version_lock:
-            return True
-        if "@" in version_lock:
-            locked_model = version_lock.split("@", 1)[0].strip()
-            return bool(locked_model) and model == locked_model
-        return False
-
 
 class Settings(
-    _SettingsFieldsPart1,
-    _SettingsFieldsPart2,
-    _SettingsFieldsPart3,
-    _SettingsFieldsPart4,
-    _SettingsMethodsPart1,
-    _SettingsMethodsPart2,
-    BaseSettings,
+    SettingsAccessorsMixin,
 ):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -565,17 +508,11 @@ class Settings(
     )
 
 
-def _validate_fragility_map(name: str, values: dict[str, float]) -> None:
-    for state, value in values.items():
-        if value < 0 or value > 1:
-            raise ValueError(f"{name}[{state}] must be within [0, 1]")
-
-
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return a cached Settings instance so values are loaded once."""
 
-    return Settings()  # type: ignore[call-arg]
+    return Settings()
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ["Settings", "get_settings"]

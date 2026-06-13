@@ -1,25 +1,18 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-"""Application configuration for the torghut service."""
+"""Shared configuration helpers for the Torghut service."""
 
 import json
 import logging
-import tempfile
-import os
-from decimal import Decimal
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from functools import lru_cache
 from http.client import HTTPConnection, HTTPSConnection
-from pathlib import Path
-import string
-from typing import Any, List, Literal, Optional, cast
+from typing import Any, Literal, Optional, cast
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel
 
 from ..logging_config import configure_logging
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
 
 configure_logging()
 
@@ -72,7 +65,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "posthog_enabled": "torghut_posthog_enabled",
 }
 
-_LLM_COMMITTEE_ROLES = {
+LLM_COMMITTEE_ROLES = {
     "researcher",
     "risk_critic",
     "execution_critic",
@@ -91,8 +84,18 @@ class TradingAccountLane(BaseModel):
     enabled: bool = True
 
 
+@dataclass(frozen=True)
+class BooleanFeatureFlagRequest:
+    endpoint: str
+    namespace_key: str
+    entity_id: str
+    flag_key: str
+    default_value: bool
+    timeout_ms: int
+
+
 @lru_cache(maxsize=1)
-def _dspy_bootstrap_artifact_hash() -> str | None:
+def dspy_bootstrap_artifact_hash() -> str | None:
     try:
         from ..trading.llm.dspy_programs.runtime import DSPyReviewRuntime
     except Exception:
@@ -163,6 +166,9 @@ class _HttpResponseHandle:
         return False
 
 
+FeatureFlagUrlopen = Callable[[_HttpRequest, float], _HttpResponseHandle]
+
+
 def urlopen(request: _HttpRequest, timeout: float) -> _HttpResponseHandle:
     connection, request_path = _http_connection_for_url(
         request.full_url,
@@ -179,73 +185,109 @@ def urlopen(request: _HttpRequest, timeout: float) -> _HttpResponseHandle:
     return _HttpResponseHandle(connection, response)
 
 
-def _resolve_boolean_feature_flag(
-    *,
-    endpoint: str,
-    namespace_key: str,
-    entity_id: str,
-    flag_key: str,
-    default_value: bool,
-    timeout_ms: int,
-) -> tuple[bool, bool]:
+def _feature_flag_urlopen() -> FeatureFlagUrlopen:
+    config_module = sys.modules.get("app.config")
+    candidate = getattr(config_module, "urlopen", None) if config_module else None
+    if callable(candidate):
+        return cast(FeatureFlagUrlopen, candidate)
+    return urlopen
+
+
+def _build_boolean_feature_flag_request(
+    request: BooleanFeatureFlagRequest,
+) -> tuple[_HttpRequest, float]:
     payload = json.dumps(
         {
-            "namespaceKey": namespace_key,
-            "flagKey": flag_key,
-            "entityId": entity_id,
+            "namespaceKey": request.namespace_key,
+            "flagKey": request.flag_key,
+            "entityId": request.entity_id,
             "context": {},
         }
     ).encode("utf-8")
-    request_url = f"{endpoint.rstrip('/')}/evaluate/v1/boolean"
-    timeout_seconds = max(timeout_ms, 1) / 1000.0
-    request = _HttpRequest(
-        full_url=request_url,
-        method="POST",
-        data=payload,
-        headers={
-            "accept": "application/json",
-            "content-type": "application/json",
-        },
+    request_url = f"{request.endpoint.rstrip('/')}/evaluate/v1/boolean"
+    timeout_seconds = max(request.timeout_ms, 1) / 1000.0
+    return (
+        _HttpRequest(
+            full_url=request_url,
+            method="POST",
+            data=payload,
+            headers={
+                "accept": "application/json",
+                "content-type": "application/json",
+            },
+        ),
+        timeout_seconds,
     )
+
+
+def _feature_flag_default(request: BooleanFeatureFlagRequest) -> tuple[bool, bool]:
+    return request.default_value, False
+
+
+def _parse_boolean_feature_flag_response(
+    *,
+    request: BooleanFeatureFlagRequest,
+    status: int,
+    body_bytes: bytes,
+) -> tuple[bool, bool]:
+    if status < 200 or status >= 300:
+        logger.warning(
+            "Feature flag resolve HTTP failure for key=%s status=%s; using default.",
+            request.flag_key,
+            status,
+        )
+        return _feature_flag_default(request)
+    raw_body = json.loads(body_bytes.decode("utf-8"))
+    if not isinstance(raw_body, dict):
+        logger.warning(
+            "Feature flag resolve invalid response for key=%s; using default.",
+            request.flag_key,
+        )
+        return _feature_flag_default(request)
+    body = cast(dict[str, object], raw_body)
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        logger.warning(
+            "Feature flag resolve missing boolean `enabled` for key=%s; using default.",
+            request.flag_key,
+        )
+        return _feature_flag_default(request)
+    return enabled, True
+
+
+def resolve_boolean_feature_flag(
+    request: BooleanFeatureFlagRequest,
+) -> tuple[bool, bool]:
+    http_request, timeout_seconds = _build_boolean_feature_flag_request(request)
     try:
-        with urlopen(request, timeout_seconds) as response:
-            status = int(getattr(response, "status", 200))
-            if status < 200 or status >= 300:
-                logger.warning(
-                    "Feature flag resolve HTTP failure for key=%s status=%s; using default.",
-                    flag_key,
-                    status,
-                )
-                return default_value, False
-            raw_body = json.loads(response.read().decode("utf-8"))
-            if not isinstance(raw_body, dict):
-                logger.warning(
-                    "Feature flag resolve invalid response for key=%s; using default.",
-                    flag_key,
-                )
-                return default_value, False
-            body = cast(dict[str, object], raw_body)
-            enabled = body.get("enabled")
-            if not isinstance(enabled, bool):
-                logger.warning(
-                    "Feature flag resolve missing boolean `enabled` for key=%s; using default.",
-                    flag_key,
-                )
-                return default_value, False
-            return enabled, True
+        with _feature_flag_urlopen()(http_request, timeout_seconds) as response:
+            return _parse_boolean_feature_flag_response(
+                request=request,
+                status=int(getattr(response, "status", 200)),
+                body_bytes=response.read(),
+            )
     except ValueError:
         logger.warning(
             "Feature flag resolve invalid endpoint for key=%s endpoint=%s; using default.",
-            flag_key,
-            endpoint,
+            request.flag_key,
+            request.endpoint,
         )
-        return default_value, False
+        return _feature_flag_default(request)
     except Exception:
         logger.warning(
-            "Feature flag resolve failed for key=%s; using default.", flag_key
+            "Feature flag resolve failed for key=%s; using default.", request.flag_key
         )
-        return default_value, False
-    return default_value, False
+        return _feature_flag_default(request)
+    return _feature_flag_default(request)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD",
+    "LLM_COMMITTEE_ROLES",
+    "BooleanFeatureFlagRequest",
+    "TradingAccountLane",
+    "dspy_bootstrap_artifact_hash",
+    "logger",
+    "resolve_boolean_feature_flag",
+    "urlopen",
+]

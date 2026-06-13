@@ -1,29 +1,14 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-"""Application configuration for the torghut service."""
+"""Core service and trading connectivity settings."""
 
-import json
-import logging
-import tempfile
-import os
-from decimal import Decimal
-from functools import lru_cache
-from http.client import HTTPConnection, HTTPSConnection
-from pathlib import Path
-import string
-from typing import Any, List, Literal, Optional, cast
-from urllib.parse import urlsplit
+from __future__ import annotations
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Literal, Optional
 
-from ..logging_config import configure_logging
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_20 import *
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings
 
 
-class _SettingsFieldsPart1(BaseSettings):
+class CoreSettingsFields(BaseSettings):
     """Environment-backed settings."""
 
     app_env: Literal["dev", "stage", "prod"] = Field(
@@ -671,4 +656,4 @@ class _SettingsFieldsPart1(BaseSettings):
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ["CoreSettingsFields"]
