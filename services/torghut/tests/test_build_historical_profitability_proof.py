@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import runpy
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,14 +13,30 @@ from unittest.mock import patch
 import yaml
 
 from scripts.build_historical_profitability_proof import (
-    _load_json,
-    _load_yaml,
     build_historical_profitability_bundle,
     main,
+)
+from scripts.build_historical_profitability_proof_modules.proof_core import (
+    _load_json,
+    _load_yaml,
 )
 
 
 class TestBuildHistoricalProfitabilityProof(TestCase):
+    def test_cli_entrypoint_delegates_to_main(self) -> None:
+        with patch(
+            "scripts.build_historical_profitability_proof_modules.main",
+            return_value=7,
+        ) as mocked_main:
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(
+                    "scripts/build_historical_profitability_proof.py",
+                    run_name="__main__",
+                )
+
+        self.assertEqual(raised.exception.code, 7)
+        mocked_main.assert_called_once_with()
+
     def test_builds_profitable_bundle_from_historical_runs(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
