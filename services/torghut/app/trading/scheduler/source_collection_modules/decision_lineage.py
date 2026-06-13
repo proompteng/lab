@@ -1,129 +1,81 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-
 from __future__ import annotations
 
 import logging
-import os
-from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
-from typing import Any, cast
-from urllib.parse import urlsplit
-
-from sqlalchemy import desc, select  # pyright: ignore[reportUnknownVariableType]
-from sqlalchemy.orm import Session
+from collections.abc import Mapping
+from datetime import timedelta, timezone
+from typing import TYPE_CHECKING, Any, cast
 
 from ....config import settings
 from ....models import (
-    Execution,
-    PositionSnapshot,
     Strategy,
-    TradeDecision,
 )
 from ...models import StrategyDecision
-from ...paper_route_target_plan import (
-    paper_route_target_plan_from_payload,
-    paper_route_target_plan_probe_symbols,
-    paper_route_target_plan_targets,
-)
 from ...runtime_decision_authority import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-    source_decision_mode_is_profit_proof_eligible,
 )
-from ...session_context import regular_session_open_utc_for
-from ..target_plan_helpers import (
-    _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
-    _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS,
-    _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON,
-    _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS,
-    _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK,
-    _REGULAR_SESSION_MINUTES,
-    _bounded_sim_collection_blockers,
-    _bounded_sim_collection_reserves_account,
-    _bounded_sim_collection_target_with_runtime_account_audit,
-    _lineage_text_values,
-    _merge_paper_route_probe_lineage,
-    _optional_decimal,
-    _paper_route_probe_lineage_from_params,
-    _safe_text,
-    _strategy_lookup_names,
-    _target_active_in_window,
-    _target_bool,
-    _target_bounded_collection_authorized,
-    _target_has_bounded_sim_collection_source_kind,
-    _target_has_bounded_source_collection_authorization,
-    _target_lookup_names,
-    _target_missing_explicit_probe_window,
-    _target_owns_bounded_sim_collection_account,
-    _target_pair_balance_state,
-    _target_plan_has_active_bounded_sim_collection_owner,
-    _target_plan_lineage,
-    _target_probe_action,
-    _target_probe_cap,
-    _target_probe_exit_minute_after_open,
-    _target_probe_symbol_actions,
-    _target_probe_symbol_quantities,
-    _target_probe_window,
-    _target_requires_bounded_sim_collection_gate,
-    _target_runtime_account_matches,
-    _target_symbols,
-    _target_truthy,
+from ..target_plan_helpers_modules import (
+    BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS as _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS,
+    BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS,
+    BOUNDED_SIM_COLLECTION_LINEAGE_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS,
+    BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS,
+    REGULAR_SESSION_MINUTES as _REGULAR_SESSION_MINUTES,
+    bounded_sim_collection_blockers as _bounded_sim_collection_blockers,
+    lineage_text_values as _lineage_text_values,
+    merge_paper_route_probe_lineage as _merge_paper_route_probe_lineage,
+    safe_text as _safe_text,
+    strategy_lookup_names as _strategy_lookup_names,
+    target_bool as _target_bool,
+    target_has_bounded_sim_collection_source_kind as _target_has_bounded_sim_collection_source_kind,
+    target_lookup_names as _target_lookup_names,
+    target_plan_lineage as _target_plan_lineage,
+    target_probe_exit_minute_after_open as _target_probe_exit_minute_after_open,
+    target_probe_window as _target_probe_window,
+    target_requires_bounded_sim_collection_gate as _target_requires_bounded_sim_collection_gate,
+    target_symbols as _target_symbols,
+    target_truthy as _target_truthy,
 )
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_80 import *
-from .part_02_simplepipelinesourcecollectionmixinmethods import *
+from .source_decisions import SimplePipelineSourceCollectionDecisionMixin
+from .target_plan_fetch import SimplePipelineSourceCollectionTargetPlanMixin
 
 
-class _SimplePipelineSourceCollectionMixinMethodsPart3:
+if TYPE_CHECKING:
+    from .collection_types import (
+        SourceCollectionRuntime as SourceCollectionRuntimeMixin,
+    )
+else:
+
+    class SourceCollectionRuntimeMixin:
+        pass
+
+
+logger = logging.getLogger(__name__)
+
+
+class SimplePipelineSourceCollectionLineageMixin(SourceCollectionRuntimeMixin):
     def _paper_route_target_lineage_for_decision(
         self,
         decision: StrategyDecision,
         strategy: Strategy | None,
     ) -> dict[str, Any]:
-        if settings.trading_mode != "paper":
-            return {}
-        if not settings.trading_simple_paper_route_probe_enabled:
-            return {}
-        symbol = decision.symbol.strip().upper()
-        if not symbol:
+        symbol = self._paper_route_lineage_symbol(decision)
+        if symbol is None:
             return {}
         target_plan_symbols, target_plan_error, target_plan_targets = (
             self._external_paper_route_target_probe_symbols_cached()
         )
         if target_plan_error or symbol not in target_plan_symbols:
             return {}
-        matching_targets: list[dict[str, Any]] = []
-        for target in target_plan_targets:
-            target_symbols = _target_symbols(target)
-            if target_symbols and symbol not in target_symbols:
-                continue
-            if not self._target_matches_decision_strategy(target, decision, strategy):
-                continue
-            if _target_probe_window(target) is not None and not (
-                self._decision_event_in_target_window(decision, target)
-            ):
-                continue
-            matching_targets.append(dict(target))
+        matching_targets = self._paper_route_lineage_targets(
+            target_plan_targets,
+            decision=decision,
+            strategy=strategy,
+            symbol=symbol,
+        )
         if not matching_targets:
             return {}
         lineage = _target_plan_lineage(matching_targets, symbol)
-        if not any(
-            lineage.get(key)
-            for key in (
-                "source_candidate_ids",
-                "source_hypothesis_ids",
-                "paper_route_probe_lineage_targets",
-            )
-        ):
+        if not self._paper_route_lineage_has_materialized_source(lineage):
             return {}
         return {
             "mode": "paper_route_target_lineage",
@@ -132,6 +84,67 @@ class _SimplePipelineSourceCollectionMixinMethodsPart3:
             "paper_route_target_plan_symbols": sorted(target_plan_symbols),
             **lineage,
         }
+
+    @staticmethod
+    def _paper_route_lineage_symbol(decision: StrategyDecision) -> str | None:
+        if settings.trading_mode != "paper":
+            return None
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return None
+        symbol = decision.symbol.strip().upper()
+        return symbol or None
+
+    def _paper_route_lineage_targets(
+        self,
+        targets: list[dict[str, Any]],
+        *,
+        decision: StrategyDecision,
+        strategy: Strategy | None,
+        symbol: str,
+    ) -> list[dict[str, Any]]:
+        matching_targets: list[dict[str, Any]] = []
+        for target in targets:
+            if self._paper_route_lineage_target_matches(
+                target,
+                decision=decision,
+                strategy=strategy,
+                symbol=symbol,
+            ):
+                matching_targets.append(dict(target))
+        return matching_targets
+
+    def _paper_route_lineage_target_matches(
+        self,
+        target: Mapping[str, Any],
+        *,
+        decision: StrategyDecision,
+        strategy: Strategy | None,
+        symbol: str,
+    ) -> bool:
+        target_symbols = _target_symbols(target)
+        if target_symbols and symbol not in target_symbols:
+            return False
+        if not self._target_matches_decision_strategy(target, decision, strategy):
+            return False
+        return _target_probe_window(
+            target
+        ) is None or self._decision_event_in_target_window(
+            decision,
+            target,
+        )
+
+    @staticmethod
+    def _paper_route_lineage_has_materialized_source(
+        lineage: Mapping[str, Any],
+    ) -> bool:
+        return any(
+            lineage.get(key)
+            for key in (
+                "source_candidate_ids",
+                "source_hypothesis_ids",
+                "paper_route_probe_lineage_targets",
+            )
+        )
 
     @staticmethod
     def _target_matches_decision_strategy(
@@ -173,28 +186,8 @@ class _SimplePipelineSourceCollectionMixinMethodsPart3:
         decision: StrategyDecision,
         strategy: Strategy | None,
     ) -> Mapping[str, Any] | None:
-        if settings.trading_mode != "paper":
-            return None
-        if not settings.trading_simple_paper_route_probe_enabled:
-            return None
-        if self._paper_route_target_source_cap(decision.params) is not None:
-            return None
-        if isinstance(
-            decision.params.get("paper_route_target_plan_source_decision"), Mapping
-        ):
-            return None
-        if isinstance(decision.params.get("paper_route_probe_exit"), Mapping):
-            return None
-        existing_mode = (
-            str(decision.params.get("source_decision_mode") or "")
-            .strip()
-            .lower()
-            .replace("-", "_")
-        )
-        if existing_mode == ROUTE_ACQUISITION_SOURCE_DECISION_MODE:
-            return None
-        symbol = decision.symbol.strip().upper()
-        if not symbol:
+        symbol = self._strategy_signal_candidate_symbol(decision)
+        if symbol is None:
             return None
         target_plan_symbols, target_plan_error, target_plan_targets = (
             self._external_paper_route_target_probe_symbols_cached()
@@ -202,49 +195,110 @@ class _SimplePipelineSourceCollectionMixinMethodsPart3:
         if target_plan_error or symbol not in target_plan_symbols:
             return None
         for target in target_plan_targets:
-            target_symbols = _target_symbols(target)
-            if target_symbols and symbol not in target_symbols:
-                continue
-            if not self._decision_event_in_target_window(decision, target):
-                continue
-            if not self._target_matches_decision_strategy(target, decision, strategy):
-                continue
-            if _safe_text(target.get("candidate_id")) is None:
-                continue
-            if _safe_text(target.get("hypothesis_id")) is None:
-                continue
-            if str(target.get("observed_stage") or "").strip().lower() != "paper":
-                continue
-            if not _target_has_bounded_sim_collection_source_kind(target):
-                continue
-            if _target_requires_bounded_sim_collection_gate(target):
-                blockers = _bounded_sim_collection_blockers(
-                    target,
-                    account_label=self.account_label,
-                )
-                if blockers:
-                    logger.warning(
-                        "Skipping strategy-signal paper authority because bounded SIM "
-                        "collection is not authorized strategy=%s symbol=%s blockers=%s",
-                        strategy.name if strategy is not None else decision.strategy_id,
-                        symbol,
-                        ",".join(blockers),
-                    )
-                    continue
-            if not _target_truthy(target.get("paper_probation_authorized")):
-                continue
-            return target
+            if self._strategy_signal_target_matches(
+                target,
+                decision=decision,
+                strategy=strategy,
+                symbol=symbol,
+            ):
+                return target
         return None
 
+    def _strategy_signal_candidate_symbol(
+        self,
+        decision: StrategyDecision,
+    ) -> str | None:
+        if self._strategy_signal_candidate_blocked(decision):
+            return None
+        symbol = decision.symbol.strip().upper()
+        return symbol or None
+
+    def _strategy_signal_candidate_blocked(
+        self,
+        decision: StrategyDecision,
+    ) -> bool:
+        existing_mode = (
+            str(decision.params.get("source_decision_mode") or "")
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        return (
+            settings.trading_mode != "paper"
+            or not settings.trading_simple_paper_route_probe_enabled
+            or self._paper_route_target_source_cap(decision.params) is not None
+            or isinstance(
+                decision.params.get("paper_route_target_plan_source_decision"),
+                Mapping,
+            )
+            or isinstance(decision.params.get("paper_route_probe_exit"), Mapping)
+            or existing_mode == ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+        )
+
+    def _strategy_signal_target_matches(
+        self,
+        target: Mapping[str, Any],
+        *,
+        decision: StrategyDecision,
+        strategy: Strategy | None,
+        symbol: str,
+    ) -> bool:
+        target_symbols = _target_symbols(target)
+        if target_symbols and symbol not in target_symbols:
+            return False
+        if not self._decision_event_in_target_window(decision, target):
+            return False
+        if not self._target_matches_decision_strategy(target, decision, strategy):
+            return False
+        if not self._strategy_signal_target_identity_complete(target):
+            return False
+        if self._strategy_signal_target_blocked(target, decision, strategy, symbol):
+            return False
+        return _target_truthy(target.get("paper_probation_authorized"))
+
     @staticmethod
+    def _strategy_signal_target_identity_complete(
+        target: Mapping[str, Any],
+    ) -> bool:
+        return (
+            _safe_text(target.get("candidate_id")) is not None
+            and _safe_text(target.get("hypothesis_id")) is not None
+            and str(target.get("observed_stage") or "").strip().lower() == "paper"
+            and _target_has_bounded_sim_collection_source_kind(target)
+        )
+
+    def _strategy_signal_target_blocked(
+        self,
+        target: Mapping[str, Any],
+        decision: StrategyDecision,
+        strategy: Strategy | None,
+        symbol: str,
+    ) -> bool:
+        if not _target_requires_bounded_sim_collection_gate(target):
+            return False
+        blockers = _bounded_sim_collection_blockers(
+            target,
+            account_label=self.account_label,
+        )
+        if not blockers:
+            return False
+        logger.warning(
+            "Skipping strategy-signal paper authority because bounded SIM "
+            "collection is not authorized strategy=%s symbol=%s blockers=%s",
+            strategy.name if strategy is not None else decision.strategy_id,
+            symbol,
+            ",".join(blockers),
+        )
+        return True
+
     def _strategy_signal_paper_metadata(
+        self,
         *,
         decision: StrategyDecision,
         target: Mapping[str, Any],
         strategy: Strategy | None,
     ) -> dict[str, Any]:
         lineage = _target_plan_lineage([dict(target)], decision.symbol)
-        window = _target_probe_window(target)
         metadata: dict[str, Any] = {
             "mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
             "source": "external_target_plan_url",
@@ -263,6 +317,16 @@ class _SimplePipelineSourceCollectionMixinMethodsPart3:
         if strategy is not None:
             metadata["strategy_name"] = strategy.name
             metadata["strategy_id"] = str(strategy.id)
+        self._add_strategy_signal_identity_metadata(metadata, target)
+        self._add_strategy_signal_bounded_metadata(metadata, target)
+        self._add_strategy_signal_probe_metadata(metadata, target)
+        return metadata
+
+    @staticmethod
+    def _add_strategy_signal_identity_metadata(
+        metadata: dict[str, Any],
+        target: Mapping[str, Any],
+    ) -> None:
         for key in (
             "candidate_id",
             "hypothesis_id",
@@ -276,6 +340,12 @@ class _SimplePipelineSourceCollectionMixinMethodsPart3:
             value = _safe_text(target.get(key))
             if value is not None:
                 metadata[key] = value
+
+    @staticmethod
+    def _add_strategy_signal_bounded_metadata(
+        metadata: dict[str, Any],
+        target: Mapping[str, Any],
+    ) -> None:
         for key in _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS:
             value = _safe_text(target.get(key))
             if value is not None:
@@ -302,6 +372,13 @@ class _SimplePipelineSourceCollectionMixinMethodsPart3:
             value = target.get(key)
             if value is not None:
                 metadata[key] = value
+
+    @staticmethod
+    def _add_strategy_signal_probe_metadata(
+        metadata: dict[str, Any],
+        target: Mapping[str, Any],
+    ) -> None:
+        window = _target_probe_window(target)
         if window is not None:
             window_start, window_end = window
             metadata["paper_route_probe_window_start"] = window_start.isoformat()
@@ -319,7 +396,6 @@ class _SimplePipelineSourceCollectionMixinMethodsPart3:
                     metadata["paper_route_probe_exit_default_reason"] = (
                         "target_plan_evidence_collection_session_close"
                     )
-        return metadata
 
     def _with_paper_route_target_lineage(
         self,
@@ -371,12 +447,15 @@ class _SimplePipelineSourceCollectionMixinMethodsPart3:
 
 
 class SimplePipelineSourceCollectionMixin(
-    _SimplePipelineSourceCollectionMixinMethodsPart1,
-    _SimplePipelineSourceCollectionMixinMethodsPart2,
-    _SimplePipelineSourceCollectionMixinMethodsPart3,
+    SimplePipelineSourceCollectionTargetPlanMixin,
+    SimplePipelineSourceCollectionDecisionMixin,
+    SimplePipelineSourceCollectionLineageMixin,
     object,
 ):
     pass
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "SimplePipelineSourceCollectionLineageMixin",
+    "SimplePipelineSourceCollectionMixin",
+]
