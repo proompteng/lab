@@ -252,7 +252,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             assert normalized.event is not None
 
             with patch(
-                "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal.create_tigerbeetle_client",
                 return_value=client,
             ):
                 persisted, is_duplicate = persist_order_event(
@@ -293,7 +293,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
 
             with (
                 patch(
-                    "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                    "app.trading.tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal.create_tigerbeetle_client",
                     return_value=client,
                 ),
                 patch(
@@ -370,7 +370,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             assert normalized.event is not None
 
             with patch(
-                "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal.create_tigerbeetle_client",
                 side_effect=RuntimeError("tb unavailable"),
             ):
                 persisted, is_duplicate = persist_order_event(
@@ -405,7 +405,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             assert normalized.event is not None
 
             with patch(
-                "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal.create_tigerbeetle_client",
                 side_effect=RuntimeError("tb unavailable"),
             ):
                 with self.assertRaisesRegex(RuntimeError, "tb unavailable"):
