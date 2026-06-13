@@ -46,6 +46,7 @@ def test_refactor_quality_guard_resolves_base_spec(
 def test_refactor_quality_guard_resolves_diff_base_with_fallbacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
     attempts: list[tuple[str, ...]] = []
 
     def fake_git_optional(_cwd: Path, *args: str) -> str | None:
