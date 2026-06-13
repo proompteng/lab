@@ -1,37 +1,40 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, cast
 
 
-from ....config import settings
 from ....models import (
     Strategy,
 )
 from ....strategies.catalog import extract_catalog_metadata
-from ...autonomy import DriftThresholds
-from ...feature_quality import FeatureQualityThresholds
 from ...models import StrategyDecision
-from ...runtime_decision_authority import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-    normalize_source_decision_mode,
-)
 from ...runtime_strategy_resolution import strategy_names_from_strategy_id
-from ...simple_risk import (
-    position_qty_for_symbol,
+from .bounded_collection import (
+    BOUNDED_PAPER_ROUTE_DEFAULT_CLOSEOUT_BUFFER_MINUTES as _BOUNDED_PAPER_ROUTE_DEFAULT_CLOSEOUT_BUFFER_MINUTES,
+    BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL as _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
+    BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS,
+    BOUNDED_SIM_COLLECTION_LINEAGE_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS,
+    BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS,
+    REGULAR_SESSION_MINUTES as _REGULAR_SESSION_MINUTES,
+    bounded_sim_collection_authorized as _bounded_sim_collection_authorized,
+    bounded_sim_collection_reserves_account as _bounded_sim_collection_reserves_account,
+    lineage_target_from_mapping as _lineage_target_from_mapping,
+    lineage_target_key as _lineage_target_key,
+    lineage_text_values as _lineage_text_values,
+    merge_unique_texts as _merge_unique_texts,
+    safe_text as _safe_text,
+    single_lineage_text as _single_lineage_text,
+    target_bool as _target_bool,
+    target_has_bounded_sim_collection_source_kind as _target_has_bounded_sim_collection_source_kind,
+    target_owns_bounded_sim_collection_account as _target_owns_bounded_sim_collection_account,
+    target_runtime_account_matches as _target_runtime_account_matches,
+    target_strategy_family_tokens as _target_strategy_family_tokens,
+    target_truthy as _target_truthy,
 )
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_32 import *
 
 
 def _target_plan_has_active_bounded_sim_collection_owner(
@@ -136,6 +139,15 @@ def _mapping_value(value: object) -> Mapping[str, Any] | None:
     if isinstance(value, Mapping):
         return cast(Mapping[str, Any], value)
     return None
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
 
 
 def _decimal_from_mapping(
@@ -247,6 +259,14 @@ def _target_probe_window(target: Mapping[str, Any]) -> tuple[datetime, datetime]
     return window_start, window_end
 
 
+def _target_active_in_window(target: Mapping[str, Any], now: datetime) -> bool:
+    window = _target_probe_window(target)
+    if window is None:
+        return False
+    window_start, window_end = window
+    return window_start <= now < window_end
+
+
 def _target_missing_explicit_probe_window(target: Mapping[str, Any]) -> bool:
     return all(
         _safe_text(target.get(key)) is None
@@ -311,7 +331,7 @@ def _target_probe_exit_minute_after_open(
                     exit_minute = None
         else:
             try:
-                exit_minute = max(0, int(cast(Any, raw_value)))
+                exit_minute = max(0, int(raw_value))
             except (TypeError, ValueError, ArithmeticError):
                 exit_minute = None
         if exit_minute is not None:
@@ -332,21 +352,6 @@ def _target_probe_exit_minute_after_open(
     return None, False
 
 
-def _target_strategy_family_tokens(target: Mapping[str, Any]) -> set[str]:
-    tokens: set[str] = set()
-    for key in (
-        "strategy_family",
-        "strategy_name",
-        "runtime_strategy_name",
-        "strategy_id",
-        "universe_type",
-    ):
-        value = _safe_text(target.get(key))
-        if value:
-            tokens.add(value.strip().lower().replace("-", "_"))
-    return tokens
-
-
 def _target_requires_balanced_pair_legs(target: Mapping[str, Any]) -> bool:
     explicit = _target_bool(target.get("paper_route_probe_pair_balance_required"))
     if explicit is not None:
@@ -357,66 +362,117 @@ def _target_requires_balanced_pair_legs(target: Mapping[str, Any]) -> bool:
     )
 
 
+def _normalized_target_symbols(symbols: Sequence[str]) -> list[str]:
+    return [symbol.strip().upper() for symbol in symbols if symbol.strip()]
+
+
+def _action_from_raw_value(value: object) -> Literal["buy", "sell"] | None:
+    action = str(value or "").strip().lower()
+    if action in {"buy", "long"}:
+        return "buy"
+    if action in {"sell", "short"}:
+        return "sell"
+    return None
+
+
+def _target_probe_actions_from_mapping(
+    raw_actions: Mapping[object, object],
+    normalized_symbols: Sequence[str],
+) -> dict[str, Literal["buy", "sell"]]:
+    actions: dict[str, Literal["buy", "sell"]] = {}
+    for raw_symbol, raw_action in raw_actions.items():
+        symbol = str(raw_symbol).strip().upper()
+        action = _action_from_raw_value(raw_action)
+        if symbol in normalized_symbols and action is not None:
+            actions[symbol] = action
+    return actions
+
+
+def _target_probe_actions_from_sequence(
+    raw_actions: Sequence[object],
+    normalized_symbols: Sequence[str],
+) -> dict[str, Literal["buy", "sell"]]:
+    actions: dict[str, Literal["buy", "sell"]] = {}
+    for raw_item in raw_actions:
+        if not isinstance(raw_item, Mapping):
+            continue
+        item = cast(Mapping[str, object], raw_item)
+        symbol = str(item.get("symbol") or "").strip().upper()
+        action = _action_from_raw_value(item.get("action") or item.get("side"))
+        if symbol in normalized_symbols and action is not None:
+            actions[symbol] = action
+    return actions
+
+
+def _target_probe_declared_actions(
+    target: Mapping[str, Any],
+    normalized_symbols: Sequence[str],
+) -> dict[str, Literal["buy", "sell"]]:
+    raw_actions = target.get("paper_route_probe_symbol_actions")
+    if isinstance(raw_actions, Mapping):
+        return _target_probe_actions_from_mapping(
+            cast(Mapping[object, object], raw_actions),
+            normalized_symbols,
+        )
+    if isinstance(raw_actions, Sequence) and not isinstance(
+        raw_actions, (str, bytes, bytearray)
+    ):
+        return _target_probe_actions_from_sequence(
+            cast(Sequence[object], raw_actions),
+            normalized_symbols,
+        )
+    return {}
+
+
+def _seed_action_pair(
+    *,
+    selection_mode: str,
+) -> tuple[Literal["buy", "sell"], Literal["buy", "sell"]]:
+    first_action: Literal["buy", "sell"] = (
+        "sell" if selection_mode == "reversal" else "buy"
+    )
+    second_action: Literal["buy", "sell"] = "buy" if first_action == "sell" else "sell"
+    return first_action, second_action
+
+
+def _balance_missing_probe_actions(
+    target: Mapping[str, Any],
+    actions: dict[str, Literal["buy", "sell"]],
+    missing_symbols: Sequence[str],
+) -> None:
+    selection_mode = str(target.get("selection_mode") or "continuation").strip().lower()
+    first_action, second_action = _seed_action_pair(selection_mode=selection_mode)
+    buy_count = sum(1 for action in actions.values() if action == "buy")
+    sell_count = sum(1 for action in actions.values() if action == "sell")
+    balanced_seed_index = 0
+    for symbol in missing_symbols:
+        if buy_count < sell_count:
+            action: Literal["buy", "sell"] = "buy"
+        elif sell_count < buy_count:
+            action = "sell"
+        else:
+            action = first_action if balanced_seed_index % 2 == 0 else second_action
+            balanced_seed_index += 1
+        actions[symbol] = action
+        if action == "buy":
+            buy_count += 1
+        else:
+            sell_count += 1
+
+
 def _target_probe_symbol_actions(
     target: Mapping[str, Any],
     symbols: Sequence[str],
 ) -> dict[str, Literal["buy", "sell"]]:
-    normalized_symbols = [
-        symbol.strip().upper() for symbol in symbols if symbol.strip()
-    ]
-    actions: dict[str, Literal["buy", "sell"]] = {}
-    raw_actions = target.get("paper_route_probe_symbol_actions")
-    if isinstance(raw_actions, Mapping):
-        for raw_symbol, raw_action in cast(
-            Mapping[object, object], raw_actions
-        ).items():
-            symbol = str(raw_symbol).strip().upper()
-            action = str(raw_action or "").strip().lower()
-            if symbol in normalized_symbols and action in {"buy", "long"}:
-                actions[symbol] = "buy"
-            elif symbol in normalized_symbols and action in {"sell", "short"}:
-                actions[symbol] = "sell"
-    elif isinstance(raw_actions, Sequence) and not isinstance(
-        raw_actions, (str, bytes, bytearray)
-    ):
-        for raw_item in cast(Sequence[object], raw_actions):
-            if not isinstance(raw_item, Mapping):
-                continue
-            item = cast(Mapping[str, object], raw_item)
-            symbol = str(item.get("symbol") or "").strip().upper()
-            action = str(item.get("action") or item.get("side") or "").strip().lower()
-            if symbol in normalized_symbols and action in {"buy", "long"}:
-                actions[symbol] = "buy"
-            elif symbol in normalized_symbols and action in {"sell", "short"}:
-                actions[symbol] = "sell"
-
+    normalized_symbols = _normalized_target_symbols(symbols)
+    actions = _target_probe_declared_actions(target, normalized_symbols)
     missing_symbols = [symbol for symbol in normalized_symbols if symbol not in actions]
     if missing_symbols and _target_requires_balanced_pair_legs(target):
-        selection_mode = (
-            str(target.get("selection_mode") or "continuation").strip().lower()
+        _balance_missing_probe_actions(
+            target,
+            actions,
+            missing_symbols,
         )
-        first_action: Literal["buy", "sell"] = (
-            "sell" if selection_mode == "reversal" else "buy"
-        )
-        second_action: Literal["buy", "sell"] = (
-            "buy" if first_action == "sell" else "sell"
-        )
-        buy_count = sum(1 for action in actions.values() if action == "buy")
-        sell_count = sum(1 for action in actions.values() if action == "sell")
-        balanced_seed_index = 0
-        for symbol in missing_symbols:
-            if buy_count < sell_count:
-                action = "buy"
-            elif sell_count < buy_count:
-                action = "sell"
-            else:
-                action = first_action if balanced_seed_index % 2 == 0 else second_action
-                balanced_seed_index += 1
-            actions[symbol] = action
-            if action == "buy":
-                buy_count += 1
-            else:
-                sell_count += 1
 
     default_action = _target_probe_action(target)
     return {
@@ -522,58 +578,34 @@ def _target_pair_balance_state(
     return "imbalanced"
 
 
-def _target_truthy(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int | float | Decimal):
-        return bool(value)
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+@dataclass
+class _PaperRouteProbeLineageAccumulator:
+    candidate_ids: list[str]
+    hypothesis_ids: list[str]
+    strategy_names: list[str]
+    lineage_targets: list[dict[str, str]]
+    lineage_target_keys: set[tuple[str | None, str | None, str | None]]
+    fallback_source_decision_modes: list[str]
+    fallback_profit_proof_values: list[bool]
+    collection_lineage: dict[str, Any]
 
 
-def _target_bool(value: object) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int | float | Decimal):
-        return bool(value)
-    text = str(value or "").strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off"}:
-        return False
-    return None
+def _new_paper_route_probe_lineage_accumulator() -> _PaperRouteProbeLineageAccumulator:
+    return _PaperRouteProbeLineageAccumulator(
+        candidate_ids=[],
+        hypothesis_ids=[],
+        strategy_names=[],
+        lineage_targets=[],
+        lineage_target_keys=set(),
+        fallback_source_decision_modes=[],
+        fallback_profit_proof_values=[],
+        collection_lineage={},
+    )
 
 
-def _lineage_text_values(value: object) -> list[str]:
-    raw_items: Sequence[object]
-    if isinstance(value, str):
-        raw_items = value.split(",")
-    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-        raw_items = cast(Sequence[object], value)
-    else:
-        raw_items = (value,)
-
-    values: list[str] = []
-    for raw_item in raw_items:
-        text = _safe_text(raw_item)
-        if text and text not in values:
-            values.append(text)
-    return values
-
-
-def _merge_unique_texts(target: list[str], values: Sequence[str]) -> None:
-    for value in values:
-        if value not in target:
-            target.append(value)
-
-
-def _single_lineage_text(value: object) -> str | None:
-    values = _lineage_text_values(value)
-    if len(values) != 1:
-        return None
-    return values[0]
-
-
-def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[str, Any]:
+def _paper_route_probe_lineage_payloads(
+    params: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
     payloads: list[Mapping[str, Any]] = [params]
     for key in (
         "paper_route_probe",
@@ -585,117 +617,181 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
         value = params.get(key)
         if isinstance(value, Mapping):
             payloads.append(cast(Mapping[str, Any], value))
+    return payloads
 
-    candidate_ids: list[str] = []
-    hypothesis_ids: list[str] = []
-    strategy_names: list[str] = []
-    lineage_targets: list[dict[str, str]] = []
-    lineage_target_keys: set[tuple[str | None, str | None, str | None]] = set()
-    source_decision_mode = _safe_text(params.get("source_decision_mode"))
-    profit_proof_eligible = _target_bool(params.get("profit_proof_eligible"))
-    fallback_source_decision_modes: list[str] = []
-    fallback_profit_proof_values: list[bool] = []
-    collection_lineage: dict[str, Any] = {}
-    for payload in payloads:
-        _merge_unique_texts(
-            candidate_ids, _lineage_text_values(payload.get("candidate_id"))
-        )
-        _merge_unique_texts(
-            candidate_ids, _lineage_text_values(payload.get("source_candidate_id"))
-        )
-        _merge_unique_texts(
-            candidate_ids, _lineage_text_values(payload.get("source_candidate_ids"))
-        )
-        _merge_unique_texts(
-            hypothesis_ids, _lineage_text_values(payload.get("hypothesis_id"))
-        )
-        _merge_unique_texts(
-            hypothesis_ids, _lineage_text_values(payload.get("source_hypothesis_id"))
-        )
-        _merge_unique_texts(
-            hypothesis_ids, _lineage_text_values(payload.get("source_hypothesis_ids"))
-        )
-        _merge_unique_texts(
-            strategy_names, _lineage_text_values(payload.get("runtime_strategy_name"))
-        )
-        _merge_unique_texts(
-            strategy_names, _lineage_text_values(payload.get("source_strategy_name"))
-        )
-        _merge_unique_texts(
-            strategy_names, _lineage_text_values(payload.get("source_strategy_names"))
-        )
-        if payload is not params:
-            if mode := _safe_text(payload.get("source_decision_mode")):
-                fallback_source_decision_modes.append(mode)
-            if (
-                eligible := _target_bool(payload.get("profit_proof_eligible"))
-            ) is not None:
-                fallback_profit_proof_values.append(eligible)
-        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS:
-            if key not in collection_lineage and (
-                value := _safe_text(payload.get(key))
-            ):
-                collection_lineage[key] = value
-        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS:
-            value = _target_bool(payload.get(key))
-            if key not in collection_lineage and value is not None:
-                collection_lineage[key] = value
-        if "paper_route_probe_symbols" not in collection_lineage:
-            symbols = _lineage_text_values(payload.get("paper_route_probe_symbols"))
-            if symbols:
-                collection_lineage["paper_route_probe_symbols"] = symbols
-        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS:
-            value = payload.get(key)
-            if key not in collection_lineage and isinstance(value, Mapping):
-                collection_lineage[key] = dict(cast(Mapping[str, Any], value))
 
-        raw_targets = payload.get("paper_route_probe_lineage_targets")
-        if isinstance(raw_targets, Sequence) and not isinstance(
-            raw_targets, (str, bytes, bytearray)
-        ):
-            for raw_target in cast(Sequence[object], raw_targets):
-                if not isinstance(raw_target, Mapping):
-                    continue
-                lineage_target = _lineage_target_from_mapping(
-                    cast(Mapping[str, object], raw_target)
-                )
-                if not lineage_target:
-                    continue
-                lineage_key = _lineage_target_key(lineage_target)
-                if lineage_key not in lineage_target_keys:
-                    lineage_target_keys.add(lineage_key)
-                    lineage_targets.append(lineage_target)
+def _collect_paper_route_probe_identity_lineage(
+    accumulator: _PaperRouteProbeLineageAccumulator,
+    payload: Mapping[str, Any],
+) -> None:
+    for key in ("candidate_id", "source_candidate_id", "source_candidate_ids"):
+        _merge_unique_texts(
+            accumulator.candidate_ids,
+            _lineage_text_values(payload.get(key)),
+        )
+    for key in ("hypothesis_id", "source_hypothesis_id", "source_hypothesis_ids"):
+        _merge_unique_texts(
+            accumulator.hypothesis_ids,
+            _lineage_text_values(payload.get(key)),
+        )
+    for key in (
+        "runtime_strategy_name",
+        "source_strategy_name",
+        "source_strategy_names",
+    ):
+        _merge_unique_texts(
+            accumulator.strategy_names,
+            _lineage_text_values(payload.get(key)),
+        )
 
+
+def _collect_paper_route_probe_fallback_lineage(
+    accumulator: _PaperRouteProbeLineageAccumulator,
+    payload: Mapping[str, Any],
+    *,
+    is_root_payload: bool,
+) -> None:
+    if is_root_payload:
+        return
+    if mode := _safe_text(payload.get("source_decision_mode")):
+        accumulator.fallback_source_decision_modes.append(mode)
+    if (eligible := _target_bool(payload.get("profit_proof_eligible"))) is not None:
+        accumulator.fallback_profit_proof_values.append(eligible)
+
+
+def _collect_paper_route_probe_collection_lineage(
+    accumulator: _PaperRouteProbeLineageAccumulator,
+    payload: Mapping[str, Any],
+) -> None:
+    collection_lineage = accumulator.collection_lineage
+    for key in _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS:
+        if key not in collection_lineage and (value := _safe_text(payload.get(key))):
+            collection_lineage[key] = value
+    for key in _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS:
+        value = _target_bool(payload.get(key))
+        if key not in collection_lineage and value is not None:
+            collection_lineage[key] = value
+    if "paper_route_probe_symbols" not in collection_lineage:
+        symbols = _lineage_text_values(payload.get("paper_route_probe_symbols"))
+        if symbols:
+            collection_lineage["paper_route_probe_symbols"] = symbols
+    for key in _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS:
+        value = payload.get(key)
+        if key not in collection_lineage and isinstance(value, Mapping):
+            collection_lineage[key] = dict(cast(Mapping[str, Any], value))
+
+
+def _collect_paper_route_probe_lineage_targets(
+    accumulator: _PaperRouteProbeLineageAccumulator,
+    payload: Mapping[str, Any],
+) -> None:
+    raw_targets = payload.get("paper_route_probe_lineage_targets")
+    if not isinstance(raw_targets, Sequence) or isinstance(
+        raw_targets, (str, bytes, bytearray)
+    ):
+        return
+    for raw_target in cast(Sequence[object], raw_targets):
+        if not isinstance(raw_target, Mapping):
+            continue
+        lineage_target = _lineage_target_from_mapping(
+            cast(Mapping[str, object], raw_target)
+        )
+        if not lineage_target:
+            continue
+        lineage_key = _lineage_target_key(lineage_target)
+        if lineage_key not in accumulator.lineage_target_keys:
+            accumulator.lineage_target_keys.add(lineage_key)
+            accumulator.lineage_targets.append(lineage_target)
+
+
+def _build_paper_route_probe_lineage(
+    accumulator: _PaperRouteProbeLineageAccumulator,
+    *,
+    source_decision_mode: str | None,
+    profit_proof_eligible: bool | None,
+) -> dict[str, Any]:
     lineage: dict[str, Any] = {}
-    if candidate_ids:
-        lineage["source_candidate_ids"] = candidate_ids
-    single_candidate_id = _single_lineage_text(candidate_ids)
+    if accumulator.candidate_ids:
+        lineage["source_candidate_ids"] = accumulator.candidate_ids
+    single_candidate_id = _single_lineage_text(accumulator.candidate_ids)
     if single_candidate_id is not None:
         lineage["candidate_id"] = single_candidate_id
-    if hypothesis_ids:
-        lineage["source_hypothesis_ids"] = hypothesis_ids
-    single_hypothesis_id = _single_lineage_text(hypothesis_ids)
+    if accumulator.hypothesis_ids:
+        lineage["source_hypothesis_ids"] = accumulator.hypothesis_ids
+    single_hypothesis_id = _single_lineage_text(accumulator.hypothesis_ids)
     if single_hypothesis_id is not None:
         lineage["hypothesis_id"] = single_hypothesis_id
-    if strategy_names:
-        lineage["source_strategy_names"] = strategy_names
-    single_strategy_name = _single_lineage_text(strategy_names)
+    if accumulator.strategy_names:
+        lineage["source_strategy_names"] = accumulator.strategy_names
+    single_strategy_name = _single_lineage_text(accumulator.strategy_names)
     if single_strategy_name is not None:
         lineage.setdefault("runtime_strategy_name", single_strategy_name)
-    if lineage_targets:
-        lineage["paper_route_probe_lineage_targets"] = lineage_targets
+    if accumulator.lineage_targets:
+        lineage["paper_route_probe_lineage_targets"] = accumulator.lineage_targets
     if source_decision_mode:
         lineage["source_decision_mode"] = source_decision_mode
     else:
-        unique_modes = list(dict.fromkeys(fallback_source_decision_modes))
+        unique_modes = list(dict.fromkeys(accumulator.fallback_source_decision_modes))
         if len(unique_modes) == 1:
             lineage["source_decision_mode"] = unique_modes[0]
     if profit_proof_eligible is not None:
         lineage["profit_proof_eligible"] = profit_proof_eligible
-    elif fallback_profit_proof_values:
-        lineage["profit_proof_eligible"] = all(fallback_profit_proof_values)
-    lineage.update(collection_lineage)
+    elif accumulator.fallback_profit_proof_values:
+        lineage["profit_proof_eligible"] = all(accumulator.fallback_profit_proof_values)
+    lineage.update(accumulator.collection_lineage)
     return lineage
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    accumulator = _new_paper_route_probe_lineage_accumulator()
+    for payload in _paper_route_probe_lineage_payloads(params):
+        _collect_paper_route_probe_identity_lineage(accumulator, payload)
+        _collect_paper_route_probe_fallback_lineage(
+            accumulator,
+            payload,
+            is_root_payload=payload is params,
+        )
+        _collect_paper_route_probe_collection_lineage(accumulator, payload)
+        _collect_paper_route_probe_lineage_targets(accumulator, payload)
+    return _build_paper_route_probe_lineage(
+        accumulator,
+        source_decision_mode=_safe_text(params.get("source_decision_mode")),
+        profit_proof_eligible=_target_bool(params.get("profit_proof_eligible")),
+    )
+
+
+# Public module boundary aliases.
+target_plan_has_active_bounded_sim_collection_owner = (
+    _target_plan_has_active_bounded_sim_collection_owner
+)
+target_requires_bounded_sim_collection_gate = (
+    _target_requires_bounded_sim_collection_gate
+)
+bounded_sim_collection_metadata_from_decision = (
+    _bounded_sim_collection_metadata_from_decision
+)
+target_lookup_names = _target_lookup_names
+strategy_lookup_names = _strategy_lookup_names
+parse_target_datetime = _parse_target_datetime
+mapping_value = _mapping_value
+optional_decimal = _optional_decimal
+decimal_from_mapping = _decimal_from_mapping
+text_from_mapping = _text_from_mapping
+target_metadata_quote_snapshot = _target_metadata_quote_snapshot
+quote_snapshot_from_mapping = _quote_snapshot_from_mapping
+quote_snapshot_matches_symbol = _quote_snapshot_matches_symbol
+snapshot_has_executable_quote = _snapshot_has_executable_quote
+target_probe_window = _target_probe_window
+target_active_in_window = _target_active_in_window
+target_missing_explicit_probe_window = _target_missing_explicit_probe_window
+target_probe_action = _target_probe_action
+target_probe_cap = _target_probe_cap
+target_probe_exit_minute_after_open = _target_probe_exit_minute_after_open
+target_requires_balanced_pair_legs = _target_requires_balanced_pair_legs
+target_probe_symbol_actions = _target_probe_symbol_actions
+target_probe_symbol_quantities = _target_probe_symbol_quantities
+TargetProbeQuantityResolution = _TargetProbeQuantityResolution
+target_probe_symbol_notional_budget = _target_probe_symbol_notional_budget
+quote_snapshot_reference_price = _quote_snapshot_reference_price
+target_pair_balance_state = _target_pair_balance_state
+paper_route_probe_lineage_from_params = _paper_route_probe_lineage_from_params

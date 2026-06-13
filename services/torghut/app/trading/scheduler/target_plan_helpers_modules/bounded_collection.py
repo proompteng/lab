@@ -1,35 +1,14 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Literal, TypeAlias, cast
 
 
-from ....config import settings
-from ....models import (
-    Strategy,
-)
-from ....strategies.catalog import extract_catalog_metadata
-from ...autonomy import DriftThresholds
-from ...feature_quality import FeatureQualityThresholds
-from ...models import StrategyDecision
-from ...runtime_decision_authority import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-    normalize_source_decision_mode,
-)
 from ...runtime_strategy_resolution import strategy_names_from_strategy_id
-from ...simple_risk import (
-    position_qty_for_symbol,
-)
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 logger = logging.getLogger(__name__)
@@ -214,6 +193,94 @@ def _safe_text(value: object) -> str | None:
     return text or None
 
 
+def _target_truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _target_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _lineage_text_values(value: object) -> list[str]:
+    raw_items: Sequence[object]
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        raw_items = cast(Sequence[object], value)
+    else:
+        raw_items = (value,)
+
+    values: list[str] = []
+    for raw_item in raw_items:
+        text = _safe_text(raw_item)
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
+def _merge_unique_texts(target: list[str], values: Sequence[str]) -> None:
+    for value in values:
+        if value not in target:
+            target.append(value)
+
+
+def _single_lineage_text(value: object) -> str | None:
+    values = _lineage_text_values(value)
+    if len(values) != 1:
+        return None
+    return values[0]
+
+
+def _target_strategy_family_tokens(target: Mapping[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for key in (
+        "strategy_family",
+        "strategy_name",
+        "runtime_strategy_name",
+        "strategy_id",
+        "universe_type",
+    ):
+        value = _safe_text(target.get(key))
+        if value:
+            tokens.add(value.strip().lower().replace("-", "_"))
+    return tokens
+
+
+def _lineage_target_from_mapping(raw_target: Mapping[str, object]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in {
+            "candidate_id": _safe_text(raw_target.get("candidate_id")),
+            "hypothesis_id": _safe_text(raw_target.get("hypothesis_id")),
+            "strategy_name": _safe_text(raw_target.get("strategy_name")),
+        }.items()
+        if value
+    }
+
+
+def _lineage_target_key(
+    lineage_target: Mapping[str, str],
+) -> tuple[str | None, str | None, str | None]:
+    return (
+        lineage_target.get("candidate_id"),
+        lineage_target.get("hypothesis_id"),
+        lineage_target.get("strategy_name"),
+    )
+
+
 def _symbols_from_mapping(target: Mapping[str, Any]) -> set[str]:
     symbols: set[str] = set()
     for field in (
@@ -356,7 +423,7 @@ def _target_has_bounded_sim_collection_source_kind(
     return _safe_text(target.get("source_kind")) in _BOUNDED_SIM_COLLECTION_SOURCE_KINDS
 
 
-def _bounded_sim_collection_blockers(
+def _bounded_sim_collection_identity_blockers(
     target: Mapping[str, Any],
     *,
     account_label: str | None,
@@ -390,6 +457,13 @@ def _bounded_sim_collection_blockers(
         or strategy_names_from_strategy_id(target.get("strategy_id"))
     ):
         blockers.append("bounded_sim_collection_runtime_strategy_missing")
+    return blockers
+
+
+def _bounded_sim_collection_authorization_blockers(
+    target: Mapping[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
     if _safe_text(target.get("source_manifest_ref")) is None:
         blockers.append("bounded_sim_collection_source_manifest_missing")
     if not _target_bounded_collection_authorized(target):
@@ -411,16 +485,25 @@ def _bounded_sim_collection_blockers(
         blockers.append("bounded_sim_collection_scope_not_supported")
     if not _target_symbols(target):
         blockers.append("bounded_sim_collection_probe_symbols_missing")
+    return blockers
 
+
+def _bounded_sim_collection_source_readiness_blockers(
+    target: Mapping[str, Any],
+) -> list[str]:
     readiness = target.get("source_decision_readiness")
     if isinstance(readiness, Mapping):
         typed_readiness = cast(Mapping[str, Any], readiness)
+        blockers: list[str] = []
         if not _target_truthy(typed_readiness.get("ready")):
             blockers.append("bounded_sim_collection_source_decision_not_ready")
         blockers.extend(_lineage_text_values(typed_readiness.get("blockers")))
-    else:
-        blockers.append("bounded_sim_collection_source_decision_readiness_missing")
+        return blockers
+    return ["bounded_sim_collection_source_decision_readiness_missing"]
 
+
+def _bounded_sim_collection_field_blockers(target: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if _safe_text(target.get("paper_route_probe_pair_balance_state")) == "imbalanced":
         blockers.append("paper_route_probe_pair_imbalanced")
     for key in _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS:
@@ -432,6 +515,24 @@ def _bounded_sim_collection_blockers(
                 if blocker not in _BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS
             ]
         blockers.extend(field_blockers)
+    return blockers
+
+
+def _bounded_sim_collection_blockers(
+    target: Mapping[str, Any],
+    *,
+    account_label: str | None,
+) -> list[str]:
+    blockers = [
+        *_bounded_sim_collection_identity_blockers(
+            target,
+            account_label=account_label,
+        ),
+        *_bounded_sim_collection_authorization_blockers(target),
+        *_bounded_sim_collection_account_audit_blockers(target),
+        *_bounded_sim_collection_source_readiness_blockers(target),
+        *_bounded_sim_collection_field_blockers(target),
+    ]
     return list(dict.fromkeys(blockers))
 
 
@@ -476,16 +577,9 @@ def _without_lineage_text_values(value: object, excluded: set[str]) -> list[str]
     return [item for item in _lineage_text_values(value) if item not in excluded]
 
 
-def _bounded_sim_collection_target_with_runtime_account_audit(
-    target: Mapping[str, Any],
-    *,
-    positions: Sequence[Mapping[str, Any]] | None,
-    account_label: str | None,
-) -> dict[str, Any]:
-    normalized = dict(target)
-    if positions is None:
-        return normalized
-
+def _remove_source_authorized_superseded_blockers(
+    normalized: dict[str, Any],
+) -> None:
     if _target_has_bounded_source_collection_authorization(normalized):
         for key in (
             "bounded_evidence_collection_blockers",
@@ -498,6 +592,13 @@ def _bounded_sim_collection_target_with_runtime_account_audit(
                     set(_BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZED_SUPERSEDED_BLOCKERS),
                 )
 
+
+def _attach_runtime_account_audit(
+    normalized: dict[str, Any],
+    target: Mapping[str, Any],
+    *,
+    account_label: str | None,
+) -> None:
     unavailable = {_PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER}
     normalized["paper_route_target_account_audit_state"] = {
         "schema_version": "torghut.paper-route-target-account-audit.v1",
@@ -522,6 +623,10 @@ def _bounded_sim_collection_target_with_runtime_account_audit(
                 normalized.get(key), unavailable
             )
 
+
+def _bounded_sim_collection_evidence_blockers(
+    normalized: Mapping[str, Any],
+) -> list[str]:
     evidence_blockers: list[str] = []
     for key in _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS:
         if key == "paper_route_target_account_audit_blockers":
@@ -549,12 +654,34 @@ def _bounded_sim_collection_target_with_runtime_account_audit(
         == "imbalanced"
     ):
         evidence_blockers.append("paper_route_probe_pair_imbalanced")
+    return list(dict.fromkeys(evidence_blockers))
 
-    if not list(dict.fromkeys(evidence_blockers)):
+
+def _authorize_collection_when_evidence_ready(normalized: dict[str, Any]) -> None:
+    if not _bounded_sim_collection_evidence_blockers(normalized):
         normalized["evidence_collection_ok"] = True
         normalized["bounded_evidence_collection_authorized"] = True
         normalized["bounded_live_paper_collection_authorized"] = True
         normalized["canary_collection_authorized"] = True
+
+
+def _bounded_sim_collection_target_with_runtime_account_audit(
+    target: Mapping[str, Any],
+    *,
+    positions: Sequence[Mapping[str, Any]] | None,
+    account_label: str | None,
+) -> dict[str, Any]:
+    normalized = dict(target)
+    if positions is None:
+        return normalized
+
+    _remove_source_authorized_superseded_blockers(normalized)
+    _attach_runtime_account_audit(
+        normalized,
+        target,
+        account_label=account_label,
+    )
+    _authorize_collection_when_evidence_ready(normalized)
     return normalized
 
 
@@ -633,12 +760,96 @@ def _target_runtime_account_matches(
     return normalized_account in labels
 
 
-def _target_active_in_window(target: Mapping[str, Any], now: datetime) -> bool:
-    window = _target_probe_window(target)
-    if window is None:
-        return False
-    window_start, window_end = window
-    return window_start <= now < window_end
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
+# Public module boundary aliases.
+SIMPLE_ALLOWED_REJECT_REASONS = _SIMPLE_ALLOWED_REJECT_REASONS
+PAPER_ROUTE_PROBE_REASONS = _PAPER_ROUTE_PROBE_REASONS
+PaperRouteRetryKind = _PaperRouteRetryKind
+PAPER_ROUTE_RETRY_KINDS = _PAPER_ROUTE_RETRY_KINDS
+PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = (
+    _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS
+)
+SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL
+PAPER_ROUTE_PROBE_QTY_STEP = _PAPER_ROUTE_PROBE_QTY_STEP
+REGULAR_SESSION_MINUTES = _REGULAR_SESSION_MINUTES
+PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS = _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS
+PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS = _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS
+PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = (
+    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS
+)
+PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK = (
+    _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK
+)
+PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON = _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON
+SIGNAL_INGEST_UNAVAILABLE_REASONS = _SIGNAL_INGEST_UNAVAILABLE_REASONS
+BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL = _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
+BOUNDED_SIM_COLLECTION_SOURCE_KIND = _BOUNDED_SIM_COLLECTION_SOURCE_KIND
+BOUNDED_SIM_COLLECTION_SOURCE_KINDS = _BOUNDED_SIM_COLLECTION_SOURCE_KINDS
+BOUNDED_SIM_COLLECTION_SCOPE = _BOUNDED_SIM_COLLECTION_SCOPE
+BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS = _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS
+BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS = (
+    _BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS
+)
+PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER = (
+    _PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER
+)
+BOUNDED_PAPER_ROUTE_DEFAULT_CLOSEOUT_BUFFER_MINUTES = (
+    _BOUNDED_PAPER_ROUTE_DEFAULT_CLOSEOUT_BUFFER_MINUTES
+)
+PAPER_ROUTE_PROBE_EXIT_PENDING_GRACE_SECONDS = (
+    _PAPER_ROUTE_PROBE_EXIT_PENDING_GRACE_SECONDS
+)
+BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS = (
+    _BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS
+)
+BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZED_SUPERSEDED_BLOCKERS = (
+    _BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZED_SUPERSEDED_BLOCKERS
+)
+BOUNDED_SIM_COLLECTION_LINEAGE_KEYS = _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS
+BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS = _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS
+BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS = (
+    _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS
+)
+FLATTEN_CLOSE_DECISION_SCHEMA_VERSION = _FLATTEN_CLOSE_DECISION_SCHEMA_VERSION
+BOUNDED_SIM_COLLECTION_RUNTIME_ACCOUNT_ALIAS_FIELDS = (
+    _BOUNDED_SIM_COLLECTION_RUNTIME_ACCOUNT_ALIAS_FIELDS
+)
+BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES = (
+    _BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES
+)
+PaperRouteRetryTransition = _PaperRouteRetryTransition
+safe_int = _safe_int
+safe_text = _safe_text
+target_truthy = _target_truthy
+target_bool = _target_bool
+lineage_text_values = _lineage_text_values
+merge_unique_texts = _merge_unique_texts
+single_lineage_text = _single_lineage_text
+target_strategy_family_tokens = _target_strategy_family_tokens
+lineage_target_from_mapping = _lineage_target_from_mapping
+lineage_target_key = _lineage_target_key
+symbols_from_mapping = _symbols_from_mapping
+target_symbols = _target_symbols
+target_plan_lineage = _target_plan_lineage
+target_lineage_strategy_names = _target_lineage_strategy_names
+target_has_bounded_source_collection_authorization = (
+    _target_has_bounded_source_collection_authorization
+)
+target_bounded_collection_authorized = _target_bounded_collection_authorized
+target_has_bounded_sim_collection_source_kind = (
+    _target_has_bounded_sim_collection_source_kind
+)
+bounded_sim_collection_blockers = _bounded_sim_collection_blockers
+bounded_sim_collection_account_audit_blockers = (
+    _bounded_sim_collection_account_audit_blockers
+)
+without_lineage_text_values = _without_lineage_text_values
+bounded_sim_collection_target_with_runtime_account_audit = (
+    _bounded_sim_collection_target_with_runtime_account_audit
+)
+bounded_sim_collection_runtime_account_aliases = (
+    _bounded_sim_collection_runtime_account_aliases
+)
+bounded_sim_collection_authorized = _bounded_sim_collection_authorized
+bounded_sim_collection_reserves_account = _bounded_sim_collection_reserves_account
+target_owns_bounded_sim_collection_account = _target_owns_bounded_sim_collection_account
+target_runtime_account_matches = _target_runtime_account_matches
