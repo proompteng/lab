@@ -1,55 +1,98 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+"""Explicit exports for Torghut trading misc helpers."""
+
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
+from typing import Any
 
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
+from . import part_01_statements_10 as _consumer_evidence
+from . import part_02_trading_autonomy as _autonomy
+from . import part_03_trading_executions as _executions
+from ..proxy import capture_module_exports
 
+_IMPLEMENTATION_MODULES: tuple[object, ...] = (
+    _consumer_evidence,
+    _autonomy,
+    _executions,
+)
 
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
+router: Any = getattr(_executions, "router")
+_consumer_evidence_dependency_quorum: Any = getattr(
+    _executions, "_consumer_evidence_dependency_quorum"
+)
+_build_consumer_evidence_receipt_projection: Any = getattr(
+    _executions, "_build_consumer_evidence_receipt_projection"
+)
+_consumer_evidence_summary_view: Any = getattr(
+    _executions, "_consumer_evidence_summary_view"
+)
+_revenue_repair_topline_fields: Any = getattr(
+    _executions, "_revenue_repair_topline_fields"
+)
+_build_trading_consumer_evidence_payload: Any = getattr(
+    _executions, "_build_trading_consumer_evidence_payload"
+)
+trading_consumer_evidence: Any = getattr(_executions, "trading_consumer_evidence")
+trading_metrics: Any = getattr(_executions, "trading_metrics")
+trading_simulation_progress: Any = getattr(_executions, "trading_simulation_progress")
+submit_lean_backtest: Any = getattr(_executions, "submit_lean_backtest")
+get_lean_backtest: Any = getattr(_executions, "get_lean_backtest")
+get_lean_shadow_parity: Any = getattr(_executions, "get_lean_shadow_parity")
+trading_autonomy: Any = getattr(_executions, "trading_autonomy")
+_runtime_ledger_bucket_evidence_grade: Any = getattr(
+    _executions, "_runtime_ledger_bucket_evidence_grade"
+)
+_daily_runtime_ledger_portfolio_summary: Any = getattr(
+    _executions, "_daily_runtime_ledger_portfolio_summary"
+)
+_build_current_evidence_epoch: Any = getattr(
+    _executions, "_build_current_evidence_epoch"
+)
+trading_evidence_epoch_latest: Any = getattr(
+    _executions, "trading_evidence_epoch_latest"
+)
+trading_evidence_epoch_detail: Any = getattr(
+    _executions, "trading_evidence_epoch_detail"
+)
+trading_empirical_jobs: Any = getattr(_executions, "trading_empirical_jobs")
+trading_completion_doc29: Any = getattr(_executions, "trading_completion_doc29")
+trading_completion_doc29_gate: Any = getattr(
+    _executions, "trading_completion_doc29_gate"
+)
+trading_autonomy_evidence_continuity: Any = getattr(
+    _executions, "trading_autonomy_evidence_continuity"
+)
+trading_llm_evaluation: Any = getattr(_executions, "trading_llm_evaluation")
+prometheus_metrics: Any = getattr(_executions, "prometheus_metrics")
+trading_decisions: Any = getattr(_executions, "trading_decisions")
+trading_executions: Any = getattr(_executions, "trading_executions")
 
+__all__ = (
+    "router",
+    "_consumer_evidence_dependency_quorum",
+    "_build_consumer_evidence_receipt_projection",
+    "_consumer_evidence_summary_view",
+    "_revenue_repair_topline_fields",
+    "_build_trading_consumer_evidence_payload",
+    "trading_consumer_evidence",
+    "trading_metrics",
+    "trading_simulation_progress",
+    "submit_lean_backtest",
+    "get_lean_backtest",
+    "get_lean_shadow_parity",
+    "trading_autonomy",
+    "_runtime_ledger_bucket_evidence_grade",
+    "_daily_runtime_ledger_portfolio_summary",
+    "_build_current_evidence_epoch",
+    "trading_evidence_epoch_latest",
+    "trading_evidence_epoch_detail",
+    "trading_empirical_jobs",
+    "trading_completion_doc29",
+    "trading_completion_doc29_gate",
+    "trading_autonomy_evidence_continuity",
+    "trading_llm_evaluation",
+    "prometheus_metrics",
+    "trading_decisions",
+    "trading_executions",
+)
 
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_10")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_trading_autonomy")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_03_trading_executions")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
-del __compat_module__
+capture_module_exports(globals(), __all__)

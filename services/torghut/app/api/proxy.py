@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import types
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any, cast
 
 
@@ -46,8 +46,8 @@ class MainAttrProxy:
     def __float__(self) -> float:
         return float(self._target())
 
-    def __iter__(self):  # type: ignore[no-untyped-def]
-        return iter(self._target())
+    def __iter__(self) -> Iterator[Any]:
+        return iter(cast(Iterable[Any], self._target()))
 
     def __len__(self) -> int:
         return len(self._target())
@@ -87,12 +87,12 @@ def install_main_compat_proxies(
 ) -> None:
     proxy_names = tuple(dict.fromkeys(names))
     for module in modules:
-        part_modules = getattr(module, "__compat_part_modules__", ())
+        implementation_modules = getattr(module, "_IMPLEMENTATION_MODULES", ())
         for name in proxy_names:
             if name == "router":
                 continue
             proxy = MainAttrProxy(name)
             setattr(module, name, proxy)
-            for part_module in part_modules:
-                if isinstance(part_module, types.ModuleType):
-                    part_module.__dict__[name] = proxy
+            for implementation_module in implementation_modules:
+                if isinstance(implementation_module, types.ModuleType):
+                    implementation_module.__dict__[name] = proxy
