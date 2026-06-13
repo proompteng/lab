@@ -1,11 +1,8 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Shared imports, constants, and scalar helpers for submission council."""
 
 from __future__ import annotations
 
 import hashlib
-
-# ruff: noqa: F401,F811
 import json
 import logging
 import os
@@ -372,4 +369,130 @@ def _coerce_aware_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+bounded_paper_route_probe_collection_payload = (
+    _bounded_paper_route_probe_collection_payload
+)
+normalize_reason_codes = _normalize_reason_codes
+safe_decimal = _safe_decimal
+safe_int = _safe_int
+safe_text = _safe_text
+
+
+__all__ = [
+    "Any",
+    "AutoresearchCandidateSpec",
+    "AutoresearchEpoch",
+    "AutoresearchPortfolioCandidate",
+    "AutoresearchProposalScore",
+    "Decimal",
+    "InvalidOperation",
+    "Lock",
+    "Mapping",
+    "NamedTuple",
+    "POST_COST_PNL_BASIS",
+    "RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER",
+    "Request",
+    "ResearchCandidate",
+    "ResearchPromotion",
+    "SQLAlchemyError",
+    "Sequence",
+    "Session",
+    "StrategyHypothesis",
+    "StrategyHypothesisMetricWindow",
+    "StrategyPromotionDecision",
+    "StrategyRuntimeLedgerBucket",
+    "TradeDecision",
+    "VNextDatasetSnapshot",
+    "VNextPromotionDecision",
+    "_AUTORESEARCH_PORTFOLIO_READY_STATUSES",
+    "_CAPITAL_STAGE_ORDER",
+    "_CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT",
+    "_CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT",
+    "_CERTIFICATE_EVIDENCE_WINDOW_LIMIT",
+    "_LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES",
+    "_PROMOTION_PORTFOLIO_READY_SCAN_LIMIT",
+    "_PROMOTION_PORTFOLIO_SAMPLE_LIMIT",
+    "_PROMOTION_SCALAR_COUNT_LIMIT",
+    "_PROMOTION_TABLE_COUNT_SCAN_LIMIT",
+    "_PortfolioPromotionRow",
+    "_QUANT_HEALTH_CACHE",
+    "_QUANT_HEALTH_CACHE_LOCK",
+    "_RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT",
+    "_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT",
+    "_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS",
+    "_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV",
+    "_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS",
+    "_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS",
+    "_RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT",
+    "_RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES",
+    "_STALE_SEGMENT_STATES",
+    "_TA_CORE_REASON_CODES",
+    "_TYPED_QUANT_HEALTH_PATH",
+    "_bounded_paper_route_probe_collection_payload",
+    "_bounded_paper_route_probe_notional",
+    "_certificate_evidence_reason_codes",
+    "_coerce_aware_datetime",
+    "_compat_symbol",
+    "_decimal_text",
+    "_maybe_set_runtime_ledger_status_statement_timeout",
+    "_normalize_reason_codes",
+    "_rollback_runtime_ledger_status_session",
+    "_runtime_ledger_status_query_timeout_ms",
+    "_safe_attr_text",
+    "_safe_bool",
+    "_safe_decimal",
+    "_safe_int",
+    "_safe_text",
+    "_sqlalchemy_error_indicates_statement_timeout",
+    "_stage_rank",
+    "_unavailable_certificate_evidence_rows",
+    "active_market_context_mapping",
+    "active_market_context_reasons",
+    "bounded_paper_route_probe_collection_payload",
+    "build_profit_lease_projection",
+    "build_profit_window_contract",
+    "build_tca_gate_inputs",
+    "cast",
+    "compile_hypothesis_runtime_statuses",
+    "datetime",
+    "derived_strategy_name_from_strategy_id",
+    "evaluate_profit_target_oracle",
+    "explicit_runtime_strategy_name_or_family_harness",
+    "func",
+    "hashlib",
+    "json",
+    "load_hypothesis_registry",
+    "logger",
+    "logging",
+    "normalize_reason_codes",
+    "os",
+    "parse_qsl",
+    "regular_session_close_utc_for",
+    "regular_session_open_utc_for",
+    "resolve_hypothesis_dependency_quorum",
+    "runtime_ledger_promotion_source_authority_blockers",
+    "runtime_ledger_promotion_source_authority_present",
+    "safe_decimal",
+    "safe_int",
+    "safe_text",
+    "select",
+    "settings",
+    "sql_text",
+    "strategy_names_from_strategy_id",
+    "summarize_hypothesis_runtime_statuses",
+    "sys",
+    "timedelta",
+    "timezone",
+    "urlencode",
+    "urlopen",
+    "urlsplit",
+    "urlunsplit",
+]
