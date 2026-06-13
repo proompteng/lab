@@ -291,8 +291,8 @@ class SimplePipelineSourceCollectionLineageMixin(SourceCollectionRuntimeMixin):
         )
         return True
 
+    @staticmethod
     def _strategy_signal_paper_metadata(
-        self,
         *,
         decision: StrategyDecision,
         target: Mapping[str, Any],
@@ -317,9 +317,18 @@ class SimplePipelineSourceCollectionLineageMixin(SourceCollectionRuntimeMixin):
         if strategy is not None:
             metadata["strategy_name"] = strategy.name
             metadata["strategy_id"] = str(strategy.id)
-        self._add_strategy_signal_identity_metadata(metadata, target)
-        self._add_strategy_signal_bounded_metadata(metadata, target)
-        self._add_strategy_signal_probe_metadata(metadata, target)
+        SimplePipelineSourceCollectionLineageMixin._add_strategy_signal_identity_metadata(
+            metadata,
+            target,
+        )
+        SimplePipelineSourceCollectionLineageMixin._add_strategy_signal_bounded_metadata(
+            metadata,
+            target,
+        )
+        SimplePipelineSourceCollectionLineageMixin._add_strategy_signal_probe_metadata(
+            metadata,
+            target,
+        )
         return metadata
 
     @staticmethod
