@@ -13,6 +13,9 @@ from scripts.historical_simulation_verification_modules import (
 from scripts.historical_simulation_verification_modules import (
     runtime_health as _runtime,
 )
+from scripts.historical_simulation_verification_modules import (
+    runtime_progress as _progress,
+)
 from scripts.historical_simulation_verification_modules import shared_runtime as _shared
 
 _T = TypeVar("_T")
@@ -110,7 +113,7 @@ def _sync_patch_targets() -> None:
         "_progress_component_snapshot": _progress_component_snapshot,
         "_simulation_progress_snapshot": _simulation_progress_snapshot,
     }
-    for module in (_shared, _runtime, _artifact):
+    for module in (_shared, _progress, _runtime, _artifact):
         for name, value in patch_targets.items():
             if hasattr(module, name):
                 facade = _FACADE_PATCH_TARGETS.get(name)
