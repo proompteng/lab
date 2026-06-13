@@ -91,6 +91,8 @@ max-module-lines = 1000
 max-args = 5
 max-branches = 12
 max-locals = 15
+max-nested-blocks = 4
+max-positional-arguments = 5
 max-returns = 6
 max-statements = 50
 

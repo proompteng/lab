@@ -1,57 +1,167 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+"""Historical simulation verification helpers split by responsibility."""
+
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_23")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_kservice_env")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_03_expected_schema_subjects"
+from .artifact_verification import (
+    _analysis_image_freshness,
+    _analysis_template_image,
+    _analysis_template_names,
+    _artifact_bundle,
+    _current_activity_report,
+    _expected_schema_subjects,
+    _http_json_get,
+    _monitor_run_completion,
+    _teardown_clean,
+    _verify_isolation_guards,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .runtime_health import (
+    _activity_state,
+    _classify_activity_snapshot,
+    _clickhouse_database_from_jdbc_url,
+    _clickhouse_database_from_table_name,
+    _clickhouse_table_activity,
+    _cursor_reached_terminal,
+    _effective_terminal_signal_ts,
+    _infer_monitor_profile,
+    _kservice_env,
+    _monitor_settings,
+    _monitor_snapshot,
+    _progress_component_snapshot,
+    _runtime_verify,
+    _schema_registry_health,
+    _signal_snapshot,
+    _simulation_progress_snapshot,
+)
+from .shared_runtime import (
+    DEFAULT_COVERAGE_STRICT_RATIO,
+    DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS,
+    DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
+    DEFAULT_RUN_MONITOR_CURSOR_TERMINAL_TOLERANCE_SECONDS,
+    DEFAULT_RUN_MONITOR_MIN_DECISIONS,
+    DEFAULT_RUN_MONITOR_MIN_EXECUTIONS,
+    DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS,
+    DEFAULT_RUN_MONITOR_MIN_TCA,
+    DEFAULT_RUN_MONITOR_POLL_SECONDS,
+    DEFAULT_RUN_MONITOR_PROFILE,
+    DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS,
+    DEFAULT_SIMULATION_ORDER_FEED_GROUP_ID,
+    DEFAULT_SIMULATION_TA_GROUP_ID,
+    DEFAULT_WARM_LANE_SIMULATION_DATABASE,
+    MONITOR_PROFILE_DEFAULTS,
+    PRODUCTION_TOPIC_BY_ROLE,
+    TORGHUT_ENV_KEYS,
+    TRANSIENT_POSTGRES_ERROR_PATTERNS,
+    US_EQUITIES_REGULAR_MINUTES,
+    US_EQUITIES_REGULAR_PROFILE,
+    US_EQUITIES_REGULAR_TIMEZONE,
+    _as_mapping,
+    _as_text,
+    _classify_restore_state_error,
+    _cluster_service_host_candidates,
+    _cluster_service_http_urls,
+    _condition_status,
+    _database_name_from_dsn,
+    _deployment_replica_health,
+    _first_text,
+    _flink_runtime_health,
+    _http_clickhouse_query,
+    _is_transient_postgres_error,
+    _kubectl_json,
+    _normalized_string_set,
+    _parse_optional_rfc3339_timestamp,
+    _parse_rfc3339_timestamp,
+    _replace_database_in_dsn,
+    _resolve_window_bounds,
+    _resource_asdict,
+    _resource_attr,
+    _resource_lane_contract,
+    _run_command,
+    _run_scoped_simulation_topic,
+    _run_with_transient_postgres_retry,
+    _safe_float,
+    _safe_int,
+    _validate_dump_coverage,
+    _validate_us_equities_regular_profile,
+    _validate_window_policy,
+    _window_min_coverage_minutes,
+)
 
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "DEFAULT_COVERAGE_STRICT_RATIO",
+    "DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS",
+    "DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS",
+    "DEFAULT_RUN_MONITOR_CURSOR_TERMINAL_TOLERANCE_SECONDS",
+    "DEFAULT_RUN_MONITOR_MIN_DECISIONS",
+    "DEFAULT_RUN_MONITOR_MIN_EXECUTIONS",
+    "DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS",
+    "DEFAULT_RUN_MONITOR_MIN_TCA",
+    "DEFAULT_RUN_MONITOR_POLL_SECONDS",
+    "DEFAULT_RUN_MONITOR_PROFILE",
+    "DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS",
+    "DEFAULT_SIMULATION_ORDER_FEED_GROUP_ID",
+    "DEFAULT_SIMULATION_TA_GROUP_ID",
+    "DEFAULT_WARM_LANE_SIMULATION_DATABASE",
+    "MONITOR_PROFILE_DEFAULTS",
+    "PRODUCTION_TOPIC_BY_ROLE",
+    "TORGHUT_ENV_KEYS",
+    "TRANSIENT_POSTGRES_ERROR_PATTERNS",
+    "US_EQUITIES_REGULAR_MINUTES",
+    "US_EQUITIES_REGULAR_PROFILE",
+    "US_EQUITIES_REGULAR_TIMEZONE",
+    "_activity_state",
+    "_analysis_image_freshness",
+    "_analysis_template_image",
+    "_analysis_template_names",
+    "_artifact_bundle",
+    "_as_mapping",
+    "_as_text",
+    "_classify_activity_snapshot",
+    "_classify_restore_state_error",
+    "_clickhouse_database_from_jdbc_url",
+    "_clickhouse_database_from_table_name",
+    "_clickhouse_table_activity",
+    "_cluster_service_host_candidates",
+    "_cluster_service_http_urls",
+    "_condition_status",
+    "_current_activity_report",
+    "_cursor_reached_terminal",
+    "_database_name_from_dsn",
+    "_deployment_replica_health",
+    "_effective_terminal_signal_ts",
+    "_expected_schema_subjects",
+    "_first_text",
+    "_flink_runtime_health",
+    "_http_clickhouse_query",
+    "_http_json_get",
+    "_infer_monitor_profile",
+    "_is_transient_postgres_error",
+    "_kservice_env",
+    "_kubectl_json",
+    "_monitor_run_completion",
+    "_monitor_settings",
+    "_monitor_snapshot",
+    "_normalized_string_set",
+    "_parse_optional_rfc3339_timestamp",
+    "_parse_rfc3339_timestamp",
+    "_progress_component_snapshot",
+    "_replace_database_in_dsn",
+    "_resolve_window_bounds",
+    "_resource_asdict",
+    "_resource_attr",
+    "_resource_lane_contract",
+    "_run_command",
+    "_run_scoped_simulation_topic",
+    "_run_with_transient_postgres_retry",
+    "_runtime_verify",
+    "_safe_float",
+    "_safe_int",
+    "_schema_registry_health",
+    "_signal_snapshot",
+    "_simulation_progress_snapshot",
+    "_teardown_clean",
+    "_validate_dump_coverage",
+    "_validate_us_equities_regular_profile",
+    "_validate_window_policy",
+    "_verify_isolation_guards",
+    "_window_min_coverage_minutes",
 ]
-del __compat_module__
