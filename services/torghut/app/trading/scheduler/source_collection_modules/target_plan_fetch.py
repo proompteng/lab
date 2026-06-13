@@ -1,5 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-
 from __future__ import annotations
 
 import logging
@@ -7,18 +5,14 @@ import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
-from sqlalchemy import desc, select  # pyright: ignore[reportUnknownVariableType]
 from sqlalchemy.orm import Session
 
 from ....config import settings
 from ....models import (
-    Execution,
-    PositionSnapshot,
     Strategy,
-    TradeDecision,
 )
 from ...models import StrategyDecision
 from ...paper_route_target_plan import (
@@ -27,63 +21,53 @@ from ...paper_route_target_plan import (
     paper_route_target_plan_targets,
 )
 from ...runtime_decision_authority import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-    source_decision_mode_is_profit_proof_eligible,
 )
 from ...session_context import regular_session_open_utc_for
-from ..target_plan_helpers import (
-    _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
-    _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS,
-    _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON,
-    _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS,
-    _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK,
-    _REGULAR_SESSION_MINUTES,
-    _bounded_sim_collection_blockers,
-    _bounded_sim_collection_reserves_account,
-    _bounded_sim_collection_target_with_runtime_account_audit,
-    _lineage_text_values,
-    _merge_paper_route_probe_lineage,
-    _optional_decimal,
-    _paper_route_probe_lineage_from_params,
-    _safe_text,
-    _strategy_lookup_names,
-    _target_active_in_window,
-    _target_bool,
-    _target_bounded_collection_authorized,
-    _target_has_bounded_sim_collection_source_kind,
-    _target_has_bounded_source_collection_authorization,
-    _target_lookup_names,
-    _target_missing_explicit_probe_window,
-    _target_owns_bounded_sim_collection_account,
-    _target_pair_balance_state,
-    _target_plan_has_active_bounded_sim_collection_owner,
-    _target_plan_lineage,
-    _target_probe_action,
-    _target_probe_cap,
-    _target_probe_exit_minute_after_open,
-    _target_probe_symbol_actions,
-    _target_probe_symbol_quantities,
-    _target_probe_window,
-    _target_requires_bounded_sim_collection_gate,
-    _target_runtime_account_matches,
-    _target_symbols,
-    _target_truthy,
+from ..target_plan_helpers_modules import (
+    BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL as _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
+    PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS as _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS,
+    PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS as _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
+    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS as _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
+    REGULAR_SESSION_MINUTES as _REGULAR_SESSION_MINUTES,
+    lineage_text_values as _lineage_text_values,
+    optional_decimal as _optional_decimal,
+    safe_text as _safe_text,
+    strategy_lookup_names as _strategy_lookup_names,
+    target_bounded_collection_authorized as _target_bounded_collection_authorized,
+    target_has_bounded_source_collection_authorization as _target_has_bounded_source_collection_authorization,
+    target_lookup_names as _target_lookup_names,
+    target_missing_explicit_probe_window as _target_missing_explicit_probe_window,
+    target_plan_lineage as _target_plan_lineage,
+    target_probe_exit_minute_after_open as _target_probe_exit_minute_after_open,
+    target_probe_symbol_actions as _target_probe_symbol_actions,
+    target_probe_symbol_quantities as _target_probe_symbol_quantities,
+    target_probe_window as _target_probe_window,
+    target_requires_bounded_sim_collection_gate as _target_requires_bounded_sim_collection_gate,
+    target_symbols as _target_symbols,
+    target_truthy as _target_truthy,
+)
+from .collection_types import (
+    SourceCollectionActiveWindowSummary,
+    SourceCollectionAction,
+    SourceCollectionTargetContext,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+
+if TYPE_CHECKING:
+    from .collection_types import (
+        SourceCollectionRuntime as SourceCollectionRuntimeMixin,
+    )
+else:
+
+    class SourceCollectionRuntimeMixin:
+        pass
 
 
 logger = logging.getLogger(__name__)
 
 
-class _SimplePipelineSourceCollectionMixinMethodsPart1:
+class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin):
     @staticmethod
     def _paper_route_target_plan_url_points_to_current_service(url: str) -> bool:
         parsed = urlsplit(url)
@@ -207,10 +191,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
         strategies: Sequence[Strategy] | None = None,
     ) -> tuple[set[str], str | None, list[dict[str, Any]]]:
         now = self._trading_now().astimezone(timezone.utc)
-        cached = cast(
-            tuple[set[str], str | None, list[dict[str, Any]], datetime] | None,
-            getattr(self, "_paper_route_target_plan_cache", None),
-        )
+        cached = self._paper_route_target_plan_cache
         if cached is not None:
             symbols, load_error, targets, cached_at = cached
             if (
@@ -286,17 +267,46 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
             return None
 
         now = self._trading_now().astimezone(timezone.utc)
+        summary = self._active_bounded_paper_route_target_summary(
+            targets=targets,
+            symbol=symbol,
+            now=now,
+        )
+        if not summary.active_targets:
+            return None
+        gate: dict[str, object] = {
+            "mode": "paper_route_target_window_submission_gate",
+            "symbol": symbol,
+            "account_label": self.account_label,
+            "target_count": len(summary.active_targets),
+            "target_symbols": sorted(target_symbols),
+            "active_windows": summary.active_windows[:5],
+            "requires_scoped_source_decision": True,
+        }
+        if summary.window_starts and summary.window_ends:
+            gate["window_start"] = min(summary.window_starts).isoformat()
+            gate["window_end"] = max(summary.window_ends).isoformat()
+        gate.update(_target_plan_lineage(summary.active_targets, symbol))
+        return gate
+
+    @staticmethod
+    def _active_bounded_paper_route_target_summary(
+        *,
+        targets: Sequence[Mapping[str, Any]],
+        symbol: str,
+        now: datetime,
+    ) -> SourceCollectionActiveWindowSummary:
         active_targets: list[dict[str, Any]] = []
         active_windows: list[dict[str, str]] = []
         window_starts: list[datetime] = []
         window_ends: list[datetime] = []
         for target in targets:
-            if not _target_requires_bounded_sim_collection_gate(target):
-                continue
-            if symbol not in _target_symbols(target):
-                continue
             window = _target_probe_window(target)
-            if window is None:
+            if (
+                not _target_requires_bounded_sim_collection_gate(target)
+                or symbol not in _target_symbols(target)
+                or window is None
+            ):
                 continue
             window_start, window_end = window
             if now < window_start or now >= window_end:
@@ -310,22 +320,12 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
                     "window_end": window_end.isoformat(),
                 }
             )
-        if not active_targets:
-            return None
-        gate: dict[str, object] = {
-            "mode": "paper_route_target_window_submission_gate",
-            "symbol": symbol,
-            "account_label": self.account_label,
-            "target_count": len(active_targets),
-            "target_symbols": sorted(target_symbols),
-            "active_windows": active_windows[:5],
-            "requires_scoped_source_decision": True,
-        }
-        if window_starts and window_ends:
-            gate["window_start"] = min(window_starts).isoformat()
-            gate["window_end"] = max(window_ends).isoformat()
-        gate.update(_target_plan_lineage(active_targets, symbol))
-        return gate
+        return SourceCollectionActiveWindowSummary(
+            active_targets=active_targets,
+            active_windows=active_windows,
+            window_starts=window_starts,
+            window_ends=window_ends,
+        )
 
     @staticmethod
     def _paper_route_target_strategy(
@@ -387,7 +387,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
                 "enabled": bool(strategy.enabled),
                 "base_timeframe": str(strategy.base_timeframe or ""),
                 "universe_symbols": sorted(
-                    SimplePipelineSourceCollectionMixin._paper_route_target_strategy_symbols(
+                    SimplePipelineSourceCollectionTargetPlanMixin._paper_route_target_strategy_symbols(
                         strategy
                     )
                 ),
@@ -486,14 +486,79 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
 
     @staticmethod
     def _paper_route_target_source_decision_metadata(
-        *,
-        target: Mapping[str, Any],
-        strategy: Strategy,
-        symbol: str,
-        window_start: datetime,
-        window_end: datetime,
-        max_notional: Decimal,
+        **metadata_args: Any,
     ) -> dict[str, Any]:
+        context, symbol = (
+            SimplePipelineSourceCollectionTargetPlanMixin._source_collection_metadata_context(
+                metadata_args
+            )
+        )
+        return SimplePipelineSourceCollectionTargetPlanMixin._paper_route_target_source_decision_metadata_from_context(
+            context=context,
+            symbol=symbol,
+        )
+
+    @staticmethod
+    def _source_collection_metadata_context(
+        metadata_args: Mapping[str, Any],
+        *,
+        require_window: bool = True,
+    ) -> tuple[SourceCollectionTargetContext, str]:
+        raw_symbol = metadata_args.get("symbol")
+        if not isinstance(raw_symbol, str) or not raw_symbol.strip():
+            raise TypeError("symbol is required")
+        symbol = raw_symbol.strip().upper()
+        context = metadata_args.get("context")
+        if isinstance(context, SourceCollectionTargetContext):
+            return context, symbol
+        target = metadata_args.get("target")
+        strategy = metadata_args.get("strategy")
+        window_start = metadata_args.get("window_start")
+        window_end = metadata_args.get("window_end")
+        max_notional = _optional_decimal(metadata_args.get("max_notional"))
+        if not isinstance(target, Mapping):
+            raise TypeError("target is required")
+        if not isinstance(strategy, Strategy):
+            raise TypeError("strategy is required")
+        if require_window and not (
+            isinstance(window_start, datetime) and isinstance(window_end, datetime)
+        ):
+            raise TypeError("window_start and window_end are required")
+        if not isinstance(window_start, datetime):
+            window_start = datetime.fromtimestamp(0, tz=timezone.utc)
+        if not isinstance(window_end, datetime):
+            window_end = window_start
+        if max_notional is None:
+            raise TypeError("max_notional is required")
+        target_mapping = cast(Mapping[str, Any], target)
+        normalized_target: dict[str, Any] = dict(target_mapping)
+        symbols = sorted(_target_symbols(normalized_target)) or [symbol]
+        return (
+            SourceCollectionTargetContext(
+                target=normalized_target,
+                strategy=strategy,
+                symbols=symbols,
+                symbol_actions=_target_probe_symbol_actions(normalized_target, symbols),
+                symbol_quantities=_target_probe_symbol_quantities(
+                    normalized_target,
+                    symbols,
+                ),
+                pair_balance_state="not_required",
+                window_start=window_start,
+                window_end=window_end,
+                target_cap=max_notional,
+            ),
+            symbol,
+        )
+
+    @staticmethod
+    def _paper_route_target_source_decision_metadata_from_context(
+        *,
+        context: SourceCollectionTargetContext,
+        symbol: str,
+    ) -> dict[str, Any]:
+        target = context.target
+        strategy = context.strategy
         lineage = _target_plan_lineage([dict(target)], symbol)
         bounded_collection_authorized = _target_bounded_collection_authorized(target)
         target_runtime_strategy_name = (
@@ -507,10 +572,10 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
             "runtime_strategy_name": target_runtime_strategy_name,
             "strategy_lookup_names": _target_lookup_names(target),
             "paper_route_probe_symbols": sorted(_target_symbols(target)),
-            "paper_route_probe_window_start": window_start.isoformat(),
-            "paper_route_probe_window_end": window_end.isoformat(),
-            "paper_route_probe_next_session_max_notional": str(max_notional),
-            "paper_route_probe_effective_max_notional": str(max_notional),
+            "paper_route_probe_window_start": context.window_start.isoformat(),
+            "paper_route_probe_window_end": context.window_end.isoformat(),
+            "paper_route_probe_next_session_max_notional": str(context.target_cap),
+            "paper_route_probe_effective_max_notional": str(context.target_cap),
             "paper_route_probe_symbol_quantities": {
                 item_symbol: str(quantity)
                 for item_symbol, quantity in _target_probe_symbol_quantities(
@@ -561,7 +626,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
                 _safe_text(target.get("bounded_evidence_collection_scope"))
                 or "paper_route_probe_next_session_only"
             ),
-            "bounded_evidence_collection_max_notional": str(max_notional),
+            "bounded_evidence_collection_max_notional": str(context.target_cap),
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_authority_ok": False,
@@ -587,7 +652,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
             metadata["exit_minute_after_open"] = exit_minute
             metadata["effective_exit_minute_after_open"] = effective_exit_minute
             metadata["exit_due_at"] = (
-                window_start + timedelta(minutes=effective_exit_minute)
+                context.window_start + timedelta(minutes=effective_exit_minute)
             ).isoformat()
             if exit_defaulted:
                 metadata["paper_route_probe_exit_defaulted"] = True
@@ -607,14 +672,37 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
 
     @staticmethod
     def _bounded_paper_route_execution_metadata(
-        *,
-        target: Mapping[str, Any],
-        strategy: Strategy,
-        symbol: str,
-        action: str,
-        account_label: str | None,
-        max_notional: Decimal,
+        **metadata_args: Any,
     ) -> dict[str, Any]:
+        context, symbol = (
+            SimplePipelineSourceCollectionTargetPlanMixin._source_collection_metadata_context(
+                metadata_args,
+                require_window=False,
+            )
+        )
+        action = metadata_args.get("action")
+        if action not in {"buy", "sell"}:
+            raise TypeError("action must be buy or sell")
+        account_label = metadata_args.get("account_label")
+        return SimplePipelineSourceCollectionTargetPlanMixin._bounded_paper_route_execution_metadata_from_context(
+            context=context,
+            symbol=symbol,
+            action=cast(SourceCollectionAction, action),
+            account_label=str(account_label).strip()
+            if account_label is not None
+            else None,
+        )
+
+    @staticmethod
+    def _bounded_paper_route_execution_metadata_from_context(
+        *,
+        context: SourceCollectionTargetContext,
+        symbol: str,
+        action: SourceCollectionAction,
+        account_label: str | None,
+    ) -> dict[str, Any]:
+        target = context.target
+        strategy = context.strategy
         target_account_label = (
             _safe_text(target.get("account_label"))
             or _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
@@ -637,7 +725,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
             "strategy_name": strategy.name,
             "symbol": symbol,
             "side": action,
-            "max_notional": str(max_notional),
+            "max_notional": str(context.target_cap),
             "idempotency_key_basis": "trade_decision_hash_client_order_id",
             "order_feed_linkage_keys": [
                 "alpaca_account_label",
@@ -684,4 +772,4 @@ class _SimplePipelineSourceCollectionMixinMethodsPart1:
         return cap if cap is not None and cap > 0 else None
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ["SimplePipelineSourceCollectionTargetPlanMixin"]

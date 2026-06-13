@@ -1,25 +1,48 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnusedImport=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportPrivateUsage=false, reportUnsupportedDunderAll=false
 """Source-collection helper functions split from the pipeline mixin."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Protocol, cast
+
+from sqlalchemy.orm import Session
 
 from ....config import settings
-from ....models import TradeDecision
-from ...models import StrategyDecision
-from ..target_plan_helpers import _optional_decimal, _safe_text
+from ...runtime_decision_authority import source_decision_mode_is_profit_proof_eligible
+from ..target_plan_helpers_modules import (
+    PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON as _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON,
+    optional_decimal as _optional_decimal,
+    paper_route_probe_lineage_from_params as _paper_route_probe_lineage_from_params,
+    safe_text as _safe_text,
+    target_bool as _target_bool,
+    target_plan_lineage as _target_plan_lineage,
+    target_symbols as _target_symbols,
+)
+from .collection_types import (
+    SourceCollectionExposure,
+    SourceCollectionMode,
+    SourceCollectionTargetContext,
+)
 
-# ruff: noqa: F401,F403,F405,F811,F821
 
-from .part_01_statements_80 import *
-from .part_02_simplepipelinesourcecollectionmixinmethods import *
+logger = logging.getLogger(__name__)
 
 
-def _source_collection_window_active(
+class FlatRepairSnapshotLookup(Protocol):
+    def __call__(
+        self,
+        *,
+        session: Session,
+        account_label: str,
+        symbol: str,
+        after: datetime | None,
+    ) -> bool: ...
+
+
+def source_collection_window_active(
     window: tuple[datetime, datetime],
     now: datetime,
 ) -> bool:
@@ -27,12 +50,12 @@ def _source_collection_window_active(
     return window_start <= now < window_end
 
 
-def _source_collection_strategy_exposure(
+def source_collection_strategy_exposure(
     rows: Sequence[Any],
-) -> _SourceCollectionExposure:
-    exposure = _SourceCollectionExposure(signed_qty=Decimal("0"), latest_fill_at=None)
+) -> SourceCollectionExposure:
+    exposure = SourceCollectionExposure(signed_qty=Decimal("0"), latest_fill_at=None)
     for row in rows:
-        exposure = _source_collection_accumulate_exposure(
+        exposure = source_collection_accumulate_exposure(
             exposure,
             side=row[0],
             filled_qty=row[1],
@@ -41,15 +64,15 @@ def _source_collection_strategy_exposure(
     return exposure
 
 
-def _source_collection_profit_proof_exposure(
+def source_collection_profit_proof_exposure(
     rows: Sequence[Any],
-) -> _SourceCollectionExposure:
-    exposure = _SourceCollectionExposure(signed_qty=Decimal("0"), latest_fill_at=None)
+) -> SourceCollectionExposure:
+    exposure = SourceCollectionExposure(signed_qty=Decimal("0"), latest_fill_at=None)
     for row in rows:
         raw_decision_json = row[2]
-        if not _source_collection_profit_row_eligible(raw_decision_json):
+        if not source_collection_profit_row_eligible(raw_decision_json):
             continue
-        exposure = _source_collection_accumulate_exposure(
+        exposure = source_collection_accumulate_exposure(
             exposure,
             side=row[0],
             filled_qty=row[1],
@@ -58,7 +81,7 @@ def _source_collection_profit_proof_exposure(
     return exposure
 
 
-def _source_collection_profit_row_eligible(raw_decision_json: object) -> bool:
+def source_collection_profit_row_eligible(raw_decision_json: object) -> bool:
     if not isinstance(raw_decision_json, Mapping):
         return False
     decision_json = cast(Mapping[str, Any], raw_decision_json)
@@ -78,13 +101,13 @@ def _source_collection_profit_row_eligible(raw_decision_json: object) -> bool:
     )
 
 
-def _source_collection_accumulate_exposure(
-    exposure: _SourceCollectionExposure,
+def source_collection_accumulate_exposure(
+    exposure: SourceCollectionExposure,
     *,
     side: object,
     filled_qty: object,
     created_at: object,
-) -> _SourceCollectionExposure:
+) -> SourceCollectionExposure:
     qty = _optional_decimal(filled_qty)
     if qty is None or qty <= 0:
         return exposure
@@ -93,7 +116,7 @@ def _source_collection_accumulate_exposure(
         signed_qty -= qty
     else:
         signed_qty += qty
-    return _SourceCollectionExposure(
+    return SourceCollectionExposure(
         signed_qty=signed_qty,
         latest_fill_at=_latest_fill_at(exposure.latest_fill_at, created_at),
     )
@@ -110,16 +133,17 @@ def _latest_fill_at(
     return current
 
 
-def _source_collection_has_unrepaired_exposure(
+def source_collection_has_unrepaired_exposure(
     *,
     session: Session,
     account_label: str,
     symbol: str,
-    exposure: _SourceCollectionExposure,
+    exposure: SourceCollectionExposure,
+    flat_repair_snapshot_lookup: FlatRepairSnapshotLookup,
 ) -> bool:
     if abs(exposure.signed_qty) <= _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON:
         return False
-    if SimplePipelineSourceCollectionMixin._paper_route_target_symbol_has_flat_repair_snapshot(
+    if flat_repair_snapshot_lookup(
         session=session,
         account_label=account_label,
         symbol=symbol,
@@ -129,7 +153,7 @@ def _source_collection_has_unrepaired_exposure(
     return True
 
 
-def _source_collection_symbols(
+def source_collection_symbols(
     target: Mapping[str, Any],
     *,
     target_symbols: set[str],
@@ -144,7 +168,7 @@ def _source_collection_symbols(
     return symbols
 
 
-def _balanced_pair_needs_short_permission(
+def balanced_pair_needs_short_permission(
     pair_balance_state: str,
     symbol_actions: Mapping[str, str],
 ) -> bool:
@@ -155,11 +179,11 @@ def _balanced_pair_needs_short_permission(
     )
 
 
-def _source_collection_simple_lane(
-    context: _SourceCollectionTargetContext,
+def source_collection_simple_lane(
+    context: SourceCollectionTargetContext,
     *,
     metadata: Mapping[str, Any],
-    mode: _SourceCollectionMode,
+    mode: SourceCollectionMode,
     action: str,
 ) -> dict[str, Any]:
     simple_lane: dict[str, Any] = {
@@ -188,13 +212,13 @@ def _source_collection_simple_lane(
     return simple_lane
 
 
-def _source_collection_params(
-    context: _SourceCollectionTargetContext,
+def source_collection_params(
+    context: SourceCollectionTargetContext,
     *,
     symbol: str,
     metadata: dict[str, Any],
     simple_lane: dict[str, Any],
-    mode: _SourceCollectionMode,
+    mode: SourceCollectionMode,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "paper_route_target_plan": metadata,
@@ -225,7 +249,7 @@ def _source_collection_params(
         "final_promotion_allowed": False,
         "live_capital_routing_enabled": False,
         **mode.execution_metadata,
-        **_source_collection_bounded_execution_params(mode.execution_metadata),
+        **source_collection_bounded_execution_params(mode.execution_metadata),
         **_target_plan_lineage([dict(context.target)], symbol),
     }
     if "exit_minute_after_open" in metadata:
@@ -233,7 +257,7 @@ def _source_collection_params(
     return params
 
 
-def _source_collection_bounded_execution_params(
+def source_collection_bounded_execution_params(
     execution_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     if not execution_metadata:
@@ -244,8 +268,8 @@ def _source_collection_bounded_execution_params(
     }
 
 
-def _source_collection_timeframe(
-    context: _SourceCollectionTargetContext,
+def source_collection_timeframe(
+    context: SourceCollectionTargetContext,
 ) -> str:
     return (
         _safe_text(context.target.get("timeframe"))
@@ -255,8 +279,8 @@ def _source_collection_timeframe(
     )
 
 
-def _log_target_notional_sizing_blocker(
-    context: _SourceCollectionTargetContext,
+def log_target_notional_sizing_blocker(
+    context: SourceCollectionTargetContext,
     *,
     symbol: str,
     blockers: object,
@@ -273,7 +297,7 @@ def _log_target_notional_sizing_blocker(
     )
 
 
-def _apply_source_collection_quantity_resolution(
+def apply_source_collection_quantity_resolution(
     *,
     metadata: dict[str, Any],
     simple_lane: dict[str, Any],
@@ -289,4 +313,17 @@ def _apply_source_collection_quantity_resolution(
     params.update(quantity_resolution.price_params)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "FlatRepairSnapshotLookup",
+    "apply_source_collection_quantity_resolution",
+    "balanced_pair_needs_short_permission",
+    "log_target_notional_sizing_blocker",
+    "source_collection_has_unrepaired_exposure",
+    "source_collection_params",
+    "source_collection_profit_proof_exposure",
+    "source_collection_simple_lane",
+    "source_collection_strategy_exposure",
+    "source_collection_symbols",
+    "source_collection_timeframe",
+    "source_collection_window_active",
+]

@@ -1,16 +1,12 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, NamedTuple, cast
-from urllib.parse import urlsplit
+from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import desc, select  # pyright: ignore[reportUnknownVariableType]
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from ....config import settings
@@ -21,105 +17,68 @@ from ....models import (
     TradeDecision,
 )
 from ...models import StrategyDecision
-from ...paper_route_target_plan import (
-    paper_route_target_plan_from_payload,
-    paper_route_target_plan_probe_symbols,
-    paper_route_target_plan_targets,
-)
 from ...runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-    source_decision_mode_is_profit_proof_eligible,
 )
-from ...session_context import regular_session_open_utc_for
-from ..target_plan_helpers import (
-    _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
-    _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS,
-    _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON,
-    _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS,
-    _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK,
-    _REGULAR_SESSION_MINUTES,
-    _bounded_sim_collection_blockers,
-    _bounded_sim_collection_reserves_account,
-    _bounded_sim_collection_target_with_runtime_account_audit,
-    _lineage_text_values,
-    _merge_paper_route_probe_lineage,
-    _optional_decimal,
-    _paper_route_probe_lineage_from_params,
-    _safe_text,
-    _strategy_lookup_names,
-    _target_active_in_window,
-    _target_bool,
-    _target_bounded_collection_authorized,
-    _target_has_bounded_sim_collection_source_kind,
-    _target_has_bounded_source_collection_authorization,
-    _target_lookup_names,
-    _target_missing_explicit_probe_window,
-    _target_owns_bounded_sim_collection_account,
-    _target_pair_balance_state,
-    _target_plan_has_active_bounded_sim_collection_owner,
-    _target_plan_lineage,
-    _target_probe_action,
-    _target_probe_cap,
-    _target_probe_exit_minute_after_open,
-    _target_probe_symbol_actions,
-    _target_probe_symbol_quantities,
-    _target_probe_window,
-    _target_requires_bounded_sim_collection_gate,
-    _target_runtime_account_matches,
-    _target_symbols,
-    _target_truthy,
+from ..target_plan_helpers_modules import (
+    PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK as _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK,
+    bounded_sim_collection_blockers as _bounded_sim_collection_blockers,
+    bounded_sim_collection_reserves_account as _bounded_sim_collection_reserves_account,
+    bounded_sim_collection_target_with_runtime_account_audit as _bounded_sim_collection_target_with_runtime_account_audit,
+    merge_paper_route_probe_lineage as _merge_paper_route_probe_lineage,
+    optional_decimal as _optional_decimal,
+    paper_route_probe_lineage_from_params as _paper_route_probe_lineage_from_params,
+    safe_text as _safe_text,
+    target_active_in_window as _target_active_in_window,
+    target_owns_bounded_sim_collection_account as _target_owns_bounded_sim_collection_account,
+    target_pair_balance_state as _target_pair_balance_state,
+    target_plan_has_active_bounded_sim_collection_owner as _target_plan_has_active_bounded_sim_collection_owner,
+    target_probe_action as _target_probe_action,
+    target_probe_cap as _target_probe_cap,
+    target_probe_symbol_actions as _target_probe_symbol_actions,
+    target_probe_symbol_quantities as _target_probe_symbol_quantities,
+    target_probe_window as _target_probe_window,
+    target_requires_bounded_sim_collection_gate as _target_requires_bounded_sim_collection_gate,
+    target_runtime_account_matches as _target_runtime_account_matches,
+)
+from .collection_types import (
+    SourceCollectionAction,
+    SourceCollectionDecisionPayload,
+    SourceCollectionDecisionRun,
+    SourceCollectionMode,
+    SourceCollectionState,
+    SourceCollectionTargetContext,
+)
+from .decision_helpers import (
+    apply_source_collection_quantity_resolution,
+    balanced_pair_needs_short_permission,
+    log_target_notional_sizing_blocker,
+    source_collection_has_unrepaired_exposure,
+    source_collection_params,
+    source_collection_profit_proof_exposure,
+    source_collection_simple_lane,
+    source_collection_strategy_exposure,
+    source_collection_symbols,
+    source_collection_timeframe,
+    source_collection_window_active,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
 
-from .part_01_statements_80 import *
+if TYPE_CHECKING:
+    from .collection_types import (
+        SourceCollectionRuntime as SourceCollectionRuntimeMixin,
+    )
+else:
 
-
-class _SourceCollectionState(NamedTuple):
-    now: datetime
-    target_symbols: set[str]
-    target_plan_targets: list[dict[str, Any]]
-    normalized_allowed: set[str]
-    bounded_sim_owner_active: bool
+    class SourceCollectionRuntimeMixin:
+        pass
 
 
-class _SourceCollectionTargetContext(NamedTuple):
-    target: Mapping[str, Any]
-    strategy: Strategy
-    symbols: list[str]
-    symbol_actions: dict[str, str]
-    symbol_quantities: dict[str, Decimal]
-    pair_balance_state: str
-    window_start: datetime
-    window_end: datetime
-    target_cap: Decimal
+logger = logging.getLogger(__name__)
 
 
-class _SourceCollectionMode(NamedTuple):
-    source_decision_mode: str
-    profit_proof_eligible: bool
-    execution_metadata: dict[str, Any]
-
-
-class _SourceCollectionDecisionPayload(NamedTuple):
-    params: dict[str, Any]
-    qty: Decimal
-    timeframe: str
-
-
-class _SourceCollectionExposure(NamedTuple):
-    signed_qty: Decimal
-    latest_fill_at: datetime | None
-
-
-class _SimplePipelineSourceCollectionMixinMethodsPart2:
+class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
     def _paper_route_target_source_decisions(
         self,
         *,
@@ -162,15 +121,17 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
                     blocked_symbols,
                 )
                 continue
+            run = SourceCollectionDecisionRun(
+                session=session,
+                blocked_symbols=set(blocked_symbols),
+                seen=seen,
+                now=state.now,
+            )
             for symbol in context.symbols:
                 decision = self._paper_route_target_source_decision_for_symbol(
                     context,
                     symbol=symbol,
-                    positions=positions,
-                    session=session,
-                    blocked_symbols=blocked_symbols,
-                    seen=seen,
-                    now=state.now,
+                    run=run,
                 )
                 if decision is not None:
                     decisions.append(decision)
@@ -182,7 +143,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
         strategies: Sequence[Strategy],
         allowed_symbols: set[str],
         session: Session | None,
-    ) -> _SourceCollectionState | None:
+    ) -> SourceCollectionState | None:
         if settings.trading_mode != "paper":
             return None
         if not settings.trading_simple_paper_route_probe_enabled:
@@ -223,7 +184,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
             account_label=self.account_label,
             now=now,
         )
-        return _SourceCollectionState(
+        return SourceCollectionState(
             now=now,
             target_symbols=target_symbols,
             target_plan_targets=target_plan_targets,
@@ -237,8 +198,8 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
         *,
         strategies: Sequence[Strategy],
         positions: Sequence[Mapping[str, Any]] | None,
-        state: _SourceCollectionState,
-    ) -> _SourceCollectionTargetContext | None:
+        state: SourceCollectionState,
+    ) -> SourceCollectionTargetContext | None:
         target = _bounded_sim_collection_target_with_runtime_account_audit(
             raw_target,
             positions=(
@@ -255,12 +216,12 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
             return None
         if self._paper_route_target_bounded_gate_blocked(target):
             return None
-        if window is None or not _source_collection_window_active(window, state.now):
+        if window is None or not source_collection_window_active(window, state.now):
             return None
         if target_cap is None or target_cap <= 0 or strategy is None:
             return None
 
-        symbols = _source_collection_symbols(
+        symbols = source_collection_symbols(
             target,
             target_symbols=state.target_symbols,
             normalized_allowed=state.normalized_allowed,
@@ -269,33 +230,29 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
         symbol_actions = _target_probe_symbol_actions(target, symbols)
         symbol_quantities = _target_probe_symbol_quantities(target, symbols)
         pair_balance_state = _target_pair_balance_state(target, symbol_actions)
-        if self._paper_route_target_pair_gate_blocked(
-            target,
-            strategy=strategy,
-            symbols=symbols,
-            symbol_actions=symbol_actions,
-            pair_balance_state=pair_balance_state,
-            positions=positions,
-        ):
-            return None
-        window_start, window_end = window
-        return _SourceCollectionTargetContext(
+        context = SourceCollectionTargetContext(
             target=target,
             strategy=strategy,
             symbols=symbols,
             symbol_actions=symbol_actions,
             symbol_quantities=symbol_quantities,
             pair_balance_state=pair_balance_state,
-            window_start=window_start,
-            window_end=window_end,
+            window_start=window[0],
+            window_end=window[1],
             target_cap=target_cap,
         )
+        if self._paper_route_target_pair_gate_blocked(
+            context,
+            positions=positions,
+        ):
+            return None
+        return context
 
     def _paper_route_target_owner_skip(
         self,
         target: Mapping[str, Any],
         *,
-        state: _SourceCollectionState,
+        state: SourceCollectionState,
     ) -> bool:
         if not (
             state.bounded_sim_owner_active
@@ -337,44 +294,43 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
 
     def _paper_route_target_pair_gate_blocked(
         self,
-        target: Mapping[str, Any],
+        context: SourceCollectionTargetContext,
         *,
-        strategy: Strategy,
-        symbols: list[str],
-        symbol_actions: Mapping[str, str],
-        pair_balance_state: str,
         positions: Sequence[Mapping[str, Any]] | None,
     ) -> bool:
         if _target_requires_bounded_sim_collection_gate(
-            target
+            context.target
         ) and self._paper_route_target_account_has_open_exposure(positions):
             logger.warning(
                 "Skipping paper-route target source collection because account "
                 "is not flat for bounded SIM evidence strategy=%s symbols=%s",
-                strategy.name,
-                symbols,
+                context.strategy.name,
+                context.symbols,
             )
             return True
-        if pair_balance_state == "imbalanced":
+        if context.pair_balance_state == "imbalanced":
             logger.warning(
                 "Skipping imbalanced paper-route pair target strategy=%s symbols=%s actions=%s",
-                strategy.name,
-                symbols,
-                symbol_actions,
+                context.strategy.name,
+                context.symbols,
+                context.symbol_actions,
             )
             return True
-        if _balanced_pair_needs_short_permission(pair_balance_state, symbol_actions):
+        if balanced_pair_needs_short_permission(
+            context.pair_balance_state,
+            context.symbol_actions,
+        ):
             logger.warning(
                 "Skipping balanced paper-route pair target because shorts are disabled strategy=%s symbols=%s",
-                strategy.name,
-                symbols,
+                context.strategy.name,
+                context.symbols,
             )
             return True
         return False
 
     def _paper_route_target_blocked_open_exposure_symbols(
         self,
-        context: _SourceCollectionTargetContext,
+        context: SourceCollectionTargetContext,
         *,
         positions: Sequence[Mapping[str, Any]] | None,
         session: Session | None,
@@ -399,28 +355,23 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
 
     def _paper_route_target_source_decision_for_symbol(
         self,
-        context: _SourceCollectionTargetContext,
+        context: SourceCollectionTargetContext,
         *,
         symbol: str,
-        positions: Sequence[Mapping[str, Any]] | None,
-        session: Session | None,
-        blocked_symbols: list[str],
-        seen: set[tuple[str, str, str, str]],
-        now: datetime,
+        run: SourceCollectionDecisionRun,
     ) -> StrategyDecision | None:
-        del positions
         action = context.symbol_actions.get(
             symbol,
             _target_probe_action(context.target),
         )
         if action == "sell" and not settings.trading_allow_shorts:
             return None
-        if symbol in blocked_symbols:
+        if symbol in run.blocked_symbols:
             return None
         if (
-            session is not None
+            run.session is not None
             and self._paper_route_target_symbol_has_open_profit_proof_exposure(
-                session=session,
+                session=run.session,
                 strategy=context.strategy,
                 symbol=symbol,
                 account_label=self.account_label,
@@ -434,21 +385,21 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
             context.window_start.isoformat(),
             action,
         )
-        if key in seen:
+        if key in run.seen:
             return None
-        seen.add(key)
+        run.seen.add(key)
         payload = self._paper_route_target_source_decision_payload(
             context,
             symbol=symbol,
             action=action,
-            now=now,
+            now=run.now,
         )
         if payload is None:
             return None
         return StrategyDecision(
             strategy_id=str(context.strategy.id),
             symbol=symbol,
-            event_ts=now,
+            event_ts=run.now,
             timeframe=payload.timeframe,
             action=action,
             qty=payload.qty,
@@ -460,24 +411,24 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
 
     def _paper_route_target_source_decision_payload(
         self,
-        context: _SourceCollectionTargetContext,
+        context: SourceCollectionTargetContext,
         *,
         symbol: str,
-        action: str,
+        action: SourceCollectionAction,
         now: datetime,
-    ) -> _SourceCollectionDecisionPayload | None:
+    ) -> SourceCollectionDecisionPayload | None:
         metadata, mode = self._paper_route_target_source_collection_metadata(
             context,
             symbol=symbol,
             action=action,
         )
-        simple_lane = _source_collection_simple_lane(
+        simple_lane = source_collection_simple_lane(
             context,
             metadata=metadata,
             mode=mode,
             action=action,
         )
-        params = _source_collection_params(
+        params = source_collection_params(
             context,
             symbol=symbol,
             metadata=metadata,
@@ -488,7 +439,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
             params,
             _paper_route_probe_lineage_from_params(params),
         )
-        timeframe = _source_collection_timeframe(context)
+        timeframe = source_collection_timeframe(context)
         requested_qty = context.symbol_quantities.get(symbol, Decimal("1"))
         quantity_resolution = self._paper_route_target_quantity_resolution(
             target=context.target,
@@ -504,19 +455,19 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
         if quantity_resolution is None:
             return None
         if quantity_resolution.audit.get("sizing_source") != "target_notional":
-            _log_target_notional_sizing_blocker(
+            log_target_notional_sizing_blocker(
                 context,
                 symbol=symbol,
                 blockers=quantity_resolution.audit.get("blockers"),
             )
             return None
-        _apply_source_collection_quantity_resolution(
+        apply_source_collection_quantity_resolution(
             metadata=metadata,
             simple_lane=simple_lane,
             params=params,
             quantity_resolution=quantity_resolution,
         )
-        return _SourceCollectionDecisionPayload(
+        return SourceCollectionDecisionPayload(
             params=params,
             qty=quantity_resolution.qty,
             timeframe=timeframe,
@@ -524,18 +475,14 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
 
     def _paper_route_target_source_collection_metadata(
         self,
-        context: _SourceCollectionTargetContext,
+        context: SourceCollectionTargetContext,
         *,
         symbol: str,
-        action: str,
-    ) -> tuple[dict[str, Any], _SourceCollectionMode]:
+        action: SourceCollectionAction,
+    ) -> tuple[dict[str, Any], SourceCollectionMode]:
         metadata = self._paper_route_target_source_decision_metadata(
-            target=context.target,
-            strategy=context.strategy,
+            context=context,
             symbol=symbol,
-            window_start=context.window_start,
-            window_end=context.window_end,
-            max_notional=context.target_cap,
         )
         metadata["paper_route_probe_symbol_actions"] = dict(context.symbol_actions)
         if context.symbol_quantities:
@@ -558,20 +505,18 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
 
     def _paper_route_target_source_collection_mode(
         self,
-        context: _SourceCollectionTargetContext,
+        context: SourceCollectionTargetContext,
         *,
         metadata: dict[str, Any],
         symbol: str,
-        action: str,
-    ) -> _SourceCollectionMode:
+        action: SourceCollectionAction,
+    ) -> SourceCollectionMode:
         execution_metadata = (
             self._bounded_paper_route_execution_metadata(
-                target=context.target,
-                strategy=context.strategy,
+                context=context,
                 symbol=symbol,
                 action=action,
                 account_label=self.account_label,
-                max_notional=context.target_cap,
             )
             if _target_requires_bounded_sim_collection_gate(context.target)
             else {}
@@ -580,7 +525,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
             _safe_text(execution_metadata.get("submit_path"))
             != "bounded_paper_route_collection"
         ):
-            return _SourceCollectionMode(
+            return SourceCollectionMode(
                 source_decision_mode=ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
                 profit_proof_eligible=False,
                 execution_metadata=execution_metadata,
@@ -593,7 +538,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
         metadata["bounded_paper_route_execution_policy"] = execution_metadata[
             "execution_policy"
         ]
-        return _SourceCollectionMode(
+        return SourceCollectionMode(
             source_decision_mode=BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
             profit_proof_eligible=True,
             execution_metadata=execution_metadata,
@@ -701,12 +646,15 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
             )
             return True
 
-        exposure = _source_collection_strategy_exposure(rows)
-        return _source_collection_has_unrepaired_exposure(
+        exposure = source_collection_strategy_exposure(rows)
+        return source_collection_has_unrepaired_exposure(
             session=session,
             account_label=account_label,
             symbol=normalized_symbol,
             exposure=exposure,
+            flat_repair_snapshot_lookup=(
+                SimplePipelineSourceCollectionDecisionMixin._paper_route_target_symbol_has_flat_repair_snapshot
+            ),
         )
 
     @staticmethod
@@ -743,7 +691,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
             positions, (bytes, bytearray, str)
         ):
             return False
-        return not SimplePipelineSourceCollectionMixin._paper_route_target_symbol_has_open_position(
+        return not SimplePipelineSourceCollectionDecisionMixin._paper_route_target_symbol_has_open_position(
             cast(Sequence[Mapping[str, Any]], positions),
             symbol,
         )
@@ -793,12 +741,15 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
             )
             return True
 
-        exposure = _source_collection_profit_proof_exposure(rows)
-        return _source_collection_has_unrepaired_exposure(
+        exposure = source_collection_profit_proof_exposure(rows)
+        return source_collection_has_unrepaired_exposure(
             session=session,
             account_label=account_label,
             symbol=normalized_symbol,
             exposure=exposure,
+            flat_repair_snapshot_lookup=(
+                SimplePipelineSourceCollectionDecisionMixin._paper_route_target_symbol_has_flat_repair_snapshot
+            ),
         )
 
     @staticmethod
@@ -835,7 +786,7 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
 
         filtered_positions: list[Mapping[str, Any]] = []
         for position in positions:
-            if SimplePipelineSourceCollectionMixin._paper_route_position_is_materialized_projection(
+            if SimplePipelineSourceCollectionDecisionMixin._paper_route_position_is_materialized_projection(
                 position,
                 materialized_client_order_ids,
             ):
@@ -884,4 +835,4 @@ class _SimplePipelineSourceCollectionMixinMethodsPart2:
         return False
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ["SimplePipelineSourceCollectionDecisionMixin"]
