@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """SQLAlchemy ORM models for torghut."""
 
 from __future__ import annotations
@@ -6,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -25,8 +24,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..base import Base, GUID, JSONType
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
+if TYPE_CHECKING:
+    from .runtime_cursors import LLMDecisionReview
+    from .strategy_evidence import StrategyRuntimeLedgerBucket
+    from .whitepaper_runtime import ExecutionTCAMetric
 
 MARKET_SYMBOL_MAX_LENGTH = 64
 
@@ -691,6 +692,3 @@ class TigerBeetleReconciliationRun(Base, TimestampMixin):
         Index("ix_tigerbeetle_reconciliation_runs_status", "status"),
         Index("ix_tigerbeetle_reconciliation_runs_started_at", "started_at"),
     )
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
