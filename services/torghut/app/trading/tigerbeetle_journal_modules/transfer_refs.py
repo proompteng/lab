@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Idempotent Torghut order-event journal for TigerBeetle."""
 
 from __future__ import annotations
@@ -7,9 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
-import json
-from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, cast
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -25,11 +22,7 @@ from app.models import (
     TigerBeetleTransferRef,
     coerce_json_payload,
 )
-from app.trading.tigerbeetle_client import (
-    TigerBeetleClientProtocol,
-    create_tigerbeetle_client,
-)
-from app.trading.tigerbeetle_ids import stable_ref_u128, stable_u128, u128_decimal
+from app.trading.tigerbeetle_ids import stable_u128, u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
     ACCOUNT_CODE_CASH_CONTROL,
     ACCOUNT_CODE_EVIDENCE_CONTROL,
@@ -40,14 +33,9 @@ from app.trading.tigerbeetle_ledger_model import (
     ACCOUNT_CODE_REALIZED_PNL,
     ACCOUNT_CODE_RUNTIME_LEDGER_EVIDENCE,
     LEDGER_USD_MICRO,
-    PNL_DIRECTION_LOSS,
-    PNL_DIRECTION_PROFIT,
     TRANSFER_KIND_CANCEL_VOID,
-    TRANSFER_KIND_EXECUTION_COST,
-    TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_KIND_FILL_POST,
     TRANSFER_KIND_REJECT_VOID,
-    TRANSFER_KIND_RUNTIME_NET_PNL,
     TRANSFER_KIND_SUBMITTED_PENDING,
     TigerBeetleAccountSpec,
     TigerBeetleTransferSpec,
@@ -56,14 +44,31 @@ from app.trading.tigerbeetle_ledger_model import (
     transfer_kind_for_event,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+from .journal_payloads import (
+    PreparedTigerBeetleTransferWrite,
+    TIGERBEETLE_BLOCKER_TRANSFER_REF_CONFLICT,
+    TigerBeetleOrderEventTransferPlan,
+    account_id_for_key,
+    economic_decimal_text,
+    event_amount_usd,
+    nested_mapping,
+    submitted_pending_key,
+    transfer_attr,
+)
 
-from .part_01_statements_58 import *
+
+@dataclass(frozen=True)
+class TransferRefLookupKey:
+    cluster_id: int
+    transfer_id_text: str
+    source_type: str
+    source_id: str
+    transfer_kind: str
 
 
 def _economic_text(value: object) -> str:
     if isinstance(value, Decimal):
-        return _economic_decimal_text(value)
+        return economic_decimal_text(value)
     if value is None:
         return "null"
     return str(value).strip()
@@ -88,8 +93,8 @@ def execution_economic_event_key(execution: Execution) -> str:
             _economic_text(execution.trade_decision_id),
             _economic_text(execution.alpaca_order_id),
             _economic_text(execution.client_order_id),
-            _economic_decimal_text(execution.filled_qty),
-            _economic_decimal_text(execution.avg_fill_price),
+            economic_decimal_text(execution.filled_qty),
+            economic_decimal_text(execution.avg_fill_price),
         )
     )
 
@@ -111,18 +116,18 @@ def execution_tca_metric_economic_event_key(metric: ExecutionTCAMetric) -> str:
             _economic_text(metric.alpaca_account_label),
             _economic_text(metric.symbol),
             _economic_text(metric.side),
-            _economic_decimal_text(metric.arrival_price),
-            _economic_decimal_text(metric.avg_fill_price),
-            _economic_decimal_text(metric.filled_qty),
-            _economic_decimal_text(metric.signed_qty),
-            _economic_decimal_text(metric.shortfall_notional),
-            _economic_decimal_text(metric.slippage_bps),
-            _economic_decimal_text(metric.realized_shortfall_bps),
-            _economic_decimal_text(metric.expected_shortfall_bps_p50),
-            _economic_decimal_text(metric.expected_shortfall_bps_p95),
-            _economic_decimal_text(metric.divergence_bps),
-            _economic_decimal_text(metric.churn_qty),
-            _economic_decimal_text(metric.churn_ratio),
+            economic_decimal_text(metric.arrival_price),
+            economic_decimal_text(metric.avg_fill_price),
+            economic_decimal_text(metric.filled_qty),
+            economic_decimal_text(metric.signed_qty),
+            economic_decimal_text(metric.shortfall_notional),
+            economic_decimal_text(metric.slippage_bps),
+            economic_decimal_text(metric.realized_shortfall_bps),
+            economic_decimal_text(metric.expected_shortfall_bps_p50),
+            economic_decimal_text(metric.expected_shortfall_bps_p95),
+            economic_decimal_text(metric.divergence_bps),
+            economic_decimal_text(metric.churn_qty),
+            economic_decimal_text(metric.churn_ratio),
             _economic_text(metric.simulator_version),
         )
     )
@@ -138,7 +143,7 @@ def execution_tca_metric_source_id(metric: ExecutionTCAMetric) -> str:
 def submitted_pending_transfer_id(event: ExecutionOrderEvent) -> int:
     return stable_u128(
         "torghut.tigerbeetle.submitted_pending",
-        _submitted_pending_key(event),
+        submitted_pending_key(event),
     )
 
 
@@ -177,7 +182,9 @@ def runtime_ledger_amount_source(bucket: StrategyRuntimeLedgerBucket) -> Decimal
     return Decimal("0")
 
 
-def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
+def order_event_account_specs(
+    event: ExecutionOrderEvent,
+) -> list[TigerBeetleAccountSpec]:
     account_label = event.alpaca_account_label
     symbol = event.symbol
     strategy_id = str(event.trade_decision_id) if event.trade_decision_id else None
@@ -186,7 +193,7 @@ def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
     )
     specs = [
         TigerBeetleAccountSpec(
-            account_id=_account_id(f"cash:{account_label}:usd"),
+            account_id=account_id_for_key(f"cash:{account_label}:usd"),
             account_key=f"cash:{account_label}:usd",
             ledger=LEDGER_USD_MICRO,
             code=ACCOUNT_CODE_CASH_CONTROL,
@@ -195,7 +202,9 @@ def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
             strategy_id=strategy_id,
         ),
         TigerBeetleAccountSpec(
-            account_id=_account_id(f"order_hold:{account_label}:{order_identity}"),
+            account_id=account_id_for_key(
+                f"order_hold:{account_label}:{order_identity}"
+            ),
             account_key=f"order_hold:{account_label}:{order_identity}",
             ledger=LEDGER_USD_MICRO,
             code=ACCOUNT_CODE_ORDER_HOLD,
@@ -204,7 +213,7 @@ def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
             strategy_id=strategy_id,
         ),
         TigerBeetleAccountSpec(
-            account_id=_account_id(
+            account_id=account_id_for_key(
                 f"fill_notional:{account_label}:{symbol}:{strategy_id}"
             ),
             account_key=f"fill_notional:{account_label}:{symbol}:{strategy_id}",
@@ -215,7 +224,7 @@ def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
             strategy_id=strategy_id,
         ),
         TigerBeetleAccountSpec(
-            account_id=_account_id(
+            account_id=account_id_for_key(
                 f"execution_cost:{account_label}:{symbol}:{strategy_id}"
             ),
             account_key=f"execution_cost:{account_label}:{symbol}:{strategy_id}",
@@ -226,7 +235,9 @@ def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
             strategy_id=strategy_id,
         ),
         TigerBeetleAccountSpec(
-            account_id=_account_id(f"realized_pnl:{account_label}:{strategy_id}"),
+            account_id=account_id_for_key(
+                f"realized_pnl:{account_label}:{strategy_id}"
+            ),
             account_key=f"realized_pnl:{account_label}:{strategy_id}",
             ledger=LEDGER_USD_MICRO,
             code=ACCOUNT_CODE_REALIZED_PNL,
@@ -238,7 +249,7 @@ def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
     return specs
 
 
-def _evidence_account_specs(
+def evidence_account_specs(
     *,
     account_label: str | None,
     symbol: str | None,
@@ -251,7 +262,9 @@ def _evidence_account_specs(
     runtime_identity = runtime_key or normalized_strategy_id
     return [
         TigerBeetleAccountSpec(
-            account_id=_account_id(f"evidence_control:{normalized_account_label}:usd"),
+            account_id=account_id_for_key(
+                f"evidence_control:{normalized_account_label}:usd"
+            ),
             account_key=f"evidence_control:{normalized_account_label}:usd",
             ledger=LEDGER_USD_MICRO,
             code=ACCOUNT_CODE_EVIDENCE_CONTROL,
@@ -260,7 +273,7 @@ def _evidence_account_specs(
             strategy_id=strategy_id,
         ),
         TigerBeetleAccountSpec(
-            account_id=_account_id(
+            account_id=account_id_for_key(
                 "execution_evidence:"
                 f"{normalized_account_label}:{normalized_symbol}:{normalized_strategy_id}"
             ),
@@ -275,7 +288,7 @@ def _evidence_account_specs(
             strategy_id=strategy_id,
         ),
         TigerBeetleAccountSpec(
-            account_id=_account_id(
+            account_id=account_id_for_key(
                 "execution_cost:"
                 f"{normalized_account_label}:{normalized_symbol}:{normalized_strategy_id}"
             ),
@@ -290,7 +303,7 @@ def _evidence_account_specs(
             strategy_id=strategy_id,
         ),
         TigerBeetleAccountSpec(
-            account_id=_account_id(
+            account_id=account_id_for_key(
                 f"runtime_ledger:{normalized_account_label}:{runtime_identity}"
             ),
             account_key=f"runtime_ledger:{normalized_account_label}:{runtime_identity}",
@@ -303,7 +316,7 @@ def _evidence_account_specs(
     ]
 
 
-def _transfer_flag(flag_name: str) -> int:
+def transfer_flag(flag_name: str) -> int:
     try:
         import tigerbeetle as tb
     except Exception:
@@ -319,7 +332,7 @@ def _transfer_flag(flag_name: str) -> int:
     return int(value)
 
 
-def _transfer_spec(
+def order_event_transfer_spec(
     event: ExecutionOrderEvent,
     *,
     transfer_kind: str,
@@ -347,7 +360,7 @@ def _transfer_spec(
             amount=amount,
             ledger=LEDGER_USD_MICRO,
             code=code,
-            flags=_transfer_flag("PENDING"),
+            flags=transfer_flag("PENDING"),
             timeout=0,
         )
     if transfer_kind in {TRANSFER_KIND_CANCEL_VOID, TRANSFER_KIND_REJECT_VOID}:
@@ -362,7 +375,7 @@ def _transfer_spec(
             pending_id=submitted_pending_transfer_id(event),
             ledger=LEDGER_USD_MICRO,
             code=code,
-            flags=_transfer_flag("VOID_PENDING_TRANSFER"),
+            flags=transfer_flag("VOID_PENDING_TRANSFER"),
         )
     if transfer_kind == TRANSFER_KIND_FILL_POST and not use_pending_transfer:
         return TigerBeetleTransferSpec(
@@ -385,13 +398,13 @@ def _transfer_spec(
         else 0,
         ledger=LEDGER_USD_MICRO,
         code=code,
-        flags=_transfer_flag("POST_PENDING_TRANSFER")
+        flags=transfer_flag("POST_PENDING_TRANSFER")
         if transfer_kind == TRANSFER_KIND_FILL_POST
         else 0,
     )
 
 
-def _pending_transfer_ref_for_event(
+def pending_transfer_ref_for_event(
     session: Session,
     event: ExecutionOrderEvent,
     *,
@@ -419,7 +432,7 @@ def build_order_event_transfer_plan(
         return None
 
     pending_ref = (
-        _pending_transfer_ref_for_event(
+        pending_transfer_ref_for_event(
             session,
             event,
             cluster_id=settings_obj.tigerbeetle_cluster_id,
@@ -433,7 +446,7 @@ def build_order_event_transfer_plan(
         }
         else None
     )
-    amount_usd = _event_amount_usd(event, transfer_kind, session=session)
+    amount_usd = event_amount_usd(event, transfer_kind, session=session)
     amount = (
         decimal_usd_to_nearest_micros(amount_usd) if amount_usd is not None else None
     )
@@ -447,14 +460,14 @@ def build_order_event_transfer_plan(
     ):
         return None
 
-    account_specs = tuple(_account_specs(event))
+    account_specs = tuple(order_event_account_specs(event))
     account_by_key = {spec.account_key: spec for spec in account_specs}
     use_pending_transfer = pending_ref is not None or transfer_kind in {
         TRANSFER_KIND_SUBMITTED_PENDING,
         TRANSFER_KIND_CANCEL_VOID,
         TRANSFER_KIND_REJECT_VOID,
     }
-    transfer_spec = _transfer_spec(
+    transfer_spec = order_event_transfer_spec(
         event,
         transfer_kind=transfer_kind,
         amount=amount,
@@ -475,7 +488,7 @@ def build_order_event_transfer_plan(
     )
 
 
-def _persist_account_refs(
+def persist_account_refs(
     session: Session,
     *,
     cluster_id: int,
@@ -538,7 +551,7 @@ def _persist_account_refs(
                 raise RuntimeError("tigerbeetle_account_ref_conflict") from None
 
 
-def _dedupe_account_specs(
+def dedupe_account_specs(
     account_specs: Sequence[TigerBeetleAccountSpec],
 ) -> list[TigerBeetleAccountSpec]:
     by_key: dict[str, TigerBeetleAccountSpec] = {}
@@ -562,22 +575,22 @@ def _dedupe_account_specs(
     return ordered
 
 
-def _transfer_matches(
+def transfer_matches(
     actual: object,
     expected: TigerBeetleTransferSpec,
 ) -> bool:
     return (
-        int(_transfer_attr(actual, "id")) == expected.transfer_id
-        and int(_transfer_attr(actual, "amount")) == expected.amount
-        and int(_transfer_attr(actual, "ledger")) == expected.ledger
-        and int(_transfer_attr(actual, "code")) == expected.code
-        and int(_transfer_attr(actual, "debit_account_id")) == expected.debit_account_id
-        and int(_transfer_attr(actual, "credit_account_id"))
+        int(transfer_attr(actual, "id")) == expected.transfer_id
+        and int(transfer_attr(actual, "amount")) == expected.amount
+        and int(transfer_attr(actual, "ledger")) == expected.ledger
+        and int(transfer_attr(actual, "code")) == expected.code
+        and int(transfer_attr(actual, "debit_account_id")) == expected.debit_account_id
+        and int(transfer_attr(actual, "credit_account_id"))
         == expected.credit_account_id
     )
 
 
-def _transfer_ref_mismatches(
+def transfer_ref_mismatches(
     ref: TigerBeetleTransferRef,
     expected: TigerBeetleTransferSpec,
 ) -> list[str]:
@@ -592,7 +605,7 @@ def _transfer_ref_mismatches(
         mismatches.append("ledger")
     if ref.code != expected.code:
         mismatches.append("code")
-    payload = _nested_mapping(ref.payload_json)
+    payload = nested_mapping(ref.payload_json)
     expected_debit = u128_decimal(expected.debit_account_id)
     expected_credit = u128_decimal(expected.credit_account_id)
     if payload.get("debit_account_id") not in {None, expected_debit}:
@@ -606,76 +619,62 @@ def _transfer_ref_mismatches(
     return mismatches
 
 
-def _assert_transfer_ref_matches(
+def assert_transfer_ref_matches(
     ref: TigerBeetleTransferRef,
     expected: TigerBeetleTransferSpec,
 ) -> None:
-    mismatches = _transfer_ref_mismatches(ref, expected)
+    mismatches = transfer_ref_mismatches(ref, expected)
     if mismatches:
         raise RuntimeError(
             f"{TIGERBEETLE_BLOCKER_TRANSFER_REF_CONFLICT}:{','.join(mismatches)}"
         )
 
 
-def _find_transfer_ref(
-    session: Session,
-    *,
-    cluster_id: int,
-    transfer_id_text: str,
-    source_type: str,
-    source_id: str,
-    transfer_kind: str,
+def find_transfer_ref(
+    session: Session, key: TransferRefLookupKey
 ) -> TigerBeetleTransferRef | None:
     source_existing = session.execute(
         select(TigerBeetleTransferRef).where(
-            TigerBeetleTransferRef.cluster_id == cluster_id,
-            TigerBeetleTransferRef.source_type == source_type,
-            TigerBeetleTransferRef.source_id == source_id,
-            TigerBeetleTransferRef.transfer_kind == transfer_kind,
+            TigerBeetleTransferRef.cluster_id == key.cluster_id,
+            TigerBeetleTransferRef.source_type == key.source_type,
+            TigerBeetleTransferRef.source_id == key.source_id,
+            TigerBeetleTransferRef.transfer_kind == key.transfer_kind,
         )
     ).scalar_one_or_none()
     if source_existing is not None:
         return source_existing
     return session.execute(
         select(TigerBeetleTransferRef).where(
-            TigerBeetleTransferRef.cluster_id == cluster_id,
-            TigerBeetleTransferRef.transfer_id == transfer_id_text,
+            TigerBeetleTransferRef.cluster_id == key.cluster_id,
+            TigerBeetleTransferRef.transfer_id == key.transfer_id_text,
         )
     ).scalar_one_or_none()
 
 
-def _merge_existing_transfer_ref(
+def merge_existing_transfer_ref(
     session: Session,
     existing: TigerBeetleTransferRef,
-    *,
-    transfer_spec: TigerBeetleTransferSpec,
-    trade_decision_id: object | None,
-    execution_id: object | None,
-    execution_order_event_id: object | None,
-    execution_tca_metric_id: object | None,
-    runtime_ledger_bucket_id: object | None,
-    event_fingerprint: str | None,
-    source_type: str,
-    source_id: str,
+    prepared: PreparedTigerBeetleTransferWrite,
     payload_json: Mapping[str, object],
 ) -> TigerBeetleTransferRef:
-    _assert_transfer_ref_matches(existing, transfer_spec)
+    transfer_spec = prepared.transfer_spec
+    assert_transfer_ref_matches(existing, transfer_spec)
     if existing.trade_decision_id is None:
-        existing.trade_decision_id = cast(Any, trade_decision_id)
+        existing.trade_decision_id = cast(Any, prepared.trade_decision_id)
     if existing.execution_id is None:
-        existing.execution_id = cast(Any, execution_id)
+        existing.execution_id = cast(Any, prepared.execution_id)
     if existing.execution_order_event_id is None:
-        existing.execution_order_event_id = cast(Any, execution_order_event_id)
+        existing.execution_order_event_id = cast(Any, prepared.execution_order_event_id)
     if existing.execution_tca_metric_id is None:
-        existing.execution_tca_metric_id = cast(Any, execution_tca_metric_id)
+        existing.execution_tca_metric_id = cast(Any, prepared.execution_tca_metric_id)
     if existing.runtime_ledger_bucket_id is None:
-        existing.runtime_ledger_bucket_id = cast(Any, runtime_ledger_bucket_id)
+        existing.runtime_ledger_bucket_id = cast(Any, prepared.runtime_ledger_bucket_id)
     if existing.source_type is None:
-        existing.source_type = source_type
+        existing.source_type = prepared.source_type
     if existing.source_id is None:
-        existing.source_id = source_id
+        existing.source_id = prepared.source_id
     if existing.event_fingerprint is None:
-        existing.event_fingerprint = event_fingerprint
+        existing.event_fingerprint = prepared.event_fingerprint
     raw_existing_payload: object = existing.payload_json
     existing_payload: Mapping[str, object] = (
         cast(Mapping[str, object], raw_existing_payload)
@@ -693,7 +692,7 @@ def _merge_existing_transfer_ref(
     return existing
 
 
-def _source_transfer_spec(
+def source_transfer_spec(
     *,
     transfer_id: int,
     transfer_kind: str,
@@ -712,11 +711,8 @@ def _source_transfer_spec(
     )
 
 
-def _execution_notional_usd(execution: Execution) -> Decimal | None:
+def execution_notional_usd(execution: Execution) -> Decimal | None:
     if execution.avg_fill_price is None:
         return None
     amount = Decimal(str(execution.filled_qty)) * Decimal(str(execution.avg_fill_price))
     return abs(amount)
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

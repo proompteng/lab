@@ -24,7 +24,7 @@ from .tca_modules.lineage_read_model import (
     build_tca_gate_inputs,
     refresh_execution_tca_metrics,
 )
-from .tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal import (
+from .tigerbeetle_journal_modules.ledger_journal import (
     TigerBeetleLedgerJournal,
 )
 

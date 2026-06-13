@@ -1,65 +1,37 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Idempotent Torghut order-event journal for TigerBeetle."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from decimal import Decimal
-import hashlib
-import json
-from types import TracebackType
-from typing import Any, Self, cast
 
-from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
-from app.config import Settings, settings
 from app.models import (
     Execution,
-    ExecutionOrderEvent,
     ExecutionTCAMetric,
     StrategyRuntimeLedgerBucket,
-    TigerBeetleAccountRef,
-    TigerBeetleTransferRef,
-    coerce_json_payload,
 )
-from app.trading.tigerbeetle_client import (
-    TigerBeetleClientProtocol,
-    create_tigerbeetle_client,
-)
-from app.trading.tigerbeetle_ids import stable_ref_u128, stable_u128, u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
-    ACCOUNT_CODE_CASH_CONTROL,
-    ACCOUNT_CODE_EVIDENCE_CONTROL,
-    ACCOUNT_CODE_EXECUTION_COST,
-    ACCOUNT_CODE_EXECUTION_EVIDENCE,
-    ACCOUNT_CODE_FILL_NOTIONAL,
-    ACCOUNT_CODE_ORDER_HOLD,
-    ACCOUNT_CODE_REALIZED_PNL,
-    ACCOUNT_CODE_RUNTIME_LEDGER_EVIDENCE,
-    LEDGER_USD_MICRO,
     PNL_DIRECTION_LOSS,
     PNL_DIRECTION_PROFIT,
-    TRANSFER_KIND_CANCEL_VOID,
     TRANSFER_KIND_EXECUTION_COST,
     TRANSFER_KIND_EXECUTION_FILL,
-    TRANSFER_KIND_FILL_POST,
-    TRANSFER_KIND_REJECT_VOID,
     TRANSFER_KIND_RUNTIME_NET_PNL,
-    TRANSFER_KIND_SUBMITTED_PENDING,
-    TigerBeetleAccountSpec,
-    TigerBeetleTransferSpec,
     decimal_usd_to_nearest_micros,
-    transfer_code_for_kind,
-    transfer_kind_for_event,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_58 import *
-from .part_02_economic_text import *
+from .journal_payloads import (
+    TigerBeetleRuntimeLedgerTransferPlan,
+    TigerBeetleSourceTransferPlan,
+)
+from .transfer_refs import (
+    evidence_account_specs,
+    execution_cost_transfer_id,
+    execution_notional_usd,
+    execution_transfer_id,
+    runtime_ledger_amount_source,
+    runtime_ledger_transfer_id,
+    source_transfer_spec,
+)
 
 
 def _amount_to_micros(value: Decimal | None) -> int | None:
@@ -80,7 +52,7 @@ def build_runtime_ledger_bucket_transfer_plan(
         f"{bucket.hypothesis_id}:{bucket.run_id}:{bucket.bucket_started_at.isoformat()}"
     )
     account_specs = tuple(
-        _evidence_account_specs(
+        evidence_account_specs(
             account_label=bucket.account_label,
             symbol=None,
             strategy_id=bucket.hypothesis_id,
@@ -96,7 +68,7 @@ def build_runtime_ledger_bucket_transfer_plan(
     credit = runtime_account if pnl_direction == PNL_DIRECTION_PROFIT else control
     return TigerBeetleRuntimeLedgerTransferPlan(
         account_specs=account_specs,
-        transfer_spec=_source_transfer_spec(
+        transfer_spec=source_transfer_spec(
             transfer_id=runtime_ledger_transfer_id(bucket),
             transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
             amount=amount,
@@ -113,7 +85,7 @@ def build_runtime_ledger_bucket_transfer_plan(
 def build_execution_transfer_plan(
     execution: Execution,
 ) -> TigerBeetleSourceTransferPlan | None:
-    amount_source = _execution_notional_usd(execution)
+    amount_source = execution_notional_usd(execution)
     amount = _amount_to_micros(amount_source)
     if amount is None or amount_source is None:
         return None
@@ -121,7 +93,7 @@ def build_execution_transfer_plan(
         str(execution.trade_decision_id) if execution.trade_decision_id else None
     )
     account_specs = tuple(
-        _evidence_account_specs(
+        evidence_account_specs(
             account_label=execution.alpaca_account_label,
             symbol=execution.symbol,
             strategy_id=strategy_id,
@@ -134,7 +106,7 @@ def build_execution_transfer_plan(
     ]
     return TigerBeetleSourceTransferPlan(
         account_specs=account_specs,
-        transfer_spec=_source_transfer_spec(
+        transfer_spec=source_transfer_spec(
             transfer_id=execution_transfer_id(execution),
             transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
             amount=amount,
@@ -154,7 +126,7 @@ def build_execution_tca_metric_transfer_plan(
         return None
     strategy_id = str(metric.strategy_id) if metric.strategy_id else None
     account_specs = tuple(
-        _evidence_account_specs(
+        evidence_account_specs(
             account_label=metric.alpaca_account_label,
             symbol=metric.symbol,
             strategy_id=strategy_id,
@@ -168,7 +140,7 @@ def build_execution_tca_metric_transfer_plan(
     ]
     return TigerBeetleSourceTransferPlan(
         account_specs=account_specs,
-        transfer_spec=_source_transfer_spec(
+        transfer_spec=source_transfer_spec(
             transfer_id=execution_cost_transfer_id(metric),
             transfer_kind=TRANSFER_KIND_EXECUTION_COST,
             amount=amount,
@@ -177,6 +149,3 @@ def build_execution_tca_metric_transfer_plan(
         ),
         amount_source=amount_source,
     )
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
