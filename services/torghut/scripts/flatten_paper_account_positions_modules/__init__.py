@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
 
 from importlib import import_module as __compat_import_module__
@@ -22,7 +21,7 @@ def __compat_export__(module: __compat_types__.ModuleType) -> None:
         globals()[name] = value
 
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_35")
+__compat_module__ = __compat_import_module__(f"{__name__}.flatten_core")
 __compat_part_modules__.append(__compat_module__)
 __compat_export__(__compat_module__)
 for __compat_loaded_module__ in __compat_part_modules__:
@@ -30,7 +29,7 @@ for __compat_loaded_module__ in __compat_part_modules__:
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_position_payload")
+__compat_module__ = __compat_import_module__(f"{__name__}.lineage_execution")
 __compat_part_modules__.append(__compat_module__)
 __compat_export__(__compat_module__)
 for __compat_loaded_module__ in __compat_part_modules__:
@@ -38,7 +37,7 @@ for __compat_loaded_module__ in __compat_part_modules__:
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_03_main")
+__compat_module__ = __compat_import_module__(f"{__name__}.cli")
 __compat_part_modules__.append(__compat_module__)
 __compat_export__(__compat_module__)
 for __compat_loaded_module__ in __compat_part_modules__:
@@ -47,9 +46,4 @@ for __compat_loaded_module__ in __compat_part_modules__:
     )
 
 __compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
 del __compat_module__
