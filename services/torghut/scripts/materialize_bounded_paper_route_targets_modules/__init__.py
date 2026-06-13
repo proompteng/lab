@@ -1,49 +1,158 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_32")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_02_confirmed_dynamic_target_indexes"
+from .target_materialization_core import (
+    ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER,
+    ACTIVE_TARGET_WINDOW_SKIP_REASON,
+    DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+    DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCES,
+    LIVE_LABEL_MARKERS,
+    OPERATOR_CONFIRMATION,
+    PROMOTION_FLAG_FIELDS,
+    SCHEMA_VERSION,
+    TARGET_PLAN_RESPONSE_LIMIT_BYTES,
+    _active_target_window_check,
+    _candidate_materialization_plans,
+    _confirmed_dynamic_target_filters,
+    _confirmed_selected_plan_sources,
+    _decimal_text,
+    _fetch_plan_url_payload,
+    _fetch_plan_url_payload_once,
+    _first_positive_decimal,
+    _json_default,
+    _load_json_file,
+    _load_plan,
+    _materialization_plan_from_payload,
+    _nested_mapping,
+    _parse_utc_datetime,
+    _plan_materialization_score,
+    _plan_with_target_indexes,
+    _resolve_now_utc,
+    _safe_decimal,
+    _safe_text,
+    _target_bounded_materialization_authorized,
+    _target_materialization_score,
+    _target_notional,
+    _target_plan_ref,
+    _target_quantity,
+    _target_runtime_strategy_confirmation_names,
+    _target_summaries,
+    _target_symbol_actions,
+    _target_symbol_quantities,
+    _target_window_check_active_indexes,
+    _target_window_end,
+    _target_window_start,
+    _to_str_map,
+    _truthy,
+    _unique_texts,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
 
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
-del __compat_module__
+from .dynamic_target_confirmation import (
+    _account_label_blockers,
+    _base_confirmations,
+    _confirmation_blockers,
+    _confirmation_pair_blockers,
+    _confirmed_dynamic_target_indexes,
+    _copy_preview_strategies,
+    _dynamic_target_confirmation_blockers,
+    _exact_target_confirmations,
+    _joined_summary_values,
+    _parse_args,
+    _plan_flag_blockers,
+    _request_flag_blockers,
+    _request_safety_blockers,
+    _run_dry_run_materialization,
+    _run_materialization,
+    _runtime_strategy_confirmation_matches,
+    _runtime_strategy_confirmation_names,
+    _safety_blockers,
+    _session_factory,
+    _sqlalchemy_dsn,
+    _strategy_names_from_summaries,
+    _summary_dynamic_target_filter_matches,
+    _summary_matches_dynamic_target_filters,
+    _target_account_blockers,
+    _target_authorization_blockers,
+    _target_capacity_blockers,
+    _target_notional_blockers,
+    _target_required_field_blockers,
+    _target_summary_safety_blockers,
+    build_report,
+    main,
+)
+
+__all__ = (
+    "ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER",
+    "ACTIVE_TARGET_WINDOW_SKIP_REASON",
+    "DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE",
+    "DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCES",
+    "LIVE_LABEL_MARKERS",
+    "OPERATOR_CONFIRMATION",
+    "PROMOTION_FLAG_FIELDS",
+    "SCHEMA_VERSION",
+    "TARGET_PLAN_RESPONSE_LIMIT_BYTES",
+    "_account_label_blockers",
+    "_active_target_window_check",
+    "_base_confirmations",
+    "_candidate_materialization_plans",
+    "_confirmation_blockers",
+    "_confirmation_pair_blockers",
+    "_confirmed_dynamic_target_filters",
+    "_confirmed_dynamic_target_indexes",
+    "_confirmed_selected_plan_sources",
+    "_copy_preview_strategies",
+    "_decimal_text",
+    "_dynamic_target_confirmation_blockers",
+    "_exact_target_confirmations",
+    "_fetch_plan_url_payload",
+    "_fetch_plan_url_payload_once",
+    "_first_positive_decimal",
+    "_joined_summary_values",
+    "_json_default",
+    "_load_json_file",
+    "_load_plan",
+    "_materialization_plan_from_payload",
+    "_nested_mapping",
+    "_parse_args",
+    "_parse_utc_datetime",
+    "_plan_flag_blockers",
+    "_plan_materialization_score",
+    "_plan_with_target_indexes",
+    "_request_flag_blockers",
+    "_request_safety_blockers",
+    "_resolve_now_utc",
+    "_run_dry_run_materialization",
+    "_run_materialization",
+    "_runtime_strategy_confirmation_matches",
+    "_runtime_strategy_confirmation_names",
+    "_safe_decimal",
+    "_safe_text",
+    "_safety_blockers",
+    "_session_factory",
+    "_sqlalchemy_dsn",
+    "_strategy_names_from_summaries",
+    "_summary_dynamic_target_filter_matches",
+    "_summary_matches_dynamic_target_filters",
+    "_target_account_blockers",
+    "_target_authorization_blockers",
+    "_target_bounded_materialization_authorized",
+    "_target_capacity_blockers",
+    "_target_materialization_score",
+    "_target_notional",
+    "_target_notional_blockers",
+    "_target_plan_ref",
+    "_target_quantity",
+    "_target_required_field_blockers",
+    "_target_runtime_strategy_confirmation_names",
+    "_target_summaries",
+    "_target_summary_safety_blockers",
+    "_target_symbol_actions",
+    "_target_symbol_quantities",
+    "_target_window_check_active_indexes",
+    "_target_window_end",
+    "_target_window_start",
+    "_to_str_map",
+    "_truthy",
+    "_unique_texts",
+    "build_report",
+    "main",
+)

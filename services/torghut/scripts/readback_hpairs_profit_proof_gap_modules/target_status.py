@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python
 """Read-only H-PAIRS profit proof-gap readback CLI.
 
@@ -10,22 +9,53 @@ changes runtime configuration.
 
 from __future__ import annotations
 
-import argparse
-import json
 import statistics
-import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
-from pathlib import Path
-from typing import Any, Literal, cast
+from decimal import Decimal
+from typing import Any, cast
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_25 import *
+from .profit_gap_core import (
+    BlockerStage,
+    CLOSED_TRADES_KEYS,
+    CONCENTRATION_DRAWDOWN_WORDS,
+    ECONOMICS_KEYS,
+    EndpointName,
+    FILLED_NOTIONAL_KEYS,
+    Identity,
+    LIFECYCLE_ECONOMICS_WORDS,
+    LIFECYCLE_KEYS,
+    LoadedSource,
+    NumericReadback,
+    OPEN_POSITIONS_KEYS,
+    SOURCE_REF_KEYS,
+    SOURCE_WINDOW_KEYS,
+    TARGET_COLLECTION_KEYS,
+)
+from .source_readback import (
+    _bool_or_none,
+    _compact_mapping,
+    _daily_net_pnls,
+    _decimal,
+    _first_bool_at_keys,
+    _first_decimal_at_keys,
+    _first_int_at_keys,
+    _first_positive_key_count,
+    _first_positive_source_row_count,
+    _has_execution_economics_rows,
+    _has_order_lifecycle_rows,
+    _has_positive_key,
+    _int_or_none,
+    _mapping,
+    _non_empty_payloads,
+    _reported_blockers,
+    _source_missing_blockers,
+    _source_ref_observation_count,
+    _source_row_count,
+    _source_window_observation_count,
+    _text,
+    _text_list,
+    _walk_items,
+)
 
 
 def _target_status(
@@ -706,12 +736,3 @@ def _truthy_route_flag(payload: Mapping[str, Any]) -> bool | None:
     if not values:
         return None
     return any(values)
-
-
-def _source_row_count(payload: Mapping[str, Any], key: str) -> int:
-    value = _mapping(payload.get("source_row_counts")).get(key)
-    parsed = _int_or_none(value)
-    return parsed if parsed is not None else 0
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

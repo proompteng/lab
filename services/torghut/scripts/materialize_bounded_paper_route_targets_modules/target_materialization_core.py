@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Safely materialize bounded H-PAIRS paper-route targets into TORGHUT_SIM."""
 
@@ -6,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -16,21 +14,13 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.models import Base, Strategy
 from app.trading.paper_route_target_plan import (
-    PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL,
     PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID,
-    materialize_bounded_paper_route_target_plan,
     paper_route_target_execution_capacity_blockers,
     paper_route_target_plan_from_payload,
     paper_route_target_plan_targets,
 )
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 SCHEMA_VERSION = "torghut.bounded-paper-route-target-materialization-cli.v1"
@@ -676,6 +666,3 @@ def _confirmed_dynamic_target_filters(args: argparse.Namespace) -> dict[str, str
         "target_plan_ref": _safe_text(args.confirm_target_plan_ref),
     }
     return {field: value for field, value in filters.items() if value}
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

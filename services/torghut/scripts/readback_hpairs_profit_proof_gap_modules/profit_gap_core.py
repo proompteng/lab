@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python
 """Read-only H-PAIRS profit proof-gap readback CLI.
 
@@ -12,18 +11,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 SCHEMA_VERSION = "torghut.hpairs-profit-proof-readback.v1"
@@ -209,6 +205,8 @@ class LoadedSource:
     read_error: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
+        from .source_readback import _text
+
         return {
             "location": self.location,
             "present": self.present,
@@ -241,6 +239,8 @@ class NumericReadback:
     symbol_concentration_share: Decimal | None
 
     def to_payload(self) -> dict[str, Any]:
+        from .source_readback import _decimal_text
+
         return {
             "trading_days": self.trading_days,
             "daily_net_pnl_after_costs": [
@@ -332,6 +332,27 @@ def build_readback_report(
     min_filled_notional: Decimal = DEFAULT_MIN_FILLED_NOTIONAL,
     min_closed_trades: int = DEFAULT_MIN_CLOSED_TRADES,
 ) -> dict[str, Any]:
+    from .target_status import (
+        _classify_blocker_stage,
+        _classification_semantics,
+        _lifecycle_economics_status,
+        _numeric_blockers,
+        _numeric_readback,
+        _paper_route_status,
+        _proof_authority_status,
+        _source_collection_readback,
+        _source_ref_status,
+        _target_status,
+    )
+
+    from .source_readback import (
+        _bool_or_none,
+        _decimal_text,
+        _mapping,
+        _reported_blockers,
+        _stable_texts,
+    )
+
     readyz = sources["readyz"].payload
     status = sources["trading_status"].payload
     target_plan = sources["paper_route_target_plan"].payload
@@ -505,6 +526,8 @@ def load_sources(args: argparse.Namespace) -> dict[EndpointName, LoadedSource]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    from .source_readback import _decimal
+
     args = parse_args(sys.argv[1:] if argv is None else argv)
     min_daily = (
         _decimal(args.min_daily_net_pnl_after_costs) or DEFAULT_MIN_DAILY_NET_PNL
@@ -624,6 +647,8 @@ def _rollout_status(
     status: Mapping[str, Any],
     proof_packet: Mapping[str, Any],
 ) -> dict[str, Any]:
+    from .source_readback import _bool_or_none, _first_text_at_keys, _mapping
+
     revisions = {
         "readyz": _first_text_at_keys(
             readyz,
@@ -672,6 +697,3 @@ def _rollout_status(
         "drift_detected": len(normalized) > 1,
         "ambiguous": len(present_revisions) < 2,
     }
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

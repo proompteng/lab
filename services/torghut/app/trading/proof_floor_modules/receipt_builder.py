@@ -1,24 +1,39 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Profitability proof-floor receipts for capital-qualified trading routes."""
 
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from typing import Any, cast
+from typing import Any
 
 from ..discovery.promotion_contract import (
     final_authority_parameter_contract,
     probation_evidence_collection_contract,
 )
-from ..risk import target_sizing_payload
 from ..route_reacquisition import build_route_reacquisition_book
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_19 import *
+from .proof_floor_core import (
+    BLOCKING_STATES,
+    LIVE_MICRO_STAGES,
+    LIVE_SCALE_STAGES,
+    add_repair,
+    bool_value,
+    decimal_value,
+    decimal_text,
+    hypothesis_repair_target_summary,
+    hypothesis_summary,
+    int_value,
+    mapping_value,
+    parse_timestamp,
+    reason_counts,
+    route_symbol_filter_enabled,
+    route_universe_adverse_slippage_clear,
+    slippage_guardrails,
+    target_notional_parameter_summary,
+    tca_symbol_routes,
+    text_value,
+    truthy,
+)
 
 
 def build_profitability_proof_floor_receipt(
@@ -44,8 +59,8 @@ def build_profitability_proof_floor_receipt(
     """
 
     generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    summary = _hypothesis_summary(hypothesis_payload)
-    reasons = _reason_counts(hypothesis_payload)
+    summary = hypothesis_summary(hypothesis_payload)
+    reasons = reason_counts(hypothesis_payload)
     dimensions: list[dict[str, object]] = []
     repairs: list[dict[str, object]] = []
 
@@ -71,8 +86,8 @@ def build_profitability_proof_floor_receipt(
             }
         )
 
-    gate_allowed = _bool(live_submission_gate.get("allowed"))
-    gate_reason = _text(live_submission_gate.get("reason"), "unknown")
+    gate_allowed = bool_value(live_submission_gate.get("allowed"))
+    gate_reason = text_value(live_submission_gate.get("reason"), "unknown")
     live_mode = trading_mode == "live"
     if live_mode and not gate_allowed:
         add_dimension(
@@ -85,7 +100,7 @@ def build_profitability_proof_floor_receipt(
                 "blocked_reasons": live_submission_gate.get("blocked_reasons") or [],
             },
         )
-        _add_repair(
+        add_repair(
             repairs,
             code="live_submit_gate_closed",
             dimension="live_submission_gate",
@@ -102,9 +117,9 @@ def build_profitability_proof_floor_receipt(
             source_ref={"capital_stage": live_submission_gate.get("capital_stage")},
         )
 
-    promotion_eligible_total = _int(summary.get("promotion_eligible_total"))
-    rollback_required_total = _int(summary.get("rollback_required_total"))
-    alpha_repair_target_summary = _hypothesis_repair_target_summary(hypothesis_payload)
+    promotion_eligible_total = int_value(summary.get("promotion_eligible_total"))
+    rollback_required_total = int_value(summary.get("rollback_required_total"))
+    alpha_repair_target_summary = hypothesis_repair_target_summary(hypothesis_payload)
     if promotion_eligible_total <= 0:
         add_dimension(
             dimension="alpha_readiness",
@@ -123,7 +138,7 @@ def build_profitability_proof_floor_receipt(
                 **alpha_repair_target_summary,
             },
         )
-        _add_repair(
+        add_repair(
             repairs,
             code="repair_alpha_readiness",
             dimension="alpha_readiness",
@@ -144,20 +159,20 @@ def build_profitability_proof_floor_receipt(
             },
         )
 
-    target_notional_summary = _target_notional_parameter_summary(
+    target_notional_summary = target_notional_parameter_summary(
         hypothesis_payload, simple_lane_status
     )
-    target_notional_raw_state = _text(target_notional_summary.get("state"), "fail")
+    target_notional_raw_state = text_value(target_notional_summary.get("state"), "fail")
     target_notional_state = (
         target_notional_raw_state
         if promotion_eligible_total > 0 or target_notional_raw_state == "pass"
         else "informational"
     )
-    target_notional_reason = _text(
+    target_notional_reason = text_value(
         target_notional_summary.get("reason"), "target_notional_parameters_missing"
     )
     if target_notional_state == "fail":
-        _add_repair(
+        add_repair(
             repairs,
             code="repair_target_notional_parameters",
             dimension="target_notional_sizing",
@@ -180,15 +195,15 @@ def build_profitability_proof_floor_receipt(
         },
     )
 
-    empirical_ready = _bool(empirical_jobs_status.get("ready"))
-    empirical_status = _text(empirical_jobs_status.get("status"), "unknown")
+    empirical_ready = bool_value(empirical_jobs_status.get("ready"))
+    empirical_status = text_value(empirical_jobs_status.get("status"), "unknown")
     if empirical_ready:
         empirical_state = "pass"
         empirical_effect = "none"
     else:
         empirical_state = "degraded"
         empirical_effect = "paper_hold" if not live_mode else "live_hold"
-        _add_repair(
+        add_repair(
             repairs,
             code="repair_empirical_jobs",
             dimension="empirical",
@@ -208,9 +223,9 @@ def build_profitability_proof_floor_receipt(
         },
     )
 
-    quant_required = _bool(quant_evidence.get("required", True))
-    quant_status = _text(quant_evidence.get("status"), "unknown").lower()
-    quant_reason = _text(quant_evidence.get("reason"), quant_status or "unknown")
+    quant_required = bool_value(quant_evidence.get("required", True))
+    quant_status = text_value(quant_evidence.get("status"), "unknown").lower()
+    quant_reason = text_value(quant_evidence.get("reason"), quant_status or "unknown")
     if not quant_required and quant_status not in {
         "ok",
         "healthy",
@@ -218,14 +233,14 @@ def build_profitability_proof_floor_receipt(
         "not_required",
     }:
         quant_state = "informational"
-    elif not _bool(quant_evidence.get("ok")):
+    elif not bool_value(quant_evidence.get("ok")):
         quant_state = "fail"
     elif quant_status in {"ok", "healthy", "pass", "not_required"}:
         quant_state = "pass"
     else:
         quant_state = "degraded"
     if quant_required and quant_state != "pass":
-        _add_repair(
+        add_repair(
             repairs,
             code="repair_quant_ingestion",
             dimension="quant_ingestion",
@@ -255,24 +270,24 @@ def build_profitability_proof_floor_receipt(
         },
     )
 
-    simple_status = _mapping(simple_lane_status)
-    order_feed_lifecycle_required = _truthy(
+    simple_status = mapping_value(simple_lane_status)
+    order_feed_lifecycle_required = truthy(
         simple_status.get("order_feed_lifecycle_required")
     )
-    order_feed_telemetry_enabled = _truthy(
+    order_feed_telemetry_enabled = truthy(
         simple_status.get("order_feed_telemetry_enabled")
     )
-    order_feed_ingestion_enabled = _truthy(
+    order_feed_ingestion_enabled = truthy(
         simple_status.get("order_feed_ingestion_enabled")
     )
-    order_feed_bootstrap_configured = _truthy(
+    order_feed_bootstrap_configured = truthy(
         simple_status.get("order_feed_bootstrap_configured")
     )
-    order_feed_topic_count = _int(simple_status.get("order_feed_topic_count"))
+    order_feed_topic_count = int_value(simple_status.get("order_feed_topic_count"))
     if order_feed_lifecycle_required and not order_feed_telemetry_enabled:
         order_feed_state = "fail"
         order_feed_reason = "order_feed_lifecycle_disabled"
-        _add_repair(
+        add_repair(
             repairs,
             code="enable_order_feed_lifecycle",
             dimension="order_feed_lifecycle",
@@ -283,7 +298,7 @@ def build_profitability_proof_floor_receipt(
     elif order_feed_lifecycle_required and not order_feed_ingestion_enabled:
         order_feed_state = "fail"
         order_feed_reason = "order_feed_ingestion_disabled"
-        _add_repair(
+        add_repair(
             repairs,
             code="enable_order_feed_lifecycle",
             dimension="order_feed_lifecycle",
@@ -294,7 +309,7 @@ def build_profitability_proof_floor_receipt(
     elif order_feed_lifecycle_required and not order_feed_bootstrap_configured:
         order_feed_state = "fail"
         order_feed_reason = "order_feed_bootstrap_missing"
-        _add_repair(
+        add_repair(
             repairs,
             code="enable_order_feed_lifecycle",
             dimension="order_feed_lifecycle",
@@ -305,7 +320,7 @@ def build_profitability_proof_floor_receipt(
     elif order_feed_lifecycle_required and order_feed_topic_count <= 0:
         order_feed_state = "fail"
         order_feed_reason = "order_feed_topic_missing"
-        _add_repair(
+        add_repair(
             repairs,
             code="enable_order_feed_lifecycle",
             dimension="order_feed_lifecycle",
@@ -329,7 +344,7 @@ def build_profitability_proof_floor_receipt(
         if not live_mode
         else "live_hold",
         source_ref={
-            "simple_lane_enabled": _truthy(simple_status.get("enabled")),
+            "simple_lane_enabled": truthy(simple_status.get("enabled")),
             "lifecycle_required": order_feed_lifecycle_required,
             "order_feed_telemetry_enabled": order_feed_telemetry_enabled,
             "order_feed_ingestion_enabled": order_feed_ingestion_enabled,
@@ -347,9 +362,9 @@ def build_profitability_proof_floor_receipt(
         },
     )
 
-    market_alert = _bool(market_context_status.get("alert_active"))
+    market_alert = bool_value(market_context_status.get("alert_active"))
     market_context_stale = reasons.get("market_context_stale", 0)
-    market_reason = _text(
+    market_reason = text_value(
         market_context_status.get("alert_reason")
         or market_context_status.get("last_reason"),
         "ok",
@@ -361,7 +376,7 @@ def build_profitability_proof_floor_receipt(
         if market_session_open is False and market_stale:
             market_state = "informational"
             market_reason = "expected_market_closed_staleness"
-            _add_repair(
+            add_repair(
                 repairs,
                 code="closed_session_market_context_hold",
                 dimension="market_context",
@@ -372,7 +387,7 @@ def build_profitability_proof_floor_receipt(
             )
         else:
             market_state = "stale" if market_stale else "degraded"
-            _add_repair(
+            add_repair(
                 repairs,
                 code="repair_market_context",
                 dimension="market_context",
@@ -400,14 +415,18 @@ def build_profitability_proof_floor_receipt(
             "last_domain_states": market_context_status.get("last_domain_states") or {},
             "hypothesis_reason_count": market_context_stale,
         },
-        freshness_seconds=_int(market_context_status.get("last_freshness_seconds"), -1),
+        freshness_seconds=int_value(
+            market_context_status.get("last_freshness_seconds"), -1
+        ),
     )
 
-    tca_last_computed_at = _parse_timestamp(tca_summary.get("last_computed_at"))
-    latest_execution_created_at = _parse_timestamp(
+    tca_last_computed_at = parse_timestamp(tca_summary.get("last_computed_at"))
+    latest_execution_created_at = parse_timestamp(
         tca_summary.get("latest_execution_created_at")
     )
-    tca_unsettled_execution_count = _int(tca_summary.get("unsettled_execution_count"))
+    tca_unsettled_execution_count = int_value(
+        tca_summary.get("unsettled_execution_count")
+    )
     tca_settlement_coverage_known = (
         "latest_execution_created_at" in tca_summary
         or "filled_execution_count" in tca_summary
@@ -425,11 +444,11 @@ def build_profitability_proof_floor_receipt(
         if tca_last_computed_at is not None
         else None
     )
-    tca_order_count = _int(tca_summary.get("order_count"))
-    avg_abs_slippage_bps = _decimal(tca_summary.get("avg_abs_slippage_bps"))
-    slippage_guardrails = _slippage_guardrails(hypothesis_payload)
-    slippage_guardrail = min(slippage_guardrails) if slippage_guardrails else None
-    route_slippage_guardrail = max(slippage_guardrails) if slippage_guardrails else None
+    tca_order_count = int_value(tca_summary.get("order_count"))
+    avg_abs_slippage_bps = decimal_value(tca_summary.get("avg_abs_slippage_bps"))
+    guardrails = slippage_guardrails(hypothesis_payload)
+    slippage_guardrail = min(guardrails) if guardrails else None
+    route_slippage_guardrail = max(guardrails) if guardrails else None
     tca_state = "pass"
     tca_reason = "fresh"
     if tca_order_count <= 0:
@@ -452,25 +471,25 @@ def build_profitability_proof_floor_receipt(
     tca_source_ref: dict[str, object] = {
         "order_count": tca_order_count,
         "last_computed_at": tca_summary.get("last_computed_at"),
-        "filled_execution_count": _int(tca_summary.get("filled_execution_count")),
+        "filled_execution_count": int_value(tca_summary.get("filled_execution_count")),
         "latest_execution_created_at": tca_summary.get("latest_execution_created_at"),
         "unsettled_execution_count": tca_unsettled_execution_count,
-        "avg_abs_slippage_bps": _decimal_text(avg_abs_slippage_bps),
-        "slippage_guardrail_bps": _decimal_text(slippage_guardrail),
+        "avg_abs_slippage_bps": decimal_text(avg_abs_slippage_bps),
+        "slippage_guardrail_bps": decimal_text(slippage_guardrail),
     }
-    symbol_routes = _tca_symbol_routes(
+    symbol_routes = tca_symbol_routes(
         tca_summary,
         slippage_guardrail=slippage_guardrail,
         route_slippage_guardrail=route_slippage_guardrail,
     )
     if symbol_routes is not None:
         tca_source_ref["symbol_routes"] = symbol_routes
-        routeable_symbol_count = _int(symbol_routes.get("routeable_symbol_count"))
-        blocked_symbol_count = _int(symbol_routes.get("blocked_symbol_count"))
-        missing_symbol_count = _int(symbol_routes.get("missing_symbol_count"))
-        scope_symbol_count = _int(symbol_routes.get("scope_symbol_count"))
+        routeable_symbol_count = int_value(symbol_routes.get("routeable_symbol_count"))
+        blocked_symbol_count = int_value(symbol_routes.get("blocked_symbol_count"))
+        missing_symbol_count = int_value(symbol_routes.get("missing_symbol_count"))
+        scope_symbol_count = int_value(symbol_routes.get("scope_symbol_count"))
         excluded_symbol_count = blocked_symbol_count + missing_symbol_count
-        route_filter_enabled = _route_symbol_filter_enabled(simple_lane_status)
+        route_filter_enabled = route_symbol_filter_enabled(simple_lane_status)
         route_universe_reason = None
         if scope_symbol_count > 0 and routeable_symbol_count <= 0:
             route_universe_reason = "execution_tca_route_universe_empty"
@@ -489,7 +508,7 @@ def build_profitability_proof_floor_receipt(
                 if route_filter_enabled
                 else "execution_tca_route_universe_incomplete"
             )
-        elif _route_universe_adverse_slippage_clear(
+        elif route_universe_adverse_slippage_clear(
             symbol_routes,
             route_filter_enabled=route_filter_enabled,
             aggregate_tca_reason=aggregate_tca_reason,
@@ -502,16 +521,14 @@ def build_profitability_proof_floor_receipt(
                 "missing_symbol_count": missing_symbol_count,
                 "max_notional_for_adverse_symbols": "0",
             }
-            route_universe_reason = (
-                "execution_tca_route_universe_adverse_slippage_clear"
-            )
+            route_universe_reason = "execution_tcaroute_universe_adverse_slippage_clear"
         if route_universe_reason is not None:
             if route_universe_reason == "execution_tca_route_universe_empty":
                 tca_state = "fail"
                 tca_reason = route_universe_reason
             elif (
                 route_universe_reason
-                == "execution_tca_route_universe_adverse_slippage_clear"
+                == "execution_tcaroute_universe_adverse_slippage_clear"
             ):
                 tca_state = "pass"
                 tca_reason = route_universe_reason
@@ -528,9 +545,9 @@ def build_profitability_proof_floor_receipt(
                 tca_source_ref["aggregate_reason"] = aggregate_tca_reason
             if (
                 route_universe_reason
-                != "execution_tca_route_universe_adverse_slippage_clear"
+                != "execution_tcaroute_universe_adverse_slippage_clear"
             ):
-                _add_repair(
+                add_repair(
                     repairs,
                     code="repair_route_universe",
                     dimension="route_universe",
@@ -543,7 +560,7 @@ def build_profitability_proof_floor_receipt(
                     ),
                 )
     if tca_state != "pass":
-        _add_repair(
+        add_repair(
             repairs,
             code="repair_execution_tca",
             dimension="execution_tca",
@@ -572,7 +589,7 @@ def build_profitability_proof_floor_receipt(
         0,
     )
     if feature_rows_missing or required_feature_set_unavailable:
-        _add_repair(
+        add_repair(
             repairs,
             code="repair_feature_coverage",
             dimension="features",
@@ -584,7 +601,7 @@ def build_profitability_proof_floor_receipt(
         )
     drift_checks_missing = reasons.get("drift_checks_missing", 0)
     if drift_checks_missing:
-        _add_repair(
+        add_repair(
             repairs,
             code="repair_drift_governance",
             dimension="drift",
@@ -596,7 +613,7 @@ def build_profitability_proof_floor_receipt(
     signal_lag_exceeded = reasons.get("signal_lag_exceeded", 0)
     if signal_lag_exceeded:
         if market_session_open:
-            _add_repair(
+            add_repair(
                 repairs,
                 code="repair_signal_freshness",
                 dimension="signal_continuity",
@@ -606,7 +623,7 @@ def build_profitability_proof_floor_receipt(
                 expected_unblock_value=signal_lag_exceeded,
             )
         else:
-            _add_repair(
+            add_repair(
                 repairs,
                 code="closed_session_signal_hold",
                 dimension="signal_continuity",
@@ -617,9 +634,9 @@ def build_profitability_proof_floor_receipt(
             )
 
     blocking_dimensions = [
-        item for item in dimensions if _text(item.get("state")) in _BLOCKING_STATES
+        item for item in dimensions if text_value(item.get("state")) in BLOCKING_STATES
     ]
-    active_stage = _text(
+    active_stage = text_value(
         live_submission_gate.get("active_capital_stage")
         or live_submission_gate.get("capital_stage"),
         "shadow",
@@ -639,9 +656,9 @@ def build_profitability_proof_floor_receipt(
         floor_state = "shadow_ready"
         max_notional = "0"
     elif live_mode:
-        if active_stage in _LIVE_SCALE_STAGES:
+        if active_stage in LIVE_SCALE_STAGES:
             route_state = "live_scale_candidate"
-        elif active_stage in _LIVE_MICRO_STAGES:
+        elif active_stage in LIVE_MICRO_STAGES:
             route_state = "live_micro_candidate"
         else:
             route_state = "live_micro_candidate"
@@ -651,26 +668,26 @@ def build_profitability_proof_floor_receipt(
             if route_state == "live_micro_candidate"
             else "live_scale_ready"
         )
-        max_notional = _text(configured_max_notional, "configured_by_risk")
+        max_notional = text_value(configured_max_notional, "configured_by_risk")
     else:
         route_state = "paper_candidate"
         capital_state = "paper_allowed"
         floor_state = "paper_ready"
-        max_notional = _text(configured_max_notional, "configured_by_risk")
+        max_notional = text_value(configured_max_notional, "configured_by_risk")
 
     ordered_repairs = sorted(
         repairs,
         key=lambda item: (
-            -_int(item.get("priority")),
-            -_int(item.get("expected_unblock_value")),
-            _text(item.get("code")),
+            -int_value(item.get("priority")),
+            -int_value(item.get("expected_unblock_value")),
+            text_value(item.get("code")),
         ),
     )
     blocking_codes = sorted(
         {
-            _text(item.get("reason"))
+            text_value(item.get("reason"))
             for item in blocking_dimensions
-            if _text(item.get("reason"))
+            if text_value(item.get("reason"))
         }
     )
 
@@ -703,7 +720,7 @@ def build_profitability_proof_floor_receipt(
     paper_route_probe_enabled = False
     paper_route_probe_max_notional: object | None = None
     if isinstance(simple_lane_status, Mapping):
-        paper_route_probe_enabled = _truthy(
+        paper_route_probe_enabled = truthy(
             simple_lane_status.get("paper_route_probe_enabled")
         )
         paper_route_probe_max_notional = simple_lane_status.get(
@@ -722,6 +739,3 @@ def build_profitability_proof_floor_receipt(
 
 
 __all__ = ["build_profitability_proof_floor_receipt"]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

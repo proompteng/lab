@@ -1,57 +1,197 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_25")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_target_status")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_03_first_positive_source_row_count"
+from .profit_gap_core import (
+    BlockerStage,
+    CLOSED_TRADES_KEYS,
+    CONCENTRATION_DRAWDOWN_WORDS,
+    DAILY_COLLECTION_KEYS,
+    DEFAULT_ACCOUNT_LABEL,
+    DEFAULT_HPAIRS_CANDIDATE_ID,
+    DEFAULT_HPAIRS_HYPOTHESIS_ID,
+    DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+    DEFAULT_MIN_CLOSED_TRADES,
+    DEFAULT_MIN_DAILY_NET_PNL,
+    DEFAULT_MIN_FILLED_NOTIONAL,
+    DEFAULT_MIN_TRADING_DAYS,
+    ECONOMICS_KEYS,
+    EndpointName,
+    FILLED_NOTIONAL_KEYS,
+    Identity,
+    LIFECYCLE_ECONOMICS_WORDS,
+    LIFECYCLE_KEYS,
+    LoadedSource,
+    MUTATION_WORDS,
+    NET_PNL_KEYS,
+    NumericReadback,
+    OPEN_POSITIONS_KEYS,
+    READ_ONLY_ENDPOINTS,
+    REQUIRED_ENDPOINTS,
+    SCHEMA_VERSION,
+    SOURCE_MISSING_WORDS,
+    SOURCE_REF_KEYS,
+    SOURCE_WINDOW_KEYS,
+    TARGET_COLLECTION_KEYS,
+    _absent,
+    _explicit_or_base,
+    _guard_read_only_url,
+    _is_url,
+    _load_json_location,
+    _rollout_status,
+    _source_read_blockers,
+    build_readback_report,
+    load_sources,
+    main,
+    parse_args,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
 
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
-del __compat_module__
+from .target_status import (
+    _best_profit_target_source_observation,
+    _best_source_observation,
+    _candidate_mappings,
+    _classification_semantics,
+    _classify_blocker_stage,
+    _compact_source_observation,
+    _has_concentration_or_drawdown_blocker,
+    _has_insufficient_daily_pnl,
+    _has_negative_pnl,
+    _lifecycle_economics_status,
+    _looks_like_candidate,
+    _looks_like_profit_target_source_observation,
+    _looks_like_source_observation,
+    _matches_identity,
+    _matches_source_identity,
+    _numeric_blockers,
+    _numeric_readback,
+    _paper_route_status,
+    _profit_target_source_observation_rank,
+    _proof_authority_status,
+    _source_collection_readback,
+    _source_observation_payloads,
+    _source_ref_status,
+    _target_status,
+    _truthy_route_flag,
+)
+
+from .source_readback import (
+    _bool_or_none,
+    _compact_mapping,
+    _daily_net_pnls,
+    _decimal,
+    _decimal_text,
+    _first_bool_at_keys,
+    _first_decimal_at_keys,
+    _first_int_at_keys,
+    _first_positive_key_count,
+    _first_positive_source_row_count,
+    _first_text_at_keys,
+    _has_execution_economics_rows,
+    _has_order_lifecycle_rows,
+    _has_positive_key,
+    _int_or_none,
+    _mapping,
+    _non_empty_payloads,
+    _reported_blockers,
+    _source_missing_blockers,
+    _source_ref_observation_count,
+    _source_row_count,
+    _source_window_observation_count,
+    _stable_texts,
+    _text,
+    _text_list,
+    _walk_items,
+)
+
+__all__ = (
+    "BlockerStage",
+    "CLOSED_TRADES_KEYS",
+    "CONCENTRATION_DRAWDOWN_WORDS",
+    "DAILY_COLLECTION_KEYS",
+    "DEFAULT_ACCOUNT_LABEL",
+    "DEFAULT_HPAIRS_CANDIDATE_ID",
+    "DEFAULT_HPAIRS_HYPOTHESIS_ID",
+    "DEFAULT_HPAIRS_RUNTIME_STRATEGY",
+    "DEFAULT_MIN_CLOSED_TRADES",
+    "DEFAULT_MIN_DAILY_NET_PNL",
+    "DEFAULT_MIN_FILLED_NOTIONAL",
+    "DEFAULT_MIN_TRADING_DAYS",
+    "ECONOMICS_KEYS",
+    "EndpointName",
+    "FILLED_NOTIONAL_KEYS",
+    "Identity",
+    "LIFECYCLE_ECONOMICS_WORDS",
+    "LIFECYCLE_KEYS",
+    "LoadedSource",
+    "MUTATION_WORDS",
+    "NET_PNL_KEYS",
+    "NumericReadback",
+    "OPEN_POSITIONS_KEYS",
+    "READ_ONLY_ENDPOINTS",
+    "REQUIRED_ENDPOINTS",
+    "SCHEMA_VERSION",
+    "SOURCE_MISSING_WORDS",
+    "SOURCE_REF_KEYS",
+    "SOURCE_WINDOW_KEYS",
+    "TARGET_COLLECTION_KEYS",
+    "_absent",
+    "_best_profit_target_source_observation",
+    "_best_source_observation",
+    "_bool_or_none",
+    "_candidate_mappings",
+    "_classification_semantics",
+    "_classify_blocker_stage",
+    "_compact_mapping",
+    "_compact_source_observation",
+    "_daily_net_pnls",
+    "_decimal",
+    "_decimal_text",
+    "_explicit_or_base",
+    "_first_bool_at_keys",
+    "_first_decimal_at_keys",
+    "_first_int_at_keys",
+    "_first_positive_key_count",
+    "_first_positive_source_row_count",
+    "_first_text_at_keys",
+    "_guard_read_only_url",
+    "_has_concentration_or_drawdown_blocker",
+    "_has_execution_economics_rows",
+    "_has_insufficient_daily_pnl",
+    "_has_negative_pnl",
+    "_has_order_lifecycle_rows",
+    "_has_positive_key",
+    "_int_or_none",
+    "_is_url",
+    "_lifecycle_economics_status",
+    "_load_json_location",
+    "_looks_like_candidate",
+    "_looks_like_profit_target_source_observation",
+    "_looks_like_source_observation",
+    "_mapping",
+    "_matches_identity",
+    "_matches_source_identity",
+    "_non_empty_payloads",
+    "_numeric_blockers",
+    "_numeric_readback",
+    "_paper_route_status",
+    "_profit_target_source_observation_rank",
+    "_proof_authority_status",
+    "_reported_blockers",
+    "_rollout_status",
+    "_source_collection_readback",
+    "_source_missing_blockers",
+    "_source_observation_payloads",
+    "_source_read_blockers",
+    "_source_ref_observation_count",
+    "_source_ref_status",
+    "_source_row_count",
+    "_source_window_observation_count",
+    "_stable_texts",
+    "_target_status",
+    "_text",
+    "_text_list",
+    "_truthy_route_flag",
+    "_walk_items",
+    "build_readback_report",
+    "load_sources",
+    "main",
+    "parse_args",
+)

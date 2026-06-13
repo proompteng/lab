@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python
 """Read-only H-PAIRS profit proof-gap readback CLI.
 
@@ -10,23 +9,18 @@ changes runtime configuration.
 
 from __future__ import annotations
 
-import argparse
-import json
-import statistics
-import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_25 import *
-from .part_02_target_status import *
+from .profit_gap_core import (
+    DAILY_COLLECTION_KEYS,
+    NET_PNL_KEYS,
+    SOURCE_MISSING_WORDS,
+    SOURCE_REF_KEYS,
+    SOURCE_WINDOW_KEYS,
+    main,
+)
 
 
 def _first_positive_source_row_count(
@@ -102,6 +96,12 @@ def _has_positive_key(payload: Mapping[str, Any], keys: Sequence[str]) -> bool:
             if value:
                 return True
     return False
+
+
+def _source_row_count(payload: Mapping[str, Any], key: str) -> int:
+    value = _mapping(payload.get("source_row_counts")).get(key)
+    parsed = _int_or_none(value)
+    return parsed if parsed is not None else 0
 
 
 def _daily_net_pnls(payloads: Sequence[Mapping[str, Any]]) -> list[Decimal]:
@@ -366,6 +366,3 @@ def _decimal_text(value: Decimal | None) -> str | None:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
