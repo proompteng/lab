@@ -1,10 +1,25 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.local_intraday_tsmom_replay.support import *
+from tests.local_intraday_tsmom_replay.support import (
+    datetime,
+    timezone,
+    Decimal,
+    Path,
+    patch,
+    GateTrace,
+    StrategyTrace,
+    ThresholdTrace,
+    Strategy,
+    SignalEnvelope,
+    StrategyDecision,
+    build_runtime_ledger_buckets,
+    ReplayConfig,
+    run_replay,
+    _TestLocalIntradayTsmomReplayBase,
+)
 
 
-class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
+class TestRunReplayTraceEvidence(_TestLocalIntradayTsmomReplayBase):
     def test_run_replay_emits_trace_funnel_and_near_misses(self) -> None:
         strategy = Strategy(
             name="breakout-continuation-long-v1",
@@ -135,7 +150,7 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
         )
 
         class _Engine:
-            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            def __init__(self, *args: object, **kwargs: object) -> None:
                 _ = args
                 _ = kwargs
                 self._call_index = 0
@@ -144,8 +159,13 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
                 _ = signal
 
             def evaluate(
-                self, signal: SignalEnvelope, strategies, *, equity, positions
-            ):  # type: ignore[no-untyped-def]
+                self,
+                signal: SignalEnvelope,
+                strategies: object,
+                *,
+                equity: object,
+                positions: object,
+            ) -> list[StrategyDecision]:
                 _ = signal
                 _ = strategies
                 _ = equity
@@ -155,7 +175,7 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
                     return [decision_one, decision_two]
                 return []
 
-            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+            def consume_runtime_telemetry(self) -> object:
                 if self._call_index == 1:
                     traces = [passed_trace]
                 elif self._call_index == 2:
@@ -165,7 +185,9 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
                 return type("Telemetry", (), {"traces": traces})()
 
         class _Allocator:
-            def allocate(self, raw_decisions, **kwargs):  # type: ignore[no-untyped-def]
+            def allocate(
+                self, raw_decisions: list[StrategyDecision], **kwargs: object
+            ) -> list[object]:
                 _ = kwargs
                 return [
                     type(
@@ -175,7 +197,7 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
                 ]
 
         class _Sizer:
-            def size(self, decision, **kwargs):  # type: ignore[no-untyped-def]
+            def size(self, decision: StrategyDecision, **kwargs: object) -> object:
                 _ = kwargs
                 return type(
                     "SizingResult", (), {"approved": True, "decision": decision}
@@ -197,20 +219,23 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay._load_strategies",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
                 return_value=iter([signal_open, signal_fill, signal_follow]),
             ),
-            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
             patch(
-                "scripts.local_intraday_tsmom_replay.allocator_from_settings",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                _Engine,
+            ),
+            patch(
+                "scripts.local_intraday_tsmom_replay_modules.runtime_evaluation.allocator_from_settings",
                 return_value=_Allocator(),
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay.sizer_from_settings",
+                "scripts.local_intraday_tsmom_replay_modules.runtime_evaluation.sizer_from_settings",
                 return_value=_Sizer(),
             ),
         ):
@@ -430,7 +455,7 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
         )
 
         class _Engine:
-            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            def __init__(self, *args: object, **kwargs: object) -> None:
                 _ = args
                 _ = kwargs
 
@@ -438,19 +463,26 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
                 _ = signal
 
             def evaluate(
-                self, signal: SignalEnvelope, strategies, *, equity, positions
-            ):  # type: ignore[no-untyped-def]
+                self,
+                signal: SignalEnvelope,
+                strategies: object,
+                *,
+                equity: object,
+                positions: object,
+            ) -> list[StrategyDecision]:
                 _ = strategies
                 _ = equity
                 _ = positions
                 observed_signals.append(signal)
                 return []
 
-            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+            def consume_runtime_telemetry(self) -> object:
                 return type("Telemetry", (), {"traces": []})()
 
         class _Allocator:
-            def allocate(self, raw_decisions, **kwargs):  # type: ignore[no-untyped-def]
+            def allocate(
+                self, raw_decisions: list[StrategyDecision], **kwargs: object
+            ) -> list[object]:
                 _ = raw_decisions
                 _ = kwargs
                 return []
@@ -470,11 +502,11 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay._load_strategies",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
                 return_value=iter(
                     [
                         day_one_aapl_open,
@@ -486,9 +518,12 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
                     ]
                 ),
             ),
-            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
             patch(
-                "scripts.local_intraday_tsmom_replay.allocator_from_settings",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                _Engine,
+            ),
+            patch(
+                "scripts.local_intraday_tsmom_replay_modules.runtime_evaluation.allocator_from_settings",
                 return_value=_Allocator(),
             ),
         ):
@@ -572,7 +607,7 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
         )
 
         class _Engine:
-            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            def __init__(self, *args: object, **kwargs: object) -> None:
                 _ = args
                 _ = kwargs
 
@@ -580,19 +615,26 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
                 _ = signal
 
             def evaluate(
-                self, signal: SignalEnvelope, strategies, *, equity, positions
-            ):  # type: ignore[no-untyped-def]
+                self,
+                signal: SignalEnvelope,
+                strategies: object,
+                *,
+                equity: object,
+                positions: object,
+            ) -> list[StrategyDecision]:
                 _ = signal
                 _ = strategies
                 _ = equity
                 _ = positions
                 return [decision]
 
-            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+            def consume_runtime_telemetry(self) -> object:
                 return type("Telemetry", (), {"traces": [passed_trace]})()
 
         class _Allocator:
-            def allocate(self, raw_decisions, **kwargs):  # type: ignore[no-untyped-def]
+            def allocate(
+                self, raw_decisions: list[StrategyDecision], **kwargs: object
+            ) -> list[object]:
                 _ = raw_decisions
                 _ = kwargs
                 return [
@@ -602,7 +644,7 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
                 ]
 
         class _Sizer:
-            def size(self, decision, **kwargs):  # type: ignore[no-untyped-def]
+            def size(self, decision: StrategyDecision, **kwargs: object) -> object:
                 _ = decision
                 _ = kwargs
                 return type(
@@ -626,20 +668,23 @@ class TestLocalIntradayTsmomReplayPart4(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay._load_strategies",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
                 return_value=iter([signal]),
             ),
-            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
             patch(
-                "scripts.local_intraday_tsmom_replay.allocator_from_settings",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                _Engine,
+            ),
+            patch(
+                "scripts.local_intraday_tsmom_replay_modules.runtime_evaluation.allocator_from_settings",
                 return_value=_Allocator(),
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay.sizer_from_settings",
+                "scripts.local_intraday_tsmom_replay_modules.runtime_evaluation.sizer_from_settings",
                 return_value=_Sizer(),
             ),
         ):

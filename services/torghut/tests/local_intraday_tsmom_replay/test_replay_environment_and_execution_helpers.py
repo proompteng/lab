@@ -1,10 +1,50 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.local_intraday_tsmom_replay.support import *
+from tests.local_intraday_tsmom_replay.support import (
+    os,
+    subprocess,
+    Namespace,
+    datetime,
+    timezone,
+    Decimal,
+    Path,
+    TemporaryDirectory,
+    Any,
+    patch,
+    CostModelConfig,
+    FetchChunkRequest,
+    TransactionCostModel,
+    StrategyDecision,
+    PendingOrder,
+    PositionState,
+    TraceBlockContext,
+    _SHARED_POSITION_OWNER,
+    _apply_filled_decision,
+    _append_decimal_sample,
+    _decision_exit_reason,
+    _decision_market_order_spread_bps_max,
+    _decision_position_owner,
+    _decision_spread_bps,
+    _estimate_trade_cost,
+    _estimate_trade_cost_lineage,
+    _fetch_chunk,
+    _http_query,
+    _latency_bucket,
+    _load_strategies,
+    _pending_censor_time,
+    _record_capital_snapshot,
+    _resolve_repo_root,
+    _reconcile_pending_order_before_immediate_fill,
+    _resolve_passed_trace_block_reason,
+    _resolve_pending_fill_price,
+    _signal_mid_jump_bps,
+    _signal_spread_bps,
+    _kubectl_clickhouse_query,
+    _TestLocalIntradayTsmomReplayBase,
+)
 
 
-class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
+class TestReplayEnvironmentAndExecutionHelpers(_TestLocalIntradayTsmomReplayBase):
     def test_resolve_repo_root_accepts_container_app_layout(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "app"
@@ -116,7 +156,7 @@ class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
             )
 
         with patch(
-            "scripts.local_intraday_tsmom_replay.subprocess.run",
+            "scripts.local_intraday_tsmom_replay_modules.strategy_loading.subprocess.run",
             return_value=Namespace(returncode=1, stdout="", stderr="denied"),
         ):
             with self.assertRaisesRegex(
@@ -130,7 +170,7 @@ class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
                 )
 
         with patch(
-            "scripts.local_intraday_tsmom_replay.subprocess.run",
+            "scripts.local_intraday_tsmom_replay_modules.strategy_loading.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd=["kubectl"], timeout=2),
         ):
             with self.assertRaisesRegex(
@@ -229,17 +269,19 @@ class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
             )
 
         with patch(
-            "scripts.local_intraday_tsmom_replay._http_query",
+            "scripts.local_intraday_tsmom_replay_modules.signal_rows._http_query",
             side_effect=fake_http_query,
         ):
             rows = _fetch_chunk(
-                http_url="http://clickhouse",
-                username="reader",
-                password="secret",
-                timeout_seconds=7,
-                chunk_start=datetime(2026, 3, 27, 17, 0, tzinfo=timezone.utc),
-                chunk_end=datetime(2026, 3, 27, 18, 0, tzinfo=timezone.utc),
-                symbols=("META", "NVDA"),
+                FetchChunkRequest(
+                    http_url="http://clickhouse",
+                    username="reader",
+                    password="secret",
+                    timeout_seconds=7,
+                    chunk_start=datetime(2026, 3, 27, 17, 0, tzinfo=timezone.utc),
+                    chunk_end=datetime(2026, 3, 27, 18, 0, tzinfo=timezone.utc),
+                    symbols=("META", "NVDA"),
+                )
             )
 
         self.assertEqual([row.symbol for row in rows], ["META"])
@@ -257,7 +299,7 @@ class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
         )()
 
         with patch(
-            "scripts.local_intraday_tsmom_replay.subprocess.run",
+            "scripts.local_intraday_tsmom_replay_modules.strategy_loading.subprocess.run",
             return_value=completed,
         ) as run_mock:
             output = _http_query(
@@ -385,13 +427,15 @@ class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
         self,
     ) -> None:
         reason = _resolve_passed_trace_block_reason(
-            strategy_id="candidate-a",
-            runtime_intent_strategy_ids={"candidate-a"},
-            runtime_suppression_reason_by_strategy_id={},
-            raw_decision_strategy_ids={"candidate-a"},
-            allocation_reject_reason_by_strategy_id={},
-            sizing_reject_reason_by_strategy_id={},
-            emitted_strategy_ids=set(),
+            "candidate-a",
+            TraceBlockContext(
+                runtime_intent_strategy_ids={"candidate-a"},
+                runtime_suppression_reason_by_strategy_id={},
+                raw_decision_strategy_ids={"candidate-a"},
+                allocation_reject_reason_by_strategy_id={},
+                sizing_reject_reason_by_strategy_id={},
+                emitted_strategy_ids=set(),
+            ),
         )
 
         self.assertEqual(reason, "post_runtime_filter_rejected")
@@ -400,15 +444,17 @@ class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
         self,
     ) -> None:
         reason = _resolve_passed_trace_block_reason(
-            strategy_id="candidate-a",
-            runtime_intent_strategy_ids={"candidate-a"},
-            runtime_suppression_reason_by_strategy_id={
-                "candidate-a": "runtime_trade_policy_blocked"
-            },
-            raw_decision_strategy_ids=set(),
-            allocation_reject_reason_by_strategy_id={},
-            sizing_reject_reason_by_strategy_id={},
-            emitted_strategy_ids=set(),
+            "candidate-a",
+            TraceBlockContext(
+                runtime_intent_strategy_ids={"candidate-a"},
+                runtime_suppression_reason_by_strategy_id={
+                    "candidate-a": "runtime_trade_policy_blocked"
+                },
+                raw_decision_strategy_ids=set(),
+                allocation_reject_reason_by_strategy_id={},
+                sizing_reject_reason_by_strategy_id={},
+                emitted_strategy_ids=set(),
+            ),
         )
 
         self.assertEqual(reason, "runtime_trade_policy_blocked")
@@ -417,13 +463,15 @@ class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
         self,
     ) -> None:
         reason = _resolve_passed_trace_block_reason(
-            strategy_id="candidate-a",
-            runtime_intent_strategy_ids=set(),
-            runtime_suppression_reason_by_strategy_id={},
-            raw_decision_strategy_ids=set(),
-            allocation_reject_reason_by_strategy_id={},
-            sizing_reject_reason_by_strategy_id={},
-            emitted_strategy_ids=set(),
+            "candidate-a",
+            TraceBlockContext(
+                runtime_intent_strategy_ids=set(),
+                runtime_suppression_reason_by_strategy_id={},
+                raw_decision_strategy_ids=set(),
+                allocation_reject_reason_by_strategy_id={},
+                sizing_reject_reason_by_strategy_id={},
+                emitted_strategy_ids=set(),
+            ),
         )
 
         self.assertEqual(reason, "engine_runtime_no_intent")
@@ -432,13 +480,15 @@ class TestLocalIntradayTsmomReplayPart1(_TestLocalIntradayTsmomReplayBase):
         self,
     ) -> None:
         reason = _resolve_passed_trace_block_reason(
-            strategy_id="candidate-a",
-            runtime_intent_strategy_ids={"candidate-a"},
-            runtime_suppression_reason_by_strategy_id={},
-            raw_decision_strategy_ids=set(),
-            allocation_reject_reason_by_strategy_id={},
-            sizing_reject_reason_by_strategy_id={},
-            emitted_strategy_ids=set(),
+            "candidate-a",
+            TraceBlockContext(
+                runtime_intent_strategy_ids={"candidate-a"},
+                runtime_suppression_reason_by_strategy_id={},
+                raw_decision_strategy_ids=set(),
+                allocation_reject_reason_by_strategy_id={},
+                sizing_reject_reason_by_strategy_id={},
+                emitted_strategy_ids=set(),
+            ),
         )
 
         self.assertEqual(reason, "engine_runtime_intent_not_emitted")

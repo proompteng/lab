@@ -1,10 +1,23 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.local_intraday_tsmom_replay.support import *
+from tests.local_intraday_tsmom_replay.support import (
+    datetime,
+    timezone,
+    Decimal,
+    Path,
+    patch,
+    GateTrace,
+    StrategyTrace,
+    Strategy,
+    SignalEnvelope,
+    StrategyDecision,
+    ReplayConfig,
+    run_replay,
+    _TestLocalIntradayTsmomReplayBase,
+)
 
 
-class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
+class TestRunReplayRejectionEvidence(_TestLocalIntradayTsmomReplayBase):
     def test_run_replay_marks_passed_trace_with_allocator_reject_reason(self) -> None:
         strategy = Strategy(
             name="breakout-continuation-long-v1",
@@ -61,7 +74,7 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
         )
 
         class _Engine:
-            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            def __init__(self, *args: object, **kwargs: object) -> None:
                 _ = args
                 _ = kwargs
 
@@ -69,19 +82,26 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
                 _ = signal
 
             def evaluate(
-                self, signal: SignalEnvelope, strategies, *, equity, positions
-            ):  # type: ignore[no-untyped-def]
+                self,
+                signal: SignalEnvelope,
+                strategies: object,
+                *,
+                equity: object,
+                positions: object,
+            ) -> list[StrategyDecision]:
                 _ = signal
                 _ = strategies
                 _ = equity
                 _ = positions
                 return [decision]
 
-            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+            def consume_runtime_telemetry(self) -> object:
                 return type("Telemetry", (), {"traces": [passed_trace]})()
 
         class _Allocator:
-            def allocate(self, raw_decisions, **kwargs):  # type: ignore[no-untyped-def]
+            def allocate(
+                self, raw_decisions: list[StrategyDecision], **kwargs: object
+            ) -> list[object]:
                 _ = raw_decisions
                 _ = kwargs
                 return [
@@ -111,16 +131,19 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay._load_strategies",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
                 return_value=iter([signal]),
             ),
-            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
             patch(
-                "scripts.local_intraday_tsmom_replay.allocator_from_settings",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                _Engine,
+            ),
+            patch(
+                "scripts.local_intraday_tsmom_replay_modules.runtime_evaluation.allocator_from_settings",
                 return_value=_Allocator(),
             ),
         ):
@@ -176,7 +199,7 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
         )
 
         class _Engine:
-            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            def __init__(self, *args: object, **kwargs: object) -> None:
                 _ = args
                 _ = kwargs
 
@@ -184,15 +207,20 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
                 _ = signal
 
             def evaluate(
-                self, signal: SignalEnvelope, strategies, *, equity, positions
-            ):  # type: ignore[no-untyped-def]
+                self,
+                signal: SignalEnvelope,
+                strategies: object,
+                *,
+                equity: object,
+                positions: object,
+            ) -> list[StrategyDecision]:
                 _ = signal
                 _ = strategies
                 _ = equity
                 _ = positions
                 return []
 
-            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+            def consume_runtime_telemetry(self) -> object:
                 observation = type(
                     "Observation",
                     (),
@@ -224,14 +252,17 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay._load_strategies",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
                 return_value=iter([signal]),
             ),
-            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
+            patch(
+                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                _Engine,
+            ),
         ):
             payload = run_replay(config)
 
@@ -283,7 +314,7 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
         )
 
         class _Engine:
-            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            def __init__(self, *args: object, **kwargs: object) -> None:
                 _ = args
                 _ = kwargs
 
@@ -291,15 +322,20 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
                 _ = signal
 
             def evaluate(
-                self, signal: SignalEnvelope, strategies, *, equity, positions
-            ):  # type: ignore[no-untyped-def]
+                self,
+                signal: SignalEnvelope,
+                strategies: object,
+                *,
+                equity: object,
+                positions: object,
+            ) -> list[StrategyDecision]:
                 _ = signal
                 _ = strategies
                 _ = equity
                 _ = positions
                 return []
 
-            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+            def consume_runtime_telemetry(self) -> object:
                 return type("Telemetry", (), {"traces": []})()
 
         config = ReplayConfig(
@@ -317,14 +353,17 @@ class TestLocalIntradayTsmomReplayPart5(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay._load_strategies",
+                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
                 return_value=iter([signal_one, signal_two]),
             ),
-            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
+            patch(
+                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                _Engine,
+            ),
         ):
             payload = run_replay(config)
 
