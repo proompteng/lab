@@ -1,10 +1,31 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.replay_tape.support import *
+from tests.replay_tape.support import (
+    json,
+    date,
+    datetime,
+    timezone,
+    Decimal,
+    Path,
+    TemporaryDirectory,
+    patch,
+    REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
+    ReplayTapeCoverageError,
+    ReplayTapeManifest,
+    build_source_query_digest,
+    default_manifest_path,
+    load_replay_tape,
+    materialize_signal_tape,
+    signal_from_tape_payload,
+    validate_tape_freshness,
+    ReplayConfig,
+    _iter_signal_rows,
+    _iter_signal_rows_from_replay_tape,
+    _TestReplayTapeBase,
+)
 
 
-class TestReplayTapePart2(_TestReplayTapeBase):
+class TestReplayTapeManifestFreshnessAndLocalIterator(_TestReplayTapeBase):
     def test_materialize_manifest_session_window_follows_new_york_dst(self) -> None:
         with TemporaryDirectory() as tmpdir:
             winter_manifest = materialize_signal_tape(
@@ -394,7 +415,7 @@ class TestReplayTapePart2(_TestReplayTapeBase):
             )
 
             with patch(
-                "scripts.local_intraday_tsmom_replay._fetch_chunk",
+                "scripts.local_intraday_tsmom_replay_modules.signal_rows._fetch_chunk",
                 side_effect=AssertionError("clickhouse should not be queried"),
             ):
                 rows = list(_iter_signal_rows(config))

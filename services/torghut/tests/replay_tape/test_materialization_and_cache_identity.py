@@ -1,10 +1,38 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.replay_tape.support import *
+from tests.replay_tape.support import (
+    json,
+    sys,
+    date,
+    datetime,
+    timezone,
+    Decimal,
+    Path,
+    TemporaryDirectory,
+    patch,
+    HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+    ReplayTapeManifest,
+    build_hpairs_replay_tape_feature_schema_hash,
+    hpairs_replay_tape_feature_versions,
+    build_replay_tape_cache_identity_diagnostics,
+    build_replay_tape_cache_key,
+    build_source_query_digest,
+    load_replay_tape,
+    materialize_signal_tape,
+    signal_from_tape_payload,
+    slice_tape_by_symbols,
+    slice_tape_by_window,
+    validate_tape_freshness,
+    SignalEnvelope,
+    FetchChunkRequest,
+    materialize_cli,
+    ReplayConfig,
+    _iter_signal_rows,
+    _TestReplayTapeBase,
+)
 
 
-class TestReplayTapePart1(_TestReplayTapeBase):
+class TestReplayTapeMaterializationAndCacheIdentity(_TestReplayTapeBase):
     def test_materialize_cli_default_strategy_configmap_is_repo_rooted(self) -> None:
         with TemporaryDirectory() as tmpdir:
             with patch.object(
@@ -373,10 +401,8 @@ class TestReplayTapePart1(_TestReplayTapeBase):
     def test_iter_signal_rows_skips_nyse_full_day_holidays(self) -> None:
         fetched_days: list[date] = []
 
-        def fetch_chunk(**kwargs: object) -> list[SignalEnvelope]:
-            chunk_start = kwargs["chunk_start"]
-            assert isinstance(chunk_start, datetime)
-            fetched_days.append(chunk_start.date())
+        def fetch_chunk(request: FetchChunkRequest) -> list[SignalEnvelope]:
+            fetched_days.append(request.chunk_start.date())
             return []
 
         config = ReplayConfig(
@@ -392,7 +418,10 @@ class TestReplayTapePart1(_TestReplayTapeBase):
             symbols=("META",),
         )
 
-        with patch("scripts.local_intraday_tsmom_replay._fetch_chunk", fetch_chunk):
+        with patch(
+            "scripts.local_intraday_tsmom_replay_modules.signal_rows._fetch_chunk",
+            fetch_chunk,
+        ):
             rows = list(_iter_signal_rows(config))
 
         self.assertEqual(rows, [])

@@ -1,10 +1,38 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.local_intraday_tsmom_replay.support import *
+from scripts.local_intraday_tsmom_replay_modules.cli_args import _parse_args
+
+from tests.local_intraday_tsmom_replay.support import (
+    json,
+    os,
+    sys,
+    Namespace,
+    datetime,
+    timezone,
+    Decimal,
+    Path,
+    TemporaryDirectory,
+    patch,
+    TransactionCostModel,
+    GateTrace,
+    NearMissRecord,
+    StrategyTrace,
+    ThresholdTrace,
+    StrategyDecision,
+    PositionState,
+    _SHARED_POSITION_OWNER,
+    _apply_filled_decision,
+    _build_near_miss,
+    _init_funnel_stats,
+    _insert_near_miss,
+    _parse_signal_row,
+    _record_trace_for_funnel,
+    replay_main,
+    _TestLocalIntradayTsmomReplayBase,
+)
 
 
-class TestLocalIntradayTsmomReplayPart3(_TestLocalIntradayTsmomReplayBase):
+class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
     def test_parse_signal_row_preserves_vwap_and_imbalance_sizes(self) -> None:
         parsed = _parse_signal_row(
             [
@@ -459,10 +487,11 @@ class TestLocalIntradayTsmomReplayPart3(_TestLocalIntradayTsmomReplayBase):
             }
             with (
                 patch(
-                    "scripts.local_intraday_tsmom_replay._parse_args", return_value=args
+                    "scripts.local_intraday_tsmom_replay_modules.cli._parse_args",
+                    return_value=args,
                 ),
                 patch(
-                    "scripts.local_intraday_tsmom_replay.run_replay",
+                    "scripts.local_intraday_tsmom_replay_modules.cli.run_replay",
                     return_value=payload,
                 ),
                 patch("builtins.print"),
@@ -486,7 +515,7 @@ class TestLocalIntradayTsmomReplayPart3(_TestLocalIntradayTsmomReplayBase):
         with patch.object(
             sys, "argv", ["local_intraday_tsmom_replay.py", "--collect-traces"]
         ):
-            args = replay_main.__globals__["_parse_args"]()
+            args = _parse_args()
 
         self.assertTrue(args.collect_traces)
 
@@ -501,7 +530,7 @@ class TestLocalIntradayTsmomReplayPart3(_TestLocalIntradayTsmomReplayBase):
             clear=False,
         ):
             with patch.object(sys, "argv", ["local_intraday_tsmom_replay.py"]):
-                args = replay_main.__globals__["_parse_args"]()
+                args = _parse_args()
 
         self.assertEqual(args.clickhouse_http_url, "http://clickhouse.example:8123")
         self.assertEqual(args.clickhouse_username, "env-user")
@@ -509,7 +538,7 @@ class TestLocalIntradayTsmomReplayPart3(_TestLocalIntradayTsmomReplayBase):
 
     def test_parse_args_uses_repo_root_strategy_configmap_by_default(self) -> None:
         with patch.object(sys, "argv", ["local_intraday_tsmom_replay.py"]):
-            args = replay_main.__globals__["_parse_args"]()
+            args = _parse_args()
 
         expected = (
             next(
@@ -563,10 +592,11 @@ class TestLocalIntradayTsmomReplayPart3(_TestLocalIntradayTsmomReplayBase):
 
             with (
                 patch(
-                    "scripts.local_intraday_tsmom_replay._parse_args", return_value=args
+                    "scripts.local_intraday_tsmom_replay_modules.cli._parse_args",
+                    return_value=args,
                 ),
                 patch(
-                    "scripts.local_intraday_tsmom_replay.run_replay",
+                    "scripts.local_intraday_tsmom_replay_modules.cli.run_replay",
                     return_value=payload,
                 ) as run_replay_mock,
                 patch("builtins.print"),

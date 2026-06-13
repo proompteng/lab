@@ -1,10 +1,33 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.local_intraday_tsmom_replay.support import *
+from tests.local_intraday_tsmom_replay.support import (
+    date,
+    datetime,
+    timezone,
+    Decimal,
+    Path,
+    patch,
+    FlattenPositionsRequest,
+    TransactionCostModel,
+    SignalEnvelope,
+    StrategyDecision,
+    PendingOrder,
+    PositionState,
+    ReplayConfig,
+    _SHARED_POSITION_OWNER,
+    _apply_filled_decision,
+    _apply_order_preferences,
+    _flatten_positions,
+    _init_funnel_stats,
+    _positions_payload,
+    _quote_quality_status,
+    _reconcile_pending_order_before_immediate_fill,
+    _should_replace_pending_order,
+    _TestLocalIntradayTsmomReplayBase,
+)
 
 
-class TestLocalIntradayTsmomReplayPart2(_TestLocalIntradayTsmomReplayBase):
+class TestOrderPreferencesPositionsAndFlattening(_TestLocalIntradayTsmomReplayBase):
     def test_apply_filled_decision_buy_covers_existing_short(self) -> None:
         signal = self._signal(bid="522.90", ask="523.00", price="522.95")
         decision = self._decision(
@@ -168,7 +191,7 @@ class TestLocalIntradayTsmomReplayPart2(_TestLocalIntradayTsmomReplayBase):
         signal = self._signal(bid="524.90", ask="525.10", price="525.00")
 
         with patch(
-            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            "scripts.local_intraday_tsmom_replay_modules.order_lifecycle.settings.trading_execution_prefer_limit",
             False,
         ):
             updated = _apply_order_preferences(decision, signal)
@@ -192,7 +215,7 @@ class TestLocalIntradayTsmomReplayPart2(_TestLocalIntradayTsmomReplayBase):
         signal = self._signal(bid="524.90", ask="525.10", price="525.00")
 
         with patch(
-            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            "scripts.local_intraday_tsmom_replay_modules.order_lifecycle.settings.trading_execution_prefer_limit",
             False,
         ):
             updated = _apply_order_preferences(
@@ -222,7 +245,7 @@ class TestLocalIntradayTsmomReplayPart2(_TestLocalIntradayTsmomReplayBase):
         signal = self._signal(bid="524.90", ask="525.10", price="525.00")
 
         with patch(
-            "scripts.local_intraday_tsmom_replay.settings.trading_execution_prefer_limit",
+            "scripts.local_intraday_tsmom_replay_modules.order_lifecycle.settings.trading_execution_prefer_limit",
             True,
         ):
             updated = _apply_order_preferences(decision, signal)
@@ -745,22 +768,24 @@ class TestLocalIntradayTsmomReplayPart2(_TestLocalIntradayTsmomReplayBase):
         stats = _init_funnel_stats()
         stats["closed_trades"] = []
         funnel_stats: dict[tuple[str, str], dict[str, object]] = {}
-        cash_ref = [Decimal("15231.20")]
         all_closed_trades: list[object] = []
 
-        _flatten_positions(
-            day=day,
-            stats=stats,
-            funnel_stats=funnel_stats,
-            positions=positions,
-            last_signals={"META": signal},
-            last_prices={"META": Decimal("520.50")},
-            cost_model=TransactionCostModel(),
-            cash_ref=cash_ref,
-            all_closed_trades=all_closed_trades,
+        cash = _flatten_positions(
+            FlattenPositionsRequest(
+                day=day,
+                stats=stats,
+                funnel_stats=funnel_stats,
+                positions=positions,
+                last_signals={"META": signal},
+                last_prices={"META": Decimal("520.50")},
+                cost_model=TransactionCostModel(),
+                all_closed_trades=all_closed_trades,
+                cash=Decimal("15231.20"),
+            )
         )
 
         self.assertEqual(positions, {})
+        self.assertLess(cash, Decimal("15231.20"))
         self.assertEqual(stats["filled_count"], 1)
         self.assertGreater(stats["gross_pnl"], Decimal("0"))
         self.assertGreater(stats["net_pnl"], Decimal("0"))

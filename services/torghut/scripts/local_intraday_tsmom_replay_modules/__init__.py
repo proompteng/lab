@@ -1,21 +1,285 @@
+"""Local intraday TSMOM replay package."""
+
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
-# ruff: noqa: F401,F403,F405,F811,F821
-import logging as __compat_logging__
-
-from .source_part_01 import SOURCE as _SOURCE_01
-from .source_part_02 import SOURCE as _SOURCE_02
-from .source_part_03 import SOURCE as _SOURCE_03
-
-__compat_source__ = "".join([_SOURCE_01, _SOURCE_02, _SOURCE_03])
-__compat_exec_globals__ = globals()
-__compat_exec_globals__["__package__"] = "scripts"
-exec(
-    compile(__compat_source__, "scripts/local_intraday_tsmom_replay.py", "exec"),
-    __compat_exec_globals__,
+from .replay_types import (
+    ClosedTrade,
+    DEFAULT_CHUNK_MINUTES,
+    DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+    DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS,
+    DEFAULT_START_EQUITY,
+    PendingOrder,
+    PositionState,
+    ReplayConfig,
+    ReplayCostLineage,
+    ReplayLedgerContext,
+    _EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION,
+    _FILL_LATENCY_BUCKETS_MS,
+    _FILL_LATENCY_THRESHOLDS_MS,
+    _REPLAY_ADV_SOURCE,
+    _REPLAY_COST_BASIS,
+    _REPLAY_LEDGER_ACCOUNT_LABEL,
+    _REPLAY_LEDGER_SOURCE,
+    _SHARED_POSITION_OWNER,
+    _decimal_text,
+    _decimal_text_or_none,
+    _file_sha256,
+    _position_key,
+    _resolve_repo_root,
+    _stable_json_hash,
+    _utc_text,
+    default_strategy_configmap_path,
+    logger,
 )
-logger = __compat_logging__.getLogger(__name__.removesuffix("_modules"))
-for __compat_loaded_module__ in globals().get("__compat_part_modules__", ()):
-    __compat_loaded_module__.__dict__["logger"] = logger
-__all__ = [name for name in globals() if not name.startswith("__")]
+
+from .ledger import (
+    _append_ledger_fill,
+    _append_ledger_resolution,
+    _append_ledger_submission,
+    _base_ledger_row,
+    _build_replay_ledger_context,
+    _exact_replay_ledger_payload,
+    _ledger_identity,
+    _ledger_resolution_event_type,
+)
+
+from .cli_args import (
+    _parse_args,
+)
+
+from .strategy_loading import (
+    _b64,
+    _http_query,
+    _kubectl_clickhouse_query,
+    _load_strategies,
+)
+
+from .signal_rows import (
+    FetchChunkRequest,
+    _extract_ask,
+    _extract_bid,
+    _extract_decimal_payload,
+    _extract_price,
+    _extract_spread,
+    _extract_volatility,
+    _fetch_chunk,
+    _iter_signal_rows,
+    _iter_signal_rows_from_replay_tape,
+    _log_quote_skipped,
+    _observed_adv_notional,
+    _observed_adv_notional_with_source,
+    _parse_clickhouse_ts,
+    _parse_signal_row,
+    _positive_decimal_mapping_value,
+    _quote_quality_status,
+    _signal_mid_jump_bps,
+    _signal_spread_bps,
+    _to_decimal,
+)
+
+from .fill_stats import (
+    _ensure_replay_stats_bucket,
+    _log_trade_closed,
+    _record_fill_order_type,
+)
+
+from .costing import (
+    _estimate_trade_cost,
+    _estimate_trade_cost_lineage,
+)
+
+from .replay_stats import (
+    _build_near_miss,
+    _init_day_stats,
+    _init_funnel_stats,
+    _insert_near_miss,
+    _log_day_summary,
+    _log_decision_queued,
+    _log_progress,
+    _record_capital_snapshot,
+    _record_decision,
+    _record_liquidity_observation,
+    _record_trace_for_funnel,
+    _signal_regime_label,
+)
+
+from .order_lifecycle import (
+    TraceBlockContext,
+    _append_decimal_sample,
+    _apply_order_preferences,
+    _decimal_average,
+    _decimal_or_none,
+    _decimal_percentile,
+    _decision_entry_order_type,
+    _decision_market_order_spread_bps_max,
+    _decision_spread_bps,
+    _execution_proxy_payload,
+    _fill_probability_by_latency_bucket,
+    _fill_probability_by_latency_threshold,
+    _first_reject_reason,
+    _init_order_lifecycle_stats,
+    _int_average,
+    _int_percentile,
+    _latency_bucket,
+    _log_pending_order_replaced,
+    _order_age_ms,
+    _order_lifecycle_summary,
+    _pending_censor_time,
+    _pending_order_priority,
+    _post_cost_survivorship_summary,
+    _reconcile_pending_order_before_immediate_fill,
+    _record_order_lifecycle,
+    _record_order_lifecycle_outcome,
+    _resolve_passed_trace_block_reason,
+    _resolve_pending_fill_price,
+    _should_replace_pending_order,
+)
+
+from .positions import (
+    ClosePositionRequest,
+    FillAccountingState,
+    FillExecution,
+    _apply_filled_decision,
+    _close_position,
+    _decision_exit_reason,
+    _decision_position_owner,
+    _position_equity,
+    _position_exposure,
+    _positions_payload,
+)
+
+from .flattening import (
+    FlattenPositionsRequest,
+    _flatten_positions,
+)
+
+from .replay_loop import (
+    run_replay,
+)
+
+from .cli import (
+    main,
+)
+
+__all__ = [
+    "ClosedTrade",
+    "DEFAULT_CHUNK_MINUTES",
+    "DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS",
+    "DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS",
+    "DEFAULT_START_EQUITY",
+    "ClosePositionRequest",
+    "FetchChunkRequest",
+    "FillAccountingState",
+    "FillExecution",
+    "FlattenPositionsRequest",
+    "PendingOrder",
+    "PositionState",
+    "ReplayConfig",
+    "ReplayCostLineage",
+    "ReplayLedgerContext",
+    "TraceBlockContext",
+    "_EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION",
+    "_FILL_LATENCY_BUCKETS_MS",
+    "_FILL_LATENCY_THRESHOLDS_MS",
+    "_REPLAY_ADV_SOURCE",
+    "_REPLAY_COST_BASIS",
+    "_REPLAY_LEDGER_ACCOUNT_LABEL",
+    "_REPLAY_LEDGER_SOURCE",
+    "_SHARED_POSITION_OWNER",
+    "_append_decimal_sample",
+    "_append_ledger_fill",
+    "_append_ledger_resolution",
+    "_append_ledger_submission",
+    "_apply_filled_decision",
+    "_apply_order_preferences",
+    "_b64",
+    "_base_ledger_row",
+    "_build_near_miss",
+    "_build_replay_ledger_context",
+    "_close_position",
+    "_decimal_average",
+    "_decimal_or_none",
+    "_decimal_percentile",
+    "_decimal_text",
+    "_decimal_text_or_none",
+    "_decision_entry_order_type",
+    "_decision_exit_reason",
+    "_decision_market_order_spread_bps_max",
+    "_decision_position_owner",
+    "_decision_spread_bps",
+    "_ensure_replay_stats_bucket",
+    "_estimate_trade_cost",
+    "_estimate_trade_cost_lineage",
+    "_exact_replay_ledger_payload",
+    "_execution_proxy_payload",
+    "_extract_ask",
+    "_extract_bid",
+    "_extract_decimal_payload",
+    "_extract_price",
+    "_extract_spread",
+    "_extract_volatility",
+    "_fetch_chunk",
+    "_file_sha256",
+    "_fill_probability_by_latency_bucket",
+    "_fill_probability_by_latency_threshold",
+    "_first_reject_reason",
+    "_flatten_positions",
+    "_http_query",
+    "_init_day_stats",
+    "_init_funnel_stats",
+    "_init_order_lifecycle_stats",
+    "_insert_near_miss",
+    "_int_average",
+    "_int_percentile",
+    "_iter_signal_rows",
+    "_iter_signal_rows_from_replay_tape",
+    "_kubectl_clickhouse_query",
+    "_latency_bucket",
+    "_ledger_identity",
+    "_ledger_resolution_event_type",
+    "_load_strategies",
+    "_log_day_summary",
+    "_log_decision_queued",
+    "_log_pending_order_replaced",
+    "_log_progress",
+    "_log_quote_skipped",
+    "_log_trade_closed",
+    "_observed_adv_notional",
+    "_observed_adv_notional_with_source",
+    "_order_age_ms",
+    "_order_lifecycle_summary",
+    "_parse_args",
+    "_parse_clickhouse_ts",
+    "_parse_signal_row",
+    "_pending_censor_time",
+    "_pending_order_priority",
+    "_position_equity",
+    "_position_exposure",
+    "_position_key",
+    "_positions_payload",
+    "_positive_decimal_mapping_value",
+    "_post_cost_survivorship_summary",
+    "_quote_quality_status",
+    "_reconcile_pending_order_before_immediate_fill",
+    "_record_capital_snapshot",
+    "_record_decision",
+    "_record_fill_order_type",
+    "_record_liquidity_observation",
+    "_record_order_lifecycle",
+    "_record_order_lifecycle_outcome",
+    "_record_trace_for_funnel",
+    "_resolve_passed_trace_block_reason",
+    "_resolve_pending_fill_price",
+    "_resolve_repo_root",
+    "_should_replace_pending_order",
+    "_signal_mid_jump_bps",
+    "_signal_regime_label",
+    "_signal_spread_bps",
+    "_stable_json_hash",
+    "_to_decimal",
+    "_utc_text",
+    "default_strategy_configmap_path",
+    "logger",
+    "main",
+    "run_replay",
+]

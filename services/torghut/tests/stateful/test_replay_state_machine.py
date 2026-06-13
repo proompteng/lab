@@ -15,6 +15,8 @@ from hypothesis.stateful import (
 from app.trading.costs import TransactionCostModel
 from app.trading.models import StrategyDecision
 from scripts.local_intraday_tsmom_replay import (
+    FillAccountingState,
+    FillExecution,
     _apply_filled_decision,
     _decision_position_owner,
     _positions_payload,
@@ -186,16 +188,21 @@ class ReplayStateMachine(RuleBasedStateMachine):
             created_at=signal.event_ts,
         )
         self.cash = _apply_filled_decision(
-            decision=decision,
-            signal=signal,
-            fill_price=fill_price,
-            filled_at=signal.event_ts,
-            created_at=signal.event_ts,
-            positions=self.positions,
-            day_bucket=self.day_bucket,
-            cost_model=TransactionCostModel(),
-            cash=self.cash,
-            all_closed_trades=self.closed_trades,
+            FillExecution(
+                decision=decision,
+                signal=signal,
+                fill_price=fill_price,
+                filled_at=signal.event_ts,
+                created_at=signal.event_ts,
+                cash=self.cash,
+            ),
+            FillAccountingState(
+                positions=self.positions,
+                day_bucket=self.day_bucket,
+                symbol_bucket=None,
+                cost_model=TransactionCostModel(),
+                all_closed_trades=self.closed_trades,
+            ),
         )
 
         assert ("META", _decision_position_owner(decision)) not in self.pending_orders

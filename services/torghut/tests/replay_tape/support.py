@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 import io
 import json
@@ -35,6 +34,7 @@ from app.trading.discovery.replay_tape import (
 from app.trading.models import SignalEnvelope
 from scripts import materialize_replay_tape as materialize_cli
 from scripts.local_intraday_tsmom_replay import (
+    FetchChunkRequest,
     ReplayConfig,
     _iter_signal_rows,
     _iter_signal_rows_from_replay_tape,
@@ -69,4 +69,41 @@ class _TestReplayTapeBase(TestCase):
         )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "io",
+    "json",
+    "sys",
+    "Namespace",
+    "redirect_stdout",
+    "date",
+    "datetime",
+    "timezone",
+    "Decimal",
+    "Path",
+    "TemporaryDirectory",
+    "TestCase",
+    "patch",
+    "HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION",
+    "REPLAY_TAPE_MANIFEST_SCHEMA_VERSION",
+    "ReplayTapeCoverageError",
+    "ReplayTapeManifest",
+    "build_hpairs_replay_tape_feature_schema_hash",
+    "hpairs_replay_tape_feature_versions",
+    "build_replay_tape_cache_identity_diagnostics",
+    "build_replay_tape_cache_key",
+    "build_source_query_digest",
+    "default_manifest_path",
+    "load_replay_tape",
+    "materialize_signal_tape",
+    "signal_from_tape_payload",
+    "slice_tape_by_symbols",
+    "slice_tape_by_window",
+    "validate_tape_freshness",
+    "SignalEnvelope",
+    "materialize_cli",
+    "FetchChunkRequest",
+    "ReplayConfig",
+    "_iter_signal_rows",
+    "_iter_signal_rows_from_replay_tape",
+    "_TestReplayTapeBase",
+)
