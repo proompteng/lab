@@ -29,9 +29,10 @@ from app.trading.scheduler.simple_pipeline import (
     _target_runtime_account_matches,
     _target_symbols,
 )
-from app.trading.runtime_window_import import (
-    _runtime_promotion_blocking_reasons,
-    resolve_hypothesis_manifest,
+from app.trading.runtime_window_import import resolve_hypothesis_manifest
+from app.trading.runtime_window_import_modules.evidence_gates import (
+    RuntimePromotionInputs,
+    runtime_promotion_blocking_reasons,
 )
 from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_RUNTIME_LEDGER,
