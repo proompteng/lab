@@ -6,6 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -14,11 +15,49 @@ from scripts.analyze_historical_simulation import (
     _build_report,
     _extract_run_scope_decisions,
     _fifo_trade_pnl,
+    _query_rows,
 )
 from scripts.start_historical_simulation import ClickHouseRuntimeConfig
 
 
 class TestAnalyzeHistoricalSimulation(TestCase):
+    def test_query_rows_executes_literal_query_and_normalizes_keys(self) -> None:
+        class FakeCursor:
+            def __init__(self) -> None:
+                self.executed_queries: list[object] = []
+
+            def __enter__(self) -> "FakeCursor":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def execute(self, query: object) -> None:
+                self.executed_queries.append(query)
+
+            def fetchall(self) -> list[dict[object, object]]:
+                return [{"id": "decision-1", 2: Decimal("1.25")}]
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.cursor_instance = FakeCursor()
+                self.row_factory: object | None = None
+
+            def cursor(self, *, row_factory: object) -> FakeCursor:
+                self.row_factory = row_factory
+                return self.cursor_instance
+
+        conn = FakeConnection()
+
+        rows = _query_rows(cast(Any, conn), "SELECT id, value FROM trade_decisions")
+
+        self.assertEqual(
+            conn.cursor_instance.executed_queries,
+            ["SELECT id, value FROM trade_decisions"],
+        )
+        self.assertIsNotNone(conn.row_factory)
+        self.assertEqual(rows, [{"id": "decision-1", "2": Decimal("1.25")}])
+
     def test_build_last_price_map_uses_lane_specific_price_table(self) -> None:
         captured_queries: list[str] = []
 

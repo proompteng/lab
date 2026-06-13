@@ -21,7 +21,7 @@ def __compat_export__(module: __compat_types__.ModuleType) -> None:
         globals()[name] = value
 
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_35")
+__compat_module__ = __compat_import_module__(f"{__name__}.report_helpers")
 __compat_part_modules__.append(__compat_module__)
 __compat_export__(__compat_module__)
 for __compat_loaded_module__ in __compat_part_modules__:
@@ -29,7 +29,7 @@ for __compat_loaded_module__ in __compat_part_modules__:
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_build_report")
+__compat_module__ = __compat_import_module__(f"{__name__}.report_builder")
 __compat_part_modules__.append(__compat_module__)
 __compat_export__(__compat_module__)
 for __compat_loaded_module__ in __compat_part_modules__:

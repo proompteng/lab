@@ -28,7 +28,7 @@ from scripts.start_historical_simulation import (
     _validate_window_policy,
 )
 
-from .part_01_statements_35 import (
+from .report_helpers import (
     REPORT_SCHEMA_VERSION,
     _as_decimal,
     _build_last_price_map,

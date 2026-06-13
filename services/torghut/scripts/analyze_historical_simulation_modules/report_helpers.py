@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, LiteralString, Mapping
 
 import psycopg
 from psycopg import rows
@@ -188,9 +188,12 @@ def _parse_optional_ts(value: str | None) -> datetime | None:
         return None
 
 
-def _query_rows(conn: psycopg.Connection[Any], query: str) -> list[dict[str, Any]]:
+def _query_rows(
+    conn: psycopg.Connection[Any],
+    query: LiteralString,
+) -> list[dict[str, Any]]:
     with conn.cursor(row_factory=rows.dict_row) as cursor:
-        cursor.execute(query)  # pyright: ignore[reportCallIssue]
+        cursor.execute(query)
         payload = cursor.fetchall()
     return [{str(k): v for k, v in item.items()} for item in payload]
 
