@@ -399,9 +399,36 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen ruff check app tests scripts migrations
 
-      - name: Refactor quality guard
+      - name: Pylint refactor quality gate
         working-directory: services/torghut
-        run: uv run --frozen python scripts/check_refactor_quality.py
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo_root="$(git rev-parse --show-toplevel)"
+          base_spec="origin/${GITHUB_BASE_REF:-main}"
+          base="$(git -C "${repo_root}" merge-base "${base_spec}" HEAD 2>/dev/null || git -C "${repo_root}" rev-parse HEAD^)"
+          changed_python=()
+          while IFS= read -r python_file; do
+            changed_python+=("${python_file}")
+          done < <(
+            git -C "${repo_root}" diff --name-only --diff-filter=ACMR "${base}...HEAD" \
+              -- services/torghut/app services/torghut/scripts services/torghut/tests services/torghut/migrations |
+              sed 's#^services/torghut/##' |
+              grep -E '^(app|scripts|tests|migrations)/.*\.pyi?$' || true
+          )
+
+          if [ "${#changed_python[@]}" -eq 0 ]; then
+            echo "No changed Torghut Python files for Pylint refactor quality gate."
+            exit 0
+          fi
+
+          uv run --frozen pylint \
+            --load-plugins=scripts.pylint_torghut_quality \
+            --disable=all \
+            --enable=torghut-generated-split-filename,torghut-dynamic-globals-reexport,torghut-compat-module-wrapper,torghut-compat-module-registry,torghut-module-class-mutation,torghut-module-replacement,torghut-file-pyright-suppression,torghut-type-ignore,torghut-file-ruff-noqa,torghut-blanket-pylint-disable,torghut-dynamic-attribute-hook,torghut-dynamic-all,torghut-wildcard-import,torghut-custom-module-class \
+            --score=n \
+            "${changed_python[@]}"
 
       - name: Pylint changed-file design gate
         working-directory: services/torghut
