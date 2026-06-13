@@ -1,12 +1,28 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.journal_tigerbeetle_order_events.support import *
+from app.trading.tigerbeetle_journal_modules.journal_payloads import (
+    result_statuses_by_index,
+)
+
+from tests.journal_tigerbeetle_order_events.support import (
+    SimpleNamespace,
+    _TestJournalTigerBeetleOrderEventsScriptBase,
+    argparse,
+    datetime,
+    io,
+    json,
+    os,
+    patch,
+    redirect_stderr,
+    redirect_stdout,
+    script,
+    subprocess,
+    sys,
+    timezone,
+)
 
 
-class TestJournalTigerBeetleOrderEventsScriptPart1(
-    _TestJournalTigerBeetleOrderEventsScriptBase
-):
+class TestJournalPayloadAndSupervision(_TestJournalTigerBeetleOrderEventsScriptBase):
     def test_sqlalchemy_dsn_normalizes_postgres_urls(self) -> None:
         self.assertEqual(
             script._sqlalchemy_dsn("postgres://user:pass@host/db"),
@@ -46,7 +62,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart1(
 
         with patch.dict(sys.modules, {"tigerbeetle": fake_tigerbeetle}):
             self.assertEqual(
-                journal_model._result_statuses_by_index(
+                result_statuses_by_index(
                     [{"index": 0, "status": 21}],
                     count=1,
                     default_status="created",
@@ -55,7 +71,7 @@ class TestJournalTigerBeetleOrderEventsScriptPart1(
                 {0: "exists"},
             )
             self.assertEqual(
-                journal_model._result_statuses_by_index(
+                result_statuses_by_index(
                     [{"index": 0, "status": 21}],
                     count=1,
                     default_status="created",

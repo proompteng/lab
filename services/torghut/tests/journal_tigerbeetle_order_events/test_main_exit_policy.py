@@ -1,12 +1,33 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.journal_tigerbeetle_order_events.support import *
+from tests.journal_tigerbeetle_order_events.support import (
+    Base,
+    Decimal,
+    ExecutionOrderEvent,
+    FakeJournal,
+    Session,
+    Settings,
+    SimpleNamespace,
+    _TestJournalTigerBeetleOrderEventsScriptBase,
+    _add_order_event,
+    _add_real_source_rows,
+    cast,
+    create_engine,
+    io,
+    json,
+    os,
+    patch,
+    redirect_stdout,
+    script,
+    script_cli,
+    script_core,
+    script_payloads,
+    sys,
+    tempfile,
+)
 
 
-class TestJournalTigerBeetleOrderEventsScriptPart4(
-    _TestJournalTigerBeetleOrderEventsScriptBase
-):
+class TestJournalMainExitPolicy(_TestJournalTigerBeetleOrderEventsScriptBase):
     def test_fresh_empty_selection_reconciliation_requires_clean_latest_payload(
         self,
     ) -> None:
