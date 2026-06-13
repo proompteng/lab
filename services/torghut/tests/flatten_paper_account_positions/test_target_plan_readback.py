@@ -4,7 +4,7 @@ from __future__ import annotations
 from tests.flatten_paper_account_positions.support import *
 
 
-class TestFlattenPaperAccountPositionsPart2(_TestFlattenPaperAccountPositionsBase):
+class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPositionsBase):
     def test_parse_args_accepts_explicit_guardrails(self) -> None:
         argv = [
             "flatten_paper_account_positions.py",

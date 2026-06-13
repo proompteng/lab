@@ -4,7 +4,7 @@ from __future__ import annotations
 from tests.flatten_paper_account_positions.support import *
 
 
-class TestFlattenPaperAccountPositionsPart3(_TestFlattenPaperAccountPositionsBase):
+class TestFlattenPaperAccountCliSnapshotGuards(_TestFlattenPaperAccountPositionsBase):
     def test_pending_baseline_allowance_predicate_fails_closed_edges(self) -> None:
         self.assertFalse(
             flatten_script._target_plan_readback_pending_clean_window_baseline_only(
