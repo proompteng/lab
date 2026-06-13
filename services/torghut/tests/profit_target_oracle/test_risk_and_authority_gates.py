@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.profit_target_oracle.support import *
+from decimal import Decimal
+
+from app.trading.discovery.profit_target_oracle import (
+    ProfitTargetOraclePolicy,
+    evaluate_profit_target_oracle,
+)
+from tests.profit_target_oracle.support import (
+    _TestProfitTargetOracleBase,
+    _executable_scorecard_fields,
+    _passing_scorecard,
+)
 
 
-class TestProfitTargetOraclePart2(_TestProfitTargetOracleBase):
+class TestProfitTargetOracleRiskAndAuthorityGates(_TestProfitTargetOracleBase):
     def test_profit_target_oracle_rejects_missing_delay_depth_tail_grid(self) -> None:
         scorecard = {
             **_passing_scorecard(),

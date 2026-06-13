@@ -1,14 +1,6 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
-
-from decimal import Decimal
 from unittest import TestCase
-
-from app.trading.discovery.profit_target_oracle import (
-    ProfitTargetOraclePolicy,
-    evaluate_profit_target_oracle,
-)
 
 
 def _executable_scorecard_fields() -> dict[str, object]:
@@ -108,6 +100,3 @@ def _check_by_metric(result: dict[str, object], metric: str) -> dict[str, object
 
 class _TestProfitTargetOracleBase(TestCase):
     pass
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
