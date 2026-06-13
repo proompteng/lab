@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .tca_modules.part_01_statements_27 import (
+from .tca_modules.adaptive_policy import (
     ADAPTIVE_DEGRADE_FALLBACK_BPS,
     ADAPTIVE_EXECUTION_SLOWDOWN,
     ADAPTIVE_EXECUTION_SPEEDUP,
@@ -12,17 +12,17 @@ from .tca_modules.part_01_statements_27 import (
     ADAPTIVE_PARTICIPATION_TIGHTEN,
     ADAPTIVE_TARGET_SLIPPAGE_BPS,
     ADAPTIVE_LOOKBACK_WINDOW,
+    AdaptiveExecutionPolicyDecision,
+    derive_adaptive_execution_policy,
+)
+from .tca_modules.execution_tca_metrics import (
     EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION,
     POST_COST_PNL_BASIS,
-    AdaptiveExecutionPolicyDecision,
     upsert_execution_tca_metric,
 )
-from .tca_modules.part_02_observed_broker_order_policy_hash import (
+from .tca_modules.lineage_read_model import (
     build_tca_gate_inputs,
     refresh_execution_tca_metrics,
-)
-from .tca_modules.part_03_execution_lineage_summary import (
-    derive_adaptive_execution_policy,
 )
 from .tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal import (
     TigerBeetleLedgerJournal,
