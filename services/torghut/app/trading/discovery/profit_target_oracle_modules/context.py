@@ -7,6 +7,8 @@ from decimal import Decimal
 from typing import Any, Mapping, cast
 
 from .parsing import (
+    RiskAdjustedDrawdownInputs,
+    TargetImpliedNotionalInputs,
     decimal_value,
     first_normalized_scorecard_text,
     numeric_check,
@@ -63,6 +65,19 @@ class _RiskReturnMetrics:
 class _PostCostPnlAuthority:
     basis: str
     source: str
+
+
+@dataclass(frozen=True)
+class _CoreOracleCheckInputs:
+    scorecard: Mapping[str, Any]
+    target_net_pnl_per_day: Decimal
+    policy: ProfitTargetOraclePolicy
+    net_pnl: Decimal
+    daily_net: _DailyNetSummary
+    risk: _RiskReturnMetrics
+    target_implied_notional_gate: dict[str, Any]
+    effective_min_avg_filled_notional_per_day: Decimal
+    observed_post_cost_expectancy_bps: Decimal
 
 
 def _daily_net_summary(
@@ -151,18 +166,18 @@ def _post_cost_pnl_authority(scorecard: Mapping[str, Any]) -> _PostCostPnlAuthor
     )
 
 
-def _core_oracle_checks(
-    *,
-    scorecard: Mapping[str, Any],
-    target_net_pnl_per_day: Decimal,
-    policy: ProfitTargetOraclePolicy,
-    net_pnl: Decimal,
-    daily_net: _DailyNetSummary,
-    risk: _RiskReturnMetrics,
-    target_implied_notional_gate: dict[str, Any],
-    effective_min_avg_filled_notional_per_day: Decimal,
-    observed_post_cost_expectancy_bps: Decimal,
-) -> list[dict[str, Any]]:
+def _core_oracle_checks(inputs: _CoreOracleCheckInputs) -> list[dict[str, Any]]:
+    scorecard = inputs.scorecard
+    target_net_pnl_per_day = inputs.target_net_pnl_per_day
+    policy = inputs.policy
+    net_pnl = inputs.net_pnl
+    daily_net = inputs.daily_net
+    risk = inputs.risk
+    target_implied_notional_gate = inputs.target_implied_notional_gate
+    effective_min_avg_filled_notional_per_day = (
+        inputs.effective_min_avg_filled_notional_per_day
+    )
+    observed_post_cost_expectancy_bps = inputs.observed_post_cost_expectancy_bps
     return [
         numeric_check(
             metric="portfolio_post_cost_net_pnl_per_day",
@@ -278,24 +293,28 @@ def _core_oracle_checks(
             threshold=policy.max_single_symbol_contribution_share,
         ),
         risk_adjusted_drawdown_check(
-            metric="worst_day_loss",
-            observed=risk.worst_day_loss,
-            start_equity=risk.start_equity,
-            normal_pct=policy.max_worst_day_loss_pct_equity,
-            extended_pct=policy.extended_max_worst_day_loss_pct_equity,
-            total_net_pnl=risk.total_net_pnl,
-            min_total_net_pnl_to_drawdown_ratio=policy.min_total_net_pnl_to_drawdown_ratio,
-            absolute_cap=policy.max_worst_day_loss,
+            RiskAdjustedDrawdownInputs(
+                metric="worst_day_loss",
+                observed=risk.worst_day_loss,
+                start_equity=risk.start_equity,
+                normal_pct=policy.max_worst_day_loss_pct_equity,
+                extended_pct=policy.extended_max_worst_day_loss_pct_equity,
+                total_net_pnl=risk.total_net_pnl,
+                min_total_net_pnl_to_drawdown_ratio=policy.min_total_net_pnl_to_drawdown_ratio,
+                absolute_cap=policy.max_worst_day_loss,
+            )
         ),
         risk_adjusted_drawdown_check(
-            metric="max_drawdown",
-            observed=decimal_value(scorecard.get("max_drawdown")),
-            start_equity=risk.start_equity,
-            normal_pct=policy.max_drawdown_pct_equity,
-            extended_pct=policy.extended_max_drawdown_pct_equity,
-            total_net_pnl=risk.total_net_pnl,
-            min_total_net_pnl_to_drawdown_ratio=policy.min_total_net_pnl_to_drawdown_ratio,
-            absolute_cap=policy.max_drawdown,
+            RiskAdjustedDrawdownInputs(
+                metric="max_drawdown",
+                observed=decimal_value(scorecard.get("max_drawdown")),
+                start_equity=risk.start_equity,
+                normal_pct=policy.max_drawdown_pct_equity,
+                extended_pct=policy.extended_max_drawdown_pct_equity,
+                total_net_pnl=risk.total_net_pnl,
+                min_total_net_pnl_to_drawdown_ratio=policy.min_total_net_pnl_to_drawdown_ratio,
+                absolute_cap=policy.max_drawdown,
+            )
         ),
         numeric_check(
             metric="max_gross_exposure_pct_equity",
@@ -390,12 +409,14 @@ def build_oracle_context(
     )
     post_cost_pnl_authority = _post_cost_pnl_authority(scorecard)
     target_implied_notional_gate = target_implied_notional_gate_payload(
-        scorecard=scorecard,
-        target_net_pnl_per_day=target_net_pnl_per_day,
-        baseline_min_avg_filled_notional_per_day=policy.min_avg_filled_notional_per_day,
-        post_cost_net_pnl_per_day=net_pnl,
-        post_cost_pnl_basis=post_cost_pnl_authority.basis,
-        post_cost_pnl_source=post_cost_pnl_authority.source,
+        TargetImpliedNotionalInputs(
+            scorecard=scorecard,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+            baseline_min_avg_filled_notional_per_day=policy.min_avg_filled_notional_per_day,
+            post_cost_net_pnl_per_day=net_pnl,
+            post_cost_pnl_basis=post_cost_pnl_authority.basis,
+            post_cost_pnl_source=post_cost_pnl_authority.source,
+        )
     )
     effective_min_avg_filled_notional_per_day = decimal_value(
         target_implied_notional_gate.get("effective_min_avg_filled_notional_per_day"),
@@ -405,15 +426,17 @@ def build_oracle_context(
         target_implied_notional_gate.get("observed_post_cost_expectancy_bps")
     )
     checks = _core_oracle_checks(
-        scorecard=scorecard,
-        target_net_pnl_per_day=target_net_pnl_per_day,
-        policy=policy,
-        net_pnl=net_pnl,
-        daily_net=daily_net,
-        risk=risk,
-        target_implied_notional_gate=target_implied_notional_gate,
-        effective_min_avg_filled_notional_per_day=effective_min_avg_filled_notional_per_day,
-        observed_post_cost_expectancy_bps=observed_post_cost_expectancy_bps,
+        _CoreOracleCheckInputs(
+            scorecard=scorecard,
+            target_net_pnl_per_day=target_net_pnl_per_day,
+            policy=policy,
+            net_pnl=net_pnl,
+            daily_net=daily_net,
+            risk=risk,
+            target_implied_notional_gate=target_implied_notional_gate,
+            effective_min_avg_filled_notional_per_day=effective_min_avg_filled_notional_per_day,
+            observed_post_cost_expectancy_bps=observed_post_cost_expectancy_bps,
+        )
     )
 
     return OracleEvaluationContext(

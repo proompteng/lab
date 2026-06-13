@@ -27,6 +27,28 @@ class _ObservedExpectancy:
     source: str
 
 
+@dataclass(frozen=True)
+class TargetImpliedNotionalInputs:
+    scorecard: Mapping[str, Any]
+    target_net_pnl_per_day: Decimal
+    baseline_min_avg_filled_notional_per_day: Decimal
+    post_cost_net_pnl_per_day: Decimal
+    post_cost_pnl_basis: str
+    post_cost_pnl_source: str
+
+
+@dataclass(frozen=True)
+class RiskAdjustedDrawdownInputs:
+    metric: str
+    observed: Decimal
+    start_equity: Decimal
+    normal_pct: Decimal
+    extended_pct: Decimal
+    total_net_pnl: Decimal
+    min_total_net_pnl_to_drawdown_ratio: Decimal
+    absolute_cap: Decimal
+
+
 def decimal_value(value: Any, *, default: str = "0") -> Decimal:
     try:
         return Decimal(str(value if value is not None else default))
@@ -186,47 +208,43 @@ def _target_implied_blockers(
 
 
 def target_implied_notional_gate_payload(
-    *,
-    scorecard: Mapping[str, Any],
-    target_net_pnl_per_day: Decimal,
-    baseline_min_avg_filled_notional_per_day: Decimal,
-    post_cost_net_pnl_per_day: Decimal,
-    post_cost_pnl_basis: str,
-    post_cost_pnl_source: str,
+    inputs: TargetImpliedNotionalInputs,
 ) -> dict[str, Any]:
     avg_filled_notional = _first_positive_decimal(
-        scorecard,
+        inputs.scorecard,
         AVG_FILLED_NOTIONAL_PER_DAY_KEYS,
     )
     authority = _pnl_authority_status(
-        basis=post_cost_pnl_basis,
-        source=post_cost_pnl_source,
+        basis=inputs.post_cost_pnl_basis,
+        source=inputs.post_cost_pnl_source,
     )
     observed_expectancy = _observed_expectancy_bps(
         authority=authority,
         avg_filled_notional_per_day=avg_filled_notional[0],
         explicit_expectancy=_first_decimal_or_none(
-            scorecard,
+            inputs.scorecard,
             POST_COST_EXPECTANCY_BPS_KEYS,
         ),
-        post_cost_net_pnl_per_day=post_cost_net_pnl_per_day,
+        post_cost_net_pnl_per_day=inputs.post_cost_net_pnl_per_day,
     )
     target_implied_min_avg_filled_notional_per_day = _target_implied_min_notional(
-        target_net_pnl_per_day=target_net_pnl_per_day,
+        target_net_pnl_per_day=inputs.target_net_pnl_per_day,
         observed_expectancy_bps=observed_expectancy.value,
     )
-    effective_min_avg_filled_notional_per_day = baseline_min_avg_filled_notional_per_day
+    effective_min_avg_filled_notional_per_day = (
+        inputs.baseline_min_avg_filled_notional_per_day
+    )
     if target_implied_min_avg_filled_notional_per_day is not None:
         effective_min_avg_filled_notional_per_day = max(
-            baseline_min_avg_filled_notional_per_day,
+            inputs.baseline_min_avg_filled_notional_per_day,
             target_implied_min_avg_filled_notional_per_day,
         )
 
     return {
-        "target_daily_net_pnl": decimal_payload(target_net_pnl_per_day),
-        "post_cost_net_pnl_per_day": decimal_payload(post_cost_net_pnl_per_day),
-        "post_cost_pnl_basis": post_cost_pnl_basis,
-        "post_cost_pnl_source": post_cost_pnl_source,
+        "target_daily_net_pnl": decimal_payload(inputs.target_net_pnl_per_day),
+        "post_cost_net_pnl_per_day": decimal_payload(inputs.post_cost_net_pnl_per_day),
+        "post_cost_pnl_basis": inputs.post_cost_pnl_basis,
+        "post_cost_pnl_source": inputs.post_cost_pnl_source,
         "post_cost_basis_accepted": authority.basis_accepted,
         "post_cost_source_accepted": authority.source_accepted,
         "avg_filled_notional_per_day": decimal_payload(avg_filled_notional[0]),
@@ -234,7 +252,7 @@ def target_implied_notional_gate_payload(
         "observed_post_cost_expectancy_bps": decimal_payload(observed_expectancy.value),
         "observed_post_cost_expectancy_bps_source": observed_expectancy.source,
         "baseline_min_avg_filled_notional_per_day": decimal_payload(
-            baseline_min_avg_filled_notional_per_day
+            inputs.baseline_min_avg_filled_notional_per_day
         ),
         "target_implied_min_avg_filled_notional_per_day": decimal_payload(
             target_implied_min_avg_filled_notional_per_day
@@ -490,43 +508,41 @@ def profit_factor(
     return Decimal("0")
 
 
-def risk_adjusted_drawdown_check(
-    *,
-    metric: str,
-    observed: Decimal,
-    start_equity: Decimal,
-    normal_pct: Decimal,
-    extended_pct: Decimal,
-    total_net_pnl: Decimal,
-    min_total_net_pnl_to_drawdown_ratio: Decimal,
-    absolute_cap: Decimal,
-) -> dict[str, Any]:
-    normal_limit = max(Decimal("0"), start_equity * normal_pct)
-    extended_limit = max(normal_limit, start_equity * extended_pct)
+def risk_adjusted_drawdown_check(inputs: RiskAdjustedDrawdownInputs) -> dict[str, Any]:
+    normal_limit = max(Decimal("0"), inputs.start_equity * inputs.normal_pct)
+    extended_limit = max(normal_limit, inputs.start_equity * inputs.extended_pct)
     absolute_limit = (
-        extended_limit if absolute_cap <= 0 else min(absolute_cap, extended_limit)
+        extended_limit
+        if inputs.absolute_cap <= 0
+        else min(inputs.absolute_cap, extended_limit)
     )
-    ratio = Decimal("999999999") if observed <= 0 else total_net_pnl / observed
-    if observed <= normal_limit:
+    ratio = (
+        Decimal("999999999")
+        if inputs.observed <= 0
+        else inputs.total_net_pnl / inputs.observed
+    )
+    if inputs.observed <= normal_limit:
         passed = True
         mode = "normal_pct"
-    elif observed <= absolute_limit and observed > 0:
-        passed = ratio >= min_total_net_pnl_to_drawdown_ratio
+    elif inputs.observed <= absolute_limit and inputs.observed > 0:
+        passed = ratio >= inputs.min_total_net_pnl_to_drawdown_ratio
         mode = "return_adjusted"
     else:
-        passed = observed <= absolute_limit
+        passed = inputs.observed <= absolute_limit
         mode = "hard_cap"
     return {
-        "metric": metric,
-        "observed": str(observed),
+        "metric": inputs.metric,
+        "observed": str(inputs.observed),
         "operator": "risk_adjusted_lte",
         "threshold": str(normal_limit),
         "extended_threshold": str(absolute_limit),
-        "start_equity": str(start_equity),
-        "normal_pct_equity": str(normal_pct),
-        "extended_pct_equity": str(extended_pct),
+        "start_equity": str(inputs.start_equity),
+        "normal_pct_equity": str(inputs.normal_pct),
+        "extended_pct_equity": str(inputs.extended_pct),
         "total_net_pnl_to_drawdown_ratio": str(ratio),
-        "min_total_net_pnl_to_drawdown_ratio": str(min_total_net_pnl_to_drawdown_ratio),
+        "min_total_net_pnl_to_drawdown_ratio": str(
+            inputs.min_total_net_pnl_to_drawdown_ratio
+        ),
         "mode": mode,
         "passed": passed,
     }
