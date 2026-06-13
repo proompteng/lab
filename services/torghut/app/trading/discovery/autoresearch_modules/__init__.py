@@ -1,49 +1,85 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+"""Public exports for app.trading.discovery.autoresearch_modules."""
+
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
+from importlib import import_module
 
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
+_impl = import_module(f"{__name__}.part_02_load_strategy_autoresearch_program")
 
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_21")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_02_load_strategy_autoresearch_program"
+_SCHEMA_VERSION = getattr(_impl, "_SCHEMA_VERSION")
+_mapping = getattr(_impl, "_mapping")
+_string = getattr(_impl, "_string")
+_string_list = getattr(_impl, "_string_list")
+_coerce_decimal = getattr(_impl, "_coerce_decimal")
+_json_clone = getattr(_impl, "_json_clone")
+_stable_value_key = getattr(_impl, "_stable_value_key")
+_dedupe_preserve_order = getattr(_impl, "_dedupe_preserve_order")
+_current_grid_value = getattr(_impl, "_current_grid_value")
+_decimal_from_candidate = getattr(_impl, "_decimal_from_candidate")
+_format_numeric_like = getattr(_impl, "_format_numeric_like")
+StrategyObjective = getattr(_impl, "StrategyObjective")
+SnapshotPolicy = getattr(_impl, "SnapshotPolicy")
+ProposalModelPolicy = getattr(_impl, "ProposalModelPolicy")
+ReplayBudget = getattr(_impl, "ReplayBudget")
+RuntimeClosurePolicy = getattr(_impl, "RuntimeClosurePolicy")
+ResearchClaim = getattr(_impl, "ResearchClaim")
+ResearchSource = getattr(_impl, "ResearchSource")
+MutationSpace = getattr(_impl, "MutationSpace")
+FamilyAutoresearchPlan = getattr(_impl, "FamilyAutoresearchPlan")
+StrategyAutoresearchProgram = getattr(_impl, "StrategyAutoresearchProgram")
+_load_mutation_space = getattr(_impl, "_load_mutation_space")
+_resolve_program_path = getattr(_impl, "_resolve_program_path")
+_resolve_seed_sweep_path = getattr(_impl, "_resolve_seed_sweep_path")
+_load_runtime_closure_policy = getattr(_impl, "_load_runtime_closure_policy")
+load_strategy_autoresearch_program = getattr(
+    _impl, "load_strategy_autoresearch_program"
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+apply_program_objective = getattr(_impl, "apply_program_objective")
+_resolved_mutation_values = getattr(_impl, "_resolved_mutation_values")
+build_mutated_sweep_config = getattr(_impl, "build_mutated_sweep_config")
+_objective_start_equity = getattr(_impl, "_objective_start_equity")
+_objective_total_net_pnl = getattr(_impl, "_objective_total_net_pnl")
+_objective_drawdown_passes = getattr(_impl, "_objective_drawdown_passes")
+candidate_meets_objective = getattr(_impl, "candidate_meets_objective")
+stable_payload_hash = getattr(_impl, "stable_payload_hash")
+run_id = getattr(_impl, "run_id")
 
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "_SCHEMA_VERSION",
+    "_mapping",
+    "_string",
+    "_string_list",
+    "_coerce_decimal",
+    "_json_clone",
+    "_stable_value_key",
+    "_dedupe_preserve_order",
+    "_current_grid_value",
+    "_decimal_from_candidate",
+    "_format_numeric_like",
+    "StrategyObjective",
+    "SnapshotPolicy",
+    "ProposalModelPolicy",
+    "ReplayBudget",
+    "RuntimeClosurePolicy",
+    "ResearchClaim",
+    "ResearchSource",
+    "MutationSpace",
+    "FamilyAutoresearchPlan",
+    "StrategyAutoresearchProgram",
+    "_load_mutation_space",
+    "_resolve_program_path",
+    "_resolve_seed_sweep_path",
+    "_load_runtime_closure_policy",
+    "load_strategy_autoresearch_program",
+    "apply_program_objective",
+    "_resolved_mutation_values",
+    "build_mutated_sweep_config",
+    "_objective_start_equity",
+    "_objective_total_net_pnl",
+    "_objective_drawdown_passes",
+    "candidate_meets_objective",
+    "stable_payload_hash",
+    "run_id",
 ]
-del __compat_module__
+
+del _impl
