@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Single-entrypoint historical simulation workflow for Torghut."""
 
@@ -62,12 +61,39 @@ from scripts.simulation_lane_contracts import (
     simulation_schema_registry_subject_roles,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_64 import *
-from .part_02_clickhouseruntimeconfig import *
-from .part_03_normalize_migrations_command import *
-from .part_04_is_vector_extension_create_permission_erro import *
+from .simulation_context import (
+    DEFAULT_SIMULATION_CACHE_BUCKET,
+    DEFAULT_SIMULATION_CACHE_PREFIX,
+    DEFAULT_SIMULATION_DUMP_FORMAT,
+    DEFAULT_SIMULATION_DUMP_SORT_MEMORY_LIMIT,
+    DEFAULT_SIMULATION_REPLAY_PROFILE,
+    REPLAY_PROFILE_DEFAULTS,
+    SIMULATION_CACHE_KEY_SCHEMA_VERSION,
+    SIMULATION_FEATURE_STALENESS_MARGIN_MS,
+    SIMULATION_FEATURE_STALENESS_MIN_MS,
+    SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST,
+    SUPPORTED_SIMULATION_DUMP_FORMATS,
+)
+from .runtime_config import (
+    ArgocdAutomationConfig,
+    PostgresRuntimeConfig,
+    SimulationResources,
+    _as_mapping,
+    _as_string_list,
+    _as_text,
+    _parse_rfc3339_timestamp,
+    _replace_database_in_dsn,
+)
+from .kubernetes_argocd import (
+    _argocd_ignore_differences_cover_required_rules,
+    _json_pointer_escape,
+    _kubectl_json,
+    _kubectl_patch_json,
+    _normalized_argocd_ignore_differences,
+    _normalized_automation_mode,
+    _read_argocd_applicationset_entry,
+    _read_named_argocd_application_sync_policy,
+)
 
 
 def _set_argocd_application_ignore_differences(
@@ -260,6 +286,8 @@ def _read_secret_key_ref(
     name: str,
     key: str,
 ) -> str:
+    from .kafka_runtime import _b64_to_bytes
+
     secret = _kubectl_json(namespace, ["get", "secret", name, "-o", "json"])
     data = _as_mapping(secret.get("data"))
     encoded = _as_text(data.get(key))
@@ -675,6 +703,8 @@ def _materialize_deterministic_dump(
     staged_path: Path,
     dump_path: Path,
 ) -> str:
+    from .resource_planning import _ensure_supported_binary
+
     _ensure_supported_binary("sort")
     sorted_path = _dump_sort_output_path(dump_path)
     sort_memory_limit = (
@@ -766,4 +796,99 @@ def _ta_restore_policy(manifest: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "Any",
+    "COMPONENT_ARTIFACTS",
+    "COMPONENT_REPLAY",
+    "COMPONENT_TA",
+    "COMPONENT_TORGHUT",
+    "Callable",
+    "CephS3Client",
+    "DOC29_SIMULATION_FULL_DAY_GATE",
+    "DOC29_SIMULATION_SMOKE_GATE",
+    "Decimal",
+    "EQUITY_SIMULATION_LANE",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "Mapping",
+    "Path",
+    "SIMULATION_PROGRESS_COMPONENTS",
+    "Sequence",
+    "SessionLocal",
+    "TRACE_STATUS_BLOCKED",
+    "TRACE_STATUS_SATISFIED",
+    "ZoneInfo",
+    "annotations",
+    "argparse",
+    "asdict",
+    "base64",
+    "build_completion_trace",
+    "build_fill_price_error_budget_report_v1",
+    "cast",
+    "contextmanager",
+    "create_engine",
+    "dataclass",
+    "date",
+    "datetime",
+    "gzip",
+    "hashlib",
+    "importlib",
+    "json",
+    "os",
+    "persist_completion_trace",
+    "psycopg",
+    "quote",
+    "quote_plus",
+    "re",
+    "replace",
+    "run_autonomous_lane",
+    "sessionmaker",
+    "shlex",
+    "shutil",
+    "simulation_clickhouse_table_names",
+    "simulation_lane_contract",
+    "simulation_lane_contract_for_manifest",
+    "simulation_schema_registry_subject_roles",
+    "simulation_verification",
+    "socket",
+    "sql",
+    "subprocess",
+    "sys",
+    "time",
+    "timedelta",
+    "timezone",
+    "unquote_plus",
+    "urlsplit",
+    "uuid",
+    "yaml",
+    "_artifact_path",
+    "_cache_artifact_lineage_matches",
+    "_cache_lineage_payload",
+    "_derived_simulation_cache_key",
+    "_derived_simulation_cache_paths",
+    "_dump_artifact_manifest_path",
+    "_dump_sort_key",
+    "_dump_sort_output_path",
+    "_dump_sort_stage_path",
+    "_dump_suffix",
+    "_expand_env_value_refs",
+    "_kservice_container_with_env",
+    "_kservice_env",
+    "_materialize_deterministic_dump",
+    "_merge_env_entries",
+    "_performance_config",
+    "_read_configmap_key_ref",
+    "_read_secret_key_ref",
+    "_recommended_simulation_feature_staleness_ms",
+    "_resolve_kservice_env_values",
+    "_resolve_warm_lane_runtime_postgres_config",
+    "_run_state_path",
+    "_set_argocd_application_ignore_differences",
+    "_simulation_account_label",
+    "_stable_json_for_hash",
+    "_stable_string_list",
+    "_state_paths",
+    "_ta_restore_policy",
+    "_torghut_env_overrides_from_manifest",
+    "_wait_for_argocd_application_mode",
+)

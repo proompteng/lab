@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Single-entrypoint historical simulation workflow for Torghut."""
 
@@ -62,13 +61,34 @@ from scripts.simulation_lane_contracts import (
     simulation_schema_registry_subject_roles,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_64 import *
-from .part_02_clickhouseruntimeconfig import *
-from .part_03_normalize_migrations_command import *
-from .part_04_is_vector_extension_create_permission_erro import *
-from .part_05_set_argocd_application_ignore_differences import *
+from .simulation_context import (
+    DEFAULT_SIMULATION_CACHE_BUCKET,
+    DEFAULT_SIMULATION_CACHE_CEPH_TIMEOUT_SECONDS,
+    DEFAULT_SIMULATION_CACHE_ENDPOINT,
+    DEFAULT_SIMULATION_DUMP_FORMAT,
+    SIMULATION_CACHE_UPLOAD_BYTES_PER_SECOND_FLOOR,
+    SIMULATION_CACHE_UPLOAD_MIN_TIMEOUT_SECONDS,
+    SIMULATION_CACHE_UPLOAD_RETRY_ATTEMPTS,
+    SIMULATION_CACHE_UPLOAD_RETRY_SLEEP_SECONDS,
+    SIMULATION_CACHE_UPLOAD_TIMEOUT_MAX_SECONDS,
+    SIMULATION_CACHE_UPLOAD_TIMEOUT_SLACK_SECONDS,
+)
+from .runtime_config import (
+    PostgresRuntimeConfig,
+    SimulationResources,
+    _as_mapping,
+    _as_text,
+    _safe_int,
+)
+from .service_environment import (
+    _cache_artifact_lineage_matches,
+    _derived_simulation_cache_key,
+    _derived_simulation_cache_paths,
+    _dump_artifact_manifest_path,
+    _performance_config,
+    _run_state_path,
+    _ta_restore_policy,
+)
 
 
 def _ta_restore_paths(ta_data: Mapping[str, Any]) -> dict[str, str | None]:
@@ -126,6 +146,8 @@ def _update_run_state(
     status: str,
     details: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from .storage_and_database import _load_optional_json
+
     state_path = _run_state_path(resources)
     state = _load_optional_json(state_path) or {
         "run_id": resources.run_id,
@@ -197,6 +219,8 @@ def _write_dump_marker(
     min_source_timestamp_ms: int | None,
     max_source_timestamp_ms: int | None,
 ) -> None:
+    from .storage_and_database import _dump_marker_path
+
     _save_json(
         _dump_marker_path(dump_path),
         {
@@ -215,6 +239,8 @@ def _write_dump_marker_from_manifest(
     dump_path: Path,
     artifact_manifest: Mapping[str, Any],
 ) -> None:
+    from .topic_dumping import _dump_format_for_path
+
     chunks = artifact_manifest.get("chunks")
     if not isinstance(chunks, list) or not chunks:
         raise RuntimeError("cache_manifest_missing_chunks")
@@ -455,6 +481,8 @@ def _restore_cached_dump_if_available(
         payload = client.get_object(bucket=bucket, key=key)
         _ensure_directory(dump_path)
         dump_path.write_bytes(payload)
+        from .storage_and_database import _file_sha256, _reusable_dump_report
+
         if manifest_ref is not None:
             manifest_bucket, manifest_key = manifest_ref
             manifest_payload = client.get_object(
@@ -477,6 +505,8 @@ def _restore_cached_dump_if_available(
                 artifact_manifest=artifact_manifest,
             )
         else:
+            from .topic_dumping import _count_lines, _dump_format_for_path
+
             _write_dump_marker(
                 dump_path=dump_path,
                 dump_sha256=_file_sha256(dump_path),
@@ -537,6 +567,8 @@ def _upload_dump_to_cache(
     manifest_bucket, manifest_key = manifest_ref
     bucket = bucket or default_bucket
     manifest_bucket = manifest_bucket or default_bucket
+
+    from .topic_dumping import _dump_format_for_path
 
     dump_content_type = {
         "ndjson": "application/x-ndjson",
@@ -729,6 +761,8 @@ def _upsert_simulation_progress_row(
             conn.commit()
 
     try:
+        from .kubernetes_argocd import _run_with_transient_postgres_retry
+
         _run_with_transient_postgres_retry(
             label=f"upsert_simulation_progress:{component}",
             operation=_write,
@@ -751,4 +785,88 @@ def _load_json(path: Path) -> dict[str, Any]:
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "Any",
+    "COMPONENT_ARTIFACTS",
+    "COMPONENT_REPLAY",
+    "COMPONENT_TA",
+    "COMPONENT_TORGHUT",
+    "Callable",
+    "CephS3Client",
+    "DOC29_SIMULATION_FULL_DAY_GATE",
+    "DOC29_SIMULATION_SMOKE_GATE",
+    "Decimal",
+    "EQUITY_SIMULATION_LANE",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "Mapping",
+    "Path",
+    "SIMULATION_PROGRESS_COMPONENTS",
+    "Sequence",
+    "SessionLocal",
+    "TRACE_STATUS_BLOCKED",
+    "TRACE_STATUS_SATISFIED",
+    "ZoneInfo",
+    "annotations",
+    "argparse",
+    "asdict",
+    "base64",
+    "build_completion_trace",
+    "build_fill_price_error_budget_report_v1",
+    "cast",
+    "contextmanager",
+    "create_engine",
+    "dataclass",
+    "date",
+    "datetime",
+    "gzip",
+    "hashlib",
+    "importlib",
+    "json",
+    "os",
+    "persist_completion_trace",
+    "psycopg",
+    "quote",
+    "quote_plus",
+    "re",
+    "replace",
+    "run_autonomous_lane",
+    "sessionmaker",
+    "shlex",
+    "shutil",
+    "simulation_clickhouse_table_names",
+    "simulation_lane_contract",
+    "simulation_lane_contract_for_manifest",
+    "simulation_schema_registry_subject_roles",
+    "simulation_verification",
+    "socket",
+    "sql",
+    "subprocess",
+    "sys",
+    "time",
+    "timedelta",
+    "timezone",
+    "unquote_plus",
+    "urlsplit",
+    "uuid",
+    "yaml",
+    "_cache_metadata",
+    "_ensure_directory",
+    "_is_transient_simulation_cache_upload_error",
+    "_load_json",
+    "_log_script_event",
+    "_resolve_ta_restore_configuration",
+    "_restore_cached_dump_if_available",
+    "_s3_bucket_key",
+    "_save_json",
+    "_simulation_cache_client_from_env",
+    "_simulation_cache_upload_attempts",
+    "_simulation_cache_upload_timeout_seconds",
+    "_ta_restore_paths",
+    "_update_run_state",
+    "_upload_dump_to_cache",
+    "_upsert_simulation_progress_row",
+    "_utc_from_millis",
+    "_write_dump_marker",
+    "_write_dump_marker_from_manifest",
+)

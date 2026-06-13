@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Single-entrypoint historical simulation workflow for Torghut."""
 
@@ -62,10 +61,50 @@ from scripts.simulation_lane_contracts import (
     simulation_schema_registry_subject_roles,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_64 import *
-from .part_02_clickhouseruntimeconfig import *
+from .simulation_context import (
+    DEFAULT_ARGOCD_APPSET_NAME,
+    DEFAULT_ARGOCD_APP_NAME,
+    DEFAULT_ARGOCD_NAMESPACE,
+    DEFAULT_ARGOCD_ROOT_APP_NAME,
+    DEFAULT_ARGOCD_RUN_MODE,
+    DEFAULT_NAMESPACE,
+    DEFAULT_OUTPUT_ROOT,
+    DEFAULT_ROLLOUTS_ACTIVITY_TEMPLATE,
+    DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE,
+    DEFAULT_ROLLOUTS_NAMESPACE,
+    DEFAULT_ROLLOUTS_RUNTIME_TEMPLATE,
+    DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE,
+    DEFAULT_ROLLOUTS_VERIFY_POLL_SECONDS,
+    DEFAULT_ROLLOUTS_VERIFY_TIMEOUT_SECONDS,
+    DEFAULT_SIM_TA_CONFIGMAP,
+    DEFAULT_SIM_TA_DEPLOYMENT,
+    DEFAULT_SIM_TORGHUT_SERVICE,
+    DEFAULT_TA_CONFIGMAP,
+    DEFAULT_TA_DEPLOYMENT,
+    DEFAULT_TORGHUT_SERVICE,
+    DEFAULT_WARM_LANE_SIMULATION_DATABASE,
+    NON_TRANSIENT_POSTGRES_ERROR_PATTERNS,
+    TRANSIENT_POSTGRES_ERROR_PATTERNS,
+)
+from .runtime_config import (
+    ArgocdAutomationConfig,
+    AutonomyLaneConfig,
+    PostgresRuntimeConfig,
+    RolloutsAnalysisConfig,
+    SimulationResources,
+    _as_mapping,
+    _as_text,
+    _database_name_from_dsn,
+    _derive_simulation_dsn,
+    _ensure_dsn_password,
+    _normalize_run_token,
+    _replace_database_in_dsn,
+    _replace_password_in_dsn,
+    _resolve_manifest_relative_path,
+    _safe_int,
+    _truthy,
+    _validate_simulation_strategy_policy,
+)
 
 
 def _normalize_migrations_command(command: str) -> str:
@@ -170,6 +209,8 @@ def _resolve_command_args(command: str) -> list[str]:
     if os.path.isabs(binary) and not Path(binary).exists():
         fallback_binary = shutil.which(Path(binary).name)
         if fallback_binary:
+            from .state_and_cache import _log_script_event
+
             _log_script_event(
                 "command_binary_resolved",
                 original_binary=binary,
@@ -188,6 +229,8 @@ def _run_alembic_upgrade(
     cwd: Path,
     label: str = "run_migrations",
 ) -> None:
+    from .kubernetes_argocd import _run_with_transient_postgres_retry
+
     _run_with_transient_postgres_retry(
         label=label,
         operation=lambda: _run_command(
@@ -738,6 +781,9 @@ def _run_simulation_autonomy_lane(
         "stage_lineage_root": result.stage_lineage_root,
         "promotion_target": autonomy_config.promotion_target,
     }
+    from .service_environment import _artifact_path
+    from .state_and_cache import _save_json
+
     _save_json(_artifact_path(resources, "autonomy-report.json"), report)
     return report
 
@@ -791,4 +837,92 @@ def _is_transient_postgres_error(error: Exception) -> bool:
     return any(pattern in message for pattern in TRANSIENT_POSTGRES_ERROR_PATTERNS)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "Any",
+    "COMPONENT_ARTIFACTS",
+    "COMPONENT_REPLAY",
+    "COMPONENT_TA",
+    "COMPONENT_TORGHUT",
+    "Callable",
+    "CephS3Client",
+    "DOC29_SIMULATION_FULL_DAY_GATE",
+    "DOC29_SIMULATION_SMOKE_GATE",
+    "Decimal",
+    "EQUITY_SIMULATION_LANE",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "Mapping",
+    "Path",
+    "SIMULATION_PROGRESS_COMPONENTS",
+    "Sequence",
+    "SessionLocal",
+    "TRACE_STATUS_BLOCKED",
+    "TRACE_STATUS_SATISFIED",
+    "ZoneInfo",
+    "annotations",
+    "argparse",
+    "asdict",
+    "base64",
+    "build_completion_trace",
+    "build_fill_price_error_budget_report_v1",
+    "cast",
+    "contextmanager",
+    "create_engine",
+    "dataclass",
+    "date",
+    "datetime",
+    "gzip",
+    "hashlib",
+    "importlib",
+    "json",
+    "os",
+    "persist_completion_trace",
+    "psycopg",
+    "quote",
+    "quote_plus",
+    "re",
+    "replace",
+    "run_autonomous_lane",
+    "sessionmaker",
+    "shlex",
+    "shutil",
+    "simulation_clickhouse_table_names",
+    "simulation_lane_contract",
+    "simulation_lane_contract_for_manifest",
+    "simulation_schema_registry_subject_roles",
+    "simulation_verification",
+    "socket",
+    "sql",
+    "subprocess",
+    "sys",
+    "time",
+    "timedelta",
+    "timezone",
+    "unquote_plus",
+    "urlsplit",
+    "uuid",
+    "yaml",
+    "_build_argocd_automation_config",
+    "_build_autonomy_lane_config",
+    "_build_postgres_runtime_config",
+    "_build_resources",
+    "_build_rollouts_analysis_config",
+    "_canonicalize_warm_lane_manifest",
+    "_default_simulation_postgres_db",
+    "_ensure_lz4_codec_available",
+    "_ensure_supported_binary",
+    "_find_vector_extension_blocking_revision",
+    "_is_transient_postgres_error",
+    "_merge_topics",
+    "_normalize_migrations_command",
+    "_replace_alembic_upgrade_target",
+    "_resolve_command_args",
+    "_run_alembic_upgrade",
+    "_run_command",
+    "_run_simulation_autonomy_lane",
+    "_ta_auto_offset_reset_key",
+    "_ta_clickhouse_url_key",
+    "_ta_group_id_key",
+    "_ta_topic_key_by_role",
+    "_warm_lane_enabled",
+)

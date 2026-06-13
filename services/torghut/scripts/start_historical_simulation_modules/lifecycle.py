@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Single-entrypoint historical simulation workflow for Torghut."""
 
@@ -62,21 +61,65 @@ from scripts.simulation_lane_contracts import (
     simulation_schema_registry_subject_roles,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_64 import *
-from .part_02_clickhouseruntimeconfig import *
-from .part_03_normalize_migrations_command import *
-from .part_04_is_vector_extension_create_permission_erro import *
-from .part_05_set_argocd_application_ignore_differences import *
-from .part_06_ta_restore_paths import *
-from .part_07_load_optional_json import *
-from .part_08_run_migrations import *
-from .part_09_restore_torghut_env_required import *
-from .part_10_dump_topics import *
-from .part_11_replay_dump import *
-from .part_12_prepare_argocd_for_run import *
-from .part_13_build_strategy_proof_artifact import *
+from .simulation_context import KafkaRuntimeConfig
+from .runtime_config import (
+    ArgocdAutomationConfig,
+    AutonomyLaneConfig,
+    ClickHouseRuntimeConfig,
+    PostgresRuntimeConfig,
+    RolloutsAnalysisConfig,
+    SimulationResources,
+    _as_mapping,
+    _as_text,
+    _parse_optional_rfc3339_timestamp,
+    _safe_int,
+    _validate_window_policy,
+)
+from .resource_planning import (
+    _ensure_supported_binary,
+    _run_simulation_autonomy_lane,
+)
+from .kubernetes_argocd import (
+    _argocd_ignore_differences_cover_runtime_mutations,
+    _clone_json_list,
+    _clone_json_mapping,
+    _normalized_automation_mode,
+    _read_argocd_application_sync_policy,
+    _read_argocd_automation_mode,
+    _read_named_argocd_application_sync_policy,
+)
+from .service_environment import (
+    _artifact_path,
+    _state_paths,
+)
+from .state_and_cache import (
+    _save_json,
+    _update_run_state,
+    _upsert_simulation_progress_row,
+)
+from .runtime_migrations import _runtime_sessionmaker
+from .kafka_runtime import _runtime_verify
+from .replay_execution import (
+    _apply,
+    _replay_dump,
+    _teardown,
+)
+from .argocd_rollouts import (
+    _build_fill_price_error_budget_payload,
+    _prepare_argocd_for_run,
+    _report_simulation,
+    _restore_argocd_after_run,
+    _run_rollouts_analysis,
+    _wait_for_runtime_verify,
+    _wait_for_torghut_service_revision_ready,
+)
+from .proof_artifacts import (
+    _build_gate_input,
+    _build_performance_report,
+    _build_run_summary,
+    _build_simulation_completion_trace,
+    _build_strategy_proof_artifact,
+)
 
 
 def _run_full_lifecycle(
@@ -364,6 +407,7 @@ def _run_full_lifecycle(
                 clickhouse_config=clickhouse_config,
                 runtime_verify=runtime_verify_report,
             )
+            assert monitor_report is not None
             final_snapshot = _as_mapping(monitor_report.get("final_snapshot"))
             _upsert_simulation_progress_row(
                 postgres_config=postgres_config,
@@ -419,7 +463,6 @@ def _run_full_lifecycle(
                         "message": str(exc),
                     }
                 rollouts_report["activity_analysis_run"] = activity_analysis_run
-            assert monitor_report is not None
             monitor_report["analysis_run"] = rollouts_report["activity_analysis_run"]
             _save_json(_artifact_path(resources, "activity-debug.json"), monitor_report)
             _upsert_simulation_progress_row(
@@ -872,4 +915,73 @@ _http_clickhouse_query = simulation_verification._http_clickhouse_query
 _monitor_run_completion = simulation_verification._monitor_run_completion
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "Any",
+    "COMPONENT_ARTIFACTS",
+    "COMPONENT_REPLAY",
+    "COMPONENT_TA",
+    "COMPONENT_TORGHUT",
+    "Callable",
+    "CephS3Client",
+    "DOC29_SIMULATION_FULL_DAY_GATE",
+    "DOC29_SIMULATION_SMOKE_GATE",
+    "Decimal",
+    "EQUITY_SIMULATION_LANE",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "Mapping",
+    "Path",
+    "SIMULATION_PROGRESS_COMPONENTS",
+    "Sequence",
+    "SessionLocal",
+    "TRACE_STATUS_BLOCKED",
+    "TRACE_STATUS_SATISFIED",
+    "ZoneInfo",
+    "annotations",
+    "argparse",
+    "asdict",
+    "base64",
+    "build_completion_trace",
+    "build_fill_price_error_budget_report_v1",
+    "cast",
+    "contextmanager",
+    "create_engine",
+    "dataclass",
+    "date",
+    "datetime",
+    "gzip",
+    "hashlib",
+    "importlib",
+    "json",
+    "os",
+    "persist_completion_trace",
+    "psycopg",
+    "quote",
+    "quote_plus",
+    "re",
+    "replace",
+    "run_autonomous_lane",
+    "sessionmaker",
+    "shlex",
+    "shutil",
+    "simulation_clickhouse_table_names",
+    "simulation_lane_contract",
+    "simulation_lane_contract_for_manifest",
+    "simulation_schema_registry_subject_roles",
+    "simulation_verification",
+    "socket",
+    "sql",
+    "subprocess",
+    "sys",
+    "time",
+    "timedelta",
+    "timezone",
+    "unquote_plus",
+    "urlsplit",
+    "uuid",
+    "yaml",
+    "_http_clickhouse_query",
+    "_monitor_run_completion",
+    "_render_report",
+    "_run_full_lifecycle",
+)
