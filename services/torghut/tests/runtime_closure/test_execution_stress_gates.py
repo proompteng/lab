@@ -1,14 +1,26 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.runtime_closure.support import *
+from tests.runtime_closure.support import (
+    Decimal,
+    Path,
+    TemporaryDirectory,
+    runtime_closure,
+    RuntimeClosurePolicy,
+    StrategyAutoresearchProgram,
+    StrategyObjective,
+    build_mlx_snapshot_manifest,
+    RuntimeClosureExecutionContext,
+    write_runtime_closure_bundle,
+    _program,
+    _TestRuntimeClosureBase,
+)
 
 
-class TestRuntimeClosurePart3(_TestRuntimeClosureBase):
+class TestRuntimeClosureExecutionStressGates(_TestRuntimeClosureBase):
     def test_delay_adjusted_depth_stress_rejects_aggregate_depth_without_lob_reality_evidence(
         self,
     ) -> None:
-        report = runtime_closure._delay_adjusted_depth_stress_report(
+        report = runtime_closure.delay_adjusted_depth_stress_report(
             runner_run_id="run-depth-no-lob-proof",
             best_candidate={
                 "candidate_id": "cand-depth-no-lob-proof",
@@ -68,7 +80,7 @@ class TestRuntimeClosurePart3(_TestRuntimeClosureBase):
             "fill_outcomes_artifact_ref": "s3://proof/fill-outcomes.json",
             "simulation_live_parity_artifact_ref": "s3://proof/live-parity.json",
         }
-        report = runtime_closure._delay_adjusted_depth_stress_report(
+        report = runtime_closure.delay_adjusted_depth_stress_report(
             runner_run_id="run-depth-candidate-metadata",
             best_candidate={
                 "candidate_id": "cand-depth-candidate-metadata",
@@ -115,7 +127,7 @@ class TestRuntimeClosurePart3(_TestRuntimeClosureBase):
     def test_delay_adjusted_depth_stress_requires_explicit_parity_error_metrics(
         self,
     ) -> None:
-        report = runtime_closure._delay_adjusted_depth_stress_report(
+        report = runtime_closure.delay_adjusted_depth_stress_report(
             runner_run_id="run-depth-missing-parity-errors",
             best_candidate={
                 "candidate_id": "cand-depth-missing-parity-errors",
@@ -179,7 +191,7 @@ class TestRuntimeClosurePart3(_TestRuntimeClosureBase):
     def test_delay_adjusted_depth_stress_accepts_lob_reality_gap_evidence(
         self,
     ) -> None:
-        report = runtime_closure._delay_adjusted_depth_stress_report(
+        report = runtime_closure.delay_adjusted_depth_stress_report(
             runner_run_id="run-depth-lob-proof",
             best_candidate={
                 "candidate_id": "cand-depth-lob-proof",
@@ -242,7 +254,7 @@ class TestRuntimeClosurePart3(_TestRuntimeClosureBase):
     def test_delay_adjusted_depth_stress_scales_net_when_recorded_depth_is_thin(
         self,
     ) -> None:
-        report = runtime_closure._delay_adjusted_depth_stress_report(
+        report = runtime_closure.delay_adjusted_depth_stress_report(
             runner_run_id="run-depth-thin",
             best_candidate={
                 "candidate_id": "cand-depth-thin",
@@ -321,18 +333,18 @@ class TestRuntimeClosurePart3(_TestRuntimeClosureBase):
         self,
     ) -> None:
         self.assertEqual(
-            runtime_closure._runtime_replay_net_pnl_per_day(
+            runtime_closure.runtime_replay_net_pnl_per_day(
                 {"summary": {"net_pnl": "1000", "trading_day_count": 2}}
             ),
             Decimal("500"),
         )
         self.assertEqual(
-            runtime_closure._runtime_replay_net_pnl_per_day(
+            runtime_closure.runtime_replay_net_pnl_per_day(
                 {"summary": {"net_pnl": "1000", "trading_day_count": 0}}
             ),
             Decimal("0"),
         )
-        weak_window = runtime_closure._double_oos_window_row(
+        weak_window = runtime_closure.double_oos_window_row(
             window_id="approval",
             report={
                 "objective_met": False,
@@ -355,21 +367,23 @@ class TestRuntimeClosurePart3(_TestRuntimeClosureBase):
             ],
         )
 
-        report = runtime_closure._double_oos_walkforward_report(
-            runner_run_id="run-double-oos",
-            best_candidate={
-                "candidate_id": "cand-double-oos",
-                "runtime_family": "breakout_continuation_consistent",
-                "runtime_strategy_name": "breakout-continuation-long-v1",
-            },
-            parity_report={
-                "objective_met": False,
-                "summary": {"net_pnl": "400", "trading_day_count": 2},
-            },
-            approval_report=None,
-            market_impact_report=None,
-            delay_depth_report=None,
-            program=_program(),
+        report = runtime_closure.double_oos_walkforward_report(
+            runtime_closure.DoubleOosWalkforwardRequest(
+                runner_run_id="run-double-oos",
+                best_candidate={
+                    "candidate_id": "cand-double-oos",
+                    "runtime_family": "breakout_continuation_consistent",
+                    "runtime_strategy_name": "breakout-continuation-long-v1",
+                },
+                parity_report={
+                    "objective_met": False,
+                    "summary": {"net_pnl": "400", "trading_day_count": 2},
+                },
+                approval_report=None,
+                market_impact_report=None,
+                delay_depth_report=None,
+                program=_program(),
+            )
         )
 
         self.assertFalse(report["objective_met"])

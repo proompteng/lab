@@ -1,10 +1,22 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.runtime_closure.support import *
+from tests.runtime_closure.support import (
+    json,
+    Decimal,
+    Path,
+    TemporaryDirectory,
+    patch,
+    runtime_closure,
+    runtime_closure_candidate_payloads,
+    yaml,
+    build_mlx_snapshot_manifest,
+    RuntimeClosureExecutionContext,
+    _program,
+    _TestRuntimeClosureBase,
+)
 
 
-class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
+class TestRuntimeClosureContext(_TestRuntimeClosureBase):
     def test_discover_runtime_root_accepts_monorepo_and_service_image_layouts(
         self,
     ) -> None:
@@ -25,7 +37,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
             (monorepo_root / ".git").write_text("gitdir: test\n", encoding="utf-8")
 
             self.assertEqual(
-                runtime_closure._discover_runtime_root(monorepo_source),
+                runtime_closure.discover_runtime_root(monorepo_source),
                 monorepo_root.resolve(),
             )
 
@@ -39,7 +51,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
             (service_root / "scripts").mkdir()
 
             self.assertEqual(
-                runtime_closure._discover_runtime_root(service_source),
+                runtime_closure.discover_runtime_root(service_source),
                 service_root.resolve(),
             )
 
@@ -70,7 +82,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
             ).write_text("apiVersion: v1\n", encoding="utf-8")
 
             self.assertEqual(
-                runtime_closure._discover_runtime_root(argocd_source),
+                runtime_closure.discover_runtime_root(argocd_source),
                 argocd_root.resolve(),
             )
 
@@ -86,7 +98,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
             shallow_source.write_text("# test\n", encoding="utf-8")
 
             self.assertEqual(
-                runtime_closure._discover_runtime_root(shallow_source),
+                runtime_closure.discover_runtime_root(shallow_source),
                 (root / "shallow").resolve(),
             )
 
@@ -95,7 +107,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
             unmatched_source.write_text("# test\n", encoding="utf-8")
 
             self.assertEqual(
-                runtime_closure._discover_runtime_root(unmatched_source),
+                runtime_closure.discover_runtime_root(unmatched_source),
                 unmatched_source.parent.resolve(),
             )
 
@@ -120,37 +132,37 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
         )
 
         self.assertEqual(
-            runtime_closure._max_drawdown_from_daily_net(
+            runtime_closure.max_drawdown_from_daily_net(
                 {"2026-03-20": Decimal("5"), "2026-03-21": Decimal("-10")}
             ),
             Decimal("10"),
         )
         self.assertEqual(
-            runtime_closure._rolling_lower_bound({}, window=3), Decimal("0")
+            runtime_closure.rolling_lower_bound({}, window=3), Decimal("0")
         )
         self.assertEqual(
-            runtime_closure._rolling_lower_bound(
+            runtime_closure.rolling_lower_bound(
                 {"2026-03-20": Decimal("2"), "2026-03-21": Decimal("4")},
                 window=3,
             ),
             Decimal("3"),
         )
         self.assertEqual(
-            runtime_closure._max_best_day_share_of_total_pnl(
+            runtime_closure.max_best_day_share_of_total_pnl(
                 daily_net={"2026-03-20": Decimal("-1")},
                 total_net_pnl=Decimal("0"),
             ),
             Decimal("1"),
         )
         self.assertEqual(
-            runtime_closure._max_best_day_share_of_total_pnl(
+            runtime_closure.max_best_day_share_of_total_pnl(
                 daily_net={"2026-03-20": Decimal("-1")},
                 total_net_pnl=Decimal("10"),
             ),
             Decimal("0"),
         )
         self.assertEqual(
-            runtime_closure._daily_liquidity_notional(
+            runtime_closure.daily_liquidity_notional(
                 {
                     "daily": {
                         "2026-03-20": {"daily_adv_notional": "3200.00"},
@@ -164,7 +176,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
             },
         )
         self.assertEqual(
-            runtime_closure._candidate_symbols(
+            runtime_closure.candidate_symbols(
                 best_candidate={"candidate_strategy_overrides": {}},
                 execution_context=context,
             ),
@@ -172,29 +184,31 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
         )
         self.assertIsNone(context.to_payload()["shadow_validation_artifact_path"])
         self.assertEqual(
-            runtime_closure._window_bounds(
+            runtime_closure.window_bounds(
                 best_candidate={},
                 window_name="full_window",
                 manifest=manifest,
             ),
             (
-                runtime_closure._date_from_iso("2026-03-20"),
-                runtime_closure._date_from_iso("2026-04-09"),
+                runtime_closure.date_from_iso("2026-03-20"),
+                runtime_closure.date_from_iso("2026-04-09"),
             ),
         )
         with self.assertRaisesRegex(
             ValueError, "runtime_closure_window_missing:holdout"
         ):
-            runtime_closure._window_bounds(
+            runtime_closure.window_bounds(
                 best_candidate={},
                 window_name="holdout",
                 manifest=manifest,
             )
         config = object()
         with patch.object(
-            runtime_closure.replay_mod, "run_replay", return_value={"status": "ok"}
+            runtime_closure_candidate_payloads.replay_mod,
+            "run_replay",
+            return_value={"status": "ok"},
         ) as mock_run:
-            payload = runtime_closure._default_replay_executor(config)
+            payload = runtime_closure.default_replay_executor(config)
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(
             payload["execution_realism_status"], "missing_required_evidence"
@@ -210,7 +224,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
         self.assertEqual(
             payload["execution_realism"]["status"], "missing_required_evidence"
         )
-        mock_run.assert_called_once_with(config)  # type: ignore[arg-type]
+        self.assertEqual(mock_run.call_args.args, (config,))
 
     def test_shadow_validation_artifact_helper_covers_invalid_schema_and_pending_status(
         self,
@@ -240,7 +254,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
                 encoding="utf-8",
             )
 
-            invalid_payload = runtime_closure._shadow_validation_artifact(
+            invalid_payload = runtime_closure.shadow_validation_artifact(
                 best_candidate={"candidate_id": "cand-1"},
                 program=_program(),
                 execution_context=RuntimeClosureExecutionContext(
@@ -258,7 +272,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
                 "shadow_validation_artifact_invalid_json", invalid_payload["reasons"]
             )
 
-            bad_schema_payload = runtime_closure._shadow_validation_artifact(
+            bad_schema_payload = runtime_closure.shadow_validation_artifact(
                 best_candidate={"candidate_id": "cand-1"},
                 program=_program(),
                 execution_context=RuntimeClosureExecutionContext(
@@ -277,7 +291,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
                 bad_schema_payload["reasons"],
             )
 
-            pending_payload = runtime_closure._shadow_validation_artifact(
+            pending_payload = runtime_closure.shadow_validation_artifact(
                 best_candidate={"candidate_id": "cand-1"},
                 program=_program(),
                 execution_context=RuntimeClosureExecutionContext(
@@ -307,7 +321,7 @@ class TestRuntimeClosurePart1(_TestRuntimeClosureBase):
                 chunk_minutes=10,
             )
             with self.assertRaisesRegex(ValueError, "strategy_configmap_not_mapping"):
-                runtime_closure._materialize_candidate_configmap(
+                runtime_closure.materialize_candidate_configmap(
                     best_candidate={},
                     execution_context=context,
                     output_path=root / "out.yaml",
@@ -341,7 +355,7 @@ data:
             with self.assertRaisesRegex(
                 ValueError, "runtime_closure_missing_runtime_strategy_name"
             ):
-                runtime_closure._materialize_candidate_configmap(
+                runtime_closure.materialize_candidate_configmap(
                     best_candidate={
                         "candidate_params": {"max_entries_per_session": "1"}
                     },
@@ -351,7 +365,7 @@ data:
             with self.assertRaisesRegex(
                 ValueError, "runtime_closure_missing_candidate_params"
             ):
-                runtime_closure._materialize_candidate_configmap(
+                runtime_closure.materialize_candidate_configmap(
                     best_candidate={
                         "runtime_strategy_name": "breakout-continuation-long-v1"
                     },
@@ -364,7 +378,7 @@ data:
             with self.assertRaisesRegex(
                 ValueError, "strategy_configmap_missing_strategies_yaml"
             ):
-                runtime_closure._load_strategy_configmap_payload(missing_catalog_path)
+                runtime_closure.load_strategy_configmap_payload(missing_catalog_path)
 
     def test_materialize_candidate_configmap_accepts_mounted_strategy_catalog(
         self,
@@ -393,7 +407,7 @@ strategies:
                 chunk_minutes=10,
             )
 
-            rendered_path = runtime_closure._materialize_candidate_configmap(
+            rendered_path = runtime_closure.materialize_candidate_configmap(
                 best_candidate={
                     "candidate_id": "cand-1",
                     "runtime_strategy_name": "breakout-continuation-long-v1",
@@ -403,12 +417,8 @@ strategies:
                 output_path=root / "candidate-configmap.yaml",
             )
 
-            rendered = runtime_closure.yaml.safe_load(
-                rendered_path.read_text(encoding="utf-8")
-            )
-            catalog = runtime_closure.yaml.safe_load(
-                rendered["data"]["strategies.yaml"]
-            )
+            rendered = yaml.safe_load(rendered_path.read_text(encoding="utf-8"))
+            catalog = yaml.safe_load(rendered["data"]["strategies.yaml"])
             strategy = catalog["strategies"][0]
             self.assertTrue(strategy["enabled"])
             self.assertEqual(strategy["params"]["max_entries_per_session"], "3")
@@ -473,21 +483,17 @@ data:
                 },
             }
 
-            rendered_path = runtime_closure._materialize_candidate_configmap(
+            rendered_path = runtime_closure.materialize_candidate_configmap(
                 best_candidate=best_candidate,
                 execution_context=context,
                 output_path=root / "portfolio.yaml",
             )
-            rendered = runtime_closure.yaml.safe_load(
-                rendered_path.read_text(encoding="utf-8")
-            )
-            catalog = runtime_closure.yaml.safe_load(
-                rendered["data"]["strategies.yaml"]
-            )
+            rendered = yaml.safe_load(rendered_path.read_text(encoding="utf-8"))
+            catalog = yaml.safe_load(rendered["data"]["strategies.yaml"])
             strategies = catalog["strategies"]
             self.assertFalse(strategies[0]["enabled"])
             self.assertEqual(
-                runtime_closure._candidate_symbols(
+                runtime_closure.candidate_symbols(
                     best_candidate=best_candidate,
                     execution_context=context,
                 ),
@@ -529,7 +535,7 @@ data:
                 full_window_start_date="2026-03-25",
                 full_window_end_date="2026-04-02",
             )
-            candidate_spec = runtime_closure._candidate_spec(
+            candidate_spec = runtime_closure.candidate_spec(
                 runner_run_id="run-1",
                 program=_program(),
                 best_candidate=best_candidate,
@@ -567,13 +573,15 @@ data:
             )
             self.assertEqual(candidate_spec["full_window_start_date"], "2026-03-25")
             self.assertEqual(candidate_spec["full_window_end_date"], "2026-04-02")
-            gate_report = runtime_closure._gate_report(
-                runner_run_id="run-1",
-                best_candidate=best_candidate,
-                promotion_target="shadow",
-                parity_report=None,
-                approval_report=None,
-                shadow_plan={"required": False, "status": "skipped"},
+            gate_report = runtime_closure.gate_report(
+                runtime_closure.GateReportRequest(
+                    runner_run_id="run-1",
+                    best_candidate=best_candidate,
+                    promotion_target="shadow",
+                    parity_report=None,
+                    approval_report=None,
+                    shadow_plan={"required": False, "status": "skipped"},
+                )
             )
             self.assertEqual(
                 gate_report["vnext"]["portfolio_promotion"]["strategy_count"], 4
@@ -635,11 +643,9 @@ data:
             },
         }
 
-        strategies = (
-            runtime_closure._materialized_microbar_portfolio_runtime_strategies(
-                best_candidate=best_candidate,
-                execution_context=context,
-            )
+        strategies = runtime_closure.materialized_microbar_portfolio_runtime_strategies(
+            best_candidate=best_candidate,
+            execution_context=context,
         )
 
         self.assertEqual(len(strategies), 2)
@@ -721,17 +727,13 @@ data:
                 },
             }
 
-            rendered_path = runtime_closure._materialize_candidate_configmap(
+            rendered_path = runtime_closure.materialize_candidate_configmap(
                 best_candidate=best_candidate,
                 execution_context=context,
                 output_path=root / "generic-portfolio.yaml",
             )
-            rendered = runtime_closure.yaml.safe_load(
-                rendered_path.read_text(encoding="utf-8")
-            )
-            catalog = runtime_closure.yaml.safe_load(
-                rendered["data"]["strategies.yaml"]
-            )
+            rendered = yaml.safe_load(rendered_path.read_text(encoding="utf-8"))
+            catalog = yaml.safe_load(rendered["data"]["strategies.yaml"])
             strategies = catalog["strategies"]
             self.assertFalse(strategies[0]["enabled"])
             self.assertEqual(
@@ -748,10 +750,10 @@ data:
             self.assertEqual(strategies[1]["params"]["sleeve_weight"], "0.6")
             self.assertEqual(strategies[2]["max_notional_per_trade"], "20000")
             self.assertEqual(
-                runtime_closure._portfolio_runtime_strategy_names(best_candidate),
+                runtime_closure.portfolio_runtime_strategy_names(best_candidate),
                 ("momentum-pullback-long-v1", "washout-rebound-long-v1"),
             )
-            portfolio_contract = runtime_closure._portfolio_promotion_v2(best_candidate)
+            portfolio_contract = runtime_closure.portfolio_promotion_v2(best_candidate)
             self.assertEqual(portfolio_contract["strategy_count"], 2)
             self.assertEqual(portfolio_contract["spec_compiled_count"], 2)
             self.assertEqual(
