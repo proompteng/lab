@@ -1,10 +1,30 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.runtime_window_import.support import *
+from tests.runtime_window_import.support import (
+    Decimal,
+    StrategyCapitalAllocation,
+    StrategyHypothesis,
+    StrategyHypothesisMetricWindow,
+    StrategyHypothesisVersion,
+    StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
+    TigerBeetleAccountRef,
+    TigerBeetleTransferRef,
+    VNextDatasetSnapshot,
+    _runtime_ledger_bucket,
+    _runtime_pnl_basis,
+    _TestRuntimeWindowImportBase,
+    build_observed_runtime_buckets,
+    datetime,
+    persist_observed_runtime_windows,
+    select,
+    timedelta,
+    timezone,
+    uuid4,
+)
 
 
-class TestRuntimeWindowImportPart3(_TestRuntimeWindowImportBase):
+class TestRuntimeWindowPersistenceReplacement(_TestRuntimeWindowImportBase):
     def test_persist_observed_runtime_windows_creates_governance_rows(self) -> None:
         event_id = uuid4()
         buckets = build_observed_runtime_buckets(

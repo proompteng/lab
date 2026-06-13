@@ -1,10 +1,21 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.runtime_window_import.support import *
+from tests.runtime_window_import.support import (
+    Decimal,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
+    _runtime_ledger_bucket,
+    _runtime_pnl_basis,
+    _TestRuntimeWindowImportBase,
+    build_observed_runtime_buckets,
+    datetime,
+    persist_observed_runtime_windows,
+    select,
+    timezone,
+)
 
 
-class TestRuntimeWindowImportPart6(_TestRuntimeWindowImportBase):
+class TestRuntimeWindowPaperProbation(_TestRuntimeWindowImportBase):
     def test_persist_observed_runtime_windows_keeps_paper_probation_evidence_only(
         self,
     ) -> None:

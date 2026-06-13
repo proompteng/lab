@@ -1,37 +1,19 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Import observed runtime windows into the hypothesis governance ledger."""
 
 from __future__ import annotations
 
 import logging
-from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
-from uuid import UUID
-from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, delete, or_, select
-from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
 
-from ...config import settings
 from ...models import (
-    StrategyCapitalAllocation,
-    StrategyHypothesis,
-    StrategyHypothesisMetricWindow,
-    StrategyHypothesisVersion,
-    StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
-    TigerBeetleAccountRef,
-    TigerBeetleTransferRef,
-    VNextDatasetSnapshot,
 )
 from ..hypotheses import (
     HypothesisManifest,
-    HypothesisRegistryLoadResult,
-    load_hypothesis_registry,
 )
 from ..runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
 from ..runtime_cost_authority import (
@@ -48,20 +30,8 @@ from ..runtime_decision_authority import (
 )
 from ..runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 from ..runtime_ledger_source_authority import (
-    build_runtime_ledger_profit_distance_readback,
     runtime_ledger_promotion_source_authority_blockers as _base_runtime_ledger_promotion_source_authority_blockers,
 )
-from ..tigerbeetle_journal import (
-    TIGERBEETLE_BLOCKER_JOURNAL_DISABLED,
-    TIGERBEETLE_BLOCKER_JOURNAL_ENTRY_UNAVAILABLE,
-    TIGERBEETLE_BLOCKER_JOURNAL_ERROR,
-    TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED,
-    TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
-    TigerBeetleLedgerJournal,
-    tigerbeetle_runtime_ledger_journal_payload,
-)
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 logger = logging.getLogger(__name__)
@@ -86,7 +56,7 @@ _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
     }
 )
 
-_RUNTIME_WINDOW_IMPORT_CAPITAL_ONLY_BLOCKERS = frozenset(
+RUNTIME_WINDOW_IMPORT_CAPITAL_ONLY_BLOCKERS = frozenset(
     {
         "candidate_board_promotion_not_allowed",
         "drift_checks_not_ok",
@@ -160,7 +130,7 @@ class ObservedRuntimeBucket:
 
 
 @dataclass(frozen=True)
-class _NormalizedTcaRow:
+class NormalizedTcaRow:
     computed_at: datetime
     bucketed_at: datetime
     abs_slippage_bps: Decimal | None
@@ -171,13 +141,13 @@ class _NormalizedTcaRow:
     source_decision_mode: str | None = None
 
 
-def _utc(dt: datetime) -> datetime:
+def utc_datetime(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
 
-def _optional_decimal(value: Any) -> Decimal | None:
+def optional_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     if isinstance(value, Decimal):
@@ -191,14 +161,14 @@ def _optional_decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _decimal_text(value: Decimal) -> str:
+def decimal_text(value: Decimal) -> str:
     text = format(value, "f")
     if "." not in text:
         return text
     return text.rstrip("0").rstrip(".") or "0"
 
 
-def _strategy_family_matches(
+def strategy_family_matches(
     *,
     manifest: HypothesisManifest,
     strategy_family: str | None,
@@ -215,7 +185,7 @@ def _strategy_family_matches(
     )
 
 
-def _text(value: Any) -> str | None:
+def text_value(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -226,7 +196,7 @@ def _promotion_grade_runtime_ledger_authority_marker_present(
     bucket: Mapping[str, Any],
     key: str,
 ) -> bool:
-    marker = _text(bucket.get(key))
+    marker = text_value(bucket.get(key))
     return (
         marker is not None
         and marker in _RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS
@@ -249,19 +219,19 @@ def runtime_ledger_promotion_source_authority_blockers(
     return list(dict.fromkeys(blockers))
 
 
-def _post_cost_expectancy_basis(value: Any) -> str:
-    text = _text(value)
+def post_cost_expectancy_basis(value: Any) -> str:
+    text = text_value(value)
     if text is None:
         return "post_cost_basis_missing"
     return text.lower().replace("-", "_")
 
 
-def _post_cost_basis_is_promotion_grade(
+def post_cost_basis_is_promotion_grade(
     *,
     basis: str,
     explicit_value: Any,
 ) -> bool:
-    parsed = _observation_bool(explicit_value)
+    parsed = observation_bool(explicit_value)
     basis_is_promotion_grade = basis in PROMOTION_GRADE_POST_COST_BASES
     if parsed is False:
         return False
@@ -270,57 +240,58 @@ def _post_cost_basis_is_promotion_grade(
     return basis_is_promotion_grade
 
 
-def _parse_observation_datetime(value: Any) -> datetime | None:
+def parse_observation_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
-        return _utc(value)
-    text = _text(value)
+        return utc_datetime(value)
+    text = text_value(value)
     if text is None:
         return None
     try:
-        return _utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        return utc_datetime(datetime.fromisoformat(text.replace("Z", "+00:00")))
     except ValueError:
         return None
 
 
-def _observation_bool(value: Any) -> bool | None:
+def observation_bool(value: Any) -> bool | None:
+    result: bool | None = None
     if value is None:
-        return None
+        return result
     if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float, Decimal)):
-        return bool(value)
-    text = _text(value)
-    if text is None:
-        return None
-    normalized = text.lower()
-    if normalized in {"1", "true", "yes", "on", "pass", "passed", "ok", "ready"}:
-        return True
-    if normalized in {"0", "false", "no", "off", "fail", "failed", "blocked"}:
-        return False
-    return None
+        result = value
+    elif isinstance(value, (int, float, Decimal)):
+        result = bool(value)
+    elif (text := text_value(value)) is not None:
+        normalized = text.lower()
+        truthy = {"1", "true", "yes", "on", "pass", "passed", "ok", "ready"}
+        falsy = {"0", "false", "no", "off", "fail", "failed", "blocked"}
+        if normalized in truthy:
+            result = True
+        elif normalized in falsy:
+            result = False
+    return result
 
 
-def _observation_int(value: Any) -> int:
+def observation_int(value: Any) -> int:
     try:
         return max(0, int(Decimal(str(value))))
     except Exception:
         return 0
 
 
-def _observation_decimal(value: Any) -> Decimal:
+def observation_decimal(value: Any) -> Decimal:
     try:
         return Decimal(str(value or "0"))
     except Exception:
         return Decimal("0")
 
 
-def _string_list(value: Any) -> list[str]:
+def string_list(value: Any) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         return []
     return [
         text
         for item in cast(Sequence[object], value)
-        if (text := _text(item)) is not None
+        if (text := text_value(item)) is not None
     ]
 
 
@@ -357,7 +328,7 @@ def _runtime_ledger_tca_ref_texts(value: Any) -> list[str]:
     if isinstance(value, Mapping):
         mapping = cast(Mapping[object, object], value)
         for key in _EXECUTION_TCA_REF_KEYS + ("id", "ref"):
-            if (text := _text(mapping.get(key))) is not None:
+            if (text := text_value(mapping.get(key))) is not None:
                 return [text]
         return []
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
@@ -366,10 +337,10 @@ def _runtime_ledger_tca_ref_texts(value: Any) -> list[str]:
             if isinstance(item, Mapping):
                 values.extend(_runtime_ledger_tca_ref_texts(item))
                 continue
-            if (text := _text(item)) is not None:
+            if (text := text_value(item)) is not None:
                 values.append(text)
         return values
-    text = _text(value)
+    text = text_value(value)
     return [text] if text is not None else []
 
 
@@ -380,7 +351,7 @@ def _runtime_ledger_execution_tca_metric_refs(bucket: Mapping[str, Any]) -> list
     return list(dict.fromkeys(refs))
 
 
-def _mapping(value: Any) -> dict[str, Any]:
+def mapping_payload(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     mapping = cast(Mapping[Any, Any], value)
@@ -410,7 +381,7 @@ def _positive_count_mapping_present(value: Any) -> bool:
 def _runtime_ledger_explicit_costs_present(bucket: Mapping[str, Any]) -> bool:
     """Require explicit cost amount and cost basis for promotion-grade proof."""
 
-    cost_amount = _optional_decimal(
+    cost_amount = optional_decimal(
         bucket.get("cost_amount")
         if bucket.get("cost_amount") is not None
         else bucket.get("runtime_ledger_cost_amount")
@@ -430,7 +401,7 @@ def _runtime_ledger_explicit_costs_present(bucket: Mapping[str, Any]) -> bool:
     if _positive_count_mapping_present(bucket.get("post_cost_basis_counts")):
         return True
     return (
-        _text(
+        text_value(
             bucket.get("cost_basis")
             or bucket.get("cost_source")
             or bucket.get("fee_basis")
@@ -441,11 +412,11 @@ def _runtime_ledger_explicit_costs_present(bucket: Mapping[str, Any]) -> bool:
     )
 
 
-def _persisted_runtime_ledger_bucket_evidence_grade(
+def persisted_runtime_ledger_bucket_evidence_grade(
     row: StrategyRuntimeLedgerBucket,
 ) -> bool:
-    blockers = _string_list(row.blockers_json)
-    payload_json = _mapping(row.payload_json)
+    blockers = string_list(row.blockers_json)
+    payload_json = mapping_payload(row.payload_json)
     cost_payload = {
         **payload_json,
         "cost_amount": (
@@ -474,17 +445,10 @@ def _persisted_runtime_ledger_bucket_evidence_grade(
     )
 
 
-def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
-    blockers = _string_list(bucket.get("blockers"))
-    ledger_schema_version = _text(bucket.get("ledger_schema_version"))
-    pnl_basis = _text(bucket.get("pnl_basis"))
-    filled_notional = _optional_decimal(bucket.get("filled_notional"))
-    cost_amount = _optional_decimal(bucket.get("cost_amount"))
-    post_cost_expectancy = _optional_decimal(bucket.get("post_cost_expectancy_bps"))
-    diagnostic_closed_trade_expectancy = _optional_decimal(
-        bucket.get("diagnostic_closed_trade_expectancy_bps")
-    )
-
+def _runtime_ledger_schema_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    ledger_schema_version = text_value(bucket.get("ledger_schema_version"))
+    pnl_basis = text_value(bucket.get("pnl_basis"))
     if ledger_schema_version is None:
         blockers.append("runtime_ledger_schema_version_missing")
     elif ledger_schema_version not in RUNTIME_LEDGER_BUCKET_SCHEMAS:
@@ -493,41 +457,57 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
         blockers.append("runtime_ledger_pnl_basis_missing")
     elif pnl_basis != POST_COST_PNL_BASIS:
         blockers.append("runtime_ledger_pnl_basis_invalid")
-    blockers.extend(runtime_ledger_promotion_source_authority_blockers(bucket))
-    source_row_counts = _mapping(bucket.get("source_row_counts"))
-    execution_count = _observation_int(source_row_counts.get("executions"))
-    tca_count = _observation_int(source_row_counts.get("execution_tca_metrics"))
+    return blockers
+
+
+def _runtime_ledger_execution_tca_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    source_row_counts = mapping_payload(bucket.get("source_row_counts"))
+    execution_count = observation_int(source_row_counts.get("executions"))
+    tca_count = observation_int(source_row_counts.get("execution_tca_metrics"))
     execution_tca_ref_count = len(_runtime_ledger_execution_tca_metric_refs(bucket))
     execution_tca_required = (
-        _observation_bool(
+        observation_bool(
             bucket.get("execution_tca_required") or bucket.get("requires_execution_tca")
         )
         is True
         or tca_count > 0
     )
-    if (
+    if not (
         execution_tca_required
         and execution_count > 0
         and (tca_count < execution_count or execution_tca_ref_count < execution_count)
     ):
-        blockers.append(EXECUTION_TCA_MISSING_BLOCKER)
-        blockers.append(RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER)
-    if _observation_int(bucket.get("fill_count")) <= 0:
+        return []
+    return [
+        EXECUTION_TCA_MISSING_BLOCKER,
+        RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER,
+    ]
+
+
+def _runtime_ledger_activity_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if observation_int(bucket.get("fill_count")) <= 0:
         blockers.append("runtime_fills_missing")
-    if _observation_int(bucket.get("decision_count")) <= 0:
+    if observation_int(bucket.get("decision_count")) <= 0:
         blockers.append("runtime_decision_lifecycle_missing")
-    if _observation_int(bucket.get("submitted_order_count")) <= 0:
+    if observation_int(bucket.get("submitted_order_count")) <= 0:
         blockers.append("submitted_order_lifecycle_missing")
-    if _observation_int(bucket.get("closed_trade_count")) <= 0:
+    if observation_int(bucket.get("closed_trade_count")) <= 0:
         blockers.append("closed_round_trip_missing")
     if bucket.get("open_position_count") is None:
         blockers.append("runtime_ledger_open_position_count_missing")
-    elif _observation_int(bucket.get("open_position_count")) > 0:
+    elif observation_int(bucket.get("open_position_count")) > 0:
         blockers.append("unclosed_position")
-    if filled_notional is None or filled_notional <= 0:
+    if (optional_decimal(bucket.get("filled_notional")) or Decimal("0")) <= 0:
         blockers.append("filled_notional_missing")
+    return blockers
+
+
+def _runtime_ledger_cost_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not _runtime_ledger_explicit_costs_present(bucket):
         blockers.append("runtime_ledger_explicit_costs_missing")
+    cost_amount = optional_decimal(bucket.get("cost_amount"))
     if cost_amount is None or cost_amount < 0:
         blockers.append("explicit_cost_missing")
     non_promotion_grade_cost_basis = is_non_promotion_grade_runtime_cost_basis(
@@ -537,10 +517,15 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
     )
     if non_promotion_grade_cost_basis:
         blockers.append("runtime_ledger_cost_basis_non_promotion_grade")
+    return blockers
+
+
+def _runtime_ledger_source_decision_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     source_decision_mode = normalize_source_decision_mode(
         bucket.get("source_decision_mode")
     )
-    profit_proof_eligible = _observation_bool(bucket.get("profit_proof_eligible"))
+    profit_proof_eligible = observation_bool(bucket.get("profit_proof_eligible"))
     source_decision_mode_counts = bucket.get("source_decision_mode_counts")
     if (
         source_decision_mode is None
@@ -563,29 +548,55 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
         blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
     if profit_proof_eligible is False:
         blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
+    return blockers
+
+
+def _runtime_ledger_expectancy_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    post_cost_expectancy = optional_decimal(bucket.get("post_cost_expectancy_bps"))
+    diagnostic_closed_trade_expectancy = optional_decimal(
+        bucket.get("diagnostic_closed_trade_expectancy_bps")
+    )
     if post_cost_expectancy is None:
-        blockers.append(
+        return [
             "runtime_ledger_expectancy_not_promotion_grade"
             if diagnostic_closed_trade_expectancy is not None
             else "runtime_ledger_expectancy_missing"
-        )
+        ]
+    return []
+
+
+def _runtime_ledger_hash_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if _hash_count(bucket.get("execution_policy_hash_counts")) <= 0:
         blockers.append("runtime_ledger_execution_policy_hash_missing")
     if _hash_count(bucket.get("cost_model_hash_counts")) <= 0:
         blockers.append("runtime_ledger_cost_model_hash_missing")
     if _hash_count(bucket.get("lineage_hash_counts")) <= 0:
         blockers.append("runtime_ledger_lineage_hash_missing")
+    return blockers
+
+
+def runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
+    blockers = string_list(bucket.get("blockers"))
+    blockers.extend(_runtime_ledger_schema_blockers(bucket))
+    blockers.extend(runtime_ledger_promotion_source_authority_blockers(bucket))
+    blockers.extend(_runtime_ledger_execution_tca_blockers(bucket))
+    blockers.extend(_runtime_ledger_activity_blockers(bucket))
+    blockers.extend(_runtime_ledger_cost_blockers(bucket))
+    blockers.extend(_runtime_ledger_source_decision_blockers(bucket))
+    blockers.extend(_runtime_ledger_expectancy_blockers(bucket))
+    blockers.extend(_runtime_ledger_hash_blockers(bucket))
     return list(dict.fromkeys(blockers))
 
 
-def _runtime_ledger_bucket_payload(value: Any) -> dict[str, Any]:
-    bucket = _mapping(value)
+def runtime_ledger_bucket_payload(value: Any) -> dict[str, Any]:
+    bucket = mapping_payload(value)
     if not bucket:
         return {}
-    return {**bucket, "blockers": _runtime_ledger_bucket_blockers(bucket)}
+    return {**bucket, "blockers": runtime_ledger_bucket_blockers(bucket)}
 
 
-def _runtime_ledger_row_is_promotion_grade(row: _NormalizedTcaRow) -> bool:
+def runtime_ledger_row_is_promotion_grade(row: NormalizedTcaRow) -> bool:
     return (
         row.post_cost_expectancy_bps is not None
         and row.post_cost_promotion_eligible
@@ -595,23 +606,23 @@ def _runtime_ledger_row_is_promotion_grade(row: _NormalizedTcaRow) -> bool:
         )
         and row.post_cost_expectancy_basis == POST_COST_PNL_BASIS
         and bool(row.runtime_ledger_bucket)
-        and not _runtime_ledger_bucket_blockers(row.runtime_ledger_bucket)
+        and not runtime_ledger_bucket_blockers(row.runtime_ledger_bucket)
     )
 
 
-def _runtime_ledger_post_cost_from_rows(
-    rows: Sequence[_NormalizedTcaRow],
+def runtime_ledger_post_cost_from_rows(
+    rows: Sequence[NormalizedTcaRow],
 ) -> tuple[Decimal | None, Decimal, Decimal, int]:
     total_net = Decimal("0")
     total_notional = Decimal("0")
     sample_count = 0
     for row in rows:
-        if not _runtime_ledger_row_is_promotion_grade(row):
+        if not runtime_ledger_row_is_promotion_grade(row):
             continue
-        net_pnl = _optional_decimal(
+        net_pnl = optional_decimal(
             row.runtime_ledger_bucket.get("net_strategy_pnl_after_costs")
         )
-        filled_notional = _optional_decimal(
+        filled_notional = optional_decimal(
             row.runtime_ledger_bucket.get("filled_notional")
         )
         if net_pnl is None or filled_notional is None or filled_notional <= 0:
@@ -629,14 +640,14 @@ def _runtime_ledger_post_cost_from_rows(
     )
 
 
-def _paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> list[str]:
-    target_metadata = _mapping(runtime_payload.get("target_metadata"))
+def paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> list[str]:
+    target_metadata = mapping_payload(runtime_payload.get("target_metadata"))
     runtime_ledger_import_satisfied = (
         runtime_payload.get("runtime_ledger_profit_proof_present") is True
     )
 
     def target_blockers(value: Any) -> list[str]:
-        blockers = _string_list(value)
+        blockers = string_list(value)
         if not runtime_ledger_import_satisfied:
             return blockers
         return [
@@ -655,19 +666,18 @@ def _paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> lis
     if not target_metadata:
         return list(dict.fromkeys(reasons))
 
-    paper_probation_authorized = _observation_bool(
+    paper_probation_authorized = observation_bool(
         target_metadata.get("paper_probation_authorized")
     )
-    evidence_collection_stage = _text(target_metadata.get("evidence_collection_stage"))
+    evidence_collection_stage = text_value(
+        target_metadata.get("evidence_collection_stage")
+    )
     if paper_probation_authorized is True and evidence_collection_stage == "paper":
         reasons.append("paper_probation_evidence_collection_only")
-    if _observation_bool(target_metadata.get("promotion_allowed")) is False:
+    if observation_bool(target_metadata.get("promotion_allowed")) is False:
         reasons.append("candidate_board_promotion_not_allowed")
-    if _observation_bool(target_metadata.get("final_promotion_authorized")) is False:
+    if observation_bool(target_metadata.get("final_promotion_authorized")) is False:
         reasons.append("final_promotion_not_authorized")
-    if _observation_bool(target_metadata.get("final_promotion_allowed")) is False:
+    if observation_bool(target_metadata.get("final_promotion_allowed")) is False:
         reasons.append("final_promotion_not_allowed")
     return list(dict.fromkeys(reasons))
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
