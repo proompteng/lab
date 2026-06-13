@@ -1,20 +1,11 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, cast
 
 
 from ....config import settings
-from ....models import (
-    Strategy,
-)
-from ....strategies.catalog import extract_catalog_metadata
 from ...autonomy import DriftThresholds
 from ...feature_quality import FeatureQualityThresholds
 from ...models import StrategyDecision
@@ -24,15 +15,25 @@ from ...runtime_decision_authority import (
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
     normalize_source_decision_mode,
 )
-from ...runtime_strategy_resolution import strategy_names_from_strategy_id
 from ...simple_risk import (
     position_qty_for_symbol,
 )
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_32 import *
-from .part_02_target_plan_has_active_bounded_sim_collect import *
+from .bounded_collection import (
+    BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS,
+    BOUNDED_SIM_COLLECTION_LINEAGE_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS,
+    BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS as _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS,
+    lineage_target_from_mapping as _lineage_target_from_mapping,
+    lineage_target_key as _lineage_target_key,
+    lineage_text_values as _lineage_text_values,
+    merge_unique_texts as _merge_unique_texts,
+    safe_text as _safe_text,
+    single_lineage_text as _single_lineage_text,
+    target_bool as _target_bool,
+)
+from .target_probe import (
+    mapping_value as _mapping_value,
+    optional_decimal as _optional_decimal,
+)
 
 
 def _paper_route_probe_entry_metadata(
@@ -154,29 +155,20 @@ def _strategy_signal_paper_entry_metadata(
     return metadata_mapping
 
 
-def _lineage_target_from_mapping(raw_target: Mapping[str, object]) -> dict[str, str]:
-    return {
-        key: value
-        for key, value in {
-            "candidate_id": _safe_text(raw_target.get("candidate_id")),
-            "hypothesis_id": _safe_text(raw_target.get("hypothesis_id")),
-            "strategy_name": _safe_text(raw_target.get("strategy_name")),
-        }.items()
-        if value
-    }
+def _merge_lineage_list_field(
+    target: dict[str, Any],
+    *,
+    key: str,
+    values: list[str],
+) -> None:
+    if not values:
+        return
+    current = target.setdefault(key, [])
+    if isinstance(current, list):
+        _merge_unique_texts(cast(list[str], current), values)
 
 
-def _lineage_target_key(
-    lineage_target: Mapping[str, str],
-) -> tuple[str | None, str | None, str | None]:
-    return (
-        lineage_target.get("candidate_id"),
-        lineage_target.get("hypothesis_id"),
-        lineage_target.get("strategy_name"),
-    )
-
-
-def _merge_paper_route_probe_lineage(
+def _merge_paper_route_probe_source_lists(
     target: dict[str, Any],
     lineage: Mapping[str, Any],
 ) -> None:
@@ -185,13 +177,17 @@ def _merge_paper_route_probe_lineage(
         "source_hypothesis_ids",
         "source_strategy_names",
     ):
-        values = _lineage_text_values(lineage.get(key))
-        if not values:
-            continue
-        current = target.setdefault(key, [])
-        if isinstance(current, list):
-            _merge_unique_texts(cast(list[str], current), values)
+        _merge_lineage_list_field(
+            target,
+            key=key,
+            values=_lineage_text_values(lineage.get(key)),
+        )
 
+
+def _merge_paper_route_probe_identity_fallbacks(
+    target: dict[str, Any],
+    lineage: Mapping[str, Any],
+) -> None:
     identity_fallbacks = {
         "candidate_id": "source_candidate_ids",
         "hypothesis_id": "source_hypothesis_ids",
@@ -206,6 +202,11 @@ def _merge_paper_route_probe_lineage(
         if value is not None:
             target[key] = value
 
+
+def _merge_paper_route_probe_scalar_lineage(
+    target: dict[str, Any],
+    lineage: Mapping[str, Any],
+) -> None:
     for key in ("source_decision_mode", "profit_proof_eligible"):
         if key in lineage and key not in target:
             target[key] = lineage[key]
@@ -225,6 +226,11 @@ def _merge_paper_route_probe_lineage(
         if key not in target and isinstance(value, Mapping):
             target[key] = dict(cast(Mapping[str, Any], value))
 
+
+def _merge_paper_route_probe_lineage_targets(
+    target: dict[str, Any],
+    lineage: Mapping[str, Any],
+) -> None:
     raw_targets = lineage.get("paper_route_probe_lineage_targets")
     if not isinstance(raw_targets, Sequence) or isinstance(
         raw_targets, (str, bytes, bytearray)
@@ -250,13 +256,14 @@ def _merge_paper_route_probe_lineage(
             typed_current_targets.append(lineage_target)
 
 
-def _optional_decimal(value: Any) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except (ArithmeticError, ValueError):
-        return None
+def _merge_paper_route_probe_lineage(
+    target: dict[str, Any],
+    lineage: Mapping[str, Any],
+) -> None:
+    _merge_paper_route_probe_source_lists(target, lineage)
+    _merge_paper_route_probe_identity_fallbacks(target, lineage)
+    _merge_paper_route_probe_scalar_lineage(target, lineage)
+    _merge_paper_route_probe_lineage_targets(target, lineage)
 
 
 def _first_decimal(*values: Decimal | None) -> Decimal | None:
@@ -367,4 +374,22 @@ def _simple_buying_power_consumption(
     return notional * (short_increasing_qty / decision.qty)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+# Public module boundary aliases.
+paper_route_probe_entry_metadata = _paper_route_probe_entry_metadata
+target_notional_sizing_audit_from_params = _target_notional_sizing_audit_from_params
+bounded_collection_decision_requires_target_notional_sizing = (
+    _bounded_collection_decision_requires_target_notional_sizing
+)
+bounded_paper_route_collection_entry_metadata = (
+    _bounded_paper_route_collection_entry_metadata
+)
+strategy_signal_paper_entry_metadata = _strategy_signal_paper_entry_metadata
+merge_paper_route_probe_lineage = _merge_paper_route_probe_lineage
+first_decimal = _first_decimal
+executable_bid_ask_present = _executable_bid_ask_present
+min_optional_decimal = _min_optional_decimal
+simple_drift_feature_thresholds = _simple_drift_feature_thresholds
+simple_drift_thresholds = _simple_drift_thresholds
+pct_cap_to_notional = _pct_cap_to_notional
+simple_decision_notional = _simple_decision_notional
+simple_buying_power_consumption = _simple_buying_power_consumption
