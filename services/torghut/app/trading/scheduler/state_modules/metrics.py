@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Scheduler runtime state and metrics types."""
 
 from __future__ import annotations
@@ -6,20 +5,22 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
-from typing import Any, Literal, Optional, cast
+from typing import Any, Optional, cast
 
 from ...decisions import DecisionRuntimeTelemetry
 from ...portfolio import AllocationResult
 from ...route_metadata import coerce_route_text
 from ...tca import AdaptiveExecutionPolicyDecision
 
-# ruff: noqa: F401,F403,F405,F811,F821
+from .metric_types import (
+    AutonomyPromotionOutcomeMetrics,
+    RuntimeUncertaintyGateAction,
+    TradingMetricsFields,
+)
+from .metric_types import normalize_reason_metric, optional_decimal, split_reason_codes
 
-from .part_01_normalize_reason_metric import *
 
-
-class _TradingMetricsMethodsPart1:
+class _TradingMetricsMethodsPart1(TradingMetricsFields):
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
         if adapter_name is None:
@@ -77,7 +78,7 @@ class _TradingMetricsMethodsPart1:
             )
 
     def record_no_signal(self, reason: str | None) -> None:
-        normalized = _normalize_reason_metric(reason)
+        normalized = normalize_reason_metric(reason)
         self.no_signal_windows_total += 1
         current = self.no_signal_reason_total.get(normalized, 0)
         self.no_signal_reason_total[normalized] = current + 1
@@ -133,22 +134,22 @@ class _TradingMetricsMethodsPart1:
         )
 
     def record_signal_staleness_alert(self, reason: str | None) -> None:
-        normalized = _normalize_reason_metric(reason)
+        normalized = normalize_reason_metric(reason)
         current = self.signal_staleness_alert_total.get(normalized, 0)
         self.signal_staleness_alert_total[normalized] = current + 1
 
     def record_signal_expected_staleness(self, reason: str | None) -> None:
-        normalized = _normalize_reason_metric(reason)
+        normalized = normalize_reason_metric(reason)
         current = self.signal_expected_staleness_total.get(normalized, 0)
         self.signal_expected_staleness_total[normalized] = current + 1
 
     def record_signal_actionable_staleness(self, reason: str | None) -> None:
-        normalized = _normalize_reason_metric(reason)
+        normalized = normalize_reason_metric(reason)
         current = self.signal_actionable_staleness_total.get(normalized, 0)
         self.signal_actionable_staleness_total[normalized] = current + 1
 
     def record_universe_fail_safe_block(self, reason: str | None) -> None:
-        normalized = _normalize_reason_metric(reason)
+        normalized = normalize_reason_metric(reason)
         current = self.universe_fail_safe_reason_total.get(normalized, 0)
         self.universe_fail_safe_reason_total[normalized] = current + 1
 
@@ -167,7 +168,7 @@ class _TradingMetricsMethodsPart1:
         cache_age_seconds: int | None,
     ) -> None:
         normalized_status = (status or "unknown").strip() or "unknown"
-        normalized_reason = _normalize_reason_metric(reason)
+        normalized_reason = normalize_reason_metric(reason)
         metric_key = f"{normalized_status}|{normalized_reason}"
         self.universe_resolution_total[metric_key] = (
             self.universe_resolution_total.get(metric_key, 0) + 1
@@ -193,23 +194,23 @@ class _TradingMetricsMethodsPart1:
         reason: str | None,
         reject_reason: str | None,
     ) -> None:
-        normalized_reason = _normalize_reason_metric(reason)
+        normalized_reason = normalize_reason_metric(reason)
         self.llm_unavailable_reason_total[normalized_reason] = (
             self.llm_unavailable_reason_total.get(normalized_reason, 0) + 1
         )
         if reject_reason:
-            normalized_reject = _normalize_reason_metric(reject_reason)
+            normalized_reject = normalize_reason_metric(reject_reason)
             self.llm_unavailable_reject_reason_total[normalized_reject] = (
                 self.llm_unavailable_reject_reason_total.get(normalized_reject, 0) + 1
             )
 
     def record_decision_rejection_reasons(self, reasons: Sequence[str]) -> None:
         for reason in reasons:
-            reason_parts = _split_reason_codes(reason)
+            reason_parts = split_reason_codes(reason)
             if not reason_parts:
-                reason_parts = [_normalize_reason_metric(reason)]
+                reason_parts = [normalize_reason_metric(reason)]
             for reason_part in reason_parts:
-                normalized = _normalize_reason_metric(reason_part)
+                normalized = normalize_reason_metric(reason_part)
                 self.decision_reject_reason_total[normalized] = (
                     self.decision_reject_reason_total.get(normalized, 0) + 1
                 )
@@ -217,17 +218,17 @@ class _TradingMetricsMethodsPart1:
     def record_submission_block(self, reasons: Sequence[str] | str) -> None:
         raw_reasons = [reasons] if isinstance(reasons, str) else list(reasons)
         for reason in raw_reasons:
-            reason_parts = _split_reason_codes(reason)
+            reason_parts = split_reason_codes(reason)
             if not reason_parts:
-                reason_parts = [_normalize_reason_metric(reason)]
+                reason_parts = [normalize_reason_metric(reason)]
             for reason_part in reason_parts:
-                normalized = _normalize_reason_metric(reason_part)
+                normalized = normalize_reason_metric(reason_part)
                 self.submission_block_total[normalized] = (
                     self.submission_block_total.get(normalized, 0) + 1
                 )
 
     def record_decision_state(self, status: str | None) -> None:
-        normalized = _normalize_reason_metric(status)
+        normalized = normalize_reason_metric(status)
         self.decision_state_total[normalized] = (
             self.decision_state_total.get(normalized, 0) + 1
         )
@@ -237,7 +238,7 @@ class _TradingMetricsMethodsPart1:
 
     def record_feature_quality_rejection(self, reasons: Sequence[str]) -> None:
         for reason in reasons:
-            normalized = _normalize_reason_metric(reason)
+            normalized = normalize_reason_metric(reason)
             self.feature_quality_reject_reason_total[normalized] = (
                 self.feature_quality_reject_reason_total.get(normalized, 0) + 1
             )
@@ -248,7 +249,7 @@ class _TradingMetricsMethodsPart1:
         self, reasons: Sequence[str]
     ) -> None:
         for reason in reasons:
-            normalized = _normalize_reason_metric(reason)
+            normalized = normalize_reason_metric(reason)
             self.feature_quality_cursor_commit_blocked_total[normalized] = (
                 self.feature_quality_cursor_commit_blocked_total.get(normalized, 0) + 1
             )
@@ -260,15 +261,15 @@ class _TradingMetricsMethodsPart1:
         outcome: str,
         reason: str | None,
     ) -> None:
-        normalized_stage = _normalize_reason_metric(stage)
-        normalized_outcome = _normalize_reason_metric(outcome)
-        normalized_reason = _normalize_reason_metric(reason)
+        normalized_stage = normalize_reason_metric(stage)
+        normalized_outcome = normalize_reason_metric(outcome)
+        normalized_reason = normalize_reason_metric(reason)
         key = f"{normalized_stage}|{normalized_outcome}|{normalized_reason}"
         self.qty_resolution_total[key] = self.qty_resolution_total.get(key, 0) + 1
 
     def record_sell_inventory_context(self, *, stage: str, context: str) -> None:
-        normalized_stage = _normalize_reason_metric(stage)
-        normalized_context = _normalize_reason_metric(context)
+        normalized_stage = normalize_reason_metric(stage)
+        normalized_context = normalize_reason_metric(context)
         key = f"{normalized_stage}|{normalized_context}"
         self.sell_inventory_context_total[key] = (
             self.sell_inventory_context_total.get(key, 0) + 1
@@ -277,8 +278,8 @@ class _TradingMetricsMethodsPart1:
     def record_execution_local_reject(
         self, *, code: str | None, reason: str | None
     ) -> None:
-        normalized_code = _normalize_reason_metric(code)
-        normalized_reason = _normalize_reason_metric(reason)
+        normalized_code = normalize_reason_metric(code)
+        normalized_reason = normalize_reason_metric(reason)
         key = f"{normalized_code}|{normalized_reason}"
         self.execution_local_reject_total[key] = (
             self.execution_local_reject_total.get(key, 0) + 1
@@ -291,9 +292,9 @@ class _TradingMetricsMethodsPart1:
         side: str | None,
         asset_class: str | None,
     ) -> None:
-        normalized_adapter = _normalize_reason_metric(adapter)
-        normalized_side = _normalize_reason_metric(side)
-        normalized_asset_class = _normalize_reason_metric(asset_class)
+        normalized_adapter = normalize_reason_metric(adapter)
+        normalized_side = normalize_reason_metric(side)
+        normalized_asset_class = normalize_reason_metric(asset_class)
         key = f"{normalized_adapter}|{normalized_side}|{normalized_asset_class}"
         self.execution_submit_attempt_total[key] = (
             self.execution_submit_attempt_total.get(key, 0) + 1
@@ -305,27 +306,27 @@ class _TradingMetricsMethodsPart1:
         status: str | None,
         adapter: str | None,
     ) -> None:
-        normalized_status = _normalize_reason_metric(status)
-        normalized_adapter = _normalize_reason_metric(adapter)
+        normalized_status = normalize_reason_metric(status)
+        normalized_adapter = normalize_reason_metric(adapter)
         key = f"{normalized_status}|{normalized_adapter}"
         self.execution_submit_result_total[key] = (
             self.execution_submit_result_total.get(key, 0) + 1
         )
 
     def record_simulation_position_state(self, state: str | None) -> None:
-        normalized = _normalize_reason_metric(state)
+        normalized = normalize_reason_metric(state)
         self.simulation_position_state_total[normalized] = (
             self.simulation_position_state_total.get(normalized, 0) + 1
         )
 
     def record_simulation_preflight_failure(self, reason: str | None) -> None:
-        normalized = _normalize_reason_metric(reason)
+        normalized = normalize_reason_metric(reason)
         self.simulation_preflight_failure_total[normalized] = (
             self.simulation_preflight_failure_total.get(normalized, 0) + 1
         )
 
     def record_rejected_signal_event(self, reason: str | None) -> None:
-        normalized = _normalize_reason_metric(reason)
+        normalized = normalize_reason_metric(reason)
         self.rejected_signal_events_total += 1
         self.rejected_signal_outcome_label_pending_total += 1
         self.rejected_signal_reason_total[normalized] = (
@@ -498,28 +499,28 @@ class _TradingMetricsMethodsPart1:
 
     def record_autonomy_promotion_outcome(
         self,
-        *,
-        signal_count: int,
-        decision_count: int,
-        trade_count: int,
-        recommendation: str | None,
-        promotion_allowed: bool,
-        outcome: str,
+        metrics: AutonomyPromotionOutcomeMetrics | None = None,
+        **legacy_fields: object,
     ) -> None:
-        self.autonomy_signal_throughput_total += max(0, signal_count)
-        self.autonomy_decision_throughput_total += max(0, decision_count)
-        self.autonomy_trade_throughput_total += max(0, trade_count)
-        if promotion_allowed:
+        resolved = metrics or AutonomyPromotionOutcomeMetrics.from_legacy_kwargs(
+            legacy_fields
+        )
+        self.autonomy_signal_throughput_total += max(0, resolved.signal_count)
+        self.autonomy_decision_throughput_total += max(0, resolved.decision_count)
+        self.autonomy_trade_throughput_total += max(0, resolved.trade_count)
+        if resolved.promotion_allowed:
             self.autonomy_promotion_allowed_total += 1
         else:
             self.autonomy_promotion_blocked_total += 1
-        normalized_recommendation = recommendation.strip() if recommendation else ""
+        normalized_recommendation = (
+            resolved.recommendation.strip() if resolved.recommendation else ""
+        )
         if not normalized_recommendation:
             normalized_recommendation = "unknown"
         self.autonomy_recommendation_total[normalized_recommendation] = (
             self.autonomy_recommendation_total.get(normalized_recommendation, 0) + 1
         )
-        normalized_outcome = outcome.strip()
+        normalized_outcome = resolved.outcome.strip()
         if not normalized_outcome:
             normalized_outcome = "unknown"
         self.autonomy_outcome_total[normalized_outcome] = (
@@ -537,7 +538,7 @@ class _TradingMetricsMethodsPart1:
         )
         if emitted:
             return
-        normalized_reason = _normalize_reason_metric(drop_reason)
+        normalized_reason = normalize_reason_metric(drop_reason)
         self.domain_telemetry_dropped_total[normalized_reason] = (
             self.domain_telemetry_dropped_total.get(normalized_reason, 0) + 1
         )
@@ -548,15 +549,15 @@ class _TradingMetricsMethodsPart1:
             self.uncertainty_gate_action_total[action] = (
                 self.uncertainty_gate_action_total.get(action, 0) + 1
             )
-        coverage_error = _optional_decimal(gate_report_payload.get("coverage_error"))
+        coverage_error = optional_decimal(gate_report_payload.get("coverage_error"))
         if coverage_error is not None:
             self.calibration_coverage_error = float(coverage_error)
-        interval_width = _optional_decimal(
+        interval_width = optional_decimal(
             gate_report_payload.get("conformal_interval_width")
         )
         if interval_width is not None:
             self.conformal_interval_width = float(interval_width)
-        shift_score = _optional_decimal(gate_report_payload.get("shift_score"))
+        shift_score = optional_decimal(gate_report_payload.get("shift_score"))
         if shift_score is not None:
             self.regime_shift_score = float(shift_score)
         gates = gate_report_payload.get("gates")
@@ -601,7 +602,7 @@ class _TradingMetricsMethodsPart1:
 
 
 @dataclass
-class TradingMetrics(_TradingMetricsFieldsPart1, _TradingMetricsMethodsPart1, object):
+class TradingMetrics(_TradingMetricsMethodsPart1):
     pass
 
 
@@ -704,11 +705,7 @@ class TradingState:
 
 
 __all__ = [
-    "RuntimeUncertaintyGate",
     "RuntimeUncertaintyGateAction",
     "TradingMetrics",
     "TradingState",
 ]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
