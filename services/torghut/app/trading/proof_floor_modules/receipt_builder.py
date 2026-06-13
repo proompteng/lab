@@ -521,14 +521,16 @@ def build_profitability_proof_floor_receipt(
                 "missing_symbol_count": missing_symbol_count,
                 "max_notional_for_adverse_symbols": "0",
             }
-            route_universe_reason = "execution_tcaroute_universe_adverse_slippage_clear"
+            route_universe_reason = (
+                "execution_tca_route_universe_adverse_slippage_clear"
+            )
         if route_universe_reason is not None:
             if route_universe_reason == "execution_tca_route_universe_empty":
                 tca_state = "fail"
                 tca_reason = route_universe_reason
             elif (
                 route_universe_reason
-                == "execution_tcaroute_universe_adverse_slippage_clear"
+                == "execution_tca_route_universe_adverse_slippage_clear"
             ):
                 tca_state = "pass"
                 tca_reason = route_universe_reason
@@ -545,7 +547,7 @@ def build_profitability_proof_floor_receipt(
                 tca_source_ref["aggregate_reason"] = aggregate_tca_reason
             if (
                 route_universe_reason
-                != "execution_tcaroute_universe_adverse_slippage_clear"
+                != "execution_tca_route_universe_adverse_slippage_clear"
             ):
                 add_repair(
                     repairs,

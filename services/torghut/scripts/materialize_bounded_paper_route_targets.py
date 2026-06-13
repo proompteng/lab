@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+import argparse
+import time
+from collections.abc import Sequence
+from http.client import HTTPConnection, HTTPSConnection
+from typing import Any
+
+from app.trading.paper_route_target_plan import paper_route_target_plan_targets
+from scripts.materialize_bounded_paper_route_targets_modules import (
+    dynamic_target_confirmation as _dynamic_target_confirmation,
+)
+from scripts.materialize_bounded_paper_route_targets_modules import (
+    target_materialization_core as _target_materialization_core,
+)
 from scripts.materialize_bounded_paper_route_targets_modules import (
     ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER,
     ACTIVE_TARGET_WINDOW_SKIP_REASON,
@@ -77,6 +90,63 @@ from scripts.materialize_bounded_paper_route_targets_modules import (
     main,
 )
 
+_ORIGINAL_FETCH_PLAN_URL_PAYLOAD = _fetch_plan_url_payload
+_ORIGINAL_FETCH_PLAN_URL_PAYLOAD_ONCE = _fetch_plan_url_payload_once
+_ORIGINAL_BUILD_REPORT = build_report
+_ORIGINAL_MAIN = main
+
+
+def _sync_patch_targets() -> None:
+    _target_materialization_core.HTTPConnection = HTTPConnection
+    _target_materialization_core.HTTPSConnection = HTTPSConnection
+    _target_materialization_core.TARGET_PLAN_RESPONSE_LIMIT_BYTES = (
+        TARGET_PLAN_RESPONSE_LIMIT_BYTES
+    )
+    _target_materialization_core.paper_route_target_plan_targets = (
+        paper_route_target_plan_targets
+    )
+    _target_materialization_core.time = time
+    _target_materialization_core._fetch_plan_url_payload = _fetch_plan_url_payload
+    _target_materialization_core._fetch_plan_url_payload_once = (
+        _fetch_plan_url_payload_once
+    )
+    _dynamic_target_confirmation.build_report = build_report
+    _dynamic_target_confirmation.paper_route_target_plan_targets = (
+        paper_route_target_plan_targets
+    )
+
+
+def _fetch_plan_url_payload_once(url: str, *, timeout_seconds: float) -> dict[str, Any]:
+    _sync_patch_targets()
+    return _ORIGINAL_FETCH_PLAN_URL_PAYLOAD_ONCE(url, timeout_seconds=timeout_seconds)
+
+
+def _fetch_plan_url_payload(
+    url: str,
+    *,
+    timeout_seconds: float,
+    attempts: int,
+    retry_backoff_seconds: float = 0.25,
+) -> dict[str, Any]:
+    _sync_patch_targets()
+    return _ORIGINAL_FETCH_PLAN_URL_PAYLOAD(
+        url,
+        timeout_seconds=timeout_seconds,
+        attempts=attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+    )
+
+
+def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    _sync_patch_targets()
+    return _ORIGINAL_BUILD_REPORT(args)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    _sync_patch_targets()
+    return _ORIGINAL_MAIN(argv)
+
+
 __all__ = (
     "ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER",
     "ACTIVE_TARGET_WINDOW_SKIP_REASON",
@@ -87,6 +157,8 @@ __all__ = (
     "PROMOTION_FLAG_FIELDS",
     "SCHEMA_VERSION",
     "TARGET_PLAN_RESPONSE_LIMIT_BYTES",
+    "HTTPConnection",
+    "HTTPSConnection",
     "_account_label_blockers",
     "_active_target_window_check",
     "_base_confirmations",
@@ -152,6 +224,8 @@ __all__ = (
     "_unique_texts",
     "build_report",
     "main",
+    "paper_route_target_plan_targets",
+    "time",
 )
 
 if __name__ == "__main__":
