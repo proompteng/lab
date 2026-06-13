@@ -1,37 +1,42 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-#!/usr/bin/env python
-"""Build a business-prioritized repair digest from Torghut readiness evidence."""
+"""Evidence summary helpers for revenue-repair digests."""
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
-from datetime import datetime, timezone
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence, cast
 
-from ..alpha_readiness_strike_ledger import build_alpha_readiness_strike_ledger
-from ..alpha_evidence_foundry import build_alpha_evidence_foundry
-from ..alpha_readiness_settlement_conveyor import (
-    build_alpha_readiness_settlement_conveyor,
-)
-from ..alpha_repair_dividend_ledger import build_alpha_repair_dividend_ledger
-from ..alpha_repair_closure_board import build_alpha_repair_closure_board
-from ..executable_alpha_receipts import (
-    build_executable_alpha_repair_receipts,
-    build_executable_alpha_settlement_slots,
-)
-from ..jangar_controller_ingestion_carry import (
-    build_jangar_controller_ingestion_carry,
-)
-from ..no_delta_repair_reentry_auction import (
-    build_no_delta_repair_reentry_auction,
+from .repair_queue import (
+    bool_value,
+    choose_mapping,
+    dedupe_items,
+    int_value,
+    mapping_value,
+    sequence_value,
+    string_items,
+    text_value,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+_bool = bool_value
+_choose_mapping = choose_mapping
+_dedupe = dedupe_items
+_int = int_value
+_mapping = mapping_value
+_sequence = sequence_value
+_string_items = string_items
+_text = text_value
 
-from .part_01_statements_32 import *
+
+@dataclass(frozen=True)
+class ToplineContractInputs:
+    status_payload: Mapping[str, Any]
+    repair_queue: Sequence[Mapping[str, Any]]
+    capital: Mapping[str, Any]
+    evidence: Mapping[str, Any]
+    repair_bid_settlement: Mapping[str, Any]
+    alpha_evidence_foundry: Mapping[str, Any]
+    alpha_readiness_settlement_conveyor: Mapping[str, Any]
+    alpha_repair_dividend_ledger: Mapping[str, Any]
+    no_delta_repair_reentry_auction: Mapping[str, Any]
 
 
 def _summarize_tca(proof_floor: Mapping[str, Any]) -> dict[str, object]:
@@ -512,127 +517,153 @@ def _field_unavailable_reason_codes(fields: Mapping[str, object]) -> list[str]:
     return reasons
 
 
-def _build_topline_contract(
-    *,
-    status_payload: Mapping[str, Any],
-    repair_queue: Sequence[Mapping[str, Any]],
-    capital: Mapping[str, Any],
-    evidence: Mapping[str, Any],
-    repair_bid_settlement: Mapping[str, Any],
-    alpha_evidence_foundry: Mapping[str, Any],
-    alpha_readiness_settlement_conveyor: Mapping[str, Any],
-    alpha_repair_dividend_ledger: Mapping[str, Any],
-    no_delta_repair_reentry_auction: Mapping[str, Any],
+def _selected_topline_refs(
+    inputs: ToplineContractInputs, top_item: Mapping[str, Any]
 ) -> dict[str, object]:
-    top_item = _top_repair_queue_item(repair_queue)
-    first_foundry_receipt = _first_mapping_item(alpha_evidence_foundry.get("receipts"))
-    selected_lane = _mapping(alpha_readiness_settlement_conveyor.get("selected_lane"))
-    selected_target = _first_mapping_item(
-        _mapping(evidence.get("alpha_readiness")).get("repair_targets")
+    first_foundry_receipt = _first_mapping_item(
+        inputs.alpha_evidence_foundry.get("receipts")
     )
-    routeable_before = _int(
-        no_delta_repair_reentry_auction.get("routeable_candidate_count_before"),
+    selected_lane = _mapping(
+        inputs.alpha_readiness_settlement_conveyor.get("selected_lane")
+    )
+    selected_target = _first_mapping_item(
+        _mapping(inputs.evidence.get("alpha_readiness")).get("repair_targets")
+    )
+    return {
+        "selected_hypothesis_id": _first_text(
+            inputs.no_delta_repair_reentry_auction.get("selected_hypothesis_id"),
+            inputs.alpha_repair_dividend_ledger.get("selected_hypothesis_id"),
+            selected_lane.get("hypothesis_id"),
+            first_foundry_receipt.get("hypothesis_id"),
+            selected_target.get("hypothesis_id"),
+        ),
+        "selected_candidate_id": _first_text(
+            first_foundry_receipt.get("candidate_id"),
+            selected_lane.get("candidate_id"),
+            selected_target.get("candidate_id"),
+        ),
+        "selected_strategy_id": _first_text(
+            first_foundry_receipt.get("strategy_id"),
+            selected_lane.get("strategy_id"),
+            selected_target.get("strategy_id"),
+        ),
+        "selected_dataset_snapshot_ref": _first_text(
+            first_foundry_receipt.get("dataset_snapshot_ref"),
+            first_foundry_receipt.get("dataset_snapshot_id"),
+            selected_lane.get("dataset_snapshot_ref"),
+            selected_lane.get("dataset_snapshot_id"),
+            inputs.alpha_repair_dividend_ledger.get("dataset_snapshot_ref"),
+        ),
+        "selected_value_gate": _first_text(
+            inputs.no_delta_repair_reentry_auction.get("selected_value_gate"),
+            inputs.alpha_evidence_foundry.get("selected_value_gate"),
+            top_item.get("value_gate"),
+        ),
+        "required_output_receipt": _first_text(
+            top_item.get("required_output_receipt"),
+            inputs.no_delta_repair_reentry_auction.get("required_output_receipt"),
+        ),
+    }
+
+
+def _routeable_counts(inputs: ToplineContractInputs) -> dict[str, int]:
+    before = _int(
+        inputs.no_delta_repair_reentry_auction.get("routeable_candidate_count_before"),
         _int(
-            alpha_evidence_foundry.get("routeable_candidate_count_before"),
-            _routeable_candidate_count_from_evidence(evidence),
+            inputs.alpha_evidence_foundry.get("routeable_candidate_count_before"),
+            _routeable_candidate_count_from_evidence(inputs.evidence),
         ),
     )
-    routeable_after = _int(
-        no_delta_repair_reentry_auction.get("routeable_candidate_count_after"),
+    after = _int(
+        inputs.no_delta_repair_reentry_auction.get("routeable_candidate_count_after"),
         _int(
-            alpha_readiness_settlement_conveyor.get("routeable_candidate_count_after"),
+            inputs.alpha_readiness_settlement_conveyor.get(
+                "routeable_candidate_count_after"
+            ),
             _int(
-                alpha_repair_dividend_ledger.get("routeable_candidate_count_after"),
-                routeable_before,
+                inputs.alpha_repair_dividend_ledger.get(
+                    "routeable_candidate_count_after"
+                ),
+                before,
             ),
         ),
     )
+    return {
+        "routeable_candidate_count_before": before,
+        "routeable_candidate_count_after": after,
+        "accepted_routeable_candidate_count": _routeable_candidate_count_from_evidence(
+            inputs.evidence
+        ),
+        "routeable_candidate_delta": after - before,
+    }
+
+
+def _market_state_refs(inputs: ToplineContractInputs) -> dict[str, object]:
     evidence_clock = _choose_mapping(
-        status_payload.get("evidence_clock_arbiter"),
-        status_payload.get("evidence_clock"),
+        inputs.status_payload.get("evidence_clock_arbiter"),
+        inputs.status_payload.get("evidence_clock"),
     )
     required_custody = _mapping(evidence_clock.get("required_torghut_custody_ref"))
     route_warrant = _choose_mapping(
-        status_payload.get("route_warrant_exchange"),
-        status_payload.get("route_warrant"),
+        inputs.status_payload.get("route_warrant_exchange"),
+        inputs.status_payload.get("route_warrant"),
     )
-    jangar_material_ref = _jangar_material_evidence_settlement_ref(status_payload)
-    selected_hypothesis_id = _first_text(
-        no_delta_repair_reentry_auction.get("selected_hypothesis_id"),
-        alpha_repair_dividend_ledger.get("selected_hypothesis_id"),
-        selected_lane.get("hypothesis_id"),
-        first_foundry_receipt.get("hypothesis_id"),
-        selected_target.get("hypothesis_id"),
-    )
-    selected_candidate_id = _first_text(
-        first_foundry_receipt.get("candidate_id"),
-        selected_lane.get("candidate_id"),
-        selected_target.get("candidate_id"),
-    )
-    selected_strategy_id = _first_text(
-        first_foundry_receipt.get("strategy_id"),
-        selected_lane.get("strategy_id"),
-        selected_target.get("strategy_id"),
-    )
-    selected_dataset_snapshot_ref = _first_text(
-        first_foundry_receipt.get("dataset_snapshot_ref"),
-        first_foundry_receipt.get("dataset_snapshot_id"),
-        selected_lane.get("dataset_snapshot_ref"),
-        selected_lane.get("dataset_snapshot_id"),
-        alpha_repair_dividend_ledger.get("dataset_snapshot_ref"),
-    )
-    selected_value_gate = _first_text(
-        no_delta_repair_reentry_auction.get("selected_value_gate"),
-        alpha_evidence_foundry.get("selected_value_gate"),
-        top_item.get("value_gate"),
-    )
-    required_output_receipt = _first_text(
-        top_item.get("required_output_receipt"),
-        no_delta_repair_reentry_auction.get("required_output_receipt"),
-    )
+    return {
+        "evidence_clock_state": _state_from_mapping(
+            evidence_clock, "capital_decision", "state", "status"
+        ),
+        "evidence_clock_custody_status": _state_from_mapping(
+            required_custody, "decision", "state", "status"
+        ),
+        "route_warrant_state": _state_from_mapping(
+            route_warrant, "warrant_state", "state", "status"
+        ),
+        "jangar_material_evidence_settlement_ref": (
+            _jangar_material_evidence_settlement_ref(inputs.status_payload)
+        ),
+        "evidence_clock_arbiter": evidence_clock.get("arbiter_id"),
+        "route_warrant_exchange": route_warrant.get("warrant_id"),
+    }
+
+
+def build_topline_contract(inputs: ToplineContractInputs) -> dict[str, object]:
+    top_item = _top_repair_queue_item(inputs.repair_queue)
+    selected_refs = _selected_topline_refs(inputs, top_item)
+    route_counts = _routeable_counts(inputs)
+    market_refs = _market_state_refs(inputs)
     runtime_window_import_repair = _mapping(
-        evidence.get("runtime_window_import_repair")
+        inputs.evidence.get("runtime_window_import_repair")
     )
     top_line: dict[str, object] = {
-        "capital_state": _text(capital.get("capital_state"), "unknown"),
-        "capital_stage": _text(capital.get("capital_stage"), "unknown"),
-        "live_submission_allowed": _bool(capital.get("live_submission_allowed")),
-        "max_notional": _text(capital.get("max_notional"), "0"),
+        "capital_state": _text(inputs.capital.get("capital_state"), "unknown"),
+        "capital_stage": _text(inputs.capital.get("capital_stage"), "unknown"),
+        "live_submission_allowed": _bool(inputs.capital.get("live_submission_allowed")),
+        "max_notional": _text(inputs.capital.get("max_notional"), "0"),
         "top_repair_queue_item": top_item or None,
-        "selected_value_gate": selected_value_gate,
-        "required_output_receipt": required_output_receipt,
         "required_receipts": _string_items(top_item.get("required_receipts")),
-        "selected_hypothesis_id": selected_hypothesis_id,
-        "selected_candidate_id": selected_candidate_id,
-        "selected_strategy_id": selected_strategy_id,
-        "selected_dataset_snapshot_ref": selected_dataset_snapshot_ref,
-        "routeable_candidate_count_before": routeable_before,
-        "routeable_candidate_count_after": routeable_after,
-        "accepted_routeable_candidate_count": _routeable_candidate_count_from_evidence(
-            evidence
-        ),
-        "routeable_candidate_delta": routeable_after - routeable_before,
-        "alpha_no_delta_release_key": no_delta_repair_reentry_auction.get(
+        **selected_refs,
+        **route_counts,
+        "alpha_no_delta_release_key": inputs.no_delta_repair_reentry_auction.get(
             "active_no_delta_release_key"
         ),
-        "no_delta_reentry_decision": no_delta_repair_reentry_auction.get(
+        "no_delta_reentry_decision": inputs.no_delta_repair_reentry_auction.get(
             "reentry_decision"
         ),
         "no_delta_reentry_reason_codes": _string_items(
-            no_delta_repair_reentry_auction.get("reason_codes")
+            inputs.no_delta_repair_reentry_auction.get("reason_codes")
         ),
         "repair_bid_settlement_status": _first_text(
-            repair_bid_settlement.get("status"),
-            repair_bid_settlement.get("capital_decision"),
+            inputs.repair_bid_settlement.get("status"),
+            inputs.repair_bid_settlement.get("capital_decision"),
         ),
         "repair_bid_settlement_selected_lot_ids": _string_items(
-            repair_bid_settlement.get("selected_lot_ids")
+            inputs.repair_bid_settlement.get("selected_lot_ids")
         ),
         "repair_bid_settlement_dispatchable_lot_ids": _string_items(
-            repair_bid_settlement.get("dispatchable_lot_ids")
+            inputs.repair_bid_settlement.get("dispatchable_lot_ids")
         ),
         "repair_bid_settlement_held_lot_ids": _repair_bid_settlement_held_lot_ids(
-            repair_bid_settlement
+            inputs.repair_bid_settlement
         ),
         "runtime_window_import_repair_status": _text(
             runtime_window_import_repair.get("status"), "missing"
@@ -650,23 +681,14 @@ def _build_topline_contract(
         "runtime_window_import_paper_probation_target_count": _int(
             runtime_window_import_repair.get("paper_probation_target_count")
         ),
-        "evidence_clock_state": _state_from_mapping(
-            evidence_clock, "capital_decision", "state", "status"
-        ),
-        "evidence_clock_custody_status": _state_from_mapping(
-            required_custody, "decision", "state", "status"
-        ),
-        "route_warrant_state": _state_from_mapping(
-            route_warrant, "warrant_state", "state", "status"
-        ),
-        "jangar_material_evidence_settlement_ref": jangar_material_ref,
+        **market_refs,
         "validation_commands": _validation_commands(
             top_item=top_item,
-            no_delta_repair_reentry_auction=no_delta_repair_reentry_auction,
+            no_delta_repair_reentry_auction=inputs.no_delta_repair_reentry_auction,
         ),
         "rollback_target": _first_text(
-            no_delta_repair_reentry_auction.get("rollback_target"),
-            alpha_evidence_foundry.get("rollback_target"),
+            inputs.no_delta_repair_reentry_auction.get("rollback_target"),
+            inputs.alpha_evidence_foundry.get("rollback_target"),
             "ignore revenue-repair top-line fields and keep Torghut max_notional=0",
         ),
     }
@@ -689,21 +711,47 @@ def _build_topline_contract(
     )
     top_line["transport_evidence_refs"] = {
         "route_evidence_clearinghouse_packet": _mapping(
-            evidence.get("route_evidence_clearinghouse")
+            inputs.evidence.get("route_evidence_clearinghouse")
         ).get("packet_id"),
-        "repair_bid_settlement_ledger": repair_bid_settlement.get("ledger_id"),
-        "alpha_evidence_foundry": alpha_evidence_foundry.get("foundry_id"),
-        "no_delta_repair_reentry_auction": no_delta_repair_reentry_auction.get(
+        "repair_bid_settlement_ledger": inputs.repair_bid_settlement.get("ledger_id"),
+        "alpha_evidence_foundry": inputs.alpha_evidence_foundry.get("foundry_id"),
+        "no_delta_repair_reentry_auction": inputs.no_delta_repair_reentry_auction.get(
             "auction_id"
         ),
-        "evidence_clock_arbiter": evidence_clock.get("arbiter_id"),
-        "route_warrant_exchange": route_warrant.get("warrant_id"),
+        "evidence_clock_arbiter": market_refs["evidence_clock_arbiter"],
+        "route_warrant_exchange": market_refs["route_warrant_exchange"],
     }
     top_line["producer_component"] = "services/torghut/app/trading/revenue_repair.py"
     top_line["expected_repair_action"] = _text(
         top_item.get("action"), "no_repair_queue_item_selected"
     )
     return top_line
+
+
+def _build_topline_contract(**kwargs: object) -> dict[str, object]:
+    return build_topline_contract(
+        ToplineContractInputs(
+            status_payload=cast(Mapping[str, Any], kwargs["status_payload"]),
+            repair_queue=cast(Sequence[Mapping[str, Any]], kwargs["repair_queue"]),
+            capital=cast(Mapping[str, Any], kwargs["capital"]),
+            evidence=cast(Mapping[str, Any], kwargs["evidence"]),
+            repair_bid_settlement=cast(
+                Mapping[str, Any], kwargs["repair_bid_settlement"]
+            ),
+            alpha_evidence_foundry=cast(
+                Mapping[str, Any], kwargs["alpha_evidence_foundry"]
+            ),
+            alpha_readiness_settlement_conveyor=cast(
+                Mapping[str, Any], kwargs["alpha_readiness_settlement_conveyor"]
+            ),
+            alpha_repair_dividend_ledger=cast(
+                Mapping[str, Any], kwargs["alpha_repair_dividend_ledger"]
+            ),
+            no_delta_repair_reentry_auction=cast(
+                Mapping[str, Any], kwargs["no_delta_repair_reentry_auction"]
+            ),
+        )
+    )
 
 
 def _business_state(
@@ -724,4 +772,68 @@ def _business_state(
     return "not_revenue_ready"
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+summarize_tca = _summarize_tca
+summarize_route_reacquisition = _summarize_route_reacquisition
+mapping_items = _mapping_items
+is_source_collection_target = _is_source_collection_target
+summarize_runtime_window_import_target = _summarize_runtime_window_import_target
+summarize_runtime_window_import_repair = _summarize_runtime_window_import_repair
+summarize_routeability_acceptance = _summarize_routeability_acceptance
+summarize_route_evidence_clearinghouse = _summarize_route_evidence_clearinghouse
+summarize_repair_bid_settlement = _summarize_repair_bid_settlement
+summarize_repair_outcome_dividend = _summarize_repair_outcome_dividend
+first_mapping_item = _first_mapping_item
+first_text = _first_text
+top_repair_queue_item = _top_repair_queue_item
+routeable_candidate_count_from_evidence = _routeable_candidate_count_from_evidence
+repair_bid_settlement_held_lot_ids = _repair_bid_settlement_held_lot_ids
+state_from_mapping = _state_from_mapping
+jangar_material_evidence_settlement_ref = _jangar_material_evidence_settlement_ref
+validation_commands = _validation_commands
+field_unavailable_reason_codes = _field_unavailable_reason_codes
+business_state = _business_state
+
+__all__ = [
+    "summarize_tca",
+    "summarize_route_reacquisition",
+    "mapping_items",
+    "is_source_collection_target",
+    "summarize_runtime_window_import_target",
+    "summarize_runtime_window_import_repair",
+    "summarize_routeability_acceptance",
+    "summarize_route_evidence_clearinghouse",
+    "summarize_repair_bid_settlement",
+    "summarize_repair_outcome_dividend",
+    "first_mapping_item",
+    "first_text",
+    "top_repair_queue_item",
+    "routeable_candidate_count_from_evidence",
+    "repair_bid_settlement_held_lot_ids",
+    "state_from_mapping",
+    "jangar_material_evidence_settlement_ref",
+    "validation_commands",
+    "field_unavailable_reason_codes",
+    "build_topline_contract",
+    "business_state",
+    "_summarize_tca",
+    "_summarize_route_reacquisition",
+    "_mapping_items",
+    "_is_source_collection_target",
+    "_summarize_runtime_window_import_target",
+    "_summarize_runtime_window_import_repair",
+    "_summarize_routeability_acceptance",
+    "_summarize_route_evidence_clearinghouse",
+    "_summarize_repair_bid_settlement",
+    "_summarize_repair_outcome_dividend",
+    "_first_mapping_item",
+    "_first_text",
+    "_top_repair_queue_item",
+    "_routeable_candidate_count_from_evidence",
+    "_repair_bid_settlement_held_lot_ids",
+    "_state_from_mapping",
+    "_jangar_material_evidence_settlement_ref",
+    "_validation_commands",
+    "_field_unavailable_reason_codes",
+    "_build_topline_contract",
+    "_business_state",
+]
