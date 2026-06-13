@@ -1,59 +1,81 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_25")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_02_archive_historical_simulation_run"
+from .archive_models import (
+    ARCHIVE_STATUS_ARCHIVED,
+    ARCHIVE_STATUS_INSUFFICIENT,
+    ARCHIVE_STATUS_PARTIAL,
+    CERTIFICATE_STATUS_HISTORICAL_PROVEN,
+    CERTIFICATE_STATUS_INSUFFICIENT_HISTORY,
+    CERTIFICATE_STATUS_LIVE_CAPPED,
+    CERTIFICATE_STATUS_LIVE_FULL,
+    CERTIFICATE_STATUS_PAPER_PROVEN,
+    CERTIFICATE_STATUS_RESEARCH_ONLY,
+    DATA_SUFFICIENCY_SCHEMA_VERSION,
+    EXECUTION_DAY_INVENTORY_SCHEMA_VERSION,
+    MARKET_DAY_INVENTORY_SCHEMA_VERSION,
+    PROFITABILITY_CERTIFICATE_SCHEMA_VERSION,
+    REPLAY_DAY_MANIFEST_SCHEMA_VERSION,
+    STATISTICAL_VALIDITY_SCHEMA_VERSION,
+    SUFFICIENCY_STATUS_HISTORICAL_READY,
+    SUFFICIENCY_STATUS_INSUFFICIENT_HISTORY,
+    SUFFICIENCY_STATUS_PAPER_READY,
+    SUFFICIENCY_STATUS_RESEARCH_ONLY,
+    TRIAL_LEDGER_SCHEMA_VERSION,
+    ArchiveWalkForwardFold,
+    ArchivedTradingDayBundle,
+    build_execution_day_inventory,
+    build_market_day_inventory,
+    build_replay_day_manifest,
+    collect_simulation_postgres_counts,
+    copy_archive_artifacts,
+    upsert_dataset_snapshot,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_03_build_statistical_validity_report"
+from .historical_run_archive import (
+    archive_historical_simulation_run,
+    build_trial_ledger,
+    generate_archive_walkforward_folds,
+    load_archived_trading_day_bundles,
+    summarize_data_sufficiency,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .statistical_validity import (
+    build_profitability_certificate,
+    build_statistical_validity_report,
+)
 
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
-del __compat_module__
+__all__ = (
+    "ARCHIVE_STATUS_ARCHIVED",
+    "ARCHIVE_STATUS_INSUFFICIENT",
+    "ARCHIVE_STATUS_PARTIAL",
+    "CERTIFICATE_STATUS_HISTORICAL_PROVEN",
+    "CERTIFICATE_STATUS_INSUFFICIENT_HISTORY",
+    "CERTIFICATE_STATUS_LIVE_CAPPED",
+    "CERTIFICATE_STATUS_LIVE_FULL",
+    "CERTIFICATE_STATUS_PAPER_PROVEN",
+    "CERTIFICATE_STATUS_RESEARCH_ONLY",
+    "DATA_SUFFICIENCY_SCHEMA_VERSION",
+    "EXECUTION_DAY_INVENTORY_SCHEMA_VERSION",
+    "MARKET_DAY_INVENTORY_SCHEMA_VERSION",
+    "PROFITABILITY_CERTIFICATE_SCHEMA_VERSION",
+    "REPLAY_DAY_MANIFEST_SCHEMA_VERSION",
+    "STATISTICAL_VALIDITY_SCHEMA_VERSION",
+    "SUFFICIENCY_STATUS_HISTORICAL_READY",
+    "SUFFICIENCY_STATUS_INSUFFICIENT_HISTORY",
+    "SUFFICIENCY_STATUS_PAPER_READY",
+    "SUFFICIENCY_STATUS_RESEARCH_ONLY",
+    "TRIAL_LEDGER_SCHEMA_VERSION",
+    "ArchiveWalkForwardFold",
+    "ArchivedTradingDayBundle",
+    "archive_historical_simulation_run",
+    "build_execution_day_inventory",
+    "build_market_day_inventory",
+    "build_profitability_certificate",
+    "build_replay_day_manifest",
+    "build_statistical_validity_report",
+    "build_trial_ledger",
+    "collect_simulation_postgres_counts",
+    "copy_archive_artifacts",
+    "generate_archive_walkforward_folds",
+    "load_archived_trading_day_bundles",
+    "summarize_data_sufficiency",
+    "upsert_dataset_snapshot",
+)

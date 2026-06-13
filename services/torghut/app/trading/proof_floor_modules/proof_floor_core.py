@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Profitability proof-floor receipts for capital-qualified trading routes."""
 
 from __future__ import annotations
@@ -14,30 +13,27 @@ from ..discovery.promotion_contract import (
     probation_evidence_collection_contract,
 )
 from ..risk import target_sizing_payload
-from ..route_reacquisition import build_route_reacquisition_book
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
-_BLOCKING_STATES = {"degraded", "fail", "missing", "stale"}
+BLOCKING_STATES = {"degraded", "fail", "missing", "stale"}
 
-_LIVE_MICRO_STAGES = {"0.10x canary", "0.25x canary"}
+LIVE_MICRO_STAGES = {"0.10x canary", "0.25x canary"}
 
-_LIVE_SCALE_STAGES = {"0.50x live", "1.00x live"}
+LIVE_SCALE_STAGES = {"0.50x live", "1.00x live"}
 
 
-def _text(value: object, default: str = "") -> str:
+def text_value(value: object, default: str = "") -> str:
     if value is None:
         return default
     normalized = str(value).strip()
     return normalized or default
 
 
-def _bool(value: object) -> bool:
+def bool_value(value: object) -> bool:
     return bool(value)
 
 
-def _int(value: object, default: int = 0) -> int:
+def int_value(value: object, default: int = 0) -> int:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -52,7 +48,7 @@ def _int(value: object, default: int = 0) -> int:
     return default
 
 
-def _decimal(value: object) -> Decimal | None:
+def decimal_value(value: object) -> Decimal | None:
     if isinstance(value, Decimal):
         return value
     if isinstance(value, (int, float)):
@@ -65,7 +61,7 @@ def _decimal(value: object) -> Decimal | None:
     return None
 
 
-def _decimal_text(value: Decimal | None) -> str | None:
+def decimal_text(value: Decimal | None) -> str | None:
     if value is None:
         return None
     normalized = value.normalize()
@@ -73,7 +69,7 @@ def _decimal_text(value: Decimal | None) -> str | None:
     return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
 
 
-def _parse_timestamp(value: object) -> datetime | None:
+def parse_timestamp(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
     elif isinstance(value, str) and value.strip():
@@ -91,38 +87,40 @@ def _parse_timestamp(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _mapping(value: object) -> Mapping[str, Any]:
+def mapping_value(value: object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return cast(Mapping[str, Any], value)
     return {}
 
 
-def _sequence(value: object) -> Sequence[object]:
+def sequence_value(value: object) -> Sequence[object]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return cast(Sequence[object], value)
     return []
 
 
-def _hypothesis_summary(hypothesis_payload: Mapping[str, Any]) -> Mapping[str, Any]:
+def hypothesis_summary(hypothesis_payload: Mapping[str, Any]) -> Mapping[str, Any]:
     summary = hypothesis_payload.get("summary")
     if isinstance(summary, Mapping):
         return cast(Mapping[str, Any], summary)
     return hypothesis_payload
 
 
-def _hypothesis_items(hypothesis_payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+def hypothesis_items(hypothesis_payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [
         item
-        for item in _sequence(hypothesis_payload.get("items"))
+        for item in sequence_value(hypothesis_payload.get("items"))
         if isinstance(item, Mapping)
     ]
 
 
-def _strings(value: object) -> list[str]:
-    return sorted({_text(item) for item in _sequence(value) if _text(item)})
+def strings_value(value: object) -> list[str]:
+    return sorted(
+        {text_value(item) for item in sequence_value(value) if text_value(item)}
+    )
 
 
-def _truthy(value: object) -> bool:
+def truthy(value: object) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -130,24 +128,24 @@ def _truthy(value: object) -> bool:
     return bool(value)
 
 
-def _first_decimal_from(
+def first_decimal_from(
     source: Mapping[str, Any], keys: Sequence[str]
 ) -> Decimal | None:
     for key in keys:
-        value = _decimal(source.get(key))
+        value = decimal_value(source.get(key))
         if value is not None:
             return value
     return None
 
 
-def _target_sizing_source_for_item(
+def target_sizing_source_for_item(
     item: Mapping[str, Any],
     simple_lane_status: Mapping[str, Any] | None,
 ) -> dict[str, object]:
-    contract = _mapping(item.get("promotion_contract"))
-    sizing = _mapping(item.get("target_sizing"))
-    simple = _mapping(simple_lane_status)
-    expectancy = _first_decimal_from(
+    contract = mapping_value(item.get("promotion_contract"))
+    sizing = mapping_value(item.get("target_sizing"))
+    simple = mapping_value(simple_lane_status)
+    expectancy = first_decimal_from(
         sizing,
         (
             "observed_post_cost_expectancy_bps",
@@ -156,7 +154,7 @@ def _target_sizing_source_for_item(
         ),
     )
     if expectancy is None:
-        expectancy = _first_decimal_from(
+        expectancy = first_decimal_from(
             item,
             (
                 "observed_post_cost_expectancy_bps",
@@ -165,7 +163,7 @@ def _target_sizing_source_for_item(
             ),
         )
     if expectancy is None:
-        expectancy = _first_decimal_from(
+        expectancy = first_decimal_from(
             contract,
             (
                 "observed_post_cost_expectancy_bps",
@@ -178,7 +176,7 @@ def _target_sizing_source_for_item(
         or item.get("target_daily_net_pnl")
         or contract.get("target_daily_net_pnl")
         or "500",
-        "observed_post_cost_expectancy_bps": _decimal_text(expectancy),
+        "observed_post_cost_expectancy_bps": decimal_text(expectancy),
         "capacity_daily_notional": sizing.get("capacity_daily_notional")
         or item.get("capacity_daily_notional")
         or contract.get("capacity_daily_notional")
@@ -194,21 +192,23 @@ def _target_sizing_source_for_item(
     }
 
 
-def _target_notional_parameter_summary(
+def target_notional_parameter_summary(
     hypothesis_payload: Mapping[str, Any],
     simple_lane_status: Mapping[str, Any] | None,
 ) -> dict[str, object]:
     candidate_payloads: list[dict[str, object]] = []
     blockers: set[str] = set()
-    for item in _hypothesis_items(hypothesis_payload):
-        candidate_id = _text(item.get("candidate_id"))
-        lineage = _mapping(item.get("lineage_ref"))
+    for item in hypothesis_items(hypothesis_payload):
+        candidate_id = text_value(item.get("candidate_id"))
+        lineage = mapping_value(item.get("lineage_ref"))
         if not candidate_id:
-            candidate_id = _text(lineage.get("candidate_id"))
-        hypothesis_id = _text(item.get("hypothesis_id"), _text(item.get("id")))
-        source = _target_sizing_source_for_item(item, simple_lane_status)
+            candidate_id = text_value(lineage.get("candidate_id"))
+        hypothesis_id = text_value(
+            item.get("hypothesis_id"), text_value(item.get("id"))
+        )
+        source = target_sizing_source_for_item(item, simple_lane_status)
         sizing = target_sizing_payload(source)
-        item_blockers = _strings(sizing.get("blocking_reasons"))
+        item_blockers = strings_value(sizing.get("blocking_reasons"))
         blockers.update(item_blockers)
         candidate_payloads.append(
             {
@@ -246,7 +246,7 @@ def _target_notional_parameter_summary(
     }
 
 
-def _hypothesis_repair_target_summary(
+def hypothesis_repair_target_summary(
     hypothesis_payload: Mapping[str, Any],
 ) -> dict[str, object]:
     hypothesis_ids: set[str] = set()
@@ -254,10 +254,10 @@ def _hypothesis_repair_target_summary(
     blocked_ids: set[str] = set()
     repair_targets: list[dict[str, object]] = []
 
-    for item in _hypothesis_items(hypothesis_payload):
-        lineage_ref = _mapping(item.get("lineage_ref"))
-        hypothesis_id = _text(
-            item.get("hypothesis_id"), _text(lineage_ref.get("hypothesis_id"))
+    for item in hypothesis_items(hypothesis_payload):
+        lineage_ref = mapping_value(item.get("lineage_ref"))
+        hypothesis_id = text_value(
+            item.get("hypothesis_id"), text_value(lineage_ref.get("hypothesis_id"))
         )
         if not hypothesis_id:
             continue
@@ -265,28 +265,30 @@ def _hypothesis_repair_target_summary(
             continue
 
         hypothesis_ids.add(hypothesis_id)
-        promotion_eligible = _truthy(item.get("promotion_eligible"))
+        promotion_eligible = truthy(item.get("promotion_eligible"))
         if promotion_eligible:
             promotion_eligible_ids.add(hypothesis_id)
         else:
             blocked_ids.add(hypothesis_id)
 
-        candidate_id = _text(
-            item.get("candidate_id"), _text(lineage_ref.get("candidate_id"))
+        candidate_id = text_value(
+            item.get("candidate_id"), text_value(lineage_ref.get("candidate_id"))
         )
-        strategy_id = _text(
-            item.get("strategy_id"), _text(lineage_ref.get("strategy_id"))
+        strategy_id = text_value(
+            item.get("strategy_id"), text_value(lineage_ref.get("strategy_id"))
         )
-        lane_id = _text(item.get("lane_id"), _text(lineage_ref.get("lane_id")))
-        strategy_family = _text(
-            item.get("strategy_family"), _text(lineage_ref.get("strategy_family"))
+        lane_id = text_value(
+            item.get("lane_id"), text_value(lineage_ref.get("lane_id"))
+        )
+        strategy_family = text_value(
+            item.get("strategy_family"), text_value(lineage_ref.get("strategy_family"))
         )
         target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
-            "state": _text(item.get("state"), "unknown"),
+            "state": text_value(item.get("state"), "unknown"),
             "promotion_eligible": promotion_eligible,
-            "reasons": _strings(item.get("reasons")),
-            "informational_reasons": _strings(item.get("informational_reasons")),
+            "reasons": strings_value(item.get("reasons")),
+            "informational_reasons": strings_value(item.get("informational_reasons")),
         }
         if candidate_id:
             target["candidate_id"] = candidate_id
@@ -310,34 +312,34 @@ def _hypothesis_repair_target_summary(
     }
 
 
-def _reason_counts(hypothesis_payload: Mapping[str, Any]) -> Counter[str]:
+def reason_counts(hypothesis_payload: Mapping[str, Any]) -> Counter[str]:
     counts: Counter[str] = Counter()
-    for item in _hypothesis_items(hypothesis_payload):
-        for reason in _sequence(item.get("reasons")):
-            normalized = _text(reason)
+    for item in hypothesis_items(hypothesis_payload):
+        for reason in sequence_value(item.get("reasons")):
+            normalized = text_value(reason)
             if normalized:
                 counts[normalized] += 1
     return counts
 
 
-def _slippage_guardrails(hypothesis_payload: Mapping[str, Any]) -> list[Decimal]:
+def slippage_guardrails(hypothesis_payload: Mapping[str, Any]) -> list[Decimal]:
     guardrails: list[Decimal] = []
-    for item in _hypothesis_items(hypothesis_payload):
-        contract = _mapping(item.get("promotion_contract"))
-        value = _decimal(contract.get("max_avg_abs_slippage_bps"))
+    for item in hypothesis_items(hypothesis_payload):
+        contract = mapping_value(item.get("promotion_contract"))
+        value = decimal_value(contract.get("max_avg_abs_slippage_bps"))
         if value is not None:
             guardrails.append(value)
     return guardrails
 
 
-def _tca_symbol_routes(
+def tca_symbol_routes(
     tca_summary: Mapping[str, Any],
     *,
     slippage_guardrail: Decimal | None,
     route_slippage_guardrail: Decimal | None = None,
 ) -> dict[str, object] | None:
     rows: list[Mapping[str, Any]] = []
-    for item in _sequence(tca_summary.get("symbol_breakdown")):
+    for item in sequence_value(tca_summary.get("symbol_breakdown")):
         if isinstance(item, Mapping):
             rows.append(cast(Mapping[str, Any], item))
     if not rows:
@@ -347,12 +349,12 @@ def _tca_symbol_routes(
     blocked_symbols: list[dict[str, object]] = []
     missing_symbols: list[str] = []
     for row in rows:
-        symbol = _text(row.get("symbol"))
+        symbol = text_value(row.get("symbol"))
         if not symbol:
             continue
-        order_count = _int(row.get("order_count"))
-        avg_abs_slippage = _decimal(row.get("avg_abs_slippage_bps"))
-        avg_realized_shortfall = _decimal(row.get("avg_realized_shortfall_bps"))
+        order_count = int_value(row.get("order_count"))
+        avg_abs_slippage = decimal_value(row.get("avg_abs_slippage_bps"))
+        avg_realized_shortfall = decimal_value(row.get("avg_realized_shortfall_bps"))
         route_adverse_slippage = (
             max(avg_realized_shortfall, Decimal("0"))
             if avg_realized_shortfall is not None
@@ -361,14 +363,14 @@ def _tca_symbol_routes(
         symbol_payload: dict[str, object] = {
             "symbol": symbol,
             "order_count": order_count,
-            "avg_abs_slippage_bps": _decimal_text(avg_abs_slippage),
-            "avg_realized_shortfall_bps": _decimal_text(avg_realized_shortfall),
-            "route_adverse_slippage_bps": _decimal_text(route_adverse_slippage),
+            "avg_abs_slippage_bps": decimal_text(avg_abs_slippage),
+            "avg_realized_shortfall_bps": decimal_text(avg_realized_shortfall),
+            "route_adverse_slippage_bps": decimal_text(route_adverse_slippage),
             "route_slippage_basis": "signed_realized_shortfall_bps"
             if avg_realized_shortfall is not None
             else "avg_abs_slippage_bps_fallback",
-            "max_abs_slippage_bps": _decimal_text(
-                _decimal(row.get("max_abs_slippage_bps"))
+            "max_abs_slippage_bps": decimal_text(
+                decimal_value(row.get("max_abs_slippage_bps"))
             ),
             "last_computed_at": row.get("last_computed_at"),
         }
@@ -386,9 +388,9 @@ def _tca_symbol_routes(
         routeable_symbols.append(symbol_payload)
 
     payload: dict[str, object] = {
-        "scope_symbols": list(_sequence(tca_summary.get("scope_symbols"))),
-        "scope_symbol_count": _int(tca_summary.get("scope_symbol_count")),
-        "slippage_guardrail_bps": _decimal_text(slippage_guardrail),
+        "scope_symbols": list(sequence_value(tca_summary.get("scope_symbols"))),
+        "scope_symbol_count": int_value(tca_summary.get("scope_symbol_count")),
+        "slippage_guardrail_bps": decimal_text(slippage_guardrail),
         "routeable_symbol_count": len(routeable_symbols),
         "blocked_symbol_count": len(blocked_symbols),
         "missing_symbol_count": len(missing_symbols),
@@ -400,13 +402,11 @@ def _tca_symbol_routes(
         route_slippage_guardrail is not None
         and route_slippage_guardrail != slippage_guardrail
     ):
-        payload["route_slippage_guardrail_bps"] = _decimal_text(
-            route_slippage_guardrail
-        )
+        payload["route_slippage_guardrail_bps"] = decimal_text(route_slippage_guardrail)
     return payload
 
 
-def _route_universe_adverse_slippage_clear(
+def route_universe_adverse_slippage_clear(
     symbol_routes: Mapping[str, Any],
     *,
     route_filter_enabled: bool,
@@ -416,34 +416,34 @@ def _route_universe_adverse_slippage_clear(
         return False
     if aggregate_tca_reason != "execution_tca_slippage_guardrail_exceeded":
         return False
-    scope_symbol_count = _int(symbol_routes.get("scope_symbol_count"))
-    routeable_symbol_count = _int(symbol_routes.get("routeable_symbol_count"))
+    scope_symbol_count = int_value(symbol_routes.get("scope_symbol_count"))
+    routeable_symbol_count = int_value(symbol_routes.get("routeable_symbol_count"))
     if (
         scope_symbol_count <= 0
         or routeable_symbol_count <= 0
         or routeable_symbol_count != scope_symbol_count
-        or _int(symbol_routes.get("blocked_symbol_count")) > 0
-        or _int(symbol_routes.get("missing_symbol_count")) > 0
+        or int_value(symbol_routes.get("blocked_symbol_count")) > 0
+        or int_value(symbol_routes.get("missing_symbol_count")) > 0
     ):
         return False
-    route_guardrail = _decimal(
+    route_guardrail = decimal_value(
         symbol_routes.get("route_slippage_guardrail_bps")
-    ) or _decimal(symbol_routes.get("slippage_guardrail_bps"))
+    ) or decimal_value(symbol_routes.get("slippage_guardrail_bps"))
     if route_guardrail is None:
         return False
-    for item in _sequence(symbol_routes.get("routeable_symbols")):
+    for item in sequence_value(symbol_routes.get("routeable_symbols")):
         if not isinstance(item, Mapping):
             return False
         row = cast(Mapping[str, Any], item)
         if row.get("route_slippage_basis") != "signed_realized_shortfall_bps":
             return False
-        route_adverse_slippage = _decimal(row.get("route_adverse_slippage_bps"))
+        route_adverse_slippage = decimal_value(row.get("route_adverse_slippage_bps"))
         if route_adverse_slippage is None or route_adverse_slippage > route_guardrail:
             return False
     return True
 
 
-def _route_symbol_filter_enabled(
+def route_symbol_filter_enabled(
     simple_lane_status: Mapping[str, Any] | None,
 ) -> bool:
     if not isinstance(simple_lane_status, Mapping):
@@ -454,7 +454,7 @@ def _route_symbol_filter_enabled(
     return bool(value)
 
 
-def _add_repair(
+def add_repair(
     repairs: list[dict[str, object]],
     *,
     code: str,
@@ -476,6 +476,3 @@ def _add_repair(
             "max_notional": max_notional,
         }
     )
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

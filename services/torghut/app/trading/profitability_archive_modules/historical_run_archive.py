@@ -1,31 +1,53 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Archive bundle and proof helpers for historical profitability validation."""
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import random
-import shutil
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from statistics import NormalDist
 from typing import Any, Mapping, Sequence, cast
 
-import psycopg
-import yaml
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...models import VNextDatasetSnapshot
-from ..evidence_contracts import ArtifactProvenance
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_25 import *
+from .archive_models import (
+    ArchiveWalkForwardFold,
+    ArchivedTradingDayBundle,
+    DATA_SUFFICIENCY_SCHEMA_VERSION,
+    SUFFICIENCY_STATUS_HISTORICAL_READY,
+    SUFFICIENCY_STATUS_INSUFFICIENT_HISTORY,
+    SUFFICIENCY_STATUS_PAPER_READY,
+    SUFFICIENCY_STATUS_RESEARCH_ONLY,
+    TRIAL_LEDGER_SCHEMA_VERSION,
+    DSR_MIN_SAMPLE_DAYS,
+    NORMAL_DIST,
+    REALITY_CHECK_MIN_SAMPLE_DAYS,
+    UTC,
+    as_dict,
+    as_float,
+    as_text,
+    candidate_id_from_manifest,
+    decimal_mean,
+    decimal_median,
+    load_json,
+    load_manifest,
+    manifest_trading_day,
+    mean_optional_floats,
+    min_retention_days,
+    missing_business_days,
+    resolve_manifest_path,
+    safe_decimal_ratio,
+    simulation_report_path,
+    stable_hash,
+    write_json,
+    build_execution_day_inventory,
+    build_market_day_inventory,
+    build_replay_day_manifest,
+    collect_simulation_postgres_counts,
+    copy_archive_artifacts,
+    upsert_dataset_snapshot,
+)
 
 
 def archive_historical_simulation_run(
@@ -38,8 +60,8 @@ def archive_historical_simulation_run(
     session: Session | None = None,
     observed_at: datetime | None = None,
 ) -> dict[str, Any]:
-    simulation_report_path = _simulation_report_path(run_dir)
-    if not simulation_report_path.exists():
+    simulation_report_file = simulation_report_path(run_dir)
+    if not simulation_report_file.exists():
         raise RuntimeError(f"simulation_report_missing:{run_dir}")
     run_manifest_path = run_dir / "run-manifest.json"
     replay_report_path = run_dir / "replay-report.json"
@@ -48,21 +70,21 @@ def archive_historical_simulation_run(
     if not replay_report_path.exists():
         raise RuntimeError(f"replay_report_missing:{run_dir}")
 
-    simulation_report = _load_json(simulation_report_path)
-    run_manifest = _load_json(run_manifest_path)
-    replay_report = _load_json(replay_report_path)
+    simulation_report = load_json(simulation_report_file)
+    run_manifest = load_json(run_manifest_path)
+    replay_report = load_json(replay_report_path)
     resolved_manifest_path = manifest_path
     if resolved_manifest_path is None:
-        run_metadata = _as_dict(simulation_report.get("run_metadata"))
-        manifest_text = _as_text(run_metadata.get("manifest_path"))
+        run_metadata = as_dict(simulation_report.get("run_metadata"))
+        manifest_text = as_text(run_metadata.get("manifest_path"))
         if manifest_text is None:
             raise RuntimeError(f"manifest_path_missing:{run_dir}")
         resolved_manifest_path = Path(manifest_text)
-    resolved_manifest_path = _resolve_manifest_path(run_dir, resolved_manifest_path)
-    manifest = _load_manifest(resolved_manifest_path)
-    trading_day = _manifest_trading_day(manifest, simulation_report)
-    candidate_id = _candidate_id(manifest, run_manifest)
-    run_id = _as_text(run_manifest.get("run_id")) or run_dir.name
+    resolved_manifest_path = resolve_manifest_path(run_dir, resolved_manifest_path)
+    manifest = load_manifest(resolved_manifest_path)
+    trading_day = manifest_trading_day(manifest, simulation_report)
+    candidate_id = candidate_id_from_manifest(manifest, run_manifest)
+    run_id = as_text(run_manifest.get("run_id")) or run_dir.name
     archive_dir = archive_root / trading_day / candidate_id / run_id
     artifact_refs = copy_archive_artifacts(
         run_dir=run_dir,
@@ -72,7 +94,7 @@ def archive_historical_simulation_run(
     actual_postgres_counts = dict(postgres_counts or {})
     if not actual_postgres_counts:
         simulation_dsn = (
-            _as_text(_as_dict(manifest.get("postgres")).get("simulation_dsn")) or ""
+            as_text(as_dict(manifest.get("postgres")).get("simulation_dsn")) or ""
         )
         if simulation_dsn:
             try:
@@ -112,19 +134,19 @@ def archive_historical_simulation_run(
     market_day_inventory_path = archive_dir / "market_day_inventory.json"
     execution_day_inventory_path = archive_dir / "execution_day_inventory.json"
     replay_day_manifest_path = archive_dir / "replay_day_manifest.json"
-    _write_json(market_day_inventory_path, market_day_inventory)
-    _write_json(execution_day_inventory_path, execution_day_inventory)
-    _write_json(replay_day_manifest_path, replay_day_manifest)
+    write_json(market_day_inventory_path, market_day_inventory)
+    write_json(execution_day_inventory_path, execution_day_inventory)
+    write_json(replay_day_manifest_path, replay_day_manifest)
 
     if session is not None:
-        window = _as_dict(manifest.get("window"))
-        dataset_from = _parse_optional_timestamp(_as_text(window.get("start")))
-        dataset_to = _parse_optional_timestamp(_as_text(window.get("end")))
+        window = as_dict(manifest.get("window"))
+        dataset_from = parse_optional_timestamp(as_text(window.get("start")))
+        dataset_to = parse_optional_timestamp(as_text(window.get("end")))
         upsert_dataset_snapshot(
             session,
             run_id=run_id,
             candidate_id=candidate_id,
-            dataset_id=_as_text(manifest.get("dataset_id")) or run_id,
+            dataset_id=as_text(manifest.get("dataset_id")) or run_id,
             dataset_from=dataset_from,
             dataset_to=dataset_to,
             artifact_ref=str(archive_dir),
@@ -147,7 +169,7 @@ def archive_historical_simulation_run(
     }
 
 
-def _parse_optional_timestamp(value: str | None) -> datetime | None:
+def parse_optional_timestamp(value: str | None) -> datetime | None:
     if value is None:
         return None
     cleaned = value.replace("Z", "+00:00")
@@ -156,8 +178,8 @@ def _parse_optional_timestamp(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=_UTC)
-    return parsed.astimezone(_UTC)
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def load_archived_trading_day_bundles(
@@ -166,16 +188,16 @@ def load_archived_trading_day_bundles(
     bundles: list[ArchivedTradingDayBundle] = []
     for replay_manifest_path in sorted(archive_root.rglob("replay_day_manifest.json")):
         archive_dir = replay_manifest_path.parent
-        replay_day_manifest = _load_json(replay_manifest_path)
-        market_day_inventory = _load_json(archive_dir / "market_day_inventory.json")
-        execution_day_inventory = _load_json(
+        replay_day_manifest = load_json(replay_manifest_path)
+        market_day_inventory = load_json(archive_dir / "market_day_inventory.json")
+        execution_day_inventory = load_json(
             archive_dir / "execution_day_inventory.json"
         )
-        trading_day = _as_text(replay_day_manifest.get("trading_day"))
-        candidate_id = _as_text(replay_day_manifest.get("candidate_id"))
-        run_id = _as_text(replay_day_manifest.get("run_id"))
-        original_run_dir = _as_text(replay_day_manifest.get("original_run_dir"))
-        archived_run_dir = _as_text(replay_day_manifest.get("archived_run_dir")) or str(
+        trading_day = as_text(replay_day_manifest.get("trading_day"))
+        candidate_id = as_text(replay_day_manifest.get("candidate_id"))
+        run_id = as_text(replay_day_manifest.get("run_id"))
+        original_run_dir = as_text(replay_day_manifest.get("original_run_dir"))
+        archived_run_dir = as_text(replay_day_manifest.get("archived_run_dir")) or str(
             archive_dir
         )
         if (
@@ -224,8 +246,8 @@ def summarize_data_sufficiency(
             if str(symbol).strip()
         }
     )
-    missing_days = _missing_business_days(replayable)
-    retention_risk_days_remaining = _min_retention_days(bundles)
+    missing_days = missing_business_days(replayable)
+    retention_risk_days_remaining = min_retention_days(bundles)
     blockers: list[str] = []
     status = SUFFICIENCY_STATUS_PAPER_READY
     if len(replayable) < min_research_days:
@@ -246,9 +268,7 @@ def summarize_data_sufficiency(
         status = SUFFICIENCY_STATUS_INSUFFICIENT_HISTORY
     return {
         "schema_version": DATA_SUFFICIENCY_SCHEMA_VERSION,
-        "generated_at": (generated_at or datetime.now(_UTC))
-        .astimezone(_UTC)
-        .isoformat(),
+        "generated_at": (generated_at or datetime.now(UTC)).astimezone(UTC).isoformat(),
         "market_days_available": len({bundle.trading_day for bundle in bundles}),
         "execution_days_available": len(execution_days),
         "replay_ready_market_days": len(replayable),
@@ -303,16 +323,16 @@ def build_trial_ledger(
             bundle for bundle in replayable_bundles if bundle.execution_day_eligible
         ]
         daily_pnls = [bundle.net_pnl_estimated for bundle in proof_eligible_bundles]
-        average_daily = _decimal_mean(daily_pnls)
-        median_daily = _decimal_median(daily_pnls)
-        profitable_ratio = _safe_decimal_ratio(
+        average_daily = decimal_mean(daily_pnls)
+        median_daily = decimal_median(daily_pnls)
+        profitable_ratio = safe_decimal_ratio(
             Decimal(sum(1 for value in daily_pnls if value > 0)),
             Decimal(len(daily_pnls)),
         )
         entry = {
             "candidate_id": candidate_id,
             "sleeve_id": candidate_id,
-            "parameter_hash": _stable_hash(candidate_id),
+            "parameter_hash": stable_hash(candidate_id),
             "search_batch_id": "archive-bundle-v1",
             "dataset_snapshot_refs": sorted(
                 {
@@ -342,9 +362,9 @@ def build_trial_ledger(
                 "median_daily_net_pnl": format(median_daily, "f"),
                 "profitable_day_ratio": format(profitable_ratio, "f"),
                 "total_net_pnl": format(sum(daily_pnls, Decimal("0")), "f"),
-                "average_abs_slippage_bps": _mean_optional_floats(
+                "average_abs_slippage_bps": mean_optional_floats(
                     [
-                        _as_float(
+                        as_float(
                             bundle.execution_day_inventory.get("avg_abs_slippage_bps")
                         )
                         for bundle in execution_bundles
@@ -363,9 +383,7 @@ def build_trial_ledger(
             entry["selection_reason"] = "highest_average_daily_net_pnl"
     return {
         "schema_version": TRIAL_LEDGER_SCHEMA_VERSION,
-        "generated_at": (generated_at or datetime.now(_UTC))
-        .astimezone(_UTC)
-        .isoformat(),
+        "generated_at": (generated_at or datetime.now(UTC)).astimezone(UTC).isoformat(),
         "trial_count": len(entries),
         "selected_candidate_id": selected_candidate_id,
         "entries": entries,
@@ -420,7 +438,7 @@ def generate_archive_walkforward_folds(
     return folds
 
 
-def _proof_eligible_bundles(
+def proof_eligible_bundles(
     bundles: Sequence[ArchivedTradingDayBundle],
     *,
     candidate_id: str | None = None,
@@ -434,17 +452,17 @@ def _proof_eligible_bundles(
     ]
 
 
-def _candidate_daily_net_pnl_by_day(
+def candidate_daily_net_pnl_by_day(
     bundles: Sequence[ArchivedTradingDayBundle],
 ) -> dict[str, dict[str, Decimal]]:
     series: dict[str, dict[str, Decimal]] = {}
-    for bundle in _proof_eligible_bundles(bundles):
+    for bundle in proof_eligible_bundles(bundles):
         candidate_series = series.setdefault(bundle.candidate_id, {})
         candidate_series[bundle.trading_day] = bundle.net_pnl_estimated
     return series
 
 
-def _fold_selection_rows(
+def fold_selection_rows(
     *,
     candidate_daily_net_pnl_by_day: Mapping[str, Mapping[str, Decimal]],
     folds: Sequence[ArchiveWalkForwardFold],
@@ -464,8 +482,8 @@ def _fold_selection_rows(
             candidate_metrics.append(
                 {
                     "candidate_id": candidate_id,
-                    "is_avg": _decimal_mean(is_values),
-                    "oos_avg": _decimal_mean(oos_values),
+                    "is_avg": decimal_mean(is_values),
+                    "oos_avg": decimal_mean(oos_values),
                     "oos_sum": sum(oos_values, Decimal("0")),
                 }
             )
@@ -510,7 +528,7 @@ def _fold_selection_rows(
     return rows
 
 
-def _estimate_pbo(fold_rows: Sequence[Mapping[str, Any]]) -> float | None:
+def estimate_pbo(fold_rows: Sequence[Mapping[str, Any]]) -> float | None:
     if not fold_rows:
         return None
     below_median = sum(
@@ -519,7 +537,7 @@ def _estimate_pbo(fold_rows: Sequence[Mapping[str, Any]]) -> float | None:
     return below_median / len(fold_rows)
 
 
-def _fit_slope(x_values: Sequence[float], y_values: Sequence[float]) -> float | None:
+def fit_slope(x_values: Sequence[float], y_values: Sequence[float]) -> float | None:
     if len(x_values) != len(y_values) or len(x_values) < 2:
         return None
     mean_x = sum(x_values) / len(x_values)
@@ -534,7 +552,7 @@ def _fit_slope(x_values: Sequence[float], y_values: Sequence[float]) -> float | 
     return numerator / denominator
 
 
-def _sample_stddev(values: Sequence[float]) -> float | None:
+def sample_stddev(values: Sequence[float]) -> float | None:
     if len(values) < 2:
         return None
     mean_value = sum(values) / len(values)
@@ -544,15 +562,15 @@ def _sample_stddev(values: Sequence[float]) -> float | None:
     return math.sqrt(variance)
 
 
-def _daily_sharpe_ratio(values: Sequence[Decimal]) -> float | None:
+def daily_sharpe_ratio(values: Sequence[Decimal]) -> float | None:
     resolved = [float(value) for value in values]
-    stddev = _sample_stddev(resolved)
+    stddev = sample_stddev(resolved)
     if stddev is None or stddev <= 0:
         return None
     return (sum(resolved) / len(resolved)) / stddev
 
 
-def _skewness_and_kurtosis(values: Sequence[Decimal]) -> tuple[float, float]:
+def skewness_and_kurtosis(values: Sequence[Decimal]) -> tuple[float, float]:
     resolved = [float(value) for value in values]
     if len(resolved) < 3:
         return (0.0, 3.0)
@@ -568,27 +586,27 @@ def _skewness_and_kurtosis(values: Sequence[Decimal]) -> tuple[float, float]:
     return (skewness, kurtosis)
 
 
-def _estimate_deflated_sharpe_ratio(
+def estimate_deflated_sharpe_ratio(
     *,
     selected_values: Sequence[Decimal],
     candidate_daily_net_pnl_by_day: Mapping[str, Mapping[str, Decimal]],
     oos_days: Sequence[str],
     trial_count: int,
 ) -> dict[str, float | int | None]:
-    if len(selected_values) < _DSR_MIN_SAMPLE_DAYS:
+    if len(selected_values) < DSR_MIN_SAMPLE_DAYS:
         return {
             "sample_size": len(selected_values),
-            "selected_daily_sharpe_ratio": None,
+            "selecteddaily_sharpe_ratio": None,
             "benchmark_sharpe_threshold": None,
             "deflated_sharpe_ratio": None,
             "deflated_sharpe_z_score": None,
         }
 
-    selected_sharpe = _daily_sharpe_ratio(selected_values)
+    selected_sharpe = daily_sharpe_ratio(selected_values)
     if selected_sharpe is None:
         return {
             "sample_size": len(selected_values),
-            "selected_daily_sharpe_ratio": None,
+            "selecteddaily_sharpe_ratio": None,
             "benchmark_sharpe_threshold": None,
             "deflated_sharpe_ratio": None,
             "deflated_sharpe_z_score": None,
@@ -597,14 +615,14 @@ def _estimate_deflated_sharpe_ratio(
     trial_sharpes: list[float] = []
     for day_map in candidate_daily_net_pnl_by_day.values():
         candidate_values = [day_map[day] for day in oos_days if day in day_map]
-        candidate_sharpe = _daily_sharpe_ratio(candidate_values)
+        candidate_sharpe = daily_sharpe_ratio(candidate_values)
         if candidate_sharpe is not None:
             trial_sharpes.append(candidate_sharpe)
     trial_reference_count = max(trial_count, len(trial_sharpes))
     if trial_reference_count < 2:
         return {
             "sample_size": len(selected_values),
-            "selected_daily_sharpe_ratio": selected_sharpe,
+            "selecteddaily_sharpe_ratio": selected_sharpe,
             "benchmark_sharpe_threshold": None,
             "deflated_sharpe_ratio": None,
             "deflated_sharpe_z_score": None,
@@ -613,17 +631,15 @@ def _estimate_deflated_sharpe_ratio(
     trial_sharpe_mean = (
         sum(trial_sharpes) / len(trial_sharpes) if trial_sharpes else 0.0
     )
-    trial_sharpe_stddev = _sample_stddev(trial_sharpes) or 0.0
+    trial_sharpe_stddev = sample_stddev(trial_sharpes) or 0.0
     euler_gamma = 0.5772156649015329
-    first_extreme = _NORMAL_DIST.inv_cdf(1.0 - (1.0 / trial_reference_count))
-    second_extreme = _NORMAL_DIST.inv_cdf(
-        1.0 - (1.0 / (trial_reference_count * math.e))
-    )
+    first_extreme = NORMAL_DIST.inv_cdf(1.0 - (1.0 / trial_reference_count))
+    second_extreme = NORMAL_DIST.inv_cdf(1.0 - (1.0 / (trial_reference_count * math.e)))
     benchmark_sharpe_threshold = trial_sharpe_mean + trial_sharpe_stddev * (
         (1.0 - euler_gamma) * first_extreme + euler_gamma * second_extreme
     )
 
-    skewness, kurtosis = _skewness_and_kurtosis(selected_values)
+    skewness, kurtosis = skewness_and_kurtosis(selected_values)
     denominator = math.sqrt(
         max(
             1e-12,
@@ -638,14 +654,14 @@ def _estimate_deflated_sharpe_ratio(
     ) / denominator
     return {
         "sample_size": len(selected_values),
-        "selected_daily_sharpe_ratio": selected_sharpe,
+        "selecteddaily_sharpe_ratio": selected_sharpe,
         "benchmark_sharpe_threshold": benchmark_sharpe_threshold,
-        "deflated_sharpe_ratio": _NORMAL_DIST.cdf(z_score),
+        "deflated_sharpe_ratio": NORMAL_DIST.cdf(z_score),
         "deflated_sharpe_z_score": z_score,
     }
 
 
-def _moving_block_bootstrap_indices(
+def moving_block_bootstrap_indices(
     *,
     length: int,
     block_size: int,
@@ -661,13 +677,13 @@ def _moving_block_bootstrap_indices(
     return indices
 
 
-def _estimate_reality_check_p_value(
+def estimate_reality_check_p_value(
     *,
     candidate_daily_net_pnl_by_day: Mapping[str, Mapping[str, Decimal]],
     oos_days: Sequence[str],
     bootstrap_replicates: int,
 ) -> float | None:
-    if len(oos_days) < _REALITY_CHECK_MIN_SAMPLE_DAYS:
+    if len(oos_days) < REALITY_CHECK_MIN_SAMPLE_DAYS:
         return None
     aligned_series: list[list[float]] = []
     for day_map in candidate_daily_net_pnl_by_day.values():
@@ -688,7 +704,7 @@ def _estimate_reality_check_p_value(
     rng = random.Random(0)
     exceedances = 0
     for _ in range(bootstrap_replicates):
-        sample_indices = _moving_block_bootstrap_indices(
+        sample_indices = moving_block_bootstrap_indices(
             length=len(oos_days),
             block_size=block_size,
             rng=rng,
@@ -700,6 +716,3 @@ def _estimate_reality_check_p_value(
         if bootstrap_statistic >= observed:
             exceedances += 1
     return (exceedances + 1) / (bootstrap_replicates + 1)
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

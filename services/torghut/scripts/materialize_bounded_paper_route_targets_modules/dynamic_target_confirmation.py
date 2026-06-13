@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Safely materialize bounded H-PAIRS paper-route targets into TORGHUT_SIM."""
 
@@ -7,14 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from http.client import HTTPConnection, HTTPSConnection
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlsplit
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -23,16 +19,33 @@ from sqlalchemy.pool import StaticPool
 from app.models import Base, Strategy
 from app.trading.paper_route_target_plan import (
     PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL,
-    PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID,
     materialize_bounded_paper_route_target_plan,
-    paper_route_target_execution_capacity_blockers,
-    paper_route_target_plan_from_payload,
     paper_route_target_plan_targets,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_32 import *
+from .target_materialization_core import (
+    ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER,
+    ACTIVE_TARGET_WINDOW_SKIP_REASON,
+    DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+    LIVE_LABEL_MARKERS,
+    OPERATOR_CONFIRMATION,
+    PROMOTION_FLAG_FIELDS,
+    SCHEMA_VERSION,
+    _active_target_window_check,
+    _confirmed_dynamic_target_filters,
+    _confirmed_selected_plan_sources,
+    _decimal_text,
+    _json_default,
+    _load_plan,
+    _plan_with_target_indexes,
+    _resolve_now_utc,
+    _safe_decimal,
+    _safe_text,
+    _target_summaries,
+    _target_window_check_active_indexes,
+    _truthy,
+    _unique_texts,
+)
 
 
 def _confirmed_dynamic_target_indexes(
@@ -728,6 +741,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

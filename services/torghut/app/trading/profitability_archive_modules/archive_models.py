@@ -1,12 +1,9 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Archive bundle and proof helpers for historical profitability validation."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import math
-import random
 import shutil
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -22,8 +19,6 @@ from sqlalchemy.orm import Session
 
 from ...models import VNextDatasetSnapshot
 from ..evidence_contracts import ArtifactProvenance
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 MARKET_DAY_INVENTORY_SCHEMA_VERSION = "torghut.market-day-inventory.v1"
@@ -66,17 +61,17 @@ ARCHIVE_STATUS_PARTIAL = "partial"
 
 ARCHIVE_STATUS_INSUFFICIENT = "insufficient_history"
 
-_UTC = timezone.utc
+UTC = timezone.utc
 
-_NORMAL_DIST = NormalDist()
+NORMAL_DIST = NormalDist()
 
-_REALITY_CHECK_BOOTSTRAP_REPLICATES = 500
+REALITY_CHECK_BOOTSTRAP_REPLICATES = 500
 
-_REALITY_CHECK_MIN_SAMPLE_DAYS = 20
+REALITY_CHECK_MIN_SAMPLE_DAYS = 20
 
-_DSR_MIN_SAMPLE_DAYS = 5
+DSR_MIN_SAMPLE_DAYS = 5
 
-_COPYABLE_ARTIFACTS: tuple[str, ...] = (
+COPYABLE_ARTIFACTS: tuple[str, ...] = (
     "run-manifest.json",
     "replay-report.json",
     "runtime-verify.json",
@@ -127,11 +122,11 @@ class ArchivedTradingDayBundle:
 
     @property
     def net_pnl_estimated(self) -> Decimal:
-        return _as_decimal(self.execution_day_inventory.get("net_pnl_estimated"))
+        return as_decimal(self.execution_day_inventory.get("net_pnl_estimated"))
 
     @property
     def estimated_cost_total(self) -> Decimal:
-        return _as_decimal(self.execution_day_inventory.get("estimated_cost_total"))
+        return as_decimal(self.execution_day_inventory.get("estimated_cost_total"))
 
     @property
     def replayable_market_day(self) -> bool:
@@ -142,22 +137,22 @@ class ArchivedTradingDayBundle:
         return bool(self.execution_day_inventory.get("execution_day_eligible", False))
 
 
-def _as_dict(value: object) -> dict[str, Any]:
+def as_dict(value: object) -> dict[str, Any]:
     return dict(cast(Mapping[str, Any], value)) if isinstance(value, Mapping) else {}
 
 
-def _as_list(value: object) -> list[Any]:
+def as_list(value: object) -> list[Any]:
     return list(cast(Sequence[Any], value)) if isinstance(value, list) else []
 
 
-def _as_text(value: object) -> str | None:
+def as_text(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
-def _as_int(value: object) -> int:
+def as_int(value: object) -> int:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -174,7 +169,7 @@ def _as_int(value: object) -> int:
     return 0
 
 
-def _as_float(value: object) -> float | None:
+def as_float(value: object) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool):
@@ -191,18 +186,77 @@ def _as_float(value: object) -> float | None:
     return None
 
 
-def _as_decimal(value: object) -> Decimal:
+def as_decimal(value: object) -> Decimal:
     try:
         return Decimal(str(value))
     except Exception:
         return Decimal("0")
 
 
-def _json_default(value: object) -> str:
+def min_retention_days(bundles: Sequence[ArchivedTradingDayBundle]) -> int | None:
+    days: list[int] = []
+    for bundle in bundles:
+        raw = as_dict(
+            bundle.market_day_inventory.get("source_topic_retention_ms_by_topic")
+        )
+        for value in raw.values():
+            retention_ms = as_int(value)
+            if retention_ms > 0:
+                days.append(max(retention_ms // 86_400_000, 0))
+    if not days:
+        return None
+    return min(days)
+
+
+def missing_business_days(trading_days: Sequence[str]) -> list[str]:
+    if not trading_days:
+        return []
+    ordered = sorted({date.fromisoformat(item) for item in trading_days})
+    missing: list[str] = []
+    cursor = ordered[0]
+    end = ordered[-1]
+    available = set(ordered)
+    while cursor <= end:
+        if cursor.weekday() < 5 and cursor not in available:
+            missing.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+    return missing
+
+
+def decimal_mean(values: Sequence[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def decimal_median(values: Sequence[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / Decimal("2")
+
+
+def safe_decimal_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
+    if denominator <= 0:
+        return Decimal("0")
+    return numerator / denominator
+
+
+def mean_optional_floats(values: Sequence[float | None]) -> float | None:
+    resolved = [value for value in values if value is not None]
+    if not resolved:
+        return None
+    return sum(resolved) / len(resolved)
+
+
+def json_default(value: object) -> str:
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=_UTC).isoformat()
-        return value.astimezone(_UTC).isoformat()
+            return value.replace(tzinfo=UTC).isoformat()
+        return value.astimezone(UTC).isoformat()
     if isinstance(value, Decimal):
         return format(value, "f")
     if isinstance(value, Path):
@@ -210,32 +264,32 @@ def _json_default(value: object) -> str:
     return str(value)
 
 
-def _stable_hash(payload: object) -> str:
+def stable_hash(payload: object) -> str:
     encoded = json.dumps(
         payload,
         sort_keys=True,
         separators=(",", ":"),
-        default=_json_default,
+        default=json_default,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _write_json(path: Path, payload: Mapping[str, object]) -> None:
+def write_json(path: Path, payload: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, default=_json_default),
+        json.dumps(payload, indent=2, sort_keys=True, default=json_default),
         encoding="utf-8",
     )
 
 
-def _load_json(path: Path) -> dict[str, Any]:
+def load_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):
         raise RuntimeError(f"json_mapping_required:{path}")
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
 
 
-def _load_manifest(path: Path) -> dict[str, Any]:
+def load_manifest(path: Path) -> dict[str, Any]:
     raw = path.read_text(encoding="utf-8")
     if path.suffix.lower() in {".yaml", ".yml"}:
         payload = yaml.safe_load(raw)
@@ -246,27 +300,29 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
 
 
-def _simulation_report_path(run_dir: Path) -> Path:
+def simulation_report_path(run_dir: Path) -> Path:
     return run_dir / "report" / "simulation-report.json"
 
 
-def _manifest_trading_day(
+def manifest_trading_day(
     manifest: Mapping[str, Any], simulation_report: Mapping[str, Any]
 ) -> str:
-    window = _as_dict(manifest.get("window"))
-    trading_day = _as_text(window.get("trading_day"))
+    window = as_dict(manifest.get("window"))
+    trading_day = as_text(window.get("trading_day"))
     if trading_day:
         return trading_day
-    coverage = _as_dict(simulation_report.get("coverage"))
-    window_start = _as_text(coverage.get("window_start"))
+    coverage = as_dict(simulation_report.get("coverage"))
+    window_start = as_text(coverage.get("window_start"))
     if window_start is None:
         raise RuntimeError("trading_day_missing")
     return window_start.split("T", 1)[0]
 
 
-def _candidate_id(manifest: Mapping[str, Any], run_manifest: Mapping[str, Any]) -> str:
-    lineage = _as_dict(run_manifest.get("evidence_lineage"))
-    candidate_id = _as_text(lineage.get("candidate_id")) or _as_text(
+def candidate_id_from_manifest(
+    manifest: Mapping[str, Any], run_manifest: Mapping[str, Any]
+) -> str:
+    lineage = as_dict(run_manifest.get("evidence_lineage"))
+    candidate_id = as_text(lineage.get("candidate_id")) or as_text(
         manifest.get("candidate_id")
     )
     if candidate_id is None:
@@ -274,23 +330,23 @@ def _candidate_id(manifest: Mapping[str, Any], run_manifest: Mapping[str, Any]) 
     return candidate_id
 
 
-def _source_topics_for_manifest(manifest: Mapping[str, Any]) -> list[str]:
+def source_topics_for_manifest(manifest: Mapping[str, Any]) -> list[str]:
     from scripts.simulation_lane_contracts import simulation_lane_contract_for_manifest
 
     contract = simulation_lane_contract_for_manifest(manifest)
     return [contract.source_topic_by_role[role] for role in contract.replay_roles]
 
 
-def _source_roles_for_manifest(manifest: Mapping[str, Any]) -> list[str]:
+def source_roles_for_manifest(manifest: Mapping[str, Any]) -> list[str]:
     from scripts.simulation_lane_contracts import simulation_lane_contract_for_manifest
 
     contract = simulation_lane_contract_for_manifest(manifest)
     return list(contract.replay_roles)
 
 
-def _artifacts_for_copy(run_dir: Path) -> list[Path]:
+def artifacts_for_copy(run_dir: Path) -> list[Path]:
     paths: dict[Path, Path] = {}
-    for relative in _COPYABLE_ARTIFACTS:
+    for relative in COPYABLE_ARTIFACTS:
         candidate = run_dir / relative
         if candidate.exists() and candidate.is_file():
             paths[candidate] = candidate
@@ -318,7 +374,7 @@ def copy_archive_artifacts(
         "sha256": hashlib.sha256(copied_manifest_path.read_bytes()).hexdigest(),
     }
 
-    for source_path in _artifacts_for_copy(run_dir):
+    for source_path in artifacts_for_copy(run_dir):
         relative_path = source_path.relative_to(run_dir)
         destination = archive_run_dir / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -332,11 +388,11 @@ def copy_archive_artifacts(
     simulation_report_entry = copied.get(simulation_report_key)
     if simulation_report_entry is not None:
         simulation_report_path = Path(simulation_report_entry["path"])
-        simulation_report = _load_json(simulation_report_path)
-        run_metadata = _as_dict(simulation_report.get("run_metadata"))
+        simulation_report = load_json(simulation_report_path)
+        run_metadata = as_dict(simulation_report.get("run_metadata"))
         run_metadata["manifest_path"] = str(copied_manifest_path)
         simulation_report["run_metadata"] = run_metadata
-        _write_json(simulation_report_path, simulation_report)
+        write_json(simulation_report_path, simulation_report)
         copied[simulation_report_key]["sha256"] = hashlib.sha256(
             simulation_report_path.read_bytes()
         ).hexdigest()
@@ -364,11 +420,11 @@ def collect_simulation_postgres_counts(simulation_dsn: str) -> dict[str, int]:
     if row is None:
         return {}
     return {
-        "trade_decisions": _as_int(row[0]),
-        "executions": _as_int(row[1]),
-        "position_snapshots": _as_int(row[2]),
-        "execution_order_events": _as_int(row[3]),
-        "execution_tca_metrics": _as_int(row[4]),
+        "trade_decisions": as_int(row[0]),
+        "executions": as_int(row[1]),
+        "position_snapshots": as_int(row[2]),
+        "execution_order_events": as_int(row[3]),
+        "execution_tca_metrics": as_int(row[4]),
     }
 
 
@@ -382,17 +438,17 @@ def build_market_day_inventory(
     topic_retention_ms_by_topic: Mapping[str, int] | None = None,
     observed_at: datetime | None = None,
 ) -> dict[str, Any]:
-    trading_day = _manifest_trading_day(manifest, simulation_report)
-    source_topics = _source_topics_for_manifest(manifest)
-    source_roles = _source_roles_for_manifest(manifest)
-    records_by_topic = _as_dict(
-        _as_dict(run_manifest.get("dump")).get("records_by_topic")
+    trading_day = manifest_trading_day(manifest, simulation_report)
+    source_topics = source_topics_for_manifest(manifest)
+    source_roles = source_roles_for_manifest(manifest)
+    records_by_topic = as_dict(
+        as_dict(run_manifest.get("dump")).get("records_by_topic")
     )
-    coverage = _as_dict(simulation_report.get("coverage"))
-    dump_coverage = _as_dict(run_manifest.get("dump_coverage"))
+    coverage = as_dict(simulation_report.get("coverage"))
+    dump_coverage = as_dict(run_manifest.get("dump_coverage"))
     coverage_ratio = (
-        _as_float(dump_coverage.get("coverage_ratio"))
-        or _as_float(coverage.get("window_coverage_ratio_from_dump"))
+        as_float(dump_coverage.get("coverage_ratio"))
+        or as_float(coverage.get("window_coverage_ratio_from_dump"))
         or 0.0
     )
     required_topics: list[str] = []
@@ -406,13 +462,13 @@ def build_market_day_inventory(
         contract = simulation_lane_contract_for_manifest(manifest)
         required_topics.append(contract.source_topic_by_role[role])
     missing_topics = [
-        topic for topic in required_topics if _as_int(records_by_topic.get(topic)) <= 0
+        topic for topic in required_topics if as_int(records_by_topic.get(topic)) <= 0
     ]
     symbols = sorted(
         {
             str(item)
-            for item in _as_list(
-                _as_dict(simulation_report.get("stability"))
+            for item in as_list(
+                as_dict(simulation_report.get("stability"))
                 .get("clickhouse", {})
                 .get("symbols")
             )
@@ -420,8 +476,8 @@ def build_market_day_inventory(
         }
     )
     if not symbols:
-        stability_clickhouse = _as_dict(
-            _as_dict(simulation_report.get("stability")).get("clickhouse")
+        stability_clickhouse = as_dict(
+            as_dict(simulation_report.get("stability")).get("clickhouse")
         )
         raw_symbols = stability_clickhouse.get("symbols")
         if isinstance(raw_symbols, list):
@@ -434,8 +490,8 @@ def build_market_day_inventory(
     market_day_inventory: dict[str, Any] = {
         "schema_version": MARKET_DAY_INVENTORY_SCHEMA_VERSION,
         "trading_day": trading_day,
-        "window": dict(_as_dict(manifest.get("window"))),
-        "lane": _as_text(manifest.get("lane")) or "equity",
+        "window": dict(as_dict(manifest.get("window"))),
+        "lane": as_text(manifest.get("lane")) or "equity",
         "source_topics": source_topics,
         "source_topic_retention_ms_by_topic": {
             topic: int(value)
@@ -444,7 +500,7 @@ def build_market_day_inventory(
         },
         "source_offsets": {},
         "source_records_by_topic": {
-            str(topic): _as_int(value) for topic, value in records_by_topic.items()
+            str(topic): as_int(value) for topic, value in records_by_topic.items()
         },
         "symbols": symbols,
         "clickhouse_coverage": {
@@ -462,11 +518,11 @@ def build_market_day_inventory(
             if key.startswith("report/")
         },
         "replayable_market_day": (
-            _as_int(_as_dict(run_manifest.get("dump")).get("records")) > 0
+            as_int(as_dict(run_manifest.get("dump")).get("records")) > 0
             and coverage_ratio
             >= (
-                _as_float(
-                    _as_dict(run_manifest.get("window_policy")).get(
+                as_float(
+                    as_dict(run_manifest.get("window_policy")).get(
                         "strict_coverage_ratio"
                     )
                 )
@@ -478,7 +534,7 @@ def build_market_day_inventory(
         "missing_partitions": [],
         "missing_symbols": [],
         "reconstruction_source_provenance": ArtifactProvenance.HISTORICAL_MARKET_REPLAY.value,
-        "observed_at": (observed_at or datetime.now(_UTC)).astimezone(_UTC).isoformat(),
+        "observed_at": (observed_at or datetime.now(UTC)).astimezone(UTC).isoformat(),
     }
     return market_day_inventory
 
@@ -492,26 +548,26 @@ def build_execution_day_inventory(
     empirical_artifact_refs: Sequence[str] | None = None,
     observed_at: datetime | None = None,
 ) -> dict[str, Any]:
-    funnel = _as_dict(simulation_report.get("funnel"))
-    execution_quality = _as_dict(simulation_report.get("execution_quality"))
-    slippage = _as_dict(execution_quality.get("slippage_bps"))
-    pnl = _as_dict(simulation_report.get("pnl"))
+    funnel = as_dict(simulation_report.get("funnel"))
+    execution_quality = as_dict(simulation_report.get("execution_quality"))
+    slippage = as_dict(execution_quality.get("slippage_bps"))
+    pnl = as_dict(simulation_report.get("pnl"))
     counts = dict(postgres_counts or {})
     trade_decisions = counts.get(
-        "trade_decisions", _as_int(funnel.get("trade_decisions"))
+        "trade_decisions", as_int(funnel.get("trade_decisions"))
     )
-    executions = counts.get("executions", _as_int(funnel.get("executions")))
+    executions = counts.get("executions", as_int(funnel.get("executions")))
     position_snapshots = counts.get("position_snapshots", 0)
     execution_order_events = counts.get(
         "execution_order_events",
-        _as_int(
+        as_int(
             funnel.get("execution_order_events_total")
             or funnel.get("execution_order_events")
         ),
     )
     execution_tca_metrics = counts.get(
         "execution_tca_metrics",
-        _as_int(funnel.get("execution_tca_metrics")),
+        as_int(funnel.get("execution_tca_metrics")),
     )
     missing_surfaces: list[str] = []
     if trade_decisions <= 0:
@@ -529,14 +585,14 @@ def build_execution_day_inventory(
 
     return {
         "schema_version": EXECUTION_DAY_INVENTORY_SCHEMA_VERSION,
-        "trading_day": _manifest_trading_day(manifest, simulation_report),
+        "trading_day": manifest_trading_day(manifest, simulation_report),
         "candidate_scope": {
-            "candidate_id": _as_text(manifest.get("candidate_id")),
-            "baseline_candidate_id": _as_text(manifest.get("baseline_candidate_id")),
-            "strategy_spec_ref": _as_text(manifest.get("strategy_spec_ref")),
+            "candidate_id": as_text(manifest.get("candidate_id")),
+            "baseline_candidate_id": as_text(manifest.get("baseline_candidate_id")),
+            "strategy_spec_ref": as_text(manifest.get("strategy_spec_ref")),
             "model_refs": [
                 str(item)
-                for item in _as_list(manifest.get("model_refs"))
+                for item in as_list(manifest.get("model_refs"))
                 if str(item).strip()
             ],
         },
@@ -569,27 +625,27 @@ def build_execution_day_inventory(
         ],
         "rejections_by_reason": {},
         "broker_failures_by_reason": {
-            str(key): _as_int(value)
-            for key, value in _as_dict(
+            str(key): as_int(value)
+            for key, value in as_dict(
                 execution_quality.get("fallback_reason_counts")
             ).items()
         },
         "decision_status_counts": {
-            str(key): _as_int(value)
-            for key, value in _as_dict(funnel.get("decision_status_counts")).items()
+            str(key): as_int(value)
+            for key, value in as_dict(funnel.get("decision_status_counts")).items()
         },
-        "net_pnl_estimated": format(_as_decimal(pnl.get("net_pnl_estimated")), "f"),
+        "net_pnl_estimated": format(as_decimal(pnl.get("net_pnl_estimated")), "f"),
         "estimated_cost_total": format(
-            _as_decimal(pnl.get("estimated_cost_total")), "f"
+            as_decimal(pnl.get("estimated_cost_total")), "f"
         ),
         "execution_notional_total": format(
-            _as_decimal(pnl.get("execution_notional_total")), "f"
+            as_decimal(pnl.get("execution_notional_total")), "f"
         ),
         "avg_abs_slippage_bps": slippage.get("avg_abs"),
         "p95_abs_slippage_bps": slippage.get("p95_abs"),
         "execution_day_eligible": not missing_surfaces,
         "missing_execution_surfaces": missing_surfaces,
-        "observed_at": (observed_at or datetime.now(_UTC)).astimezone(_UTC).isoformat(),
+        "observed_at": (observed_at or datetime.now(UTC)).astimezone(UTC).isoformat(),
     }
 
 
@@ -605,15 +661,15 @@ def build_replay_day_manifest(
     execution_day_inventory: Mapping[str, Any],
     observed_at: datetime | None = None,
 ) -> dict[str, Any]:
-    evidence_lineage = _as_dict(run_manifest.get("evidence_lineage"))
+    evidence_lineage = as_dict(run_manifest.get("evidence_lineage"))
     bundle_inputs = {
         "artifact_refs": artifact_refs,
         "market_day_inventory": market_day_inventory,
         "execution_day_inventory": execution_day_inventory,
-        "run_manifest_dump_sha256": _as_text(
-            _as_dict(run_manifest.get("dump")).get("sha256")
+        "run_manifest_dump_sha256": as_text(
+            as_dict(run_manifest.get("dump")).get("sha256")
         ),
-        "replay_report_dump_sha256": _as_text(replay_report.get("dump_sha256")),
+        "replay_report_dump_sha256": as_text(replay_report.get("dump_sha256")),
     }
     archive_status = ARCHIVE_STATUS_ARCHIVED
     if not bool(market_day_inventory.get("replayable_market_day", False)):
@@ -627,65 +683,65 @@ def build_replay_day_manifest(
 
     return {
         "schema_version": REPLAY_DAY_MANIFEST_SCHEMA_VERSION,
-        "run_id": _as_text(run_manifest.get("run_id")) or original_run_dir.name,
-        "dataset_id": _as_text(manifest.get("dataset_id"))
-        or _as_text(run_manifest.get("dataset_id"))
+        "run_id": as_text(run_manifest.get("run_id")) or original_run_dir.name,
+        "dataset_id": as_text(manifest.get("dataset_id"))
+        or as_text(run_manifest.get("dataset_id"))
         or original_run_dir.name,
-        "dataset_snapshot_ref": _as_text(manifest.get("dataset_snapshot_ref")),
-        "candidate_id": _as_text(evidence_lineage.get("candidate_id"))
-        or _as_text(manifest.get("candidate_id")),
-        "baseline_candidate_id": _as_text(evidence_lineage.get("baseline_candidate_id"))
-        or _as_text(manifest.get("baseline_candidate_id")),
-        "trading_day": _manifest_trading_day(manifest, market_day_inventory),
-        "window": dict(_as_dict(manifest.get("window"))),
+        "dataset_snapshot_ref": as_text(manifest.get("dataset_snapshot_ref")),
+        "candidate_id": as_text(evidence_lineage.get("candidate_id"))
+        or as_text(manifest.get("candidate_id")),
+        "baseline_candidate_id": as_text(evidence_lineage.get("baseline_candidate_id"))
+        or as_text(manifest.get("baseline_candidate_id")),
+        "trading_day": manifest_trading_day(manifest, market_day_inventory),
+        "window": dict(as_dict(manifest.get("window"))),
         "source_dump_ref": (
-            _as_text(
-                _as_dict(artifact_refs.get("source-dump.jsonl.zst.manifest.json")).get(
+            as_text(
+                as_dict(artifact_refs.get("source-dump.jsonl.zst.manifest.json")).get(
                     "path"
                 )
             )
-            or _as_text(
-                _as_dict(artifact_refs.get("source-dump.jsonl.gz.manifest.json")).get(
+            or as_text(
+                as_dict(artifact_refs.get("source-dump.jsonl.gz.manifest.json")).get(
                     "path"
                 )
             )
-            or _as_text(
-                _as_dict(artifact_refs.get("source-dump.ndjson.manifest.json")).get(
+            or as_text(
+                as_dict(artifact_refs.get("source-dump.ndjson.manifest.json")).get(
                     "path"
                 )
             )
         ),
         "source_dump_sha256": (
-            _as_text(replay_report.get("dump_sha256"))
-            or _as_text(_as_dict(run_manifest.get("dump")).get("sha256"))
+            as_text(replay_report.get("dump_sha256"))
+            or as_text(as_dict(run_manifest.get("dump")).get("sha256"))
         ),
-        "run_manifest_ref": _as_text(
-            _as_dict(artifact_refs.get("run-manifest.json")).get("path")
+        "run_manifest_ref": as_text(
+            as_dict(artifact_refs.get("run-manifest.json")).get("path")
         ),
-        "analysis_report_ref": _as_text(
-            _as_dict(artifact_refs.get("report/simulation-report.json")).get("path")
+        "analysis_report_ref": as_text(
+            as_dict(artifact_refs.get("report/simulation-report.json")).get("path")
         ),
-        "simulation_database": _as_text(
-            _as_dict(manifest.get("clickhouse")).get("simulation_database")
+        "simulation_database": as_text(
+            as_dict(manifest.get("clickhouse")).get("simulation_database")
         ),
         "runtime_version_refs": [
             str(item)
-            for item in _as_list(evidence_lineage.get("runtime_version_refs"))
+            for item in as_list(evidence_lineage.get("runtime_version_refs"))
             if str(item).strip()
         ],
         "model_refs": [
             str(item)
-            for item in _as_list(evidence_lineage.get("model_refs"))
+            for item in as_list(evidence_lineage.get("model_refs"))
             if str(item).strip()
         ],
-        "strategy_spec_ref": _as_text(evidence_lineage.get("strategy_spec_ref"))
-        or _as_text(manifest.get("strategy_spec_ref")),
-        "artifact_bundle_sha256": _stable_hash(bundle_inputs),
+        "strategy_spec_ref": as_text(evidence_lineage.get("strategy_spec_ref"))
+        or as_text(manifest.get("strategy_spec_ref")),
+        "artifact_bundle_sha256": stable_hash(bundle_inputs),
         "archive_status": archive_status,
         "original_run_dir": str(original_run_dir),
         "archived_run_dir": str(archive_dir),
         "artifact_refs": {key: value["path"] for key, value in artifact_refs.items()},
-        "observed_at": (observed_at or datetime.now(_UTC)).astimezone(_UTC).isoformat(),
+        "observed_at": (observed_at or datetime.now(UTC)).astimezone(UTC).isoformat(),
     }
 
 
@@ -724,13 +780,10 @@ def upsert_dataset_snapshot(
     return snapshot
 
 
-def _resolve_manifest_path(run_dir: Path, manifest_path: Path) -> Path:
+def resolve_manifest_path(run_dir: Path, manifest_path: Path) -> Path:
     if manifest_path.is_absolute() and manifest_path.exists():
         return manifest_path
     for candidate in (run_dir / manifest_path, Path.cwd() / manifest_path):
         if candidate.exists():
             return candidate
     return manifest_path
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
