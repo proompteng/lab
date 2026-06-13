@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.profit_target_oracle.support import *
+from decimal import Decimal
+
+from app.trading.discovery.profit_target_oracle import (
+    ProfitTargetOraclePolicy,
+    evaluate_profit_target_oracle,
+)
+from tests.profit_target_oracle.support import (
+    _TestProfitTargetOracleBase,
+    _check_by_metric,
+    _passing_scorecard,
+)
 
 
-class TestProfitTargetOraclePart1(_TestProfitTargetOracleBase):
+class TestProfitTargetOracleContractAndExecutionOverlays(_TestProfitTargetOracleBase):
     def test_profit_target_oracle_accepts_full_doc71_contract(self) -> None:
         result = evaluate_profit_target_oracle(
             _passing_scorecard(),
