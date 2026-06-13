@@ -399,6 +399,33 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen ruff check app tests scripts migrations
 
+      - name: Refactor quality guard
+        working-directory: services/torghut
+        run: uv run --frozen python scripts/check_refactor_quality.py
+
+      - name: Pylint changed-file design gate
+        working-directory: services/torghut
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base_spec="origin/${GITHUB_BASE_REF:-main}"
+          base="$(git merge-base "${base_spec}" HEAD 2>/dev/null || git rev-parse HEAD^)"
+          mapfile -t changed_python < <(
+            git diff --name-only --diff-filter=ACMR "${base}...HEAD" -- app scripts |
+              grep -E '\.py$' || true
+          )
+
+          if [ "${#changed_python[@]}" -eq 0 ]; then
+            echo "No changed Torghut app/script Python files for Pylint design gate."
+            exit 0
+          fi
+
+          uv run --frozen pylint "${changed_python[@]}" \
+            --disable=all \
+            --enable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-locals,too-many-return-statements,too-many-statements,too-many-nested-blocks \
+            --score=n
+
       - name: Pylint file length gate
         working-directory: services/torghut
         run: uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
