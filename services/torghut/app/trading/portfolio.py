@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .portfolio_modules.part_01_statements_26 import (
+from .portfolio_modules.allocation_types import (
     ALLOCATOR_CLIP_CORRELATION_CAPACITY,
     ALLOCATOR_CLIP_GROSS_EXPOSURE,
     ALLOCATOR_CLIP_STRATEGY_BUDGET,
@@ -27,8 +27,8 @@ from .portfolio_modules.part_01_statements_26 import (
     PortfolioSizingConfig,
     PortfolioSizingResult,
 )
-from .portfolio_modules.part_02_portfolioallocator import PortfolioAllocator
-from .portfolio_modules.part_03_sizer_from_settings import (
+from .portfolio_modules.allocator import PortfolioAllocator
+from .portfolio_modules.settings_factory import (
     allocator_from_settings,
     fragility_monitor_from_settings,
     sizer_from_settings,

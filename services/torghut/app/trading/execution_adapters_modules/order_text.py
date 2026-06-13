@@ -1,33 +1,15 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Broker-neutral execution adapters for trading order flow."""
 
 from __future__ import annotations
 
-import json
-import logging
-import time
-from datetime import datetime, timezone
 from collections.abc import Mapping
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, Optional, Protocol, cast
-from urllib.parse import quote, urlencode
+from typing import Any
 from urllib.parse import urlsplit
-from uuid import uuid4
-
-from ...alpaca_client import TorghutAlpacaClient
-from ...config import settings
-from ..firewall import OrderFirewall
-from ..simulation_progress import active_simulation_runtime_context
-from ..time_source import trading_now
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_23 import *
-from .part_02_leanexecutionadapter import *
 
 
-def _float_to_order_text(value: float) -> str:
+def float_to_order_text(value: float) -> str:
     normalized = max(float(value), 0.0)
     rendered = f"{normalized:.8f}".rstrip("0").rstrip(".")
     if not rendered:
@@ -35,7 +17,7 @@ def _float_to_order_text(value: float) -> str:
     return rendered
 
 
-def _decimal_to_order_text(value: Decimal) -> str:
+def decimal_to_order_text(value: Decimal) -> str:
     normalized = abs(value)
     rendered = format(normalized, "f")
     if "." in rendered:
@@ -45,7 +27,7 @@ def _decimal_to_order_text(value: Decimal) -> str:
     return rendered
 
 
-def _signed_decimal_to_text(value: Decimal) -> str:
+def signed_decimal_to_text(value: Decimal) -> str:
     rendered = format(value, "f")
     if "." in rendered:
         rendered = rendered.rstrip("0").rstrip(".")
@@ -54,7 +36,7 @@ def _signed_decimal_to_text(value: Decimal) -> str:
     return rendered
 
 
-def _optional_decimal(value: Any) -> Decimal | None:
+def optional_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     try:
@@ -63,8 +45,8 @@ def _optional_decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _positive_decimal(value: Any) -> Decimal | None:
-    parsed = _optional_decimal(value)
+def positive_decimal(value: Any) -> Decimal | None:
+    parsed = optional_decimal(value)
     if parsed is None:
         return None
     if parsed.is_finite() and parsed > 0:
@@ -72,10 +54,10 @@ def _positive_decimal(value: Any) -> Decimal | None:
     return None
 
 
-def _signed_position_market_value(
+def signed_position_market_value(
     position: Mapping[str, Any], *, side: str
 ) -> Decimal | None:
-    market_value = _optional_decimal(position.get("market_value"))
+    market_value = optional_decimal(position.get("market_value"))
     if market_value is None:
         return None
     normalized_side = side.strip().lower()
@@ -86,7 +68,7 @@ def _signed_position_market_value(
     return market_value
 
 
-def _resolve_simulation_context_payload(
+def resolve_simulation_context_payload(
     *,
     simulation_run_id: str | None,
     dataset_id: str | None,
@@ -105,19 +87,19 @@ def _resolve_simulation_context_payload(
     return context
 
 
-def _error_summary(exc: Exception) -> str:
+def error_summary(exc: Exception) -> str:
     message = str(exc).strip()
     if message:
         return message
     return exc.__class__.__name__
 
 
-def _is_http_status_error(exc: Exception, status_code: int) -> bool:
+def is_http_status_error(exc: Exception, status_code: int) -> bool:
     message = str(exc).strip().lower()
     return message.startswith(f"lean_runner_http_{status_code}")
 
 
-def _classify_fallback_reason(*, op: str, exc: Exception) -> str:
+def classify_fallback_reason(*, op: str, exc: Exception) -> str:
     message = str(exc).strip().lower()
     if "lean_order_payload_" in message or "lean_read_order_payload_" in message:
         return f"lean_{op}_contract_violation"
@@ -134,25 +116,27 @@ def _classify_fallback_reason(*, op: str, exc: Exception) -> str:
     return f"lean_{op}_failed"
 
 
-def _classify_failure_taxonomy(exc: Exception) -> str:
+def classify_failure_taxonomy(exc: Exception) -> str:
     if isinstance(exc, TimeoutError):
         return "timeout"
     message = str(exc).lower().strip()
+    taxonomy = "unknown_error"
     if "network_error" in message:
-        return "network_error"
-    if message.startswith("lean_runner_http_"):
+        taxonomy = "network_error"
+    elif message.startswith("lean_runner_http_"):
         code = message.split(":", 1)[0].replace("lean_runner_http_", "")
         if code.isdigit():
-            return f"http_{code}"
-        return "http_error"
-    if "contract" in message:
-        return "contract_violation"
-    if "invalid_json" in message:
-        return "invalid_json"
-    return "unknown_error"
+            taxonomy = f"http_{code}"
+        else:
+            taxonomy = "http_error"
+    elif "contract" in message:
+        taxonomy = "contract_violation"
+    elif "invalid_json" in message:
+        taxonomy = "invalid_json"
+    return taxonomy
 
 
-def _http_request_text(
+def http_request_text(
     *,
     url: str,
     method: str,
@@ -186,12 +170,16 @@ def _http_request_text(
 
 
 __all__ = [
-    "ExecutionAdapter",
-    "AlpacaExecutionAdapter",
-    "SimulationExecutionAdapter",
-    "LeanExecutionAdapter",
-    "build_execution_adapter",
+    "classify_failure_taxonomy",
+    "classify_fallback_reason",
+    "decimal_to_order_text",
+    "error_summary",
+    "float_to_order_text",
+    "http_request_text",
+    "is_http_status_error",
+    "optional_decimal",
+    "positive_decimal",
+    "resolve_simulation_context_payload",
+    "signed_decimal_to_text",
+    "signed_position_market_value",
 ]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

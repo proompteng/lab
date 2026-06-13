@@ -11,6 +11,7 @@ from app.trading.execution_adapters import (
     SimulationExecutionAdapter,
     build_execution_adapter,
 )
+from app.trading.execution_adapters_modules.lean_adapter import LeanRequest
 
 
 class FakeFallbackAdapter:
@@ -91,7 +92,7 @@ class FakeFallbackAdapter:
 
 
 class FakeOrderFirewall:
-    def submit_order(self, **kwargs):  # type: ignore[no-untyped-def]
+    def submit_order(self, **kwargs: Any) -> dict[str, Any]:
         return {
             "id": "fallback-order",
             "status": "accepted",
@@ -717,23 +718,18 @@ class TestExecutionAdapters(TestCase):
         self,
     ) -> None:
         class CapturingLeanAdapter(LeanExecutionAdapter):
-            def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+            def __init__(self, **kwargs: Any) -> None:
                 super().__init__(**kwargs)
                 self.captured_headers: dict[str, str] = {}
 
-            def _request_json_with_headers(  # type: ignore[override]
+            def _request_json_with_headers(
                 self,
-                method: str,
-                path: str,
-                payload: dict[str, str] | None,
-                *,
-                headers: dict[str, str] | None,
-                operation: str,
-            ):
-                _ = (method, payload, operation)
-                if headers:
-                    self.captured_headers = dict(headers)
-                if path == "/v1/shadow/simulate":
+                request: LeanRequest,
+            ) -> dict[str, Any]:
+                _ = (request.method, request.payload, request.operation)
+                if request.headers:
+                    self.captured_headers = dict(request.headers)
+                if request.path == "/v1/shadow/simulate":
                     return {"parity_status": "pass", "simulated_slippage_bps": 0.1}
                 return {
                     "id": "lean-order-1",
@@ -804,16 +800,14 @@ class TestExecutionAdapters(TestCase):
 
     def test_lean_submit_contract_violation_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
-            def _request_json(  # type: ignore[override]
+            def _request_json(
                 self,
                 method: str,
                 path: str,
                 payload: dict[str, Any] | None = None,
-                *,
-                headers: dict[str, str] | None = None,
-                operation: str = "request_json",
-            ):
-                _ = (method, path, payload, headers, operation)
+                **options: Any,
+            ) -> dict[str, str]:
+                _ = (method, path, payload, options)
                 return {"status": "accepted"}  # missing id/symbol/qty contract keys
 
         fallback = FakeFallbackAdapter()
@@ -841,16 +835,14 @@ class TestExecutionAdapters(TestCase):
 
     def test_lean_get_order_contract_violation_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
-            def _request_json(  # type: ignore[override]
+            def _request_json(
                 self,
                 method: str,
                 path: str,
                 payload: dict[str, Any] | None = None,
-                *,
-                headers: dict[str, str] | None = None,
-                operation: str = "request_json",
-            ):
-                _ = (method, path, payload, headers, operation)
+                **options: Any,
+            ) -> dict[str, str]:
+                _ = (method, path, payload, options)
                 return {"symbol": "AAPL"}  # missing id/status
 
         fallback = FakeFallbackAdapter()
@@ -878,16 +870,14 @@ class TestExecutionAdapters(TestCase):
 
     def test_lean_list_orders_contract_violation_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
-            def _request_json(  # type: ignore[override]
+            def _request_json(
                 self,
                 method: str,
                 path: str,
                 payload: dict[str, Any] | None = None,
-                *,
-                headers: dict[str, str] | None = None,
-                operation: str = "request_json",
-            ):
-                _ = (method, path, payload, headers, operation)
+                **options: Any,
+            ) -> dict[str, list[dict[str, str]]]:
+                _ = (method, path, payload, options)
                 return {"orders": [{"symbol": "AAPL"}]}  # missing id/status
 
         fallback = FakeFallbackAdapter()
@@ -943,16 +933,14 @@ class TestExecutionAdapters(TestCase):
 
     def test_lean_submit_symbol_mismatch_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):
-            def _request_json(  # type: ignore[override]
+            def _request_json(
                 self,
                 method: str,
                 path: str,
                 payload: dict[str, Any] | None = None,
-                *,
-                headers: dict[str, str] | None = None,
-                operation: str = "request_json",
-            ):
-                _ = (method, path, payload, headers, operation)
+                **options: Any,
+            ) -> dict[str, str]:
+                _ = (method, path, payload, options)
                 return {
                     "id": "lean-order-1",
                     "status": "accepted",

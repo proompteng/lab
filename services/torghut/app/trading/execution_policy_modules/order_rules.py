@@ -1,53 +1,84 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Execution policy enforcing order placement safety and impact assumptions."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable, Mapping, Optional, cast
 
-from ...config import settings
-from ...models import Strategy
-from ..costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
-from ..microstructure import (
-    MicrostructureStateV5,
-    is_microstructure_stale,
-    parse_execution_advice,
-    parse_microstructure_state,
-)
+from ..costs import CostModelConfig
 from ..models import StrategyDecision
 from ..prices import MarketSnapshot, resolve_execution_reference_price
-from ..quantity_rules import (
-    min_qty_for_symbol,
-    qty_has_valid_increment,
-    quantize_qty_for_symbol,
-    resolve_quantity_resolution,
+
+
+from .policy_types import (
+    ADAPTIVE_EXECUTION_SECONDS_MAX,
+    ADAPTIVE_EXECUTION_SECONDS_MIN,
+    AdaptiveExecutionApplication,
+    DEFAULT_EXECUTION_SECONDS,
+    ExecutionPolicyConfig,
+    HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN,
+    HIGH_CONVICTION_BREAKOUT_MICROPRICE_BPS_MIN,
+    HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX,
+    HIGH_CONVICTION_WASHOUT_MICROPRICE_BPS_MIN,
+    HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN,
+    MICROSTRUCTURE_EXECUTION_SCALE_EPSILON,
+    MICROSTRUCTURE_EXECUTION_SCALE_MAX,
+    SIZING_LIMITING_CONSTRAINT_REASONS,
 )
-from ..tca import AdaptiveExecutionPolicyDecision
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_29 import *
-from .part_02_executionpolicy import *
 
 
-def _should_keep_market_order_for_high_conviction_entry(
+def should_keep_market_order_for_high_conviction_entry(
     decision: StrategyDecision,
     *,
     price: Decimal | None,
     spread: Decimal | None,
 ) -> bool:
-    if decision.order_type != "market":
+    entry_context = _high_conviction_entry_context(
+        decision=decision,
+        price=price,
+        spread=spread,
+    )
+    if entry_context is None:
         return False
-    if decision.params.get("position_exit") is not None:
-        return False
+    strategy_types, execution_features = entry_context
 
+    continuation_rank = optional_decimal(
+        execution_features.get("cross_section_continuation_rank")
+    )
+    reversal_rank = optional_decimal(
+        execution_features.get("cross_section_reversal_rank")
+    )
+    microprice_bias_bps = optional_decimal(
+        execution_features.get("recent_microprice_bias_bps_avg")
+    )
+    if _is_high_conviction_breakout_entry(
+        strategy_types=strategy_types,
+        continuation_rank=continuation_rank,
+        microprice_bias_bps=microprice_bias_bps,
+    ):
+        return True
+    if _is_high_conviction_washout_entry(
+        strategy_types=strategy_types,
+        reversal_rank=reversal_rank,
+        microprice_bias_bps=microprice_bias_bps,
+    ):
+        return True
+    return _has_microbar_cross_sectional_entry(decision, strategy_types)
+
+
+def _high_conviction_entry_context(
+    *,
+    decision: StrategyDecision,
+    price: Decimal | None,
+    spread: Decimal | None,
+) -> tuple[set[str], Mapping[str, Any]] | None:
+    if decision.order_type != "market":
+        return None
+    if decision.params.get("position_exit") is not None:
+        return None
     strategy_types = _decision_strategy_runtime_types(decision)
     if not strategy_types:
-        return False
-
+        return None
     execution_features = _decision_execution_features(decision)
     spread_bps = _decision_spread_bps(
         price=price,
@@ -55,61 +86,63 @@ def _should_keep_market_order_for_high_conviction_entry(
         execution_features=execution_features,
     )
     if spread_bps is None or spread_bps > HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX:
-        return False
+        return None
+    return strategy_types, execution_features
 
-    continuation_rank = _optional_decimal(
-        execution_features.get("cross_section_continuation_rank")
-    )
-    reversal_rank = _optional_decimal(
-        execution_features.get("cross_section_reversal_rank")
-    )
-    microprice_bias_bps = _optional_decimal(
-        execution_features.get("recent_microprice_bias_bps_avg")
-    )
 
-    if "breakout_continuation_long_v1" in strategy_types:
-        if (
-            continuation_rank is None
-            or continuation_rank < HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN
-        ):
-            return False
-        if (
-            microprice_bias_bps is not None
-            and microprice_bias_bps < HIGH_CONVICTION_BREAKOUT_MICROPRICE_BPS_MIN
-        ):
-            return False
-        return True
-
-    if "washout_rebound_long_v1" in strategy_types:
-        if (
-            reversal_rank is None
-            or reversal_rank < HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN
-        ):
-            return False
-        if (
-            microprice_bias_bps is not None
-            and microprice_bias_bps < HIGH_CONVICTION_WASHOUT_MICROPRICE_BPS_MIN
-        ):
-            return False
-        return True
-
-    if {
-        "microbar_cross_sectional_long_v1",
-        "microbar_cross_sectional_short_v1",
-        "microbar_cross_sectional_pairs_v1",
-    } & strategy_types:
-        return bool(
-            {
-                "microbar_cross_sectional_entry",
-                "microbar_cross_sectional_pair_entry",
-            }
-            & _decision_rationale_tokens(decision)
+def _is_high_conviction_breakout_entry(
+    *,
+    strategy_types: set[str],
+    continuation_rank: Decimal | None,
+    microprice_bias_bps: Decimal | None,
+) -> bool:
+    return (
+        "breakout_continuation_long_v1" in strategy_types
+        and continuation_rank is not None
+        and continuation_rank >= HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN
+        and (
+            microprice_bias_bps is None
+            or microprice_bias_bps >= HIGH_CONVICTION_BREAKOUT_MICROPRICE_BPS_MIN
         )
+    )
 
-    return False
+
+def _is_high_conviction_washout_entry(
+    *,
+    strategy_types: set[str],
+    reversal_rank: Decimal | None,
+    microprice_bias_bps: Decimal | None,
+) -> bool:
+    return (
+        "washout_rebound_long_v1" in strategy_types
+        and reversal_rank is not None
+        and reversal_rank >= HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN
+        and (
+            microprice_bias_bps is None
+            or microprice_bias_bps >= HIGH_CONVICTION_WASHOUT_MICROPRICE_BPS_MIN
+        )
+    )
 
 
-def _should_keep_market_order_for_pair_runtime_exit(
+def _has_microbar_cross_sectional_entry(
+    decision: StrategyDecision, strategy_types: set[str]
+) -> bool:
+    return bool(
+        {
+            "microbar_cross_sectional_long_v1",
+            "microbar_cross_sectional_short_v1",
+            "microbar_cross_sectional_pairs_v1",
+        }
+        & strategy_types
+        and {
+            "microbar_cross_sectional_entry",
+            "microbar_cross_sectional_pair_entry",
+        }
+        & _decision_rationale_tokens(decision)
+    )
+
+
+def should_keep_market_order_for_pair_runtime_exit(
     decision: StrategyDecision,
     *,
     price: Decimal | None,
@@ -177,7 +210,7 @@ def _decision_spread_bps(
     spread: Decimal | None,
     execution_features: Mapping[str, Any],
 ) -> Decimal | None:
-    spread_bps = _optional_decimal(execution_features.get("spread_bps"))
+    spread_bps = optional_decimal(execution_features.get("spread_bps"))
     if (
         spread_bps is None
         and spread is not None
@@ -197,18 +230,18 @@ def _decision_rationale_tokens(decision: StrategyDecision) -> set[str]:
     }
 
 
-def _near_touch_limit_price(
+def near_touch_limit_price(
     price: Decimal, spread: Optional[Decimal], action: str
 ) -> Decimal:
     if spread is None or spread <= 0:
-        return _normalize_price_for_trading(price)
+        return normalize_price_for_trading(price)
     half_spread = spread / Decimal("2")
     if action == "buy":
-        return _normalize_price_for_trading(price + half_spread)
-    return _normalize_price_for_trading(price - half_spread)
+        return normalize_price_for_trading(price + half_spread)
+    return normalize_price_for_trading(price - half_spread)
 
 
-def _normalize_price_for_trading(price: Decimal) -> Decimal:
+def normalize_price_for_trading(price: Decimal) -> Decimal:
     """Align broker-facing prices to common US-equity tick sizes.
 
     This keeps order pricing deterministic and avoids sub-penny rejects from
@@ -225,7 +258,7 @@ def _tick_size_for_price(price: Decimal) -> Decimal:
     return Decimal("0.01")
 
 
-def _build_retry_delays(config: ExecutionPolicyConfig) -> list[float]:
+def build_retry_delays(config: ExecutionPolicyConfig) -> list[float]:
     if config.max_retries <= 0:
         return []
     delays: list[float] = []
@@ -261,19 +294,19 @@ def should_retry_order_error(error: Exception) -> bool:
     return any(token in message for token in retryable_tokens)
 
 
-def _build_impact_inputs(
+def build_impact_inputs(
     decision: StrategyDecision,
     market_snapshot: Optional[MarketSnapshot],
     *,
     execution_seconds_scale: Decimal | None = None,
 ) -> dict[str, Any]:
-    resolved_price = _resolve_price(decision, market_snapshot)
+    resolved_price = resolve_price(decision, market_snapshot)
     price = resolved_price if resolved_price is not None else Decimal("0")
-    spread = _optional_decimal(decision.params.get("spread"))
+    spread = optional_decimal(decision.params.get("spread"))
     if spread is None and market_snapshot is not None:
         spread = market_snapshot.spread
-    volatility = _optional_decimal(decision.params.get("volatility"))
-    adv = _optional_decimal(
+    volatility = optional_decimal(decision.params.get("volatility"))
+    adv = optional_decimal(
         decision.params.get("adv")
         or decision.params.get("avg_dollar_volume")
         or decision.params.get("avg_daily_dollar_volume")
@@ -303,7 +336,7 @@ def _build_impact_inputs(
     }
 
 
-def _combined_execution_seconds_scale(
+def combined_execution_seconds_scale(
     *,
     adaptive_application: AdaptiveExecutionApplication | None,
     microstructure_execution_scale: Decimal,
@@ -322,7 +355,7 @@ def _combined_execution_seconds_scale(
     return execution_scale
 
 
-def _build_impact_assumptions(
+def build_impact_assumptions(
     *,
     estimate: Any,
     config: CostModelConfig,
@@ -337,10 +370,10 @@ def _build_impact_assumptions(
     volatility = impact_inputs.get("volatility")
     return {
         "inputs": {
-            "price": _stringify_decimal(price) if price_present else None,
-            "spread": _stringify_decimal(spread),
-            "volatility": _stringify_decimal(volatility),
-            "adv": _stringify_decimal(adv),
+            "price": stringify_decimal(price) if price_present else None,
+            "spread": stringify_decimal(spread),
+            "volatility": stringify_decimal(volatility),
+            "adv": stringify_decimal(adv),
             "execution_seconds": execution_seconds,
         },
         "model": {
@@ -360,14 +393,14 @@ def _build_impact_assumptions(
             "impact_cost_bps": str(estimate.impact_cost_bps),
             "commission_cost_bps": str(estimate.commission_cost_bps),
             "total_cost_bps": str(estimate.total_cost_bps),
-            "participation_rate": _stringify_decimal(estimate.participation_rate),
+            "participation_rate": stringify_decimal(estimate.participation_rate),
             "capacity_ok": estimate.capacity_ok,
             "warnings": list(estimate.warnings),
         },
     }
 
 
-def _resolve_price(
+def resolve_price(
     decision: StrategyDecision, market_snapshot: Optional[MarketSnapshot]
 ) -> Optional[Decimal]:
     return resolve_execution_reference_price(
@@ -378,14 +411,14 @@ def _resolve_price(
     )
 
 
-def _position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decimal:
+def position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decimal:
     normalized_symbol = symbol.strip().upper()
     total_qty = Decimal("0")
     for position in positions:
         position_symbol = str(position.get("symbol") or "").strip().upper()
         if position_symbol != normalized_symbol:
             continue
-        qty = _optional_decimal(position.get("qty")) or _optional_decimal(
+        qty = optional_decimal(position.get("qty")) or optional_decimal(
             position.get("quantity")
         )
         side = str(position.get("side") or "").lower()
@@ -396,25 +429,25 @@ def _position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decim
     return total_qty
 
 
-def _is_short_increasing(
+def is_short_increasing(
     decision: StrategyDecision, positions: Iterable[dict[str, Any]]
 ) -> bool:
     if decision.action == "buy":
         return False
-    qty = _optional_decimal(decision.qty)
+    qty = optional_decimal(decision.qty)
     if qty is None:
         return False
-    position_qty = _position_summary(decision.symbol, positions)
+    position_qty = position_summary(decision.symbol, positions)
     if position_qty <= 0:
         return True
     return qty > position_qty
 
 
-def _is_position_reducing(
+def is_position_reducing(
     decision: StrategyDecision,
     position_qty: Decimal,
 ) -> bool:
-    qty = _optional_decimal(decision.qty)
+    qty = optional_decimal(decision.qty)
     if qty is None or qty <= 0:
         return False
     if decision.action == "sell" and position_qty > 0:
@@ -424,10 +457,10 @@ def _is_position_reducing(
     return False
 
 
-def _prechecked_reducing_position_qty(decision: StrategyDecision) -> Decimal | None:
+def prechecked_reducing_position_qty(decision: StrategyDecision) -> Decimal | None:
     if decision.action.strip().lower() != "sell":
         return None
-    qty = _optional_decimal(decision.qty)
+    qty = optional_decimal(decision.qty)
     if qty is None or qty <= 0:
         return None
     for key in ("simple_lane", "simple_lane_precheck"):
@@ -444,7 +477,7 @@ def _prechecked_reducing_position_qty(decision: StrategyDecision) -> Decimal | N
             resolution=resolution_map,
         ):
             continue
-        position_qty = _optional_decimal(resolution_map.get("position_qty"))
+        position_qty = optional_decimal(resolution_map.get("position_qty"))
         if position_qty is None or position_qty <= 0 or qty > position_qty:
             continue
         reason = str(resolution_map.get("reason") or "").strip().lower()
@@ -465,8 +498,8 @@ def _quantity_resolution_matches_decision(
     action = str(resolution.get("action") or "").strip().lower()
     if action and action != decision.action.strip().lower():
         return False
-    requested_qty = _optional_decimal(resolution.get("requested_qty"))
-    decision_qty = _optional_decimal(decision.qty)
+    requested_qty = optional_decimal(resolution.get("requested_qty"))
+    decision_qty = optional_decimal(decision.qty)
     if (
         requested_qty is not None
         and decision_qty is not None
@@ -488,7 +521,7 @@ def _coerce_optional_bool(value: Any) -> bool | None:
     return None
 
 
-def _optional_decimal(value: Any) -> Optional[Decimal]:
+def optional_decimal(value: Any) -> Optional[Decimal]:
     if value is None:
         return None
     if isinstance(value, Decimal):
@@ -499,7 +532,7 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-def _allocator_payload(decision: StrategyDecision) -> dict[str, object]:
+def allocator_payload(decision: StrategyDecision) -> dict[str, object]:
     raw = decision.params.get("allocator")
     if not isinstance(raw, dict):
         return {}
@@ -507,7 +540,7 @@ def _allocator_payload(decision: StrategyDecision) -> dict[str, object]:
     return {str(key): value for key, value in payload.items()}
 
 
-def _resolve_qty_below_min_reason(decision: StrategyDecision) -> str:
+def resolve_qty_below_min_reason(decision: StrategyDecision) -> str:
     portfolio_sizing = decision.params.get("portfolio_sizing")
     if not isinstance(portfolio_sizing, dict):
         return "qty_below_min"
@@ -518,23 +551,19 @@ def _resolve_qty_below_min_reason(decision: StrategyDecision) -> str:
     if not isinstance(limiting_constraint, str):
         return "qty_below_min"
     normalized = limiting_constraint.strip()
-    if normalized in _SIZING_LIMITING_CONSTRAINT_REASONS:
+    if normalized in SIZING_LIMITING_CONSTRAINT_REASONS:
         return normalized
     return "qty_below_min"
 
 
-def _stringify_decimal(value: Optional[Decimal]) -> Optional[str]:
+def stringify_decimal(value: Optional[Decimal]) -> Optional[str]:
     if value is None:
         return None
     return str(value)
 
 
 __all__ = [
-    "ExecutionPolicy",
-    "ExecutionPolicyOutcome",
-    "ExecutionPolicyConfig",
+    "near_touch_limit_price",
+    "should_keep_market_order_for_high_conviction_entry",
     "should_retry_order_error",
 ]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

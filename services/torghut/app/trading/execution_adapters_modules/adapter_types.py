@@ -1,30 +1,160 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Broker-neutral execution adapters for trading order flow."""
 
 from __future__ import annotations
 
 import json
 import logging
-import time
-from datetime import datetime, timezone
-from collections.abc import Mapping
+from dataclasses import dataclass
+from importlib import import_module
+from datetime import datetime
+from collections.abc import Callable, Mapping
 from decimal import Decimal
-from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, Protocol, cast
-from urllib.parse import quote, urlencode
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ...alpaca_client import TorghutAlpacaClient
-from ...config import settings
 from ..firewall import OrderFirewall
 from ..simulation_progress import active_simulation_runtime_context
 from ..time_source import trading_now
 
-# ruff: noqa: F401,F403,F405,F811,F821
+from .order_text import (
+    decimal_to_order_text,
+    float_to_order_text,
+    optional_decimal,
+    resolve_simulation_context_payload,
+    signed_decimal_to_text,
+    signed_position_market_value,
+)
+from .simulation_orders import (
+    resolve_simulated_fill_price,
+    resolve_simulated_filled_qty,
+    resolve_simulation_event_ts,
+    simulated_order_status,
+    simulated_trade_update_event,
+)
 
 
 logger = logging.getLogger(__name__)
+
+
+def _active_simulation_runtime_context() -> Mapping[str, Any] | None:
+    provider: Callable[[], object] = active_simulation_runtime_context
+    try:
+        execution_adapters_api = import_module("app.trading.execution_adapters")
+        patched_provider = getattr(
+            execution_adapters_api,
+            "active_simulation_runtime_context",
+            provider,
+        )
+        if callable(patched_provider):
+            provider = cast(Callable[[], object], patched_provider)
+    except Exception:
+        pass
+    context = provider()
+    if isinstance(context, Mapping):
+        return cast(Mapping[str, Any], context)
+    return None
+
+
+@dataclass(frozen=True)
+class OrderSubmission:
+    symbol: str
+    side: str
+    qty: float
+    order_type: str
+    time_in_force: str
+    limit_price: Optional[float]
+    stop_price: Optional[float]
+    extra_params: Optional[dict[str, Any]]
+
+    @classmethod
+    def from_legacy(
+        cls,
+        symbol: str,
+        side: str,
+        qty: float,
+        *args: Any,
+        **kwargs: Any,
+    ) -> "OrderSubmission":
+        positional = list(args)
+        order_type = kwargs.pop(
+            "order_type", positional.pop(0) if positional else "market"
+        )
+        time_in_force = kwargs.pop(
+            "time_in_force", positional.pop(0) if positional else "day"
+        )
+        limit_price = kwargs.pop(
+            "limit_price", positional.pop(0) if positional else None
+        )
+        stop_price = kwargs.pop("stop_price", positional.pop(0) if positional else None)
+        extra_params = kwargs.pop(
+            "extra_params", positional.pop(0) if positional else None
+        )
+        if positional or kwargs:
+            unexpected = [*map(str, positional), *sorted(kwargs)]
+            raise TypeError(f"unexpected_order_submission_arguments:{unexpected}")
+        return cls(
+            symbol=symbol,
+            side=side,
+            qty=float(qty),
+            order_type=str(order_type),
+            time_in_force=str(time_in_force),
+            limit_price=cast(Optional[float], limit_price),
+            stop_price=cast(Optional[float], stop_price),
+            extra_params=cast(Optional[dict[str, Any]], extra_params),
+        )
+
+
+@dataclass(frozen=True)
+class SimulationAdapterConfig:
+    bootstrap_servers: str | None
+    security_protocol: str | None
+    sasl_mechanism: str | None
+    sasl_username: str | None
+    sasl_password: str | None
+    topic: str
+    account_label: str
+    simulation_run_id: str | None
+    dataset_id: str | None
+
+    @classmethod
+    def from_kwargs(cls, values: Mapping[str, Any]) -> "SimulationAdapterConfig":
+        return cls(
+            bootstrap_servers=cast(str | None, values.get("bootstrap_servers")),
+            security_protocol=cast(str | None, values.get("security_protocol")),
+            sasl_mechanism=cast(str | None, values.get("sasl_mechanism")),
+            sasl_username=cast(str | None, values.get("sasl_username")),
+            sasl_password=cast(str | None, values.get("sasl_password")),
+            topic=str(values.get("topic") or "torghut.sim.trade-updates.v1"),
+            account_label=str(values.get("account_label") or "paper"),
+            simulation_run_id=cast(str | None, values.get("simulation_run_id")),
+            dataset_id=cast(str | None, values.get("dataset_id")),
+        )
+
+
+@dataclass(frozen=True)
+class SimulationOrderDraft:
+    request: OrderSubmission
+    client_order_id: str
+    correlation_id: str
+    idempotency_key: str
+    simulation_context: dict[str, Any]
+    event_ts: datetime
+    order_id: str
+    fill_price: float
+    requested_qty: float
+    filled_qty: float
+    order_status: str
+    trade_update_event: str
+
+
+@dataclass(frozen=True)
+class PositionMarketValueUpdate:
+    symbol: str
+    current_qty: Decimal
+    updated_qty: Decimal
+    market_value_delta: Decimal
+    fill_price: Decimal
 
 
 class ExecutionAdapter(Protocol):
@@ -38,11 +168,8 @@ class ExecutionAdapter(Protocol):
         symbol: str,
         side: str,
         qty: float,
-        order_type: str,
-        time_in_force: str,
-        limit_price: Optional[float] = None,
-        stop_price: Optional[float] = None,
-        extra_params: Optional[dict[str, Any]] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> dict[str, Any]: ...
 
     def cancel_order(self, order_id: str) -> bool: ...
@@ -77,21 +204,19 @@ class AlpacaExecutionAdapter:
         symbol: str,
         side: str,
         qty: float,
-        order_type: str,
-        time_in_force: str,
-        limit_price: Optional[float] = None,
-        stop_price: Optional[float] = None,
-        extra_params: Optional[dict[str, Any]] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> dict[str, Any]:
+        request = OrderSubmission.from_legacy(symbol, side, qty, *args, **kwargs)
         payload = self._firewall.submit_order(
-            symbol=symbol,
-            side=side,
-            qty=qty,
-            order_type=order_type,
-            time_in_force=time_in_force,
-            limit_price=limit_price,
-            stop_price=stop_price,
-            extra_params=extra_params,
+            symbol=request.symbol,
+            side=request.side,
+            qty=request.qty,
+            order_type=request.order_type,
+            time_in_force=request.time_in_force,
+            limit_price=request.limit_price,
+            stop_price=request.stop_price,
+            extra_params=request.extra_params,
         )
         self.last_route = self.name
         return payload
@@ -127,26 +252,17 @@ class SimulationExecutionAdapter:
 
     name = "simulation"
 
-    def __init__(
-        self,
-        *,
-        bootstrap_servers: str | None,
-        security_protocol: str | None,
-        sasl_mechanism: str | None,
-        sasl_username: str | None,
-        sasl_password: str | None,
-        topic: str,
-        account_label: str,
-        simulation_run_id: str | None,
-        dataset_id: str | None,
-    ) -> None:
+    def __init__(self, **config_values: Any) -> None:
+        config = SimulationAdapterConfig.from_kwargs(config_values)
         self.last_route = self.name
         self.last_correlation_id: str | None = None
         self.last_idempotency_key: str | None = None
-        self._topic = topic.strip() or "torghut.sim.trade-updates.v1"
-        self._account_label = account_label.strip() or "paper"
-        self._simulation_run_id = (simulation_run_id or "").strip() or "simulation"
-        self._dataset_id = (dataset_id or "").strip() or "unknown"
+        self._topic = config.topic.strip() or "torghut.sim.trade-updates.v1"
+        self._account_label = config.account_label.strip() or "paper"
+        self._simulation_run_id = (
+            config.simulation_run_id or ""
+        ).strip() or "simulation"
+        self._dataset_id = (config.dataset_id or "").strip() or "unknown"
         self._seq = 0
         self._orders_by_id: dict[str, dict[str, Any]] = {}
         self._order_id_by_client_id: dict[str, str] = {}
@@ -156,19 +272,19 @@ class SimulationExecutionAdapter:
         self._producer: Any | None = None
         self._producer_init_error: str | None = None
         self._kafka_security_kwargs: dict[str, str] = {}
-        if security_protocol:
-            self._kafka_security_kwargs["security_protocol"] = security_protocol
-        if sasl_mechanism:
-            self._kafka_security_kwargs["sasl_mechanism"] = sasl_mechanism
-        if sasl_username:
-            self._kafka_security_kwargs["sasl_plain_username"] = sasl_username
-        if sasl_password:
-            self._kafka_security_kwargs["sasl_plain_password"] = sasl_password
-        if bootstrap_servers and bootstrap_servers.strip():
-            self._producer = self._build_producer(bootstrap_servers.strip())
+        if config.security_protocol:
+            self._kafka_security_kwargs["security_protocol"] = config.security_protocol
+        if config.sasl_mechanism:
+            self._kafka_security_kwargs["sasl_mechanism"] = config.sasl_mechanism
+        if config.sasl_username:
+            self._kafka_security_kwargs["sasl_plain_username"] = config.sasl_username
+        if config.sasl_password:
+            self._kafka_security_kwargs["sasl_plain_password"] = config.sasl_password
+        if config.bootstrap_servers and config.bootstrap_servers.strip():
+            self._producer = self._build_producer(config.bootstrap_servers.strip())
 
     def _sync_runtime_context(self) -> None:
-        runtime_context = active_simulation_runtime_context()
+        runtime_context = _active_simulation_runtime_context()
         run_id = (runtime_context or {}).get("run_id") or self._simulation_run_id
         dataset_id = (runtime_context or {}).get("dataset_id") or self._dataset_id
         if run_id == self._simulation_run_id and dataset_id == self._dataset_id:
@@ -211,7 +327,7 @@ class SimulationExecutionAdapter:
                 seeded_market_values.pop(symbol, None)
                 continue
             seeded_positions[symbol] = net_qty
-            signed_market_value = _signed_position_market_value(raw_position, side=side)
+            signed_market_value = signed_position_market_value(raw_position, side=side)
             if signed_market_value is not None:
                 seeded_market_values[symbol] = (
                     seeded_market_values.get(symbol, Decimal("0")) + signed_market_value
@@ -241,7 +357,7 @@ class SimulationExecutionAdapter:
         side = str(position.get("side") or "").strip().lower()
         signed_qty = -abs(qty) if side == "short" else qty
         self._positions_by_symbol[symbol] = signed_qty
-        signed_market_value = _signed_position_market_value(position, side=side)
+        signed_market_value = signed_position_market_value(position, side=side)
         if signed_market_value is not None:
             self._position_market_value_by_symbol[symbol] = signed_market_value
         return True
@@ -251,95 +367,115 @@ class SimulationExecutionAdapter:
         symbol: str,
         side: str,
         qty: float,
-        order_type: str,
-        time_in_force: str,
-        limit_price: Optional[float] = None,
-        stop_price: Optional[float] = None,
-        extra_params: Optional[dict[str, Any]] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         self._sync_runtime_context()
-        payload = dict(extra_params or {})
+        request = OrderSubmission.from_legacy(symbol, side, qty, *args, **kwargs)
+        draft = self._simulation_order_draft(request)
+        order = self._simulation_order_payload(draft)
+        self._store_simulation_order(draft, order)
+        if draft.filled_qty > 0:
+            self._apply_fill_to_positions(order)
+        self._publish_trade_update(
+            order, event_type=draft.trade_update_event, event_ts=draft.event_ts
+        )
+        return dict(order)
+
+    def _simulation_order_draft(self, request: OrderSubmission) -> SimulationOrderDraft:
+        payload = dict(request.extra_params or {})
         requested_client_order_id = payload.get("client_order_id")
         client_order_id = (
             str(requested_client_order_id).strip() if requested_client_order_id else ""
         )
         if not client_order_id:
             client_order_id = f"sim-client-{uuid4().hex[:20]}"
-        correlation_id = f"sim-{uuid4().hex[:20]}"
-        idempotency_key = client_order_id
-        simulation_context = _resolve_simulation_context_payload(
+        simulation_context = resolve_simulation_context_payload(
             simulation_run_id=self._simulation_run_id,
             dataset_id=self._dataset_id,
-            symbol=symbol,
+            symbol=request.symbol,
             source=payload.get("simulation_context")
             if isinstance(payload.get("simulation_context"), Mapping)
             else None,
         )
-        now = _resolve_simulation_event_ts(
+        event_ts = resolve_simulation_event_ts(
             simulation_context=simulation_context,
             account_label=self._account_label,
         )
-        order_id = self._order_id_by_client_id.get(client_order_id)
-        if order_id is None:
-            order_id = f"sim-order-{uuid4().hex[:20]}"
-        fill_price = _resolve_simulated_fill_price(
-            limit_price=limit_price,
-            stop_price=stop_price,
+        requested_qty = max(float(request.qty), 0.0)
+        filled_qty = resolve_simulated_filled_qty(
+            requested_qty=requested_qty,
             simulation_context=simulation_context,
         )
-        qty_value = max(float(qty), 0.0)
-        filled_qty_value = _resolve_simulated_filled_qty(
-            requested_qty=qty_value,
+        return SimulationOrderDraft(
+            request=request,
+            client_order_id=client_order_id,
+            correlation_id=f"sim-{uuid4().hex[:20]}",
+            idempotency_key=client_order_id,
             simulation_context=simulation_context,
+            event_ts=event_ts,
+            order_id=self._order_id_by_client_id.get(client_order_id)
+            or f"sim-order-{uuid4().hex[:20]}",
+            fill_price=resolve_simulated_fill_price(
+                limit_price=request.limit_price,
+                stop_price=request.stop_price,
+                simulation_context=simulation_context,
+            ),
+            requested_qty=requested_qty,
+            filled_qty=filled_qty,
+            order_status=simulated_order_status(
+                requested_qty=requested_qty,
+                filled_qty=filled_qty,
+            ),
+            trade_update_event=simulated_trade_update_event(
+                requested_qty=requested_qty,
+                filled_qty=filled_qty,
+            ),
         )
-        order_status = _simulated_order_status(
-            requested_qty=qty_value,
-            filled_qty=filled_qty_value,
-        )
-        trade_update_event = _simulated_trade_update_event(
-            requested_qty=qty_value,
-            filled_qty=filled_qty_value,
-        )
+
+    def _simulation_order_payload(self, draft: SimulationOrderDraft) -> dict[str, Any]:
+        request = draft.request
         order: dict[str, Any] = {
-            "id": order_id,
-            "client_order_id": client_order_id,
-            "symbol": symbol,
-            "side": side,
-            "type": order_type,
-            "time_in_force": time_in_force,
-            "qty": _float_to_order_text(qty_value),
-            "filled_qty": _float_to_order_text(filled_qty_value),
-            "filled_avg_price": _float_to_order_text(fill_price)
-            if filled_qty_value > 0
+            "id": draft.order_id,
+            "client_order_id": draft.client_order_id,
+            "symbol": request.symbol,
+            "side": request.side,
+            "type": request.order_type,
+            "time_in_force": request.time_in_force,
+            "qty": float_to_order_text(draft.requested_qty),
+            "filled_qty": float_to_order_text(draft.filled_qty),
+            "filled_avg_price": float_to_order_text(draft.fill_price)
+            if draft.filled_qty > 0
             else None,
-            "status": order_status,
-            "submitted_at": now.isoformat(),
-            "updated_at": now.isoformat(),
+            "status": draft.order_status,
+            "submitted_at": draft.event_ts.isoformat(),
+            "updated_at": draft.event_ts.isoformat(),
             "alpaca_account_label": self._account_label,
             "_execution_adapter": self.name,
             "_execution_route_expected": self.name,
             "_execution_route_actual": self.name,
-            "_execution_correlation_id": correlation_id,
-            "_execution_idempotency_key": idempotency_key,
+            "_execution_correlation_id": draft.correlation_id,
+            "_execution_idempotency_key": draft.idempotency_key,
         }
-        order["_simulation_context"] = simulation_context
-        order["simulation_context"] = simulation_context
+        order["_simulation_context"] = draft.simulation_context
+        order["simulation_context"] = draft.simulation_context
         order["_execution_audit"] = {
             "adapter": self.name,
-            "correlation_id": correlation_id,
-            "idempotency_key": idempotency_key,
+            "correlation_id": draft.correlation_id,
+            "idempotency_key": draft.idempotency_key,
             "mode": "historical_simulation",
-            "simulation_context": simulation_context,
+            "simulation_context": draft.simulation_context,
         }
+        return order
+
+    def _store_simulation_order(
+        self, draft: SimulationOrderDraft, order: dict[str, Any]
+    ) -> None:
         self.last_route = self.name
-        self.last_correlation_id = correlation_id
-        self.last_idempotency_key = idempotency_key
-        self._orders_by_id[order_id] = dict(order)
-        self._order_id_by_client_id[client_order_id] = order_id
-        if filled_qty_value > 0:
-            self._apply_fill_to_positions(order)
-        self._publish_trade_update(order, event_type=trade_update_event, event_ts=now)
-        return dict(order)
+        self.last_correlation_id = draft.correlation_id
+        self.last_idempotency_key = draft.idempotency_key
+        self._orders_by_id[draft.order_id] = dict(order)
+        self._order_id_by_client_id[draft.client_order_id] = draft.order_id
 
     def cancel_order(self, order_id: str) -> bool:
         self._sync_runtime_context()
@@ -415,56 +551,81 @@ class SimulationExecutionAdapter:
             side = "long" if net_qty > 0 else "short"
             position = {
                 "symbol": symbol,
-                "qty": _decimal_to_order_text(abs(net_qty)),
+                "qty": decimal_to_order_text(abs(net_qty)),
                 "side": side,
                 "alpaca_account_label": self._account_label,
             }
             market_value = self._position_market_value_by_symbol.get(symbol)
             if market_value is not None:
-                position["market_value"] = _signed_decimal_to_text(market_value)
+                position["market_value"] = signed_decimal_to_text(market_value)
             positions.append(position)
         return positions
 
     def _apply_fill_to_positions(self, order: Mapping[str, Any]) -> None:
-        symbol = str(order.get("symbol") or "").strip().upper()
-        if not symbol:
+        parsed = self._filled_position_delta(order)
+        if parsed is None:
             return
-        raw_qty = order.get("filled_qty") or order.get("qty")
-        try:
-            qty = Decimal(str(raw_qty or "0"))
-        except Exception:
-            return
-        if qty <= 0:
-            return
-        side = str(order.get("side") or "").strip().lower()
-        delta = qty if side == "buy" else -qty
+        symbol, delta, fill_price = parsed
         current_qty = self._positions_by_symbol.get(symbol, Decimal("0"))
         updated = current_qty + delta
         if updated == 0:
             self._positions_by_symbol.pop(symbol, None)
             self._position_market_value_by_symbol.pop(symbol, None)
-            return
-        self._positions_by_symbol[symbol] = updated
-
-        fill_price = _optional_decimal(order.get("filled_avg_price"))
-        if fill_price is None:
-            return
-        market_value_delta = delta * fill_price
-        current_market_value = self._position_market_value_by_symbol.get(symbol)
-        if current_market_value is not None:
-            self._position_market_value_by_symbol[symbol] = (
-                current_market_value + market_value_delta
+        else:
+            self._positions_by_symbol[symbol] = updated
+            self._update_position_market_value(
+                PositionMarketValueUpdate(
+                    symbol=symbol,
+                    current_qty=current_qty,
+                    updated_qty=updated,
+                    market_value_delta=delta * fill_price,
+                    fill_price=fill_price,
+                )
             )
-            return
-        if current_qty == 0:
-            self._position_market_value_by_symbol[symbol] = market_value_delta
-            return
-        if current_qty > 0 > updated or current_qty < 0 < updated:
-            self._position_market_value_by_symbol[symbol] = updated * fill_price
+
+    def _update_position_market_value(self, update: PositionMarketValueUpdate) -> None:
+        current_market_value = self._position_market_value_by_symbol.get(update.symbol)
+        if current_market_value is not None:
+            self._position_market_value_by_symbol[update.symbol] = (
+                current_market_value + update.market_value_delta
+            )
+        elif update.current_qty == 0:
+            self._position_market_value_by_symbol[update.symbol] = (
+                update.market_value_delta
+            )
+        elif (
+            update.current_qty > 0 > update.updated_qty
+            or update.current_qty < 0 < update.updated_qty
+        ):
+            self._position_market_value_by_symbol[update.symbol] = (
+                update.updated_qty * update.fill_price
+            )
+
+    @staticmethod
+    def _filled_position_delta(
+        order: Mapping[str, Any],
+    ) -> tuple[str, Decimal, Decimal] | None:
+        symbol = str(order.get("symbol") or "").strip().upper()
+        if not symbol:
+            return None
+        raw_qty = order.get("filled_qty") or order.get("qty")
+        try:
+            qty = Decimal(str(raw_qty or "0"))
+        except Exception:
+            return None
+        if qty <= 0:
+            return None
+        side = str(order.get("side") or "").strip().lower()
+        delta = qty if side == "buy" else -qty
+        fill_price = optional_decimal(order.get("filled_avg_price"))
+        if fill_price is None:
+            return None
+        return symbol, delta, fill_price
 
     def _build_producer(self, bootstrap_servers: str) -> Any | None:
         try:
-            from kafka import KafkaProducer  # type: ignore[import-not-found]
+            kafka_module = import_module("kafka")
+            kafka_producer = getattr(kafka_module, "KafkaProducer")
         except Exception as exc:  # pragma: no cover - dependency/runtime error
             self._producer_init_error = f"kafka_import_failed:{exc}"
             logger.warning(
@@ -475,21 +636,18 @@ class SimulationExecutionAdapter:
             return None
 
         try:
-            return cast(
-                Any,
-                KafkaProducer(
-                    bootstrap_servers=[
-                        item.strip()
-                        for item in bootstrap_servers.split(",")
-                        if item.strip()
-                    ],
-                    value_serializer=None,
-                    key_serializer=None,
-                    retries=1,
-                    request_timeout_ms=2_000,
-                    max_block_ms=2_000,
-                    **self._kafka_security_kwargs,
-                ),
+            return kafka_producer(
+                bootstrap_servers=[
+                    item.strip()
+                    for item in bootstrap_servers.split(",")
+                    if item.strip()
+                ],
+                value_serializer=None,
+                key_serializer=None,
+                retries=1,
+                request_timeout_ms=2_000,
+                max_block_ms=2_000,
+                **self._kafka_security_kwargs,
             )
         except Exception as exc:  # pragma: no cover - environment-dependent
             self._producer_init_error = f"kafka_producer_init_failed:{exc}"
@@ -507,7 +665,7 @@ class SimulationExecutionAdapter:
         simulation_context = (
             dict(cast(Mapping[str, Any], order.get("simulation_context")))
             if isinstance(order.get("simulation_context"), Mapping)
-            else _resolve_simulation_context_payload(
+            else resolve_simulation_context_payload(
                 simulation_run_id=self._simulation_run_id,
                 dataset_id=self._dataset_id,
                 symbol=str(order.get("symbol") or "").strip().upper(),
@@ -569,4 +727,9 @@ class SimulationExecutionAdapter:
             )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "AlpacaExecutionAdapter",
+    "ExecutionAdapter",
+    "SimulationExecutionAdapter",
+    "logger",
+]

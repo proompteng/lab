@@ -1,29 +1,43 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Broker-neutral execution adapters for trading order flow."""
 
 from __future__ import annotations
 
 import json
-import logging
 import time
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from collections.abc import Mapping
-from decimal import Decimal
-from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, Optional, Protocol, cast
+from typing import Any, Optional, cast
 from urllib.parse import quote, urlencode
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ...alpaca_client import TorghutAlpacaClient
 from ...config import settings
 from ..firewall import OrderFirewall
-from ..simulation_progress import active_simulation_runtime_context
-from ..time_source import trading_now
 
-# ruff: noqa: F401,F403,F405,F811,F821
 
-from .part_01_statements_23 import *
+from .adapter_types import (
+    AlpacaExecutionAdapter,
+    ExecutionAdapter,
+    OrderSubmission,
+    SimulationExecutionAdapter,
+    logger,
+)
+from .order_text import (
+    classify_failure_taxonomy,
+    classify_fallback_reason,
+    error_summary,
+    http_request_text,
+    is_http_status_error,
+)
+
+
+@dataclass(frozen=True)
+class LeanRequest:
+    method: str
+    path: str
+    payload: Optional[dict[str, Any]]
+    headers: dict[str, str] | None
+    operation: str
 
 
 class LeanExecutionAdapter:
@@ -59,60 +73,24 @@ class LeanExecutionAdapter:
         symbol: str,
         side: str,
         qty: float,
-        order_type: str,
-        time_in_force: str,
-        limit_price: Optional[float] = None,
-        stop_price: Optional[float] = None,
-        extra_params: Optional[dict[str, Any]] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> dict[str, Any]:
-        extra_params_payload: dict[str, Any] = dict(extra_params or {})
+        request = OrderSubmission.from_legacy(symbol, side, qty, *args, **kwargs)
+        extra_params_payload: dict[str, Any] = dict(request.extra_params or {})
         client_order_id = extra_params_payload.get("client_order_id")
         correlation_id = f"torghut-{uuid4().hex[:20]}"
         idempotency_key = str(
             client_order_id
-            or f"{symbol}:{side}:{qty}:{order_type}:{time_in_force}:{uuid4().hex[:8]}"
+            or (
+                f"{request.symbol}:{request.side}:{request.qty}:"
+                f"{request.order_type}:{request.time_in_force}:{uuid4().hex[:8]}"
+            )
         )
         self.last_correlation_id = correlation_id
         self.last_idempotency_key = idempotency_key
-        body: dict[str, Any] = {
-            "symbol": symbol,
-            "side": side,
-            "qty": qty,
-            "order_type": order_type,
-            "time_in_force": time_in_force,
-            "limit_price": limit_price,
-            "stop_price": stop_price,
-            "extra_params": extra_params_payload,
-        }
-        if (
-            settings.trading_lean_shadow_execution_enabled
-            and not settings.trading_lean_lane_disable_switch
-        ):
-            try:
-                shadow_payload = self._request_json(
-                    "POST",
-                    "/v1/shadow/simulate",
-                    {
-                        "symbol": symbol,
-                        "side": side,
-                        "qty": qty,
-                        "order_type": order_type,
-                        "time_in_force": time_in_force,
-                        "limit_price": limit_price,
-                        "intent_price": limit_price,
-                    },
-                    headers={"X-Correlation-ID": correlation_id},
-                    operation="shadow_simulate",
-                )
-                if isinstance(shadow_payload, Mapping):
-                    extra_params_payload["_lean_shadow"] = dict(
-                        cast(Mapping[str, Any], shadow_payload)
-                    )
-            except Exception:
-                logger.debug(
-                    "lean shadow simulation request failed; continuing without shadow context",
-                    exc_info=True,
-                )
+        body = self._submit_body(request, extra_params_payload)
+        self._attach_shadow_context(request, extra_params_payload, correlation_id)
         payload = self._with_fallback(
             op="submit_order",
             request=lambda: self._validate_submit_payload(
@@ -128,18 +106,9 @@ class LeanExecutionAdapter:
                 ),
                 adapter="lean",
                 expected_client_order_id=client_order_id,
-                expected_symbol=symbol,
+                expected_symbol=request.symbol,
             ),
-            fallback=lambda: self._fallback_submit(
-                symbol=symbol,
-                side=side,
-                qty=qty,
-                order_type=order_type,
-                time_in_force=time_in_force,
-                limit_price=limit_price,
-                stop_price=stop_price,
-                extra_params=extra_params,
-            ),
+            fallback=lambda: self._fallback_submit(request),
         )
         payload["_execution_route_expected"] = "lean"
         shadow_event = extra_params_payload.get("_lean_shadow")
@@ -152,6 +121,58 @@ class LeanExecutionAdapter:
             "idempotency_key": idempotency_key,
         }
         return payload
+
+    @staticmethod
+    def _submit_body(
+        request: OrderSubmission, extra_params_payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "symbol": request.symbol,
+            "side": request.side,
+            "qty": request.qty,
+            "order_type": request.order_type,
+            "time_in_force": request.time_in_force,
+            "limit_price": request.limit_price,
+            "stop_price": request.stop_price,
+            "extra_params": extra_params_payload,
+        }
+
+    def _attach_shadow_context(
+        self,
+        request: OrderSubmission,
+        extra_params_payload: dict[str, Any],
+        correlation_id: str,
+    ) -> None:
+        if (
+            not settings.trading_lean_shadow_execution_enabled
+            or settings.trading_lean_lane_disable_switch
+        ):
+            return
+        try:
+            shadow_payload = self._request_json(
+                "POST",
+                "/v1/shadow/simulate",
+                {
+                    "symbol": request.symbol,
+                    "side": request.side,
+                    "qty": request.qty,
+                    "order_type": request.order_type,
+                    "time_in_force": request.time_in_force,
+                    "limit_price": request.limit_price,
+                    "intent_price": request.limit_price,
+                },
+                headers={"X-Correlation-ID": correlation_id},
+                operation="shadow_simulate",
+            )
+            if isinstance(shadow_payload, Mapping):
+                extra_params_payload["_lean_shadow"] = dict(
+                    cast(Mapping[str, Any], shadow_payload)
+                )
+        except Exception:
+            logger.debug(
+                "lean shadow simulation request failed; continuing without shadow context",
+                exc_info=True,
+            )
 
     def cancel_order(self, order_id: str) -> bool:
         payload = self._with_fallback(
@@ -214,7 +235,7 @@ class LeanExecutionAdapter:
             self.last_route = self.name
             return self._validate_read_order_payload(payload, adapter="lean")
         except Exception as exc:
-            if _is_http_status_error(exc, 404):
+            if is_http_status_error(exc, 404):
                 self.last_route = self.name
                 return None
             return self._fallback_get_order_by_client_id(client_order_id, exc)
@@ -303,29 +324,21 @@ class LeanExecutionAdapter:
         asset = cast(Mapping[str, Any], payload)
         return {str(key): value for key, value in asset.items()}
 
-    def _request_json_with_headers(
-        self,
-        method: str,
-        path: str,
-        payload: Optional[dict[str, Any]],
-        *,
-        headers: dict[str, str] | None,
-        operation: str,
-    ) -> Any:
-        url = f"{self.base_url}{path}"
+    def _request_json_with_headers(self, request: LeanRequest) -> Any:
+        url = f"{self.base_url}{request.path}"
         started = time.perf_counter()
         request_body = None
         request_headers = {"accept": "application/json"}
-        if headers:
-            request_headers.update(headers)
-        if payload is not None:
-            request_body = json.dumps(payload).encode("utf-8")
+        if request.headers:
+            request_headers.update(request.headers)
+        if request.payload is not None:
+            request_body = json.dumps(request.payload).encode("utf-8")
             request_headers["content-type"] = "application/json"
 
         try:
-            status, body = _http_request_text(
+            status, body = http_request_text(
                 url=url,
-                method=method,
+                method=request.method,
                 headers=request_headers,
                 body=request_body,
                 timeout_seconds=self.timeout_seconds,
@@ -333,9 +346,11 @@ class LeanExecutionAdapter:
             if status < 200 or status >= 300:
                 raise RuntimeError(f"lean_runner_http_{status}:{body[:200]}")
         except Exception as exc:
-            self._record_observability_failure(operation, exc)
+            self._record_observability_failure(request.operation, exc)
             raise
-        self._record_observability_success(operation, time.perf_counter() - started)
+        self._record_observability_success(
+            request.operation, time.perf_counter() - started
+        )
         if not body:
             return {}
         try:
@@ -348,16 +363,16 @@ class LeanExecutionAdapter:
         method: str,
         path: str,
         payload: Optional[dict[str, Any]] = None,
-        *,
-        headers: dict[str, str] | None = None,
-        operation: str = "request_json",
+        **options: Any,
     ) -> Any:
         return self._request_json_with_headers(
-            method,
-            path,
-            payload,
-            headers=headers,
-            operation=operation,
+            LeanRequest(
+                method=method,
+                path=path,
+                payload=payload,
+                headers=cast(dict[str, str] | None, options.get("headers")),
+                operation=str(options.get("operation") or "request_json"),
+            )
         )
 
     def _with_fallback(self, *, op: str, request: Any, fallback: Any) -> Any:
@@ -370,11 +385,11 @@ class LeanExecutionAdapter:
         except (TimeoutError, RuntimeError) as exc:
             if self.fallback is None:
                 raise
-            fallback_reason = _classify_fallback_reason(op=op, exc=exc)
+            fallback_reason = classify_fallback_reason(op=op, exc=exc)
             logger.warning(
                 "LEAN adapter failed op=%s; falling back to Alpaca adapter error=%s",
                 op,
-                _error_summary(exc),
+                error_summary(exc),
             )
             self.last_fallback_reason = fallback_reason
             self.last_fallback_count = 1
@@ -440,42 +455,33 @@ class LeanExecutionAdapter:
         )
 
     def _record_observability_failure(self, operation: str, exc: Exception) -> None:
-        taxonomy = _classify_failure_taxonomy(exc)
+        taxonomy = classify_failure_taxonomy(exc)
         key = f"{operation}:{taxonomy}"
         self._observability_failures_total[key] = (
             self._observability_failures_total.get(key, 0) + 1
         )
 
-    def _fallback_submit(
-        self,
-        *,
-        symbol: str,
-        side: str,
-        qty: float,
-        order_type: str,
-        time_in_force: str,
-        limit_price: Optional[float],
-        stop_price: Optional[float],
-        extra_params: Optional[dict[str, Any]],
-    ) -> dict[str, Any]:
+    def _fallback_submit(self, request: OrderSubmission) -> dict[str, Any]:
         if self.fallback is None:
             raise RuntimeError("lean_fallback_not_configured")
         payload = self.fallback.submit_order(
-            symbol=symbol,
-            side=side,
-            qty=qty,
-            order_type=order_type,
-            time_in_force=time_in_force,
-            limit_price=limit_price,
-            stop_price=stop_price,
-            extra_params=extra_params,
+            symbol=request.symbol,
+            side=request.side,
+            qty=request.qty,
+            order_type=request.order_type,
+            time_in_force=request.time_in_force,
+            limit_price=request.limit_price,
+            stop_price=request.stop_price,
+            extra_params=request.extra_params,
         )
         payload = self._coerce_order_dict(payload)
         payload = self._validate_submit_payload(
             payload,
             adapter="alpaca_fallback",
-            expected_client_order_id=(extra_params or {}).get("client_order_id"),
-            expected_symbol=symbol,
+            expected_client_order_id=(request.extra_params or {}).get(
+                "client_order_id"
+            ),
+            expected_symbol=request.symbol,
         )
         payload["_execution_adapter"] = "alpaca_fallback"
         payload["_execution_fallback_reason"] = (
@@ -520,10 +526,10 @@ class LeanExecutionAdapter:
             raise exc
         logger.warning(
             "LEAN adapter failed op=get_order_by_client_order_id; falling back error=%s",
-            _error_summary(exc),
+            error_summary(exc),
         )
         self.last_route = "alpaca_fallback"
-        self.last_fallback_reason = _classify_fallback_reason(
+        self.last_fallback_reason = classify_fallback_reason(
             op="get_order_by_client_order_id", exc=exc
         )
         self.last_fallback_count = 1
@@ -689,136 +695,7 @@ def _build_simulation_execution_adapter() -> SimulationExecutionAdapter | None:
     )
 
 
-def _resolve_simulated_fill_price(
-    *,
-    limit_price: float | None,
-    stop_price: float | None,
-    simulation_context: Mapping[str, Any] | None = None,
-) -> float:
-    for candidate in (limit_price, stop_price):
-        value = _positive_decimal(candidate)
-        if value is not None:
-            return float(value)
-    if isinstance(simulation_context, Mapping):
-        for key in ("simulated_fill_price", "fill_price", "arrival_price", "price"):
-            value = _positive_decimal(simulation_context.get(key))
-            if value is not None:
-                return float(value)
-        price_snapshot = simulation_context.get("price_snapshot")
-        if isinstance(price_snapshot, Mapping):
-            snapshot_payload = cast(Mapping[object, Any], price_snapshot)
-            value = _positive_decimal(snapshot_payload.get("price"))
-            if value is not None:
-                return float(value)
-    return 1.0
-
-
-def _resolve_simulated_filled_qty(
-    *,
-    requested_qty: float,
-    simulation_context: Mapping[str, Any] | None = None,
-) -> float:
-    qty = max(float(requested_qty), 0.0)
-    if qty <= 0:
-        return 0.0
-    if not isinstance(simulation_context, Mapping):
-        return qty
-    explicit_qty = _first_nonnegative_decimal(
-        simulation_context,
-        ("simulated_filled_qty", "filled_qty", "fill_qty", "queue_filled_qty"),
-    )
-    if explicit_qty is not None:
-        return float(min(Decimal(str(qty)), explicit_qty))
-    ratios: list[Decimal] = []
-    explicit_ratio = _first_nonnegative_decimal(
-        simulation_context,
-        ("simulated_fill_ratio", "fill_ratio", "queue_fill_ratio"),
-    )
-    if explicit_ratio is not None:
-        ratios.append(explicit_ratio)
-    queue_fill_probability = _first_nonnegative_decimal(
-        simulation_context,
-        ("queue_fill_probability", "fill_probability", "passive_fill_probability"),
-    )
-    if queue_fill_probability is not None:
-        ratios.append(queue_fill_probability)
-    depth_at_limit = _first_nonnegative_decimal(
-        simulation_context,
-        ("depth_at_limit", "limit_depth_qty", "available_depth_qty"),
-    )
-    if depth_at_limit is not None:
-        queue_ahead_qty = _first_nonnegative_decimal(
-            simulation_context,
-            ("queue_ahead_qty", "queue_position_qty"),
-        ) or Decimal("0")
-        fillable_qty = max(Decimal("0"), depth_at_limit - queue_ahead_qty)
-        ratios.append(fillable_qty / Decimal(str(qty)))
-    cancel_intensity = _first_nonnegative_decimal(
-        simulation_context,
-        ("cancel_intensity", "queue_cancel_intensity"),
-    )
-    market_order_intensity = _first_nonnegative_decimal(
-        simulation_context,
-        ("market_order_intensity", "opposing_market_order_intensity"),
-    )
-    if (
-        cancel_intensity is not None
-        and market_order_intensity is not None
-        and cancel_intensity + market_order_intensity > 0
-    ):
-        ratios.append(
-            market_order_intensity / (market_order_intensity + cancel_intensity)
-        )
-    if not ratios:
-        return qty
-    fill_ratio = min(Decimal("1"), max(Decimal("0"), min(ratios)))
-    return float(Decimal(str(qty)) * fill_ratio)
-
-
-def _first_nonnegative_decimal(
-    payload: Mapping[str, Any],
-    keys: tuple[str, ...],
-) -> Decimal | None:
-    for key in keys:
-        value = _optional_decimal(payload.get(key))
-        if value is not None and value >= 0:
-            return value
-    return None
-
-
-def _simulated_order_status(*, requested_qty: float, filled_qty: float) -> str:
-    if requested_qty <= 0 or filled_qty <= 0:
-        return "accepted"
-    if filled_qty >= requested_qty:
-        return "filled"
-    return "partially_filled"
-
-
-def _simulated_trade_update_event(*, requested_qty: float, filled_qty: float) -> str:
-    if requested_qty <= 0 or filled_qty <= 0:
-        return "new"
-    if filled_qty >= requested_qty:
-        return "fill"
-    return "partial_fill"
-
-
-def _resolve_simulation_event_ts(
-    *,
-    simulation_context: Mapping[str, Any],
-    account_label: str,
-) -> datetime:
-    raw = simulation_context.get("signal_event_ts")
-    if isinstance(raw, str) and raw.strip():
-        normalized = f"{raw[:-1]}+00:00" if raw.endswith("Z") else raw
-        try:
-            parsed = datetime.fromisoformat(normalized)
-        except ValueError:
-            parsed = None
-        if parsed is not None:
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-    return trading_now(account_label=account_label)
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "LeanExecutionAdapter",
+    "build_execution_adapter",
+]
