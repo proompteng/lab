@@ -2,6 +2,8 @@
 
 import json
 import logging
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from http.client import HTTPConnection, HTTPSConnection
@@ -164,6 +166,9 @@ class _HttpResponseHandle:
         return False
 
 
+FeatureFlagUrlopen = Callable[[_HttpRequest, float], _HttpResponseHandle]
+
+
 def urlopen(request: _HttpRequest, timeout: float) -> _HttpResponseHandle:
     connection, request_path = _http_connection_for_url(
         request.full_url,
@@ -178,6 +183,14 @@ def urlopen(request: _HttpRequest, timeout: float) -> _HttpResponseHandle:
         connection.close()
         raise
     return _HttpResponseHandle(connection, response)
+
+
+def _feature_flag_urlopen() -> FeatureFlagUrlopen:
+    config_module = sys.modules.get("app.config")
+    candidate = getattr(config_module, "urlopen", None) if config_module else None
+    if callable(candidate):
+        return cast(FeatureFlagUrlopen, candidate)
+    return urlopen
 
 
 def _build_boolean_feature_flag_request(
@@ -247,7 +260,7 @@ def resolve_boolean_feature_flag(
 ) -> tuple[bool, bool]:
     http_request, timeout_seconds = _build_boolean_feature_flag_request(request)
     try:
-        with urlopen(http_request, timeout_seconds) as response:
+        with _feature_flag_urlopen()(http_request, timeout_seconds) as response:
             return _parse_boolean_feature_flag_response(
                 request=request,
                 status=int(getattr(response, "status", 200)),
