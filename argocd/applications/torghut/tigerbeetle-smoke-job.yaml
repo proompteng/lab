@@ -31,7 +31,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: smoke
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:6fb5c0f8f093badb4ad67e31ab28eb3da6818108ca4dbff92da3aff97fb012d0
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:20987dde71569e4b8decd772d2b9376050b6de22c118b44005cbddf829fcc47e
           imagePullPolicy: IfNotPresent
           securityContext:
             seccompProfile:
