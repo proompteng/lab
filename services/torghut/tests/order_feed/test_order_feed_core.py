@@ -1,7 +1,40 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.order_feed.support import *
+from tests.order_feed.support import (
+    SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+    TRANSFER_KIND_EXECUTION_FILL,
+    TRANSFER_KIND_FILL_POST,
+    Decimal,
+    Execution,
+    ExecutionOrderEvent,
+    ExecutionTCAMetric,
+    FakeConsumer,
+    FakeRecord,
+    FakeTigerBeetleClient,
+    NormalizedOrderEvent,
+    OrderFeedIngestor,
+    OrderFeedSourceWindow,
+    OrderFeedTestCase,
+    RejectedSignalOutcomeEvent,
+    Session,
+    Strategy,
+    TigerBeetleReconciliationRun,
+    TigerBeetleTransferRef,
+    TradeDecision,
+    apply_order_event_to_execution,
+    datetime,
+    latest_order_event_for_execution,
+    merge_execution_raw_order_update,
+    normalize_order_feed_record,
+    order_feed_module,
+    patch,
+    persist_order_event,
+    select,
+    settings,
+    timedelta,
+    timezone,
+)
 
 
 class TestOrderFeedCore(OrderFeedTestCase):
@@ -301,7 +334,10 @@ class TestOrderFeedCore(OrderFeedTestCase):
                 default_account_label="paper",
             )
             with patch(
-                "app.trading.order_feed.reconcile_tigerbeetle_transfers",
+                (
+                    "app.trading.order_feed_modules.part_01_statements_32"
+                    ".reconcile_tigerbeetle_transfers"
+                ),
                 side_effect=RuntimeError("reconcile failed"),
             ):
                 with self.assertLogs(order_feed_module.logger, level="WARNING"):
@@ -601,7 +637,12 @@ class TestOrderFeedCore(OrderFeedTestCase):
         with Session(self.engine) as session:
             execution = self._seed_execution(session)
 
-            with patch("app.trading.order_feed.upsert_execution_tca_metric") as upsert:
+            with patch(
+                (
+                    "app.trading.order_feed_modules.part_01_statements_32"
+                    ".upsert_execution_tca_metric"
+                )
+            ) as upsert:
                 counters = ingestor.ingest_once(session)
                 session.refresh(execution)
 

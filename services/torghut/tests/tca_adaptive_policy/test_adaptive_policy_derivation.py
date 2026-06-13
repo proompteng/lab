@@ -1,7 +1,22 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.tca_adaptive_policy.support import *
+from tests.tca_adaptive_policy.support import (
+    Decimal,
+    Execution,
+    ExecutionTCAMetric,
+    TradeDecision,
+    _TestAdaptiveExecutionPolicyDerivationBase,
+    build_tca_gate_inputs,
+    cast,
+    datetime,
+    derive_adaptive_execution_policy,
+    patch,
+    refresh_execution_tca_metrics,
+    select,
+    tca_module,
+    timezone,
+    upsert_execution_tca_metric,
+)
 
 
 class TestAdaptiveExecutionPolicyDerivationPart1(
@@ -362,7 +377,10 @@ class TestAdaptiveExecutionPolicyDerivationPart1(
                 patch.object(tca_module.settings, "tigerbeetle_journal_enabled", True),
                 patch.object(tca_module.settings, "tigerbeetle_required", False),
                 patch(
-                    "app.trading.tca.TigerBeetleLedgerJournal.journal_execution",
+                    (
+                        "app.trading.tca_modules.part_01_statements_27"
+                        ".TigerBeetleLedgerJournal.journal_execution"
+                    ),
                     side_effect=RuntimeError("journal failed"),
                 ),
             ):
@@ -383,7 +401,10 @@ class TestAdaptiveExecutionPolicyDerivationPart1(
                 patch.object(tca_module.settings, "tigerbeetle_journal_enabled", True),
                 patch.object(tca_module.settings, "tigerbeetle_required", True),
                 patch(
-                    "app.trading.tca.TigerBeetleLedgerJournal.journal_execution",
+                    (
+                        "app.trading.tca_modules.part_01_statements_27"
+                        ".TigerBeetleLedgerJournal.journal_execution"
+                    ),
                     side_effect=RuntimeError("journal failed"),
                 ),
             ):

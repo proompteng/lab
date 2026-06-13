@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
-
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import cast
@@ -12,7 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base, Execution, ExecutionTCAMetric, Strategy, TradeDecision
-from app.trading import tca as tca_module
+from app.trading import tca_modules as tca_module
 from app.trading.tca import (
     build_tca_gate_inputs,
     derive_adaptive_execution_policy,
@@ -209,4 +207,27 @@ class _TestAdaptiveExecutionPolicyDerivationBase(TestCase):
         session.commit()
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "Base",
+    "Decimal",
+    "Execution",
+    "ExecutionTCAMetric",
+    "Session",
+    "Strategy",
+    "TestCase",
+    "TradeDecision",
+    "_TestAdaptiveExecutionPolicyDerivationBase",
+    "build_tca_gate_inputs",
+    "cast",
+    "create_engine",
+    "datetime",
+    "derive_adaptive_execution_policy",
+    "patch",
+    "refresh_execution_tca_metrics",
+    "select",
+    "sessionmaker",
+    "tca_module",
+    "timedelta",
+    "timezone",
+    "upsert_execution_tca_metric",
+]
