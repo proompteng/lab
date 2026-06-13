@@ -1,194 +1,135 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Transaction cost analytics (TCA) derivation for execution rows."""
 
 from __future__ import annotations
 
-import logging
-import hashlib
-import json
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import ROUND_CEILING, Decimal
+from decimal import Decimal
 from typing import Any, Optional, cast
+from uuid import UUID
 
-from sqlalchemy import func, or_, select
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, load_only
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
-from ...config import settings
 from ...models import Execution, ExecutionTCAMetric, TradeDecision
 from ..prices import resolve_execution_reference_price
-from ..tigerbeetle_journal import (
-    TIGERBEETLE_BLOCKER_JOURNAL_ERROR,
-    TIGERBEETLE_BLOCKER_TRANSFER_REF_CONFLICT,
-    TigerBeetleLedgerJournal,
-)
 
-# ruff: noqa: F401,F403,F405,F811,F821
+ADAPTIVE_LOOKBACK_WINDOW = 24
 
-from .part_01_statements_27 import *
-from .part_02_observed_broker_order_policy_hash import *
+ADAPTIVE_MIN_SAMPLE_SIZE = 6
 
+ADAPTIVE_DEGRADE_FALLBACK_BPS = Decimal("4")
 
-def _execution_lineage_summary(executions: Collection[Execution]) -> dict[str, object]:
-    blocker_counts: dict[str, int] = {}
-    source_backed_count = 0
-    filled_notional_count = 0
-    explicit_cost_count = 0
-    execution_policy_hash_count = 0
-    cost_model_hash_count = 0
-    post_cost_pnl_basis_count = 0
-    sample_blockers: list[dict[str, object]] = []
-    for execution in executions:
-        audit_payload = _mapping_from_any(execution.execution_audit_json)
-        lineage = _mapping_from_any(
-            audit_payload.get("runtime_ledger_lineage")
-            or audit_payload.get("execution_tca_cost_lineage")
-        )
-        blockers = [
-            str(item).strip()
-            for item in cast(Collection[object], lineage.get("blockers") or [])
-            if str(item).strip()
-        ]
-        if not lineage:
-            blockers = ["runtime_tca_cost_lineage_readback_missing"]
-        if lineage.get("source_backed") is True and not blockers:
-            source_backed_count += 1
-        if lineage.get("filled_notional") is not None:
-            filled_notional_count += 1
-        if lineage.get("explicit_cost_amount") is not None:
-            explicit_cost_count += 1
-        if lineage.get("execution_policy_hash") is not None:
-            execution_policy_hash_count += 1
-        if lineage.get("cost_model_hash") is not None:
-            cost_model_hash_count += 1
-        if lineage.get("pnl_basis") == POST_COST_PNL_BASIS:
-            post_cost_pnl_basis_count += 1
-        for blocker in blockers:
-            blocker_counts[blocker] = blocker_counts.get(blocker, 0) + 1
-        if blockers and len(sample_blockers) < 10:
-            sample_blockers.append(
-                {
-                    "execution_id": str(execution.id),
-                    "alpaca_order_id": execution.alpaca_order_id,
-                    "symbol": execution.symbol,
-                    "blockers": blockers,
-                }
-            )
+ADAPTIVE_TARGET_SLIPPAGE_BPS = Decimal("12")
 
-    execution_count = len(executions)
-    blockers = sorted(blocker_counts)
-    return {
-        "schema_version": EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION,
-        "status": "source_backed"
-        if execution_count > 0
-        and source_backed_count == execution_count
-        and not blockers
-        else "blocked"
-        if execution_count > 0
-        else "missing",
-        "promotion_authority": False,
-        "promotion_authority_reason": "lineage_dimension_only_not_promotion_authority",
-        "execution_count": execution_count,
-        "source_backed_count": source_backed_count,
-        "blocked_count": max(0, execution_count - source_backed_count),
-        "filled_notional_count": filled_notional_count,
-        "explicit_cost_count": explicit_cost_count,
-        "execution_policy_hash_count": execution_policy_hash_count,
-        "cost_model_hash_count": cost_model_hash_count,
-        "post_cost_pnl_basis_count": post_cost_pnl_basis_count,
-        "blockers": blockers,
-        "blocker_counts": dict(sorted(blocker_counts.items())),
-        "sample_blockers": sample_blockers,
-    }
+ADAPTIVE_MAX_SLIPPAGE_BPS = Decimal("20")
+
+ADAPTIVE_MAX_SHORTFALL = Decimal("15")
+
+ADAPTIVE_MIN_EXPECTED_SHORTFALL_COVERAGE = Decimal("0.50")
+
+ADAPTIVE_PARTICIPATION_TIGHTEN = Decimal("0.75")
+
+ADAPTIVE_PARTICIPATION_RELAX = Decimal("1.0")
+
+ADAPTIVE_EXECUTION_SLOWDOWN = Decimal("1.40")
+
+ADAPTIVE_EXECUTION_SPEEDUP = Decimal("0.85")
 
 
-def _normalize_tca_symbols(symbols: Collection[str] | None) -> tuple[str, ...]:
-    if symbols is None:
-        return ()
-    return tuple(
-        sorted(
-            {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
-        )
-    )
+@dataclass(frozen=True)
+class AdaptiveExecutionPolicyDecision:
+    key: str
+    symbol: str
+    regime_label: str
+    sample_size: int
+    adaptive_samples: int
+    baseline_slippage_bps: Decimal | None
+    recent_slippage_bps: Decimal | None
+    baseline_shortfall_notional: Decimal | None
+    recent_shortfall_notional: Decimal | None
+    effect_size_bps: Decimal | None
+    degradation_bps: Decimal | None
+    expected_shortfall_coverage: Decimal
+    expected_shortfall_sample_count: int
+    fallback_active: bool
+    fallback_reason: str | None
+    prefer_limit: bool | None
+    participation_rate_scale: Decimal
+    execution_seconds_scale: Decimal
+    aggressiveness: str
+    generated_at: datetime
 
+    @property
+    def has_override(self) -> bool:
+        return self.prefer_limit is not None
 
-def _unavailable_tca_symbol_breakdown(
-    *,
-    symbols: tuple[str, ...],
-    reason: str,
-) -> list[dict[str, object]]:
-    return [
-        {
-            "symbol": symbol,
-            "order_count": 0,
-            "avg_abs_slippage_bps": None,
-            "max_abs_slippage_bps": None,
-            "avg_realized_shortfall_bps": None,
-            "last_computed_at": None,
-            "read_model_unavailable": True,
-            "read_model_status": "timeout",
-            "reason_codes": [reason],
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "symbol": self.symbol,
+            "regime_label": self.regime_label,
+            "sample_size": self.sample_size,
+            "adaptive_samples": self.adaptive_samples,
+            "baseline_slippage_bps": _decimal_str(self.baseline_slippage_bps),
+            "recent_slippage_bps": _decimal_str(self.recent_slippage_bps),
+            "baseline_shortfall_notional": _decimal_str(
+                self.baseline_shortfall_notional
+            ),
+            "recent_shortfall_notional": _decimal_str(self.recent_shortfall_notional),
+            "effect_size_bps": _decimal_str(self.effect_size_bps),
+            "degradation_bps": _decimal_str(self.degradation_bps),
+            "expected_shortfall_coverage": str(self.expected_shortfall_coverage),
+            "expected_shortfall_sample_count": self.expected_shortfall_sample_count,
+            "fallback_active": self.fallback_active,
+            "fallback_reason": self.fallback_reason,
+            "prefer_limit": self.prefer_limit,
+            "participation_rate_scale": _decimal_str(self.participation_rate_scale),
+            "execution_seconds_scale": _decimal_str(self.execution_seconds_scale),
+            "aggressiveness": self.aggressiveness,
+            "generated_at": self.generated_at.isoformat(),
         }
-        for symbol in symbols
-    ]
 
 
-def _build_tca_symbol_breakdown(
-    session: Session,
-    *,
-    strategy_id: str | None,
-    account_label: str,
-    symbols: tuple[str, ...],
-) -> list[dict[str, object]]:
-    if not symbols:
-        return []
+@dataclass(frozen=True)
+class _AdaptiveWindowSummary:
+    sample_size: int
+    adaptive_samples: int
+    expected_shortfall_sample_count: int
+    expected_shortfall_coverage: Decimal
+    slippages: list[Decimal]
+    shortfalls: list[Decimal]
 
-    stmt = (
-        select(
-            ExecutionTCAMetric.symbol,
-            func.count(ExecutionTCAMetric.id),
-            func.avg(func.abs(ExecutionTCAMetric.slippage_bps)),
-            func.max(func.abs(ExecutionTCAMetric.slippage_bps)),
-            func.max(ExecutionTCAMetric.computed_at),
-            func.avg(ExecutionTCAMetric.realized_shortfall_bps),
-        )
-        .where(ExecutionTCAMetric.symbol.in_(symbols))
-        .group_by(ExecutionTCAMetric.symbol)
-    )
-    if strategy_id:
-        stmt = stmt.where(ExecutionTCAMetric.strategy_id == strategy_id)
-    if account_label:
-        stmt = stmt.where(ExecutionTCAMetric.alpaca_account_label == account_label)
 
-    rows_by_symbol = {str(row[0]).upper(): row for row in session.execute(stmt).all()}
-    breakdown: list[dict[str, object]] = []
-    for symbol in symbols:
-        row = rows_by_symbol.get(symbol)
-        if row is None:
-            breakdown.append(
-                {
-                    "symbol": symbol,
-                    "order_count": 0,
-                    "avg_abs_slippage_bps": None,
-                    "max_abs_slippage_bps": None,
-                    "avg_realized_shortfall_bps": None,
-                    "last_computed_at": None,
-                }
-            )
-            continue
-        breakdown.append(
-            {
-                "symbol": symbol,
-                "order_count": int(row[1] or 0),
-                "avg_abs_slippage_bps": _decimal_or_none(row[2]),
-                "max_abs_slippage_bps": _decimal_or_none(row[3]),
-                "last_computed_at": row[4],
-                "avg_realized_shortfall_bps": _decimal_or_none(row[5]),
-            }
-        )
-    return breakdown
+@dataclass(frozen=True)
+class _AdaptivePolicyMetrics:
+    baseline_slippage_bps: Decimal | None
+    recent_slippage_bps: Decimal | None
+    baseline_shortfall_notional: Decimal | None
+    recent_shortfall_notional: Decimal | None
+    effect_size_bps: Decimal | None
+    degradation_bps: Decimal | None
+
+
+@dataclass(frozen=True)
+class _AdaptivePolicyControls:
+    fallback_active: bool
+    fallback_reason: str | None
+    prefer_limit: bool | None
+    participation_rate_scale: Decimal
+    execution_seconds_scale: Decimal
+    aggressiveness: str
+
+
+@dataclass(frozen=True)
+class ExecutionChurnContext:
+    session: Session
+    execution: Execution
+    strategy_id: UUID | None
+    account_label: str | None
+    signed_qty: Decimal
+    filled_qty: Decimal
 
 
 def derive_adaptive_execution_policy(
@@ -214,30 +155,10 @@ def derive_adaptive_execution_policy(
         session, symbol=normalized_symbol, regime_label=normalized_regime
     )
     window_summary = _collect_adaptive_windows(rows)
-    baseline_slippage, recent_slippage = _split_window_average(window_summary.slippages)
-    baseline_shortfall, recent_shortfall = _split_window_average(
-        window_summary.shortfalls
-    )
-    effect_size_bps, degradation_bps = _derive_effect_size(
-        baseline_slippage=baseline_slippage,
-        recent_slippage=recent_slippage,
-    )
-    fallback_active, fallback_reason = _resolve_fallback_state(
-        sample_size=window_summary.sample_size,
-        adaptive_samples=window_summary.adaptive_samples,
-        expected_shortfall_coverage=window_summary.expected_shortfall_coverage,
-        degradation_bps=degradation_bps,
-    )
-    (
-        prefer_limit,
-        participation_rate_scale,
-        execution_seconds_scale,
-        aggressiveness,
-    ) = _resolve_adaptive_controls(
-        sample_size=window_summary.sample_size,
-        fallback_active=fallback_active,
-        recent_slippage=recent_slippage,
-        recent_shortfall=recent_shortfall,
+    metrics = _derive_adaptive_policy_metrics(window_summary)
+    controls = _derive_adaptive_policy_controls(
+        window_summary=window_summary,
+        metrics=metrics,
     )
 
     return AdaptiveExecutionPolicyDecision(
@@ -246,21 +167,71 @@ def derive_adaptive_execution_policy(
         regime_label=normalized_regime,
         sample_size=window_summary.sample_size,
         adaptive_samples=window_summary.adaptive_samples,
+        baseline_slippage_bps=metrics.baseline_slippage_bps,
+        recent_slippage_bps=metrics.recent_slippage_bps,
+        baseline_shortfall_notional=metrics.baseline_shortfall_notional,
+        recent_shortfall_notional=metrics.recent_shortfall_notional,
+        effect_size_bps=metrics.effect_size_bps,
+        degradation_bps=metrics.degradation_bps,
+        expected_shortfall_coverage=window_summary.expected_shortfall_coverage,
+        expected_shortfall_sample_count=window_summary.expected_shortfall_sample_count,
+        fallback_active=controls.fallback_active,
+        fallback_reason=controls.fallback_reason,
+        prefer_limit=controls.prefer_limit,
+        participation_rate_scale=controls.participation_rate_scale,
+        execution_seconds_scale=controls.execution_seconds_scale,
+        aggressiveness=controls.aggressiveness,
+        generated_at=generated_at,
+    )
+
+
+def _derive_adaptive_policy_metrics(
+    window_summary: _AdaptiveWindowSummary,
+) -> _AdaptivePolicyMetrics:
+    baseline_slippage, recent_slippage = _split_window_average(window_summary.slippages)
+    baseline_shortfall, recent_shortfall = _split_window_average(
+        window_summary.shortfalls
+    )
+    effect_size_bps, degradation_bps = _derive_effect_size(
+        baseline_slippage=baseline_slippage,
+        recent_slippage=recent_slippage,
+    )
+    return _AdaptivePolicyMetrics(
         baseline_slippage_bps=baseline_slippage,
         recent_slippage_bps=recent_slippage,
         baseline_shortfall_notional=baseline_shortfall,
         recent_shortfall_notional=recent_shortfall,
         effect_size_bps=effect_size_bps,
         degradation_bps=degradation_bps,
+    )
+
+
+def _derive_adaptive_policy_controls(
+    *,
+    window_summary: _AdaptiveWindowSummary,
+    metrics: _AdaptivePolicyMetrics,
+) -> _AdaptivePolicyControls:
+    fallback_active, fallback_reason = _resolve_fallback_state(
+        sample_size=window_summary.sample_size,
+        adaptive_samples=window_summary.adaptive_samples,
         expected_shortfall_coverage=window_summary.expected_shortfall_coverage,
-        expected_shortfall_sample_count=window_summary.expected_shortfall_sample_count,
+        degradation_bps=metrics.degradation_bps,
+    )
+    prefer_limit, participation_rate_scale, execution_seconds_scale, aggressiveness = (
+        _resolve_adaptive_controls(
+            sample_size=window_summary.sample_size,
+            fallback_active=fallback_active,
+            recent_slippage=metrics.recent_slippage_bps,
+            recent_shortfall=metrics.recent_shortfall_notional,
+        )
+    )
+    return _AdaptivePolicyControls(
         fallback_active=fallback_active,
         fallback_reason=fallback_reason,
         prefer_limit=prefer_limit,
         participation_rate_scale=participation_rate_scale,
         execution_seconds_scale=execution_seconds_scale,
         aggressiveness=aggressiveness,
-        generated_at=generated_at,
     )
 
 
@@ -413,15 +384,15 @@ def _resolve_adaptive_controls(
     )
 
 
-def _derive_churn(
-    *,
-    session: Session,
-    execution: Execution,
-    strategy_id: Any,
-    account_label: str | None,
-    signed_qty: Decimal,
-    filled_qty: Decimal,
+def derive_execution_churn(
+    context: ExecutionChurnContext,
 ) -> tuple[Decimal, Optional[Decimal]]:
+    session = context.session
+    execution = context.execution
+    strategy_id = context.strategy_id
+    account_label = context.account_label
+    signed_qty = context.signed_qty
+    filled_qty = context.filled_qty
     if strategy_id is None or filled_qty <= 0 or signed_qty == 0:
         return Decimal("0"), None
 
@@ -441,7 +412,7 @@ def _derive_churn(
         .join(Execution, Execution.id == ExecutionTCAMetric.execution_id)
         .where(*prior_where)
     )
-    prior_signed = _decimal_or_none(
+    prior_signed = decimal_or_none(
         session.execute(prior_signed_sum_stmt).scalar_one()
     ) or Decimal("0")
 
@@ -455,7 +426,7 @@ def _derive_churn(
     return churn_qty, churn_ratio
 
 
-def _resolve_arrival_price(
+def resolve_arrival_price(
     *, decision: TradeDecision | None, execution: Execution
 ) -> Decimal | None:
     decision_payload: dict[str, Any] = {}
@@ -489,7 +460,7 @@ def _resolve_arrival_price(
         raw_order_payload.get("arrival_price"),
         raw_order_payload.get("reference_price"),
     ):
-        resolved = _positive_decimal(candidate)
+        resolved = positive_decimal(candidate)
         if resolved is not None:
             return resolved
     return resolve_execution_reference_price(
@@ -498,7 +469,7 @@ def _resolve_arrival_price(
     )
 
 
-def _load_trade_decision(
+def load_trade_decision_for_execution(
     session: Session, execution: Execution
 ) -> TradeDecision | None:
     if execution.trade_decision_id is not None:
@@ -551,9 +522,9 @@ def _load_recent_tca_rows(
         )
         filtered.append(
             {
-                "slippage_bps": _decimal_or_none(metric.slippage_bps),
-                "shortfall_notional": _decimal_or_none(metric.shortfall_notional),
-                "expected_shortfall_bps_p50": _decimal_or_none(
+                "slippage_bps": decimal_or_none(metric.slippage_bps),
+                "shortfall_notional": decimal_or_none(metric.shortfall_notional),
+                "expected_shortfall_bps_p50": decimal_or_none(
                     metric.expected_shortfall_bps_p50
                 ),
                 "adaptive_applied": bool(adaptive_map.get("applied", False)),
@@ -602,7 +573,7 @@ def _normalize_regime_label(value: Any) -> str:
     return text or "all"
 
 
-def _resolve_simulator_expectations(
+def resolve_simulator_expectations(
     decision: TradeDecision | None,
 ) -> tuple[Decimal | None, Decimal | None, str | None]:
     if decision is None:
@@ -627,9 +598,9 @@ def _resolve_simulator_expectations(
     simulator_version: str | None = None
     for advice in advice_payloads:
         if expected_p50 is None:
-            expected_p50 = _decimal_or_none(advice.get("expected_shortfall_bps_p50"))
+            expected_p50 = decimal_or_none(advice.get("expected_shortfall_bps_p50"))
         if expected_p95 is None:
-            expected_p95 = _decimal_or_none(advice.get("expected_shortfall_bps_p95"))
+            expected_p95 = decimal_or_none(advice.get("expected_shortfall_bps_p95"))
         if simulator_version is None:
             simulator_version_raw = advice.get("simulator_version")
             if simulator_version_raw is not None:
@@ -638,7 +609,7 @@ def _resolve_simulator_expectations(
     return expected_p50, expected_p95, simulator_version
 
 
-def _signed_qty(*, side: str, qty: Decimal) -> Decimal:
+def signed_execution_quantity(*, side: str, qty: Decimal) -> Decimal:
     normalized = (side or "").strip().lower()
     if normalized == "buy":
         return qty
@@ -647,14 +618,14 @@ def _signed_qty(*, side: str, qty: Decimal) -> Decimal:
     return Decimal("0")
 
 
-def _positive_decimal(value: Any) -> Decimal | None:
-    parsed = _decimal_or_none(value)
+def positive_decimal(value: Any) -> Decimal | None:
+    parsed = decimal_or_none(value)
     if parsed is None or parsed <= 0:
         return None
     return parsed
 
 
-def _decimal_or_none(value: Any) -> Decimal | None:
+def decimal_or_none(value: Any) -> Decimal | None:
     if value is None:
         return None
     if isinstance(value, Decimal):
@@ -672,12 +643,24 @@ def _decimal_str(value: Decimal | None) -> str | None:
 
 
 __all__ = [
+    "ADAPTIVE_DEGRADE_FALLBACK_BPS",
+    "ADAPTIVE_EXECUTION_SLOWDOWN",
+    "ADAPTIVE_EXECUTION_SPEEDUP",
+    "ADAPTIVE_LOOKBACK_WINDOW",
+    "ADAPTIVE_MAX_SHORTFALL",
+    "ADAPTIVE_MAX_SLIPPAGE_BPS",
+    "ADAPTIVE_MIN_EXPECTED_SHORTFALL_COVERAGE",
+    "ADAPTIVE_MIN_SAMPLE_SIZE",
+    "ADAPTIVE_PARTICIPATION_RELAX",
+    "ADAPTIVE_PARTICIPATION_TIGHTEN",
+    "ADAPTIVE_TARGET_SLIPPAGE_BPS",
     "AdaptiveExecutionPolicyDecision",
-    "build_tca_gate_inputs",
+    "ExecutionChurnContext",
+    "derive_execution_churn",
     "derive_adaptive_execution_policy",
-    "refresh_execution_tca_metrics",
-    "upsert_execution_tca_metric",
+    "load_trade_decision_for_execution",
+    "positive_decimal",
+    "resolve_arrival_price",
+    "resolve_simulator_expectations",
+    "signed_execution_quantity",
 ]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
