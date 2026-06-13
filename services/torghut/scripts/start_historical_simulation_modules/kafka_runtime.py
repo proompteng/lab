@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Single-entrypoint historical simulation workflow for Torghut."""
 
@@ -62,16 +61,23 @@ from scripts.simulation_lane_contracts import (
     simulation_schema_registry_subject_roles,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_64 import *
-from .part_02_clickhouseruntimeconfig import *
-from .part_03_normalize_migrations_command import *
-from .part_04_is_vector_extension_create_permission_erro import *
-from .part_05_set_argocd_application_ignore_differences import *
-from .part_06_ta_restore_paths import *
-from .part_07_load_optional_json import *
-from .part_08_run_migrations import *
+from .simulation_context import (
+    DEFAULT_SIMULATION_REPLAY_PROFILE,
+    EMBEDDED_SCHEMA_REGISTRY_SCHEMA_BY_SUFFIX,
+    KafkaRuntimeConfig,
+    REPLAY_PROFILE_DEFAULTS,
+    SCHEMA_REGISTRY_CONTENT_TYPE,
+    TORGHUT_ENV_KEYS,
+)
+from .runtime_config import (
+    SimulationResources,
+    _as_mapping,
+    _as_text,
+    _safe_int,
+)
+from .kubernetes_argocd import _kubectl_json
+from .service_environment import _kservice_env
+from .storage_and_database import _http_request
 
 
 def _restore_torghut_env_required(
@@ -153,42 +159,13 @@ def _runtime_verify(
     resources: SimulationResources,
     manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
-    window_start, window_end = _resolve_window_bounds(manifest)
-    service = _kubectl_json(
-        resources.namespace,
-        ["get", "kservice", resources.torghut_service, "-o", "json"],
+    return cast(
+        dict[str, Any],
+        simulation_verification._runtime_verify(
+            resources=resources,
+            manifest=manifest,
+        ),
     )
-    service_status = _as_mapping(service.get("status"))
-    latest_ready_revision = _as_text(service_status.get("latestReadyRevisionName"))
-    ready = _condition_status(service_status, condition_type="Ready") == "True"
-    revision_health: dict[str, Any] | None = None
-    if latest_ready_revision:
-        revision_health = _deployment_replica_health(
-            resources.namespace,
-            f"{latest_ready_revision}-deployment",
-        )
-    ta_health = _fink_runtime_health(resources.namespace, resources.ta_deployment)
-    report = {
-        "runtime_state": "ready"
-        if ready
-        and revision_health is not None
-        and revision_health["ready_replicas"] > 0
-        and ta_health["desired_state"] == "running"
-        and ta_health["lifecycle_state"] in {"RUNNING", "running", "DEPLOYED"}
-        else "not_ready",
-        "target_mode": resources.target_mode,
-        "window_start": window_start.astimezone(timezone.utc).isoformat(),
-        "window_end": window_end.astimezone(timezone.utc).isoformat(),
-        "torghut_service": {
-            "name": resources.torghut_service,
-            "ready": ready,
-            "latest_ready_revision": latest_ready_revision,
-            "revision_health": revision_health,
-        },
-        "ta_runtime": ta_health,
-        "environment_state": "complete",
-    }
-    return report
 
 
 def _kafka_admin_client(config: KafkaRuntimeConfig) -> Any:
@@ -531,4 +508,89 @@ def _offset_for_time_lookup(*, metadata: Any, fallback: int) -> int:
     return offset
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "Any",
+    "COMPONENT_ARTIFACTS",
+    "COMPONENT_REPLAY",
+    "COMPONENT_TA",
+    "COMPONENT_TORGHUT",
+    "Callable",
+    "CephS3Client",
+    "DOC29_SIMULATION_FULL_DAY_GATE",
+    "DOC29_SIMULATION_SMOKE_GATE",
+    "Decimal",
+    "EQUITY_SIMULATION_LANE",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "Mapping",
+    "Path",
+    "SIMULATION_PROGRESS_COMPONENTS",
+    "Sequence",
+    "SessionLocal",
+    "TRACE_STATUS_BLOCKED",
+    "TRACE_STATUS_SATISFIED",
+    "ZoneInfo",
+    "annotations",
+    "argparse",
+    "asdict",
+    "base64",
+    "build_completion_trace",
+    "build_fill_price_error_budget_report_v1",
+    "cast",
+    "contextmanager",
+    "create_engine",
+    "dataclass",
+    "date",
+    "datetime",
+    "gzip",
+    "hashlib",
+    "importlib",
+    "json",
+    "os",
+    "persist_completion_trace",
+    "psycopg",
+    "quote",
+    "quote_plus",
+    "re",
+    "replace",
+    "run_autonomous_lane",
+    "sessionmaker",
+    "shlex",
+    "shutil",
+    "simulation_clickhouse_table_names",
+    "simulation_lane_contract",
+    "simulation_lane_contract_for_manifest",
+    "simulation_schema_registry_subject_roles",
+    "simulation_verification",
+    "socket",
+    "sql",
+    "subprocess",
+    "sys",
+    "time",
+    "timedelta",
+    "timezone",
+    "unquote_plus",
+    "urlsplit",
+    "uuid",
+    "yaml",
+    "_b64_to_bytes",
+    "_bytes_to_b64",
+    "_condition_status",
+    "_consumer_for_dump",
+    "_deployment_replica_health",
+    "_ensure_simulation_schema_subjects",
+    "_ensure_topics",
+    "_fink_runtime_health",
+    "_headers_to_json",
+    "_json_to_headers",
+    "_kafka_admin_client",
+    "_kafka_available_broker_count",
+    "_load_schema_registry_schema_literal",
+    "_offset_for_time_lookup",
+    "_producer_for_replay",
+    "_resolve_schema_registry_schema_path",
+    "_restore_torghut_env_required",
+    "_runtime_verify",
+    "_simulation_schema_registry_subject_specs",
+    "_source_topic_partition_counts",
+)

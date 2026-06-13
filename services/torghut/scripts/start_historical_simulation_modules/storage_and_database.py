@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Single-entrypoint historical simulation workflow for Torghut."""
 
@@ -62,14 +61,44 @@ from scripts.simulation_lane_contracts import (
     simulation_schema_registry_subject_roles,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_64 import *
-from .part_02_clickhouseruntimeconfig import *
-from .part_03_normalize_migrations_command import *
-from .part_04_is_vector_extension_create_permission_erro import *
-from .part_05_set_argocd_application_ignore_differences import *
-from .part_06_ta_restore_paths import *
+from .simulation_context import (
+    APPLY_CONFIRMATION_PHRASE,
+    KafkaRuntimeConfig,
+    SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE,
+    SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_ATTEMPTS,
+    SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_SLEEP_SECONDS,
+    VECTOR_EXTENSION_NAME,
+    _cluster_service_host_candidates,
+)
+from .runtime_config import (
+    ArgocdAutomationConfig,
+    ClickHouseRuntimeConfig,
+    PostgresRuntimeConfig,
+    SimulationResources,
+    _as_mapping,
+    _as_text,
+    _redact_dsn_credentials,
+    _replace_database_in_dsn,
+    _safe_int,
+    _username_from_dsn,
+    _validate_window_policy,
+)
+from .resource_planning import _build_rollouts_analysis_config
+from .kubernetes_argocd import (
+    _is_vector_extension_create_permission_error,
+    _kubectl_json,
+    _postgres_extension_exists,
+    _run_with_transient_postgres_retry,
+)
+from .service_environment import (
+    _dump_artifact_manifest_path,
+    _performance_config,
+    _run_state_path,
+    _state_paths,
+    _ta_restore_policy,
+    _torghut_env_overrides_from_manifest,
+)
+from .state_and_cache import _save_json
 
 
 def _load_optional_json(path: Path) -> dict[str, Any] | None:
@@ -112,6 +141,8 @@ def _parse_dump_timestamp_bounds(payload: Mapping[str, Any]) -> tuple[int, int] 
 
 
 def _scan_dump_timestamp_bounds(dump_path: Path) -> tuple[int | None, int | None]:
+    from .topic_dumping import _open_dump_reader
+
     min_ms: int | None = None
     max_ms: int | None = None
     with _open_dump_reader(dump_path) as handle:
@@ -138,6 +169,8 @@ def _scan_dump_timestamp_bounds(dump_path: Path) -> tuple[int | None, int | None
 
 
 def _reusable_dump_report(dump_path: Path) -> dict[str, Any] | None:
+    from .topic_dumping import _count_lines, _dump_format_for_path
+
     if not dump_path.exists():
         return None
     marker_path = _dump_marker_path(dump_path)
@@ -749,4 +782,89 @@ def _ensure_postgres_runtime_permissions(
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "Any",
+    "COMPONENT_ARTIFACTS",
+    "COMPONENT_REPLAY",
+    "COMPONENT_TA",
+    "COMPONENT_TORGHUT",
+    "Callable",
+    "CephS3Client",
+    "DOC29_SIMULATION_FULL_DAY_GATE",
+    "DOC29_SIMULATION_SMOKE_GATE",
+    "Decimal",
+    "EQUITY_SIMULATION_LANE",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "Mapping",
+    "Path",
+    "SIMULATION_PROGRESS_COMPONENTS",
+    "Sequence",
+    "SessionLocal",
+    "TRACE_STATUS_BLOCKED",
+    "TRACE_STATUS_SATISFIED",
+    "ZoneInfo",
+    "annotations",
+    "argparse",
+    "asdict",
+    "base64",
+    "build_completion_trace",
+    "build_fill_price_error_budget_report_v1",
+    "cast",
+    "contextmanager",
+    "create_engine",
+    "dataclass",
+    "date",
+    "datetime",
+    "gzip",
+    "hashlib",
+    "importlib",
+    "json",
+    "os",
+    "persist_completion_trace",
+    "psycopg",
+    "quote",
+    "quote_plus",
+    "re",
+    "replace",
+    "run_autonomous_lane",
+    "sessionmaker",
+    "shlex",
+    "shutil",
+    "simulation_clickhouse_table_names",
+    "simulation_lane_contract",
+    "simulation_lane_contract_for_manifest",
+    "simulation_schema_registry_subject_roles",
+    "simulation_verification",
+    "socket",
+    "sql",
+    "subprocess",
+    "sys",
+    "time",
+    "timedelta",
+    "timezone",
+    "unquote_plus",
+    "urlsplit",
+    "uuid",
+    "yaml",
+    "_build_plan_report",
+    "_clickhouse_database_precreated",
+    "_clickhouse_query_configs",
+    "_dump_marker_path",
+    "_ensure_clickhouse_database",
+    "_ensure_clickhouse_runtime_tables",
+    "_ensure_postgres_database",
+    "_ensure_postgres_runtime_permissions",
+    "_file_sha256",
+    "_http_clickhouse_query",
+    "_http_request",
+    "_load_optional_json",
+    "_parse_dump_timestamp_bounds",
+    "_postgres_database_precreated",
+    "_reusable_dump_report",
+    "_rewrite_clickhouse_table_ddl_for_simulation",
+    "_scan_dump_timestamp_bounds",
+    "_show_create_clickhouse_table",
+    "_wait_for_clickhouse_database",
+    "_wait_for_clickhouse_table",
+)
