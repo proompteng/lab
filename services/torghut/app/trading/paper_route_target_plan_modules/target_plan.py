@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Helpers for external paper-route runtime-window target plans."""
 
 from __future__ import annotations
@@ -6,24 +5,13 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from hashlib import sha256
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, cast
-from urllib.parse import urlsplit
-
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from urllib.parse import SplitResult, urlsplit
 
 from ...config import settings
-from ...models import Strategy, TradeDecision, coerce_json_payload
-from ..runtime_decision_authority import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    source_decision_mode_is_profit_proof_eligible,
-)
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 PAPER_ROUTE_MATERIALIZATION_SCHEMA_VERSION = (
@@ -45,6 +33,12 @@ PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS = (
 PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID = "H-PAIRS-01"
 
 PAPER_ROUTE_TARGET_NOTIONAL_SOURCE_DECISION_SEED_QTY = Decimal("1")
+
+
+@dataclass(frozen=True)
+class PaperRouteTargetPlanFetchClient:
+    http_connection: type[HTTPConnection] = HTTPConnection
+    https_connection: type[HTTPSConnection] = HTTPSConnection
 
 
 def _to_str_map(value: object) -> dict[str, Any]:
@@ -383,13 +377,16 @@ def fetch_paper_route_target_plan_url(
     timeout_seconds: float,
     attempts: int = 1,
     retry_backoff_seconds: float = 0.25,
+    fetch_client: PaperRouteTargetPlanFetchClient | None = None,
 ) -> dict[str, Any]:
     max_attempts = max(int(attempts), 1)
+    client = fetch_client or PaperRouteTargetPlanFetchClient()
     result: dict[str, Any] = {}
     for attempt in range(1, max_attempts + 1):
         result = _fetch_paper_route_target_plan_url_once(
             url,
             timeout_seconds=timeout_seconds,
+            fetch_client=client,
         )
         if not str(result.get("load_error") or "").strip():
             if attempt > 1:
@@ -409,27 +406,68 @@ def _fetch_paper_route_target_plan_url_once(
     url: str,
     *,
     timeout_seconds: float,
+    fetch_client: PaperRouteTargetPlanFetchClient,
 ) -> dict[str, Any]:
+    parsed, load_error = _parse_paper_route_target_plan_url(url)
+    if load_error is not None:
+        return {"load_error": load_error}
+
+    raw, load_error = _read_paper_route_target_plan_url(
+        parsed,
+        timeout_seconds=timeout_seconds,
+        fetch_client=fetch_client,
+    )
+    if load_error is not None:
+        return {"load_error": load_error}
+
+    payload, load_error = _decode_paper_route_target_plan_payload(raw)
+    if load_error is not None:
+        return {"load_error": load_error}
+
+    plan = paper_route_target_plan_from_payload(payload)
+    if not plan:
+        return {"load_error": "paper_route_target_plan_missing"}
+
+    plan = dict(plan)
+    plan.setdefault("source", "external_paper_route_target_plan")
+    return plan
+
+
+def _parse_paper_route_target_plan_url(url: str) -> tuple[SplitResult, str | None]:
     parsed = urlsplit(url)
     scheme = parsed.scheme.lower()
     if scheme not in {"http", "https"}:
-        return {
-            "load_error": f"paper_route_target_plan_invalid_scheme:{scheme or 'missing'}"
-        }
+        return parsed, f"paper_route_target_plan_invalid_scheme:{scheme or 'missing'}"
     if not parsed.hostname:
-        return {"load_error": "paper_route_target_plan_invalid_host"}
+        return parsed, "paper_route_target_plan_invalid_host"
+    return parsed, None
+
+
+def _read_paper_route_target_plan_url(
+    parsed: SplitResult,
+    *,
+    timeout_seconds: float,
+    fetch_client: PaperRouteTargetPlanFetchClient,
+) -> tuple[bytes, str | None]:
+    hostname = parsed.hostname
+    if hostname is None:
+        return b"", "paper_route_target_plan_invalid_host"
 
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
-    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
+    connection_class = (
+        fetch_client.https_connection
+        if parsed.scheme.lower() == "https"
+        else fetch_client.http_connection
+    )
     connection = connection_class(
-        parsed.hostname,
+        hostname,
         parsed.port,
         timeout=max(float(timeout_seconds), 0.1),
     )
     try:
-        host_header = parsed.netloc or parsed.hostname
+        host_header = parsed.netloc or hostname
         connection.request(
             "GET",
             path,
@@ -441,29 +479,28 @@ def _fetch_paper_route_target_plan_url_once(
         )
         response = connection.getresponse()
         if response.status < 200 or response.status >= 300:
-            return {
-                "load_error": f"paper_route_target_plan_http_status:{response.status}"
-            }
+            return b"", f"paper_route_target_plan_http_status:{response.status}"
         raw = response.read(5_000_001)
     except Exception as exc:  # pragma: no cover - depends on network
-        return {"load_error": f"paper_route_target_plan_fetch_failed:{exc}"}
+        return b"", f"paper_route_target_plan_fetch_failed:{exc}"
     finally:
         connection.close()
 
     if len(raw) > 5_000_000:
-        return {"load_error": "paper_route_target_plan_response_too_large"}
+        return b"", "paper_route_target_plan_response_too_large"
+    return raw, None
+
+
+def _decode_paper_route_target_plan_payload(
+    raw: bytes,
+) -> tuple[Mapping[str, Any], str | None]:
     try:
         payload = json.loads(raw.decode("utf-8"))
     except Exception as exc:
-        return {"load_error": f"paper_route_target_plan_invalid_json:{exc}"}
+        return {}, f"paper_route_target_plan_invalid_json:{exc}"
     if not isinstance(payload, Mapping):
-        return {"load_error": "paper_route_target_plan_invalid_payload"}
-    plan = paper_route_target_plan_from_payload(cast(Mapping[str, Any], payload))
-    if not plan:
-        return {"load_error": "paper_route_target_plan_missing"}
-    plan = dict(plan)
-    plan.setdefault("source", "external_paper_route_target_plan")
-    return plan
+        return {}, "paper_route_target_plan_invalid_payload"
+    return cast(Mapping[str, Any], payload), None
 
 
 def paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> set[str]:
@@ -672,4 +709,52 @@ def _target_identity(
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+clean_window_baseline_blockers = _clean_window_baseline_blockers
+configured_bounded_collection_limit = _configured_bounded_collection_limit
+decimal_text = _decimal_text
+safe_decimal = _safe_decimal
+safe_text = _safe_text
+target_identity = _target_identity
+target_identity_keys = _target_identity_keys
+target_notional = _target_notional
+target_plan_selection_score = _target_plan_selection_score
+target_source_decision_quantities = _target_source_decision_quantities
+target_source_decision_ready = _target_source_decision_ready
+target_symbol_actions = _target_symbol_actions
+target_symbol_quantities = _target_symbol_quantities
+text_items = _text_items
+to_str_map = _to_str_map
+truthy = _truthy
+
+
+__all__ = [
+    "PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL",
+    "PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS",
+    "PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID",
+    "PAPER_ROUTE_MATERIALIZATION_SCHEMA_VERSION",
+    "PAPER_ROUTE_MATERIALIZATION_SOURCE",
+    "PAPER_ROUTE_MATERIALIZATION_STAGE",
+    "PAPER_ROUTE_TARGET_NOTIONAL_SOURCE_DECISION_SEED_QTY",
+    "PaperRouteTargetPlanFetchClient",
+    "clean_window_baseline_blockers",
+    "configured_bounded_collection_limit",
+    "decimal_text",
+    "fetch_paper_route_target_plan_url",
+    "mapping_items",
+    "paper_route_target_plan_from_payload",
+    "paper_route_target_plan_probe_symbols",
+    "paper_route_target_plan_targets",
+    "safe_decimal",
+    "safe_text",
+    "target_identity",
+    "target_identity_keys",
+    "target_notional",
+    "target_plan_selection_score",
+    "target_source_decision_quantities",
+    "target_source_decision_ready",
+    "target_symbol_actions",
+    "target_symbol_quantities",
+    "text_items",
+    "to_str_map",
+    "truthy",
+]

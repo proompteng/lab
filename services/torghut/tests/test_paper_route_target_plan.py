@@ -20,13 +20,13 @@ from app.trading.execution import (
 )
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.paper_route_target_plan import (
-    _paper_route_source_decision_needs_refresh,
-    _paper_route_source_materialization_blockers,
-    _target_identity_keys,
-    _target_plan_selection_score,
-    _target_source_decision_quantities,
-    _target_source_decision_ready,
-    _truthy,
+    paper_route_source_decision_needs_refresh,
+    paper_route_source_materialization_blockers,
+    target_identity_keys,
+    target_plan_selection_score,
+    target_source_decision_quantities,
+    target_source_decision_ready,
+    truthy,
     materialize_bounded_paper_route_target_plan,
     paper_route_target_plan_from_payload,
     paper_route_target_plan_probe_symbols,
@@ -290,17 +290,17 @@ def test_materializer_preserves_explicit_quantities_without_runtime_sizing(
 
 
 def test_materialization_truthy_helper_accepts_numeric_and_text_readiness() -> None:
-    assert _truthy(1) is True
-    assert _truthy(0) is False
-    assert _truthy("true") is True
-    assert _truthy("false") is False
+    assert truthy(1) is True
+    assert truthy(0) is False
+    assert truthy("true") is True
+    assert truthy("false") is False
 
 
 def test_target_source_decision_quantities_fail_closed_without_quantity_or_notional() -> (
     None
 ):
     assert (
-        _target_source_decision_quantities(
+        target_source_decision_quantities(
             _hpairs_target(
                 paper_route_probe_symbol_quantities={},
                 target_symbol_quantities={},
@@ -314,10 +314,8 @@ def test_target_source_decision_quantities_fail_closed_without_quantity_or_notio
 
 
 def test_target_source_decision_readiness_accepts_text_truth() -> None:
-    assert _target_source_decision_ready(
-        {"source_decision_readiness": {"ready": "yes"}}
-    )
-    assert not _target_source_decision_ready(
+    assert target_source_decision_ready({"source_decision_readiness": {"ready": "yes"}})
+    assert not target_source_decision_ready(
         {"source_decision_readiness": {"ready": "no"}}
     )
 
@@ -355,11 +353,11 @@ def test_target_identity_keys_fall_back_by_available_specificity(
     target: dict[str, Any],
     expected: set[tuple[str, str]],
 ) -> None:
-    assert _target_identity_keys(target) == expected
+    assert target_identity_keys(target) == expected
 
 
 def test_target_plan_selection_score_rejects_empty_plans() -> None:
-    assert _target_plan_selection_score(
+    assert target_plan_selection_score(
         {},
         source_rank=3,
         selected_identity_keys=set(),
@@ -832,7 +830,7 @@ def test_target_plan_source_materialization_blockers_are_fail_closed() -> None:
         "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
         "source_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
     }
-    blockers = _paper_route_source_materialization_blockers(
+    blockers = paper_route_source_materialization_blockers(
         {
             "params": {"final_promotion_allowed": False},
             "paper_route_target_plan": {
@@ -883,14 +881,14 @@ def test_target_plan_source_decision_refresh_guards_status_and_account(
     )
 
     assert (
-        _paper_route_source_decision_needs_refresh(
+        paper_route_source_decision_needs_refresh(
             wrong_account,
             identity=identity,
         )
         is True
     )
     assert (
-        _paper_route_source_decision_needs_refresh(
+        paper_route_source_decision_needs_refresh(
             executed,
             identity=identity,
         )
