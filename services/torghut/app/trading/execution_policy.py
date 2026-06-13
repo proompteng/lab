@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .execution_policy_modules.part_01_statements_29 import (
+from .execution_policy_modules.policy_types import (
     ADAPTIVE_EXECUTION_SECONDS_MAX,
     ADAPTIVE_EXECUTION_SECONDS_MIN,
     ADAPTIVE_PARTICIPATION_RATE_FLOOR,
@@ -32,18 +32,16 @@ from .execution_policy_modules.part_01_statements_29 import (
     ExecutionPolicyConfig,
     ExecutionPolicyOutcome,
 )
-from .execution_policy_modules.part_02_executionpolicy import ExecutionPolicy
-from .execution_policy_modules import (
-    part_03_should_keep_market_order_for_high_convicti as _execution_policy_helpers,
-)
-from .execution_policy_modules.part_03_should_keep_market_order_for_high_convicti import (
+from .execution_policy_modules.policy import ExecutionPolicy
+from .execution_policy_modules.order_rules import (
+    near_touch_limit_price,
+    should_keep_market_order_for_high_conviction_entry,
     should_retry_order_error,
 )
 
-_near_touch_limit_price = getattr(_execution_policy_helpers, "_near_touch_limit_price")
-_should_keep_market_order_for_high_conviction_entry = getattr(
-    _execution_policy_helpers,
-    "_should_keep_market_order_for_high_conviction_entry",
+_near_touch_limit_price = near_touch_limit_price
+_should_keep_market_order_for_high_conviction_entry = (
+    should_keep_market_order_for_high_conviction_entry
 )
 
 __all__ = [
@@ -78,7 +76,7 @@ __all__ = [
     "ExecutionPolicy",
     "ExecutionPolicyConfig",
     "ExecutionPolicyOutcome",
-    "_near_touch_limit_price",
-    "_should_keep_market_order_for_high_conviction_entry",
+    "near_touch_limit_price",
+    "should_keep_market_order_for_high_conviction_entry",
     "should_retry_order_error",
 ]

@@ -1,12 +1,10 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Execution policy enforcing order placement safety and impact assumptions."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import timezone
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Iterable, Mapping, Optional, cast
+from dataclasses import replace
+from decimal import Decimal
+from typing import Any, Optional
 
 from ...config import settings
 from ...models import Strategy
@@ -18,7 +16,7 @@ from ..microstructure import (
     parse_microstructure_state,
 )
 from ..models import StrategyDecision
-from ..prices import MarketSnapshot, resolve_execution_reference_price
+from ..prices import MarketSnapshot
 from ..quantity_rules import (
     min_qty_for_symbol,
     qty_has_valid_increment,
@@ -27,9 +25,58 @@ from ..quantity_rules import (
 )
 from ..tca import AdaptiveExecutionPolicyDecision
 
-# ruff: noqa: F401,F403,F405,F811,F821
 
-from .part_01_statements_29 import *
+from .policy_types import (
+    ADAPTIVE_PARTICIPATION_RATE_FLOOR,
+    MICROSTRUCTURE_COMPRESSED_RATE_SCALE,
+    MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE,
+    MICROSTRUCTURE_DEPTH_USD_PRESSURE,
+    MICROSTRUCTURE_EXECUTION_SCALE_MAX,
+    MICROSTRUCTURE_EXECUTION_SCALE_MIN,
+    MICROSTRUCTURE_HAZARD_PRESSURE,
+    MICROSTRUCTURE_HAZARD_RATE_SCALE,
+    MICROSTRUCTURE_HIGH_SPREAD_RATE_SCALE,
+    MICROSTRUCTURE_LATENCY_PRESSURE_MS,
+    MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE,
+    MICROSTRUCTURE_PARTICIPATION_FLOOR,
+    MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE,
+    MICROSTRUCTURE_SPREAD_BPS_PRESSURE,
+    MICROSTRUCTURE_STRESSED_RATE_SCALE,
+    MICROSTRUCTURE_STRESS_EXECUTION_SCALE,
+    AdaptiveExecutionApplication,
+    ExecutionPolicyConfig,
+    ExecutionPolicyOutcome,
+)
+from .policy_context import (
+    ExecutionPolicyEvaluateRequest,
+    ExecutionPolicyImpact,
+    ExecutionPolicyRuntimeContext,
+    ExecutionPolicySelection,
+    ExecutionPolicySizing,
+    MicrostructureAdjustment,
+    QuantityResolutionRequest,
+    apply_crumbling_quote_pressure,
+    execution_advisor_input_fallback_reason,
+)
+from .order_rules import (
+    allocator_payload,
+    build_impact_assumptions,
+    build_impact_inputs,
+    build_retry_delays,
+    combined_execution_seconds_scale,
+    is_position_reducing,
+    is_short_increasing,
+    near_touch_limit_price,
+    normalize_price_for_trading,
+    optional_decimal,
+    position_summary,
+    prechecked_reducing_position_qty,
+    resolve_price,
+    resolve_qty_below_min_reason,
+    should_keep_market_order_for_high_conviction_entry,
+    should_keep_market_order_for_pair_runtime_exit,
+    stringify_decimal,
+)
 
 
 class ExecutionPolicy:
@@ -46,152 +93,195 @@ class ExecutionPolicy:
     def evaluate(
         self,
         decision: StrategyDecision,
-        *,
-        strategy: Optional[Strategy],
-        positions: Iterable[dict[str, Any]],
-        market_snapshot: Optional[MarketSnapshot],
-        kill_switch_enabled: Optional[bool] = None,
-        adaptive_policy: AdaptiveExecutionPolicyDecision | None = None,
+        **kwargs: Any,
     ) -> ExecutionPolicyOutcome:
+        request = ExecutionPolicyEvaluateRequest.from_kwargs(decision, dict(kwargs))
+        runtime = self._evaluation_runtime(request)
+        selection = self._execution_selection(request, runtime)
+        sizing = self._execution_sizing(request, runtime, selection)
+        self._append_notional_reasons(runtime, sizing)
+        impact = self._execution_impact(request, runtime, selection, sizing)
+        return ExecutionPolicyOutcome(
+            approved=len(runtime.reasons) == 0,
+            decision=selection.decision,
+            reasons=runtime.reasons,
+            notional=sizing.notional,
+            participation_rate=impact.participation_rate,
+            retry_delays=impact.retry_delays,
+            impact_assumptions=impact.impact_assumptions,
+            selected_order_type=selection.selected_order_type,
+            adaptive=runtime.adaptive_application,
+            advisor_metadata=runtime.advisor_metadata,
+            microstructure_metadata=runtime.microstructure_metadata,
+        )
+
+    def _evaluation_runtime(
+        self, request: ExecutionPolicyEvaluateRequest
+    ) -> ExecutionPolicyRuntimeContext:
         config = self._sanitize_config(
             self._resolve_config(
-                strategy=strategy, kill_switch_enabled=kill_switch_enabled
+                strategy=request.strategy,
+                kill_switch_enabled=request.kill_switch_enabled,
             )
         )
         microstructure_state = parse_microstructure_state(
-            decision.params.get("microstructure_state")
-            or decision.params.get("microstructure_signal"),
-            expected_symbol=decision.symbol,
+            request.decision.params.get("microstructure_state")
+            or request.decision.params.get("microstructure_signal"),
+            expected_symbol=request.decision.symbol,
         )
-        (
-            microstructure_metadata,
-            microstructure_participation_scale,
-            microstructure_execution_scale,
-        ) = self._evaluate_microstructure_state(
-            decision=decision,
-            state=microstructure_state,
+        microstructure_metadata, participation_scale, execution_scale = (
+            self._evaluate_microstructure_state(
+                decision=request.decision,
+                state=microstructure_state,
+            )
         )
-        reasons: list[str] = []
-        config = self._apply_allocator_participation_override(config, decision)
+        config = self._apply_allocator_participation_override(config, request.decision)
         config = self._apply_microstructure_config(
             config=config,
-            participation_scale=microstructure_participation_scale,
+            participation_scale=participation_scale,
             micro_prefer_limit=bool(microstructure_metadata.get("prefer_limit")),
         )
         advisor_metadata, advisor_max_participation = self._evaluate_advisor(
-            decision=decision,
+            decision=request.decision,
             baseline_max_participation=config.max_participation_rate,
             microstructure_state=microstructure_state,
         )
-
-        if config.kill_switch_enabled:
-            reasons.append("kill_switch_enabled")
-
-        adaptive_application = self._resolve_adaptive_application(adaptive_policy)
+        reasons = ["kill_switch_enabled"] if config.kill_switch_enabled else []
+        adaptive_application = self._resolve_adaptive_application(
+            request.adaptive_policy
+        )
         if adaptive_application is not None and adaptive_application.applied:
             config = self._apply_adaptive_config(config, adaptive_application.decision)
+        return ExecutionPolicyRuntimeContext(
+            config=config,
+            reasons=reasons,
+            microstructure_state=microstructure_state,
+            microstructure_metadata=microstructure_metadata,
+            microstructure_execution_scale=execution_scale,
+            advisor_metadata=advisor_metadata,
+            advisor_max_participation=advisor_max_participation,
+            adaptive_application=adaptive_application,
+        )
 
+    def _execution_selection(
+        self,
+        request: ExecutionPolicyEvaluateRequest,
+        runtime: ExecutionPolicyRuntimeContext,
+    ) -> ExecutionPolicySelection:
         decision, selected_order_type = self._select_order_type(
-            decision,
-            market_snapshot,
-            prefer_limit=config.prefer_limit,
+            request.decision,
+            request.market_snapshot,
+            prefer_limit=runtime.config.prefer_limit,
         )
         decision, selected_order_type = self._apply_microstructure_order_type(
             decision=decision,
             selected_order_type=selected_order_type,
-            microstructure_metadata=microstructure_metadata,
-            market_snapshot=market_snapshot,
+            microstructure_metadata=runtime.microstructure_metadata,
+            market_snapshot=request.market_snapshot,
         )
         decision, selected_order_type = self._apply_advisor_order_type(
             decision=decision,
             selected_order_type=selected_order_type,
-            advice=advisor_metadata,
-            market_snapshot=market_snapshot,
+            advice=runtime.advisor_metadata,
+            market_snapshot=request.market_snapshot,
+        )
+        return ExecutionPolicySelection(
+            decision=decision, selected_order_type=selected_order_type
         )
 
-        price = _resolve_price(decision, market_snapshot)
-        position_qty = _position_summary(decision.symbol, positions)
-        prechecked_reducing_position_qty = _prechecked_reducing_position_qty(decision)
-        if prechecked_reducing_position_qty is not None:
-            position_qty = prechecked_reducing_position_qty
-            short_increasing = False
+    def _execution_sizing(
+        self,
+        request: ExecutionPolicyEvaluateRequest,
+        runtime: ExecutionPolicyRuntimeContext,
+        selection: ExecutionPolicySelection,
+    ) -> ExecutionPolicySizing:
+        decision = selection.decision
+        price = resolve_price(decision, request.market_snapshot)
+        position_qty = position_summary(decision.symbol, request.positions)
+        prechecked_qty = prechecked_reducing_position_qty(decision)
+        short_increasing = False
+        if prechecked_qty is not None:
+            position_qty = prechecked_qty
         else:
-            short_increasing = _is_short_increasing(decision, positions)
-        position_reducing = _is_position_reducing(decision, position_qty)
+            short_increasing = is_short_increasing(decision, request.positions)
         qty, notional = self._resolve_qty_and_notional(
-            decision=decision,
+            QuantityResolutionRequest(
+                decision=decision,
+                position_qty=position_qty,
+                short_increasing=short_increasing,
+                allow_shorts=runtime.config.allow_shorts,
+                price=price,
+                reasons=runtime.reasons,
+            )
+        )
+        return ExecutionPolicySizing(
+            price=price,
             position_qty=position_qty,
             short_increasing=short_increasing,
-            allow_shorts=config.allow_shorts,
-            price=price,
-            reasons=reasons,
+            position_reducing=is_position_reducing(decision, position_qty),
+            qty=qty,
+            notional=notional,
         )
 
-        min_notional = config.min_notional
+    @staticmethod
+    def _append_notional_reasons(
+        runtime: ExecutionPolicyRuntimeContext, sizing: ExecutionPolicySizing
+    ) -> None:
+        config = runtime.config
         if (
-            min_notional is not None
-            and notional is not None
-            and notional < min_notional
+            config.min_notional is not None
+            and sizing.notional is not None
+            and sizing.notional < config.min_notional
         ):
-            reasons.append("min_notional_not_met")
-
-        max_notional = config.max_notional
+            runtime.reasons.append("min_notional_not_met")
         if (
-            max_notional is not None
-            and notional is not None
-            and notional > max_notional
-            and not position_reducing
+            config.max_notional is not None
+            and sizing.notional is not None
+            and sizing.notional > config.max_notional
+            and not sizing.position_reducing
         ):
-            reasons.append("max_notional_exceeded")
+            runtime.reasons.append("max_notional_exceeded")
+        if sizing.short_increasing and not config.allow_shorts:
+            runtime.reasons.append("shorts_not_allowed")
 
-        if short_increasing and not config.allow_shorts:
-            reasons.append("shorts_not_allowed")
-
-        impact_inputs = _build_impact_inputs(
-            decision,
-            market_snapshot,
-            execution_seconds_scale=(
-                _combined_execution_seconds_scale(
-                    adaptive_application=adaptive_application,
-                    microstructure_execution_scale=microstructure_execution_scale,
-                )
+    def _execution_impact(
+        self,
+        request: ExecutionPolicyEvaluateRequest,
+        runtime: ExecutionPolicyRuntimeContext,
+        selection: ExecutionPolicySelection,
+        sizing: ExecutionPolicySizing,
+    ) -> ExecutionPolicyImpact:
+        impact_inputs = build_impact_inputs(
+            selection.decision,
+            request.market_snapshot,
+            execution_seconds_scale=combined_execution_seconds_scale(
+                adaptive_application=runtime.adaptive_application,
+                microstructure_execution_scale=runtime.microstructure_execution_scale,
             ),
         )
         execution_seconds = impact_inputs["execution_seconds"]
         estimate = self._estimate_execution_costs(
-            decision=decision,
-            qty=qty,
+            decision=selection.decision,
+            qty=sizing.qty,
             impact_inputs=impact_inputs,
             execution_seconds=execution_seconds,
         )
-
-        max_participation = advisor_max_participation or config.max_participation_rate
+        max_participation = (
+            runtime.advisor_max_participation or runtime.config.max_participation_rate
+        )
         participation_rate = estimate.participation_rate
         if participation_rate is not None and participation_rate > max_participation:
-            reasons.append("participation_exceeds_max")
-
-        retry_delays = _build_retry_delays(config)
-        impact_assumptions = _build_impact_assumptions(
-            estimate=estimate,
-            config=self.cost_model.config,
-            max_participation=max_participation,
-            execution_seconds=execution_seconds,
-            impact_inputs=impact_inputs,
-        )
-
-        approved = len(reasons) == 0
-        return ExecutionPolicyOutcome(
-            approved=approved,
-            decision=decision,
-            reasons=reasons,
-            notional=notional,
+            runtime.reasons.append("participation_exceeds_max")
+        return ExecutionPolicyImpact(
             participation_rate=participation_rate,
-            retry_delays=retry_delays,
-            impact_assumptions=impact_assumptions,
-            selected_order_type=selected_order_type,
-            adaptive=adaptive_application,
-            advisor_metadata=advisor_metadata,
-            microstructure_metadata=microstructure_metadata,
+            retry_delays=build_retry_delays(runtime.config),
+            impact_assumptions=build_impact_assumptions(
+                estimate=estimate,
+                config=self.cost_model.config,
+                max_participation=max_participation,
+                execution_seconds=execution_seconds,
+                impact_inputs=impact_inputs,
+            ),
         )
 
     def _apply_allocator_participation_override(
@@ -199,8 +289,8 @@ class ExecutionPolicy:
         config: ExecutionPolicyConfig,
         decision: StrategyDecision,
     ) -> ExecutionPolicyConfig:
-        allocator_meta = _allocator_payload(decision)
-        participation_override = _optional_decimal(
+        allocator_meta = allocator_payload(decision)
+        participation_override = optional_decimal(
             allocator_meta.get("max_participation_rate_override")
         )
         if participation_override is None:
@@ -215,35 +305,29 @@ class ExecutionPolicy:
         )
 
     def _resolve_qty_and_notional(
-        self,
-        *,
-        decision: StrategyDecision,
-        position_qty: Decimal,
-        short_increasing: bool,
-        allow_shorts: bool,
-        price: Decimal | None,
-        reasons: list[str],
+        self, request: QuantityResolutionRequest
     ) -> tuple[Decimal, Decimal | None]:
-        qty = _optional_decimal(decision.qty)
+        decision = request.decision
+        qty = optional_decimal(decision.qty)
         resolution = resolve_quantity_resolution(
             decision.symbol,
             action=decision.action,
             global_enabled=settings.trading_fractional_equities_enabled,
-            allow_shorts=allow_shorts,
-            position_qty=position_qty,
+            allow_shorts=request.allow_shorts,
+            position_qty=request.position_qty,
             requested_qty=qty,
         )
         fractional_equities_enabled = (
-            resolution.fractional_allowed and not short_increasing
+            resolution.fractional_allowed and not request.short_increasing
         )
         min_qty = min_qty_for_symbol(
             decision.symbol, fractional_equities_enabled=fractional_equities_enabled
         )
         if qty is None or qty <= 0:
-            reasons.append("qty_non_positive")
+            request.reasons.append("qty_non_positive")
             qty = Decimal("0")
         elif qty < min_qty:
-            reasons.append(_resolve_qty_below_min_reason(decision))
+            request.reasons.append(resolve_qty_below_min_reason(decision))
         elif not qty_has_valid_increment(
             decision.symbol,
             qty,
@@ -254,9 +338,11 @@ class ExecutionPolicy:
                 qty,
                 fractional_equities_enabled=fractional_equities_enabled,
             )
-            reasons.append(f"qty_invalid_increment:step={_stringify_decimal(min_qty)}")
+            request.reasons.append(
+                f"qty_invalid_increment:step={stringify_decimal(min_qty)}"
+            )
             qty = quantized
-        notional = price * qty if price is not None else None
+        notional = request.price * qty if request.price is not None else None
         return qty, notional
 
     def _estimate_execution_costs(
@@ -299,7 +385,7 @@ class ExecutionPolicy:
                 applied=False,
                 reason=reason,
             )
-        if not adaptive_policy.has_override:
+        if adaptive_policy.has_override is False:
             return AdaptiveExecutionApplication(
                 decision=adaptive_policy,
                 applied=False,
@@ -317,7 +403,28 @@ class ExecutionPolicy:
         decision: StrategyDecision,
         state: MicrostructureStateV5 | None,
     ) -> tuple[dict[str, Any], Decimal, Decimal]:
-        metadata: dict[str, Any] = {
+        metadata = self._base_microstructure_metadata()
+        if state is None:
+            metadata["fallback_reason"] = "microstructure_state_unavailable"
+            return metadata, Decimal("1"), Decimal("1")
+        self._hydrate_microstructure_metadata(metadata, state)
+        if is_microstructure_stale(
+            state,
+            reference_ts=decision.event_ts,
+            max_staleness_seconds=settings.trading_execution_advisor_max_staleness_seconds,
+        ):
+            metadata["fallback_reason"] = "microstructure_state_stale"
+            return metadata, Decimal("1"), Decimal("1")
+        adjustment = MicrostructureAdjustment(metadata=metadata)
+        self._apply_microstructure_regime(adjustment, state)
+        self._apply_microstructure_depth_and_spread(adjustment, state)
+        self._apply_microstructure_crumbling_quote(adjustment, state)
+        self._apply_microstructure_latency_and_imbalance(adjustment, state)
+        return self._finalize_microstructure_adjustment(adjustment)
+
+    @staticmethod
+    def _base_microstructure_metadata() -> dict[str, Any]:
+        return {
             "applied": False,
             "fallback_reason": None,
             "prefer_limit": None,
@@ -335,10 +442,11 @@ class ExecutionPolicy:
             "event_ts": None,
             "state_valid": False,
         }
-        if state is None:
-            metadata["fallback_reason"] = "microstructure_state_unavailable"
-            return metadata, Decimal("1"), Decimal("1")
 
+    @staticmethod
+    def _hydrate_microstructure_metadata(
+        metadata: dict[str, Any], state: MicrostructureStateV5
+    ) -> None:
         metadata.update(
             {
                 "liquidity_regime": state.liquidity_regime,
@@ -346,10 +454,10 @@ class ExecutionPolicy:
                 "depth_top5_usd": str(state.depth_top5_usd),
                 "order_flow_imbalance": str(state.order_flow_imbalance),
                 "fill_hazard": str(state.fill_hazard),
-                "crumbling_quote_probability": _stringify_decimal(
+                "crumbling_quote_probability": stringify_decimal(
                     state.crumbling_quote_probability
                 ),
-                "mechanical_liquidity_withdrawal_probability": _stringify_decimal(
+                "mechanical_liquidity_withdrawal_probability": stringify_decimal(
                     state.mechanical_liquidity_withdrawal_probability
                 ),
                 "latency_ms_estimate": state.latency_ms_estimate,
@@ -357,99 +465,108 @@ class ExecutionPolicy:
                 "state_valid": True,
             }
         )
-        if is_microstructure_stale(
-            state,
-            reference_ts=decision.event_ts,
-            max_staleness_seconds=settings.trading_execution_advisor_max_staleness_seconds,
-        ):
-            metadata["fallback_reason"] = "microstructure_state_stale"
-            return metadata, Decimal("1"), Decimal("1")
 
-        participation_rate_scale = Decimal("1")
-        execution_seconds_scale = Decimal("1")
-
+    @staticmethod
+    def _apply_microstructure_regime(
+        adjustment: MicrostructureAdjustment, state: MicrostructureStateV5
+    ) -> None:
         if state.liquidity_regime == "stressed":
-            participation_rate_scale *= MICROSTRUCTURE_STRESSED_RATE_SCALE
-            execution_seconds_scale *= MICROSTRUCTURE_STRESS_EXECUTION_SCALE
-            metadata["prefer_limit"] = True
-            metadata["tightening_reasons"].append("microstructure_regime_stressed")
+            adjustment.tighten_participation(
+                MICROSTRUCTURE_STRESSED_RATE_SCALE,
+                "microstructure_regime_stressed",
+            )
+            adjustment.slow_execution(MICROSTRUCTURE_STRESS_EXECUTION_SCALE)
+            adjustment.prefer_limit()
         elif state.liquidity_regime == "compressed":
-            participation_rate_scale *= MICROSTRUCTURE_COMPRESSED_RATE_SCALE
-            metadata["tightening_reasons"].append("microstructure_regime_compressed")
+            adjustment.tighten_participation(
+                MICROSTRUCTURE_COMPRESSED_RATE_SCALE,
+                "microstructure_regime_compressed",
+            )
 
+    @staticmethod
+    def _apply_microstructure_depth_and_spread(
+        adjustment: MicrostructureAdjustment, state: MicrostructureStateV5
+    ) -> None:
         if state.spread_bps >= MICROSTRUCTURE_SPREAD_BPS_PRESSURE:
-            participation_rate_scale *= MICROSTRUCTURE_HIGH_SPREAD_RATE_SCALE
-            execution_seconds_scale *= MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE
-            metadata["prefer_limit"] = True
-            metadata["tightening_reasons"].append(
-                "microstructure_spread_bps_above_pressure"
+            adjustment.tighten_participation(
+                MICROSTRUCTURE_HIGH_SPREAD_RATE_SCALE,
+                "microstructure_spread_bps_above_pressure",
             )
-
+            adjustment.slow_execution(MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE)
+            adjustment.prefer_limit()
         if state.depth_top5_usd < MICROSTRUCTURE_DEPTH_USD_PRESSURE:
-            participation_rate_scale *= MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE
-            metadata["prefer_limit"] = True
-            metadata["tightening_reasons"].append("microstructure_depth_compressed")
-
+            adjustment.tighten_participation(
+                MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE,
+                "microstructure_depth_compressed",
+            )
+            adjustment.prefer_limit()
         if state.fill_hazard >= MICROSTRUCTURE_HAZARD_PRESSURE:
-            participation_rate_scale *= MICROSTRUCTURE_HAZARD_RATE_SCALE
-            metadata["prefer_limit"] = True
-            metadata["tightening_reasons"].append(
-                "microstructure_fill_hazard_above_pressure"
+            adjustment.tighten_participation(
+                MICROSTRUCTURE_HAZARD_RATE_SCALE,
+                "microstructure_fill_hazard_above_pressure",
             )
+            adjustment.prefer_limit()
 
-        if (
+    @staticmethod
+    def _apply_microstructure_crumbling_quote(
+        adjustment: MicrostructureAdjustment, state: MicrostructureStateV5
+    ) -> None:
+        crumbling_threshold = MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE
+        crumbling_pressure = (
             state.crumbling_quote_probability is not None
-            and state.crumbling_quote_probability
-            >= MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE
-        ):
-            participation_rate_scale *= MICROSTRUCTURE_CRUMBLING_QUOTE_RATE_SCALE
-            execution_seconds_scale *= MICROSTRUCTURE_CRUMBLING_QUOTE_EXECUTION_SCALE
-            metadata["prefer_limit"] = True
-            metadata["tightening_reasons"].append(
-                "microstructure_crumbling_quote_probability_above_pressure"
-            )
-
-        if (
+            and state.crumbling_quote_probability >= crumbling_threshold
+        )
+        mechanical_pressure = (
             state.mechanical_liquidity_withdrawal_probability is not None
-            and state.mechanical_liquidity_withdrawal_probability
-            >= MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE
-        ):
-            participation_rate_scale *= MICROSTRUCTURE_CRUMBLING_QUOTE_RATE_SCALE
-            execution_seconds_scale *= MICROSTRUCTURE_CRUMBLING_QUOTE_EXECUTION_SCALE
-            metadata["prefer_limit"] = True
-            metadata["tightening_reasons"].append(
-                "microstructure_mechanical_liquidity_withdrawal_above_pressure"
+            and state.mechanical_liquidity_withdrawal_probability >= crumbling_threshold
+        )
+        if crumbling_pressure:
+            apply_crumbling_quote_pressure(
+                adjustment, "microstructure_crumbling_quote_probability_above_pressure"
+            )
+        if mechanical_pressure:
+            apply_crumbling_quote_pressure(
+                adjustment,
+                "microstructure_mechanical_liquidity_withdrawal_above_pressure",
             )
 
+    @staticmethod
+    def _apply_microstructure_latency_and_imbalance(
+        adjustment: MicrostructureAdjustment, state: MicrostructureStateV5
+    ) -> None:
         if state.latency_ms_estimate >= MICROSTRUCTURE_LATENCY_PRESSURE_MS:
-            execution_seconds_scale *= MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE
-            metadata["tightening_reasons"].append(
-                "microstructure_latency_ms_above_pressure"
+            adjustment.slow_execution(
+                MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE,
+                "microstructure_latency_ms_above_pressure",
             )
-
         abs_imbalance = abs(state.order_flow_imbalance)
         if abs_imbalance >= Decimal("0.55"):
-            participation_rate_scale *= Decimal("0.85")
-            metadata["tightening_reasons"].append(
-                "microstructure_order_flow_imbalance_pressure"
+            adjustment.tighten_participation(
+                Decimal("0.85"),
+                "microstructure_order_flow_imbalance_pressure",
             )
         if abs_imbalance >= Decimal("0.85"):
-            participation_rate_scale *= Decimal("0.90")
-            metadata["prefer_limit"] = True
+            adjustment.tighten_participation(Decimal("0.90"))
+            adjustment.prefer_limit()
 
-        participation_rate_scale = min(Decimal("1"), participation_rate_scale)
+    @staticmethod
+    def _finalize_microstructure_adjustment(
+        adjustment: MicrostructureAdjustment,
+    ) -> tuple[dict[str, Any], Decimal, Decimal]:
+        participation_rate_scale = min(
+            Decimal("1"), adjustment.participation_rate_scale
+        )
         execution_seconds_scale = max(
             MICROSTRUCTURE_EXECUTION_SCALE_MIN,
-            min(MICROSTRUCTURE_EXECUTION_SCALE_MAX, execution_seconds_scale),
+            min(MICROSTRUCTURE_EXECUTION_SCALE_MAX, adjustment.execution_seconds_scale),
         )
-
         if participation_rate_scale < Decimal("1") or execution_seconds_scale > Decimal(
             "1"
         ):
-            metadata["applied"] = True
-        metadata["participation_rate_scale"] = str(participation_rate_scale)
-        metadata["execution_seconds_scale"] = str(execution_seconds_scale)
-        return metadata, participation_rate_scale, execution_seconds_scale
+            adjustment.metadata["applied"] = True
+        adjustment.metadata["participation_rate_scale"] = str(participation_rate_scale)
+        adjustment.metadata["execution_seconds_scale"] = str(execution_seconds_scale)
+        return adjustment.metadata, participation_rate_scale, execution_seconds_scale
 
     def _apply_microstructure_config(
         self,
@@ -495,18 +612,18 @@ class ExecutionPolicy:
         ):
             return decision, selected_order_type
 
-        price = _resolve_price(decision, market_snapshot)
+        price = resolve_price(decision, market_snapshot)
         if price is None:
             return decision, selected_order_type
 
-        spread = _optional_decimal(decision.params.get("spread"))
+        spread = optional_decimal(decision.params.get("spread"))
         if spread is None and market_snapshot is not None:
             spread = market_snapshot.spread
         return (
             decision.model_copy(
                 update={
                     "order_type": "limit",
-                    "limit_price": _near_touch_limit_price(
+                    "limit_price": near_touch_limit_price(
                         price, spread, decision.action
                     ),
                     "stop_price": None,
@@ -575,43 +692,28 @@ class ExecutionPolicy:
 
         state = microstructure_state
         advice = parse_execution_advice(decision.params.get("execution_advice"))
-        if state is None or advice is None:
-            metadata["fallback_reason"] = "advisor_missing_inputs"
-            return metadata, None
-
         max_staleness_seconds = settings.trading_execution_advisor_max_staleness_seconds
-        if is_microstructure_stale(
-            state,
-            reference_ts=decision.event_ts,
+        fallback_reason = execution_advisor_input_fallback_reason(
+            decision=decision,
+            state=state,
+            advice=advice,
             max_staleness_seconds=max_staleness_seconds,
-        ):
-            metadata["fallback_reason"] = "advisor_state_stale"
+        )
+        if fallback_reason is not None:
+            metadata["fallback_reason"] = fallback_reason
             return metadata, None
-        if advice.event_ts is not None:
-            advice_age = (
-                decision.event_ts.astimezone(timezone.utc)
-                - advice.event_ts.astimezone(timezone.utc)
-            ).total_seconds()
-            if advice_age > max(max_staleness_seconds, 0):
-                metadata["fallback_reason"] = "advisor_advice_stale"
-                return metadata, None
-        if (
-            advice.latency_ms is not None
-            and advice.latency_ms > settings.trading_execution_advisor_timeout_ms
-        ):
-            metadata["fallback_reason"] = "advisor_timeout"
-            return metadata, None
+        assert advice is not None
 
         metadata["urgency_tier"] = advice.urgency_tier
         metadata["preferred_order_type"] = advice.preferred_order_type
-        metadata["adverse_selection_risk"] = _stringify_decimal(
+        metadata["adverse_selection_risk"] = stringify_decimal(
             advice.adverse_selection_risk
         )
         metadata["simulator_version"] = advice.simulator_version
-        metadata["expected_shortfall_bps_p50"] = _stringify_decimal(
+        metadata["expected_shortfall_bps_p50"] = stringify_decimal(
             advice.expected_shortfall_bps_p50
         )
-        metadata["expected_shortfall_bps_p95"] = _stringify_decimal(
+        metadata["expected_shortfall_bps_p95"] = stringify_decimal(
             advice.expected_shortfall_bps_p95
         )
 
@@ -629,7 +731,7 @@ class ExecutionPolicy:
             and advice.max_participation_rate > 0
         ):
             candidate = min(advice.max_participation_rate, baseline_max_participation)
-            metadata["max_participation_rate"] = _stringify_decimal(candidate)
+            metadata["max_participation_rate"] = stringify_decimal(candidate)
             if candidate < baseline_max_participation:
                 tightened_max = candidate
                 tightening_reasons.append("participation_rate_tightened")
@@ -656,17 +758,17 @@ class ExecutionPolicy:
         preferred = advice.get("preferred_order_type")
         if preferred != "limit" or selected_order_type != "market":
             return decision, selected_order_type
-        price = _resolve_price(decision, market_snapshot)
+        price = resolve_price(decision, market_snapshot)
         if price is None:
             return decision, selected_order_type
-        spread = _optional_decimal(decision.params.get("spread"))
+        spread = optional_decimal(decision.params.get("spread"))
         if spread is None and market_snapshot is not None:
             spread = market_snapshot.spread
         return (
             decision.model_copy(
                 update={
                     "order_type": "limit",
-                    "limit_price": _near_touch_limit_price(
+                    "limit_price": near_touch_limit_price(
                         price, spread, decision.action
                     ),
                     "stop_price": None,
@@ -712,26 +814,29 @@ class ExecutionPolicy:
         if self.config is not None:
             return self.config
 
-        min_notional = _optional_decimal(settings.trading_min_notional_per_trade)
-        max_notional = _optional_decimal(
+        min_notional = optional_decimal(settings.trading_min_notional_per_trade)
+        max_notional = optional_decimal(
             strategy.max_notional_per_trade if strategy else None
         )
         if max_notional is None:
-            max_notional = _optional_decimal(settings.trading_max_notional_per_trade)
+            max_notional = optional_decimal(settings.trading_max_notional_per_trade)
 
-        max_participation = _optional_decimal(settings.trading_max_participation_rate)
+        max_participation = optional_decimal(settings.trading_max_participation_rate)
         if max_participation is None:
             max_participation = self.cost_model.config.max_participation_rate
 
-        if kill_switch_enabled is None:
-            kill_switch_enabled = settings.trading_kill_switch_enabled
+        resolved_kill_switch_enabled = (
+            settings.trading_kill_switch_enabled
+            if kill_switch_enabled is None
+            else kill_switch_enabled
+        )
 
         return ExecutionPolicyConfig(
             min_notional=min_notional,
             max_notional=max_notional,
             max_participation_rate=max_participation,
             allow_shorts=settings.trading_allow_shorts,
-            kill_switch_enabled=kill_switch_enabled,
+            kill_switch_enabled=resolved_kill_switch_enabled,
             prefer_limit=settings.trading_execution_prefer_limit,
             max_retries=settings.trading_execution_max_retries,
             backoff_base_seconds=settings.trading_execution_backoff_base_seconds,
@@ -746,8 +851,8 @@ class ExecutionPolicy:
         *,
         prefer_limit: bool,
     ) -> tuple[StrategyDecision, str]:
-        price = _resolve_price(decision, market_snapshot)
-        spread = _optional_decimal(decision.params.get("spread"))
+        price = resolve_price(decision, market_snapshot)
+        spread = optional_decimal(decision.params.get("spread"))
         if spread is None and market_snapshot is not None:
             spread = market_snapshot.spread
 
@@ -759,37 +864,37 @@ class ExecutionPolicy:
             decision.order_type == "market"
             and prefer_limit
             and price is not None
-            and not _should_keep_market_order_for_high_conviction_entry(
+            and not should_keep_market_order_for_high_conviction_entry(
                 decision,
                 price=price,
                 spread=spread,
             )
-            and not _should_keep_market_order_for_pair_runtime_exit(
+            and not should_keep_market_order_for_pair_runtime_exit(
                 decision,
                 price=price,
                 spread=spread,
             )
         ):
             selected_order_type = "limit"
-            limit_price = _near_touch_limit_price(price, spread, decision.action)
+            limit_price = near_touch_limit_price(price, spread, decision.action)
 
         if (
             selected_order_type in {"limit", "stop_limit"}
             and limit_price is None
             and price is not None
         ):
-            limit_price = _normalize_price_for_trading(price)
+            limit_price = normalize_price_for_trading(price)
         elif limit_price is not None:
-            limit_price = _normalize_price_for_trading(limit_price)
+            limit_price = normalize_price_for_trading(limit_price)
 
         if (
             selected_order_type in {"stop", "stop_limit"}
             and stop_price is None
             and price is not None
         ):
-            stop_price = _normalize_price_for_trading(price)
+            stop_price = normalize_price_for_trading(price)
         elif stop_price is not None:
-            stop_price = _normalize_price_for_trading(stop_price)
+            stop_price = normalize_price_for_trading(stop_price)
 
         updated = decision.model_copy(
             update={
@@ -801,4 +906,4 @@ class ExecutionPolicy:
         return updated, selected_order_type
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ["ExecutionPolicy"]

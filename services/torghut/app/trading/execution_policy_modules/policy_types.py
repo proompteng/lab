@@ -1,33 +1,13 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Execution policy enforcing order placement safety and impact assumptions."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import timezone
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Iterable, Mapping, Optional, cast
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Any, Optional
 
-from ...config import settings
-from ...models import Strategy
-from ..costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
-from ..microstructure import (
-    MicrostructureStateV5,
-    is_microstructure_stale,
-    parse_execution_advice,
-    parse_microstructure_state,
-)
 from ..models import StrategyDecision
-from ..prices import MarketSnapshot, resolve_execution_reference_price
-from ..quantity_rules import (
-    min_qty_for_symbol,
-    qty_has_valid_increment,
-    quantize_qty_for_symbol,
-    resolve_quantity_resolution,
-)
 from ..tca import AdaptiveExecutionPolicyDecision
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 DEFAULT_EXECUTION_SECONDS = 60
@@ -84,7 +64,7 @@ HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN = Decimal("0.55")
 
 HIGH_CONVICTION_WASHOUT_MICROPRICE_BPS_MIN = Decimal("0.05")
 
-_SIZING_LIMITING_CONSTRAINT_REASONS: frozenset[str] = frozenset(
+SIZING_LIMITING_CONSTRAINT_REASONS: frozenset[str] = frozenset(
     {
         "symbol_capacity_exhausted",
         "sell_inventory_unavailable",
@@ -92,6 +72,12 @@ _SIZING_LIMITING_CONSTRAINT_REASONS: frozenset[str] = frozenset(
         "net_exposure_capacity_exhausted",
     }
 )
+
+
+def stringify_decimal(value: Optional[Decimal]) -> Optional[str]:
+    if value is None:
+        return None
+    return str(value)
 
 
 @dataclass(frozen=True)
@@ -140,8 +126,8 @@ class ExecutionPolicyOutcome:
             "execution_policy": {
                 "approved": self.approved,
                 "reasons": list(self.reasons),
-                "notional": _stringify_decimal(self.notional),
-                "participation_rate": _stringify_decimal(self.participation_rate),
+                "notional": stringify_decimal(self.notional),
+                "participation_rate": stringify_decimal(self.participation_rate),
                 "selected_order_type": self.selected_order_type,
                 "retry_delays": self.retry_delays,
             },
@@ -154,4 +140,35 @@ class ExecutionPolicyOutcome:
         return payload
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "ADAPTIVE_EXECUTION_SECONDS_MAX",
+    "ADAPTIVE_EXECUTION_SECONDS_MIN",
+    "ADAPTIVE_PARTICIPATION_RATE_FLOOR",
+    "DEFAULT_EXECUTION_SECONDS",
+    "HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN",
+    "HIGH_CONVICTION_BREAKOUT_MICROPRICE_BPS_MIN",
+    "HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX",
+    "HIGH_CONVICTION_WASHOUT_MICROPRICE_BPS_MIN",
+    "HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN",
+    "MICROSTRUCTURE_COMPRESSED_RATE_SCALE",
+    "MICROSTRUCTURE_CRUMBLING_QUOTE_EXECUTION_SCALE",
+    "MICROSTRUCTURE_CRUMBLING_QUOTE_PROBABILITY_PRESSURE",
+    "MICROSTRUCTURE_CRUMBLING_QUOTE_RATE_SCALE",
+    "MICROSTRUCTURE_DEPTH_USD_PRESSURE",
+    "MICROSTRUCTURE_EXECUTION_SCALE_EPSILON",
+    "MICROSTRUCTURE_EXECUTION_SCALE_MAX",
+    "MICROSTRUCTURE_EXECUTION_SCALE_MIN",
+    "MICROSTRUCTURE_HAZARD_PRESSURE",
+    "MICROSTRUCTURE_HAZARD_RATE_SCALE",
+    "MICROSTRUCTURE_HIGH_SPREAD_RATE_SCALE",
+    "MICROSTRUCTURE_LATENCY_PRESSURE_MS",
+    "MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE",
+    "MICROSTRUCTURE_PARTICIPATION_FLOOR",
+    "MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE",
+    "MICROSTRUCTURE_SPREAD_BPS_PRESSURE",
+    "MICROSTRUCTURE_STRESSED_RATE_SCALE",
+    "MICROSTRUCTURE_STRESS_EXECUTION_SCALE",
+    "AdaptiveExecutionApplication",
+    "ExecutionPolicyConfig",
+    "ExecutionPolicyOutcome",
+]
