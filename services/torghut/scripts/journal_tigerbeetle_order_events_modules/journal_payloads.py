@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python3
 """Journal existing order-feed events into TigerBeetle and persist reconciliation."""
 
@@ -10,106 +9,21 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any, cast
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-
 from app.config import Settings
-from app.models import (
-    Execution,
-    ExecutionOrderEvent,
-    ExecutionTCAMetric,
-    StrategyRuntimeLedgerBucket,
-    TigerBeetleTransferRef,
-)
-from app.trading.tigerbeetle_journal import (
-    SOURCE_TYPE_EXECUTION,
-    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-    SOURCE_TYPE_EXECUTION_TCA_METRIC,
-    SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
-    TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
-    TigerBeetleLedgerJournal,
-    build_runtime_ledger_bucket_transfer_plan,
-    build_order_event_transfer_plan,
-    tigerbeetle_runtime_ledger_journal_payload,
-)
-from app.trading.tigerbeetle_client import TigerBeetleClientTimeoutError
-from app.trading.tigerbeetle_ledger_model import (
-    TRANSFER_KIND_EXECUTION_COST,
-    TRANSFER_KIND_EXECUTION_FILL,
-    TRANSFER_KIND_RUNTIME_NET_PNL,
-)
 from app.trading.tigerbeetle_reconcile import (
     latest_tigerbeetle_reconciliation_payload,
-    reconcile_tigerbeetle_transfers,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_50 import *
-
-
-def _attach_runtime_bucket_journal_payload(
-    row: StrategyRuntimeLedgerBucket,
-    ref: TigerBeetleTransferRef,
-) -> None:
-    journal_payload = tigerbeetle_runtime_ledger_journal_payload(
-        bucket=row,
-        ref=ref,
-        status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
-    )
-    existing_payload = (
-        dict(row.payload_json) if isinstance(row.payload_json, dict) else {}
-    )
-    source_refs = [
-        str(item)
-        for item in existing_payload.get("source_refs", [])
-        if str(item).strip()
-    ]
-    raw_journal_source_refs = journal_payload.get("source_refs")
-    journal_source_refs = (
-        cast(Sequence[object], raw_journal_source_refs)
-        if isinstance(raw_journal_source_refs, Sequence)
-        and not isinstance(raw_journal_source_refs, (str, bytes, bytearray))
-        else ()
-    )
-    for source_ref in journal_source_refs:
-        if isinstance(source_ref, str) and source_ref not in source_refs:
-            source_refs.append(source_ref)
-    source_row_counts = (
-        dict(existing_payload.get("source_row_counts", {}))
-        if isinstance(existing_payload.get("source_row_counts"), dict)
-        else {}
-    )
-    source_row_counts["tigerbeetle_transfer_refs"] = 1
-    row.payload_json = {
-        **existing_payload,
-        "source_refs": source_refs,
-        "source_row_counts": source_row_counts,
-        "tigerbeetle_journal_parity": journal_payload,
-        "tigerbeetle": journal_payload,
-        "tigerbeetle_account_ids": journal_payload["account_ids"],
-        "tigerbeetle_account_keys": journal_payload["account_keys"],
-        "tigerbeetle_transfer_ids": journal_payload["transfer_ids"],
-        "tigerbeetle_non_authority_blockers": journal_payload["authority_blockers"],
-    }
-
-
-def _error_summary(exc: Exception) -> str:
-    message = str(exc).strip()
-    if len(message) > 160:
-        message = f"{message[:157]}..."
-    return f"{type(exc).__name__}:{message}"
-
-
-def _reset_session_identity_map(session: Any) -> None:
-    expunge_all = getattr(session, "expunge_all", None)
-    if callable(expunge_all):
-        expunge_all()
+from .journal_core import (
+    DEFAULT_JOURNAL_BATCH_CHUNK_SIZE,
+    INFRASTRUCTURE_RECONCILIATION_BLOCKERS,
+    MAX_JOURNAL_BATCH_CHUNK_SIZE,
+    _emit_progress,
+    _parse_sources,
+)
 
 
 def _fresh_reconciliation_for_empty_selection(
@@ -691,6 +605,3 @@ def _run_supervised_worker(args: argparse.Namespace, *, started_at: datetime) ->
         if source_exit_code:
             exit_code = 1
     return exit_code
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
