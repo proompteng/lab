@@ -22,7 +22,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: renew
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:c7eac8c74c0b9a170ca50766cb9c94e677fe9e6aa0ac6a18642a091b65d3fd23
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:355efbccbd316d2bcead19f4836bb8ae15e8689d864e92a4f8bd941fe70b1df9
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
@@ -160,9 +160,9 @@ spec:
                 - name: SIM_DB_DSN
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:c7eac8c74c0b9a170ca50766cb9c94e677fe9e6aa0ac6a18642a091b65d3fd23
+                  value: sha256:355efbccbd316d2bcead19f4836bb8ae15e8689d864e92a4f8bd941fe70b1df9
                 - name: TORGHUT_COMMIT
-                  value: 57d1c4c8a551981f8626163e91a12a01112b2ba5
+                  value: 48d285e1c61f9ce28e23db2f442e8f460334ec27
                 - name: TORGHUT_EMPIRICAL_CEPH_BUCKET
                   valueFrom:
                     configMapKeyRef:
