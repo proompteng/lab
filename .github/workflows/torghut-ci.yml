@@ -409,11 +409,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          repo_root="$(git rev-parse --show-toplevel)"
           base_spec="origin/${GITHUB_BASE_REF:-main}"
-          base="$(git merge-base "${base_spec}" HEAD 2>/dev/null || git rev-parse HEAD^)"
-          mapfile -t changed_python < <(
-            git diff --name-only --diff-filter=ACMR "${base}...HEAD" -- app scripts |
-              grep -E '\.py$' || true
+          base="$(git -C "${repo_root}" merge-base "${base_spec}" HEAD 2>/dev/null || git -C "${repo_root}" rev-parse HEAD^)"
+          changed_python=()
+          while IFS= read -r python_file; do
+            changed_python+=("${python_file}")
+          done < <(
+            git -C "${repo_root}" diff --name-only --diff-filter=ACMR "${base}...HEAD" -- services/torghut/app services/torghut/scripts |
+              sed 's#^services/torghut/##' |
+              grep -E '^(app|scripts)/.*\.py$' || true
           )
 
           if [ "${#changed_python[@]}" -eq 0 ]; then
