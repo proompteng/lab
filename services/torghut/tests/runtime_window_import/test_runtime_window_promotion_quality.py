@@ -1,10 +1,24 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.runtime_window_import.support import *
+from tests.runtime_window_import.support import (
+    Decimal,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
+    _runtime_ledger_bucket,
+    runtime_ledger_bucket_blockers,
+    _runtime_pnl_basis,
+    _simulation_report_pnl_basis,
+    _TestRuntimeWindowImportBase,
+    build_observed_runtime_buckets,
+    datetime,
+    persist_observed_runtime_windows,
+    select,
+    timedelta,
+    timezone,
+)
 
 
-class TestRuntimeWindowImportPart5(_TestRuntimeWindowImportBase):
+class TestRuntimeWindowPromotionQuality(_TestRuntimeWindowImportBase):
     def test_runtime_ledger_bucket_requires_structured_source_offsets(self) -> None:
         for malformed_offsets in (
             ["alpaca.trade_updates:0:100"],
@@ -15,7 +29,7 @@ class TestRuntimeWindowImportPart5(_TestRuntimeWindowImportBase):
             bucket = _runtime_ledger_bucket(source_offsets=malformed_offsets)
             self.assertIn(
                 "runtime_ledger_source_offsets_missing",
-                _runtime_ledger_bucket_blockers(bucket),
+                runtime_ledger_bucket_blockers(bucket),
             )
 
     def test_runtime_ledger_bucket_requires_explicit_source_authority_class(
@@ -29,13 +43,13 @@ class TestRuntimeWindowImportPart5(_TestRuntimeWindowImportBase):
 
         self.assertIn(
             "runtime_ledger_authority_class_missing",
-            _runtime_ledger_bucket_blockers(bucket),
+            runtime_ledger_bucket_blockers(bucket),
         )
         for marker_field in ("authority_class", "authority_reason"):
             marker_only = _runtime_ledger_bucket(**{marker_field: None})
             self.assertIn(
                 "runtime_ledger_authority_class_missing",
-                _runtime_ledger_bucket_blockers(marker_only),
+                runtime_ledger_bucket_blockers(marker_only),
             )
 
     def test_runtime_ledger_bucket_requires_explicit_cost_basis_and_amount(
@@ -56,10 +70,10 @@ class TestRuntimeWindowImportPart5(_TestRuntimeWindowImportBase):
         ):
             self.assertIn(
                 "runtime_ledger_explicit_costs_missing",
-                _runtime_ledger_bucket_blockers(bucket),
+                runtime_ledger_bucket_blockers(bucket),
             )
 
-        blockers = _runtime_ledger_bucket_blockers(
+        blockers = runtime_ledger_bucket_blockers(
             _runtime_ledger_bucket(
                 cost_basis_counts={},
                 post_cost_basis_counts={"broker_reported_commission_and_fees": 2},
