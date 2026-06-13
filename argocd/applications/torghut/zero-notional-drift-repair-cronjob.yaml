@@ -26,7 +26,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: run-zero-notional-drift-repair
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:3457e4c0249c1e3fb433810da964e58705754e91df3fd8c726a45a884f5d4ae1
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:fed76b4ae204e63f858798b454edde129dabb08a8c2c800f5af4c7ffbc8b8d95
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
