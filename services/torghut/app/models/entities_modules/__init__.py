@@ -1,81 +1,163 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-from __future__ import annotations
+"""Domain modules for Torghut ORM entity definitions."""
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_28")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_researchrun")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_03_vnextempiricaljobrun")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_04_whitepapercontent")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_05_whitepaperstrategytemplate"
+from .research_records import (
+    ResearchAttempt,
+    ResearchCandidate,
+    ResearchCostCalibration,
+    ResearchFoldMetrics,
+    ResearchPromotion,
+    ResearchRun,
+    ResearchSequentialTrial,
+    ResearchStressMetrics,
+    ResearchValidationTest,
+    VNextDatasetSnapshot,
+    VNextExperimentRun,
+    VNextExperimentSpec,
+    VNextFeatureViewSpec,
+    VNextModelArtifact,
+    VNextPromotionDecision,
+    VNextShadowLiveDeviation,
+    VNextSimulationCalibration,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .runtime_cursors import (
+    LLMDSPyWorkflowArtifact,
+    LLMDecisionReview,
+    SimulationRunProgress,
+    SimulationRuntimeContext,
+    TradeCursor,
+)
+from .strategy_evidence import (
+    EvidenceEpochRecord,
+    EvidenceReceiptRecord,
+    RejectedSignalOutcomeEvent,
+    StrategyCapitalAllocation,
+    StrategyHypothesis,
+    StrategyHypothesisMetricWindow,
+    StrategyHypothesisVersion,
+    StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
+    VNextCompletionGateResult,
+    VNextEmpiricalJobRun,
+    WhitepaperDocument,
+    WhitepaperDocumentVersion,
+)
+from .trading_records import (
+    MARKET_SYMBOL_MAX_LENGTH,
+    CreatedAtMixin,
+    Execution,
+    ExecutionOrderEvent,
+    OrderFeedConsumerCursor,
+    OrderFeedSourceWindow,
+    Strategy,
+    TigerBeetleAccountRef,
+    TigerBeetleReconciliationRun,
+    TigerBeetleTransferRef,
+    TimestampMixin,
+    TradeDecision,
+)
+from .whitepaper_content import (
+    WhitepaperAnalysisRun,
+    WhitepaperAnalysisStep,
+    WhitepaperArtifact,
+    WhitepaperClaim,
+    WhitepaperClaimRelation,
+    WhitepaperCodexAgentRun,
+    WhitepaperContent,
+    WhitepaperDesignPullRequest,
+    WhitepaperSynthesis,
+    WhitepaperViabilityVerdict,
+)
+from .whitepaper_runtime import (
+    AutoresearchCandidateSpec,
+    AutoresearchEpoch,
+    AutoresearchPortfolioCandidate,
+    AutoresearchProposalScore,
+    ExecutionTCAMetric,
+    LeanBacktestRun,
+    LeanCanaryIncident,
+    LeanExecutionShadowEvent,
+    LeanStrategyShadowEvaluation,
+    PositionSnapshot,
+    ToolRunLog,
+    WhitepaperContradictionEvent,
+    WhitepaperEngineeringTrigger,
+    WhitepaperExperimentSpec,
+    WhitepaperRolloutTransition,
+    WhitepaperStrategyTemplate,
+)
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_06_tradecursor")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "MARKET_SYMBOL_MAX_LENGTH",
+    "AutoresearchCandidateSpec",
+    "AutoresearchEpoch",
+    "AutoresearchPortfolioCandidate",
+    "AutoresearchProposalScore",
+    "CreatedAtMixin",
+    "EvidenceEpochRecord",
+    "EvidenceReceiptRecord",
+    "Execution",
+    "ExecutionOrderEvent",
+    "ExecutionTCAMetric",
+    "LeanBacktestRun",
+    "LeanCanaryIncident",
+    "LeanExecutionShadowEvent",
+    "LeanStrategyShadowEvaluation",
+    "LLMDSPyWorkflowArtifact",
+    "LLMDecisionReview",
+    "OrderFeedConsumerCursor",
+    "OrderFeedSourceWindow",
+    "PositionSnapshot",
+    "RejectedSignalOutcomeEvent",
+    "ResearchAttempt",
+    "ResearchCandidate",
+    "ResearchCostCalibration",
+    "ResearchFoldMetrics",
+    "ResearchPromotion",
+    "ResearchRun",
+    "ResearchSequentialTrial",
+    "ResearchStressMetrics",
+    "ResearchValidationTest",
+    "SimulationRunProgress",
+    "SimulationRuntimeContext",
+    "Strategy",
+    "StrategyCapitalAllocation",
+    "StrategyHypothesis",
+    "StrategyHypothesisMetricWindow",
+    "StrategyHypothesisVersion",
+    "StrategyPromotionDecision",
+    "StrategyRuntimeLedgerBucket",
+    "TigerBeetleAccountRef",
+    "TigerBeetleReconciliationRun",
+    "TigerBeetleTransferRef",
+    "TimestampMixin",
+    "ToolRunLog",
+    "TradeCursor",
+    "TradeDecision",
+    "VNextCompletionGateResult",
+    "VNextDatasetSnapshot",
+    "VNextEmpiricalJobRun",
+    "VNextExperimentRun",
+    "VNextExperimentSpec",
+    "VNextFeatureViewSpec",
+    "VNextModelArtifact",
+    "VNextPromotionDecision",
+    "VNextShadowLiveDeviation",
+    "VNextSimulationCalibration",
+    "WhitepaperAnalysisRun",
+    "WhitepaperAnalysisStep",
+    "WhitepaperArtifact",
+    "WhitepaperClaim",
+    "WhitepaperClaimRelation",
+    "WhitepaperCodexAgentRun",
+    "WhitepaperContent",
+    "WhitepaperContradictionEvent",
+    "WhitepaperDesignPullRequest",
+    "WhitepaperDocument",
+    "WhitepaperDocumentVersion",
+    "WhitepaperEngineeringTrigger",
+    "WhitepaperExperimentSpec",
+    "WhitepaperRolloutTransition",
+    "WhitepaperStrategyTemplate",
+    "WhitepaperSynthesis",
+    "WhitepaperViabilityVerdict",
 ]
-del __compat_module__

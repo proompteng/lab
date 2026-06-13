@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """SQLAlchemy ORM models for torghut."""
 
 from __future__ import annotations
@@ -6,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -17,7 +16,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    UniqueConstraint,
     text,
 )
 from sqlalchemy import func
@@ -25,11 +23,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..base import Base, GUID, JSONType
 
-# ruff: noqa: F401,F403,F405,F811,F821
+from .strategy_evidence import WhitepaperDocument, WhitepaperDocumentVersion
+from .trading_records import CreatedAtMixin, TimestampMixin
 
-from .part_01_statements_28 import *
-from .part_02_researchrun import *
-from .part_03_vnextempiricaljobrun import *
+if TYPE_CHECKING:
+    from .whitepaper_runtime import (
+        WhitepaperContradictionEvent,
+        WhitepaperEngineeringTrigger,
+        WhitepaperExperimentSpec,
+        WhitepaperStrategyTemplate,
+    )
 
 
 class WhitepaperContent(Base, CreatedAtMixin):
@@ -716,6 +719,3 @@ class WhitepaperClaimRelation(Base, TimestampMixin):
             unique=True,
         ),
     )
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
