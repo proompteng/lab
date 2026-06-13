@@ -1,34 +1,25 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Scheduler runtime state and metrics types."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal, Optional, cast
 
-from ...decisions import DecisionRuntimeTelemetry
-from ...portfolio import AllocationResult
-from ...route_metadata import coerce_route_text
-from ...tca import AdaptiveExecutionPolicyDecision
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-
-def _normalize_reason_metric(reason: str | None) -> str:
+def normalize_reason_metric(reason: str | None) -> str:
     normalized = reason.strip() if isinstance(reason, str) else ""
     return normalized or "unknown"
 
 
-def _split_reason_codes(reason: str | None) -> list[str]:
+def split_reason_codes(reason: str | None) -> list[str]:
     if not isinstance(reason, str):
         return []
     return [part.strip() for part in reason.split(";") if part.strip()]
 
 
-def _optional_decimal(value: Any) -> Optional[Decimal]:
+def optional_decimal(value: Any) -> Optional[Decimal]:
     if value is None:
         return None
     try:
@@ -74,8 +65,45 @@ class RuntimeUncertaintyGate:
         return payload
 
 
+@dataclass(frozen=True)
+class AutonomyPromotionOutcomeMetrics:
+    signal_count: int
+    decision_count: int
+    trade_count: int
+    recommendation: str | None
+    promotion_allowed: bool
+    outcome: str
+
+    @classmethod
+    def from_legacy_kwargs(
+        cls, fields: Mapping[str, object]
+    ) -> "AutonomyPromotionOutcomeMetrics":
+        return cls(
+            signal_count=_int_metric(fields.get("signal_count")),
+            decision_count=_int_metric(fields.get("decision_count")),
+            trade_count=_int_metric(fields.get("trade_count")),
+            recommendation=_optional_text(fields.get("recommendation")),
+            promotion_allowed=bool(fields.get("promotion_allowed")),
+            outcome=str(fields.get("outcome") or ""),
+        )
+
+
+def _int_metric(value: object) -> int:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @dataclass
-class _TradingMetricsFieldsPart1:
+class TradingMetricsFields:
     decisions_total: int = 0
 
     orders_submitted_total: int = 0
@@ -575,4 +603,12 @@ class _TradingMetricsFieldsPart1:
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "AutonomyPromotionOutcomeMetrics",
+    "RuntimeUncertaintyGate",
+    "RuntimeUncertaintyGateAction",
+    "TradingMetricsFields",
+    "normalize_reason_metric",
+    "optional_decimal",
+    "split_reason_codes",
+]
