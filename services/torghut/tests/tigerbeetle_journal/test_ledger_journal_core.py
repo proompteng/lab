@@ -26,7 +26,7 @@ from tests.tigerbeetle_journal.support import (
     _create_fill_event,
     _runtime_bucket,
     _settings,
-    _transfer_ref_mismatches,
+    transfer_ref_mismatches,
     datetime,
     execution_cost_transfer_id,
     execution_economic_event_key,
@@ -142,7 +142,7 @@ class TestTigerBeetleLedgerJournalPart1(_TestTigerBeetleLedgerJournalBase):
             client = ClosableFakeTigerBeetleClient()
 
             with patch(
-                "app.trading.tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
                 return_value=client,
             ) as factory:
                 with TigerBeetleLedgerJournal(settings_obj=_settings()) as journal:
@@ -175,7 +175,7 @@ class TestTigerBeetleLedgerJournalPart1(_TestTigerBeetleLedgerJournalBase):
         client = ClosableFakeTigerBeetleClient()
 
         with patch(
-            "app.trading.tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal.create_tigerbeetle_client",
+            "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
             return_value=client,
         ) as factory:
             with TigerBeetleLedgerJournal(settings_obj=_settings()) as journal:
@@ -710,7 +710,7 @@ class TestTigerBeetleLedgerJournalPart1(_TestTigerBeetleLedgerJournalBase):
         )
 
         self.assertEqual(
-            _transfer_ref_mismatches(ref, expected),
+            transfer_ref_mismatches(ref, expected),
             ["transfer_id", "transfer_kind", "code", "pending_id"],
         )
 

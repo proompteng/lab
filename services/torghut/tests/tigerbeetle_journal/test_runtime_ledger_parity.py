@@ -1,16 +1,43 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.tigerbeetle_journal.support import *
+from app.trading.tigerbeetle_journal_modules.journal_payloads import (
+    PreparedTigerBeetleTransferWrite,
+)
+from tests.tigerbeetle_journal.support import (
+    Decimal,
+    FakeTigerBeetleClient,
+    IntegrityError,
+    LEDGER_USD_MICRO,
+    Session,
+    SimpleNamespace,
+    TRANSFER_KIND_EXECUTION_FILL,
+    TigerBeetleAccountRef,
+    TigerBeetleAccountSpec,
+    TigerBeetleLedgerJournal,
+    TigerBeetleTransferRef,
+    TigerBeetleTransferSpec,
+    _RacingAccountRefSession,
+    _RacingTransferRefSession,
+    _TestTigerBeetleLedgerJournalBase,
+    _create_fill_event,
+    _settings,
+    cast,
+    order_event_account_specs,
+    persist_account_refs,
+    result_status,
+    u128_decimal,
+)
 
 
-class TestTigerBeetleLedgerJournalPart3(_TestTigerBeetleLedgerJournalBase):
+class TestTigerBeetleLedgerJournalRuntimeLedgerParity(
+    _TestTigerBeetleLedgerJournalBase
+):
     def test_journal_detects_account_ref_id_key_conflict(self) -> None:
         with Session(self.engine) as session:
             event = _create_fill_event(session, fingerprint="fingerprint-ref-conflict")
             spec = next(
                 item
-                for item in _account_specs(event)
+                for item in order_event_account_specs(event)
                 if item.account_key.startswith("order_hold:")
             )
             session.add(
@@ -58,7 +85,7 @@ class TestTigerBeetleLedgerJournalPart3(_TestTigerBeetleLedgerJournalBase):
         )
         session = _RacingAccountRefSession(existing)
 
-        _persist_account_refs(
+        persist_account_refs(
             cast(Session, session),
             cluster_id=2001,
             account_specs=(spec,),
@@ -77,7 +104,7 @@ class TestTigerBeetleLedgerJournalPart3(_TestTigerBeetleLedgerJournalBase):
         session = _RacingAccountRefSession(None)
 
         with self.assertRaises(IntegrityError):
-            _persist_account_refs(
+            persist_account_refs(
                 cast(Session, session),
                 cluster_id=2001,
                 account_specs=(spec,),
@@ -103,7 +130,7 @@ class TestTigerBeetleLedgerJournalPart3(_TestTigerBeetleLedgerJournalBase):
             RuntimeError,
             "tigerbeetle_account_ref_conflict",
         ):
-            _persist_account_refs(
+            persist_account_refs(
                 cast(Session, session),
                 cluster_id=2001,
                 account_specs=(spec,),
@@ -142,11 +169,19 @@ class TestTigerBeetleLedgerJournalPart3(_TestTigerBeetleLedgerJournalBase):
             client=FakeTigerBeetleClient(),
         )._persist_transfer(
             cast(Session, session),
-            account_specs=(),
-            transfer_spec=transfer_spec,
-            source_type="execution",
-            source_id="execution-race-row",
-            payload_json={"source": "execution"},
+            PreparedTigerBeetleTransferWrite(
+                account_specs=(),
+                transfer_spec=transfer_spec,
+                trade_decision_id=None,
+                execution_id=None,
+                execution_order_event_id=None,
+                execution_tca_metric_id=None,
+                runtime_ledger_bucket_id=None,
+                event_fingerprint=None,
+                source_type="execution",
+                source_id="execution-race-row",
+                payload_json={"source": "execution"},
+            ),
         )
 
         self.assertIs(ref, existing)
@@ -218,14 +253,14 @@ class TestTigerBeetleLedgerJournalPart3(_TestTigerBeetleLedgerJournalBase):
             assert ref is not None
             self.assertEqual(ref.status, "exists")
             self.assertEqual(
-                _result_status(
+                result_status(
                     SimpleNamespace(status=46),
                     status_type_names=("CreateTransferStatus",),
                 ),
                 "exists",
             )
             self.assertEqual(
-                _result_status(
+                result_status(
                     SimpleNamespace(status=4294967295),
                     status_type_names=("CreateTransferStatus",),
                 ),

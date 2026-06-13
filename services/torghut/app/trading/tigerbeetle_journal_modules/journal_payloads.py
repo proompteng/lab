@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Idempotent Torghut order-event journal for TigerBeetle."""
 
 from __future__ import annotations
@@ -8,55 +7,24 @@ from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
 import json
-from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, cast
 
 from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.config import Settings, settings
 from app.models import (
-    Execution,
     ExecutionOrderEvent,
-    ExecutionTCAMetric,
     StrategyRuntimeLedgerBucket,
     TigerBeetleAccountRef,
     TigerBeetleTransferRef,
     coerce_json_payload,
 )
-from app.trading.tigerbeetle_client import (
-    TigerBeetleClientProtocol,
-    create_tigerbeetle_client,
-)
 from app.trading.tigerbeetle_ids import stable_ref_u128, stable_u128, u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
-    ACCOUNT_CODE_CASH_CONTROL,
-    ACCOUNT_CODE_EVIDENCE_CONTROL,
-    ACCOUNT_CODE_EXECUTION_COST,
-    ACCOUNT_CODE_EXECUTION_EVIDENCE,
-    ACCOUNT_CODE_FILL_NOTIONAL,
-    ACCOUNT_CODE_ORDER_HOLD,
-    ACCOUNT_CODE_REALIZED_PNL,
-    ACCOUNT_CODE_RUNTIME_LEDGER_EVIDENCE,
-    LEDGER_USD_MICRO,
-    PNL_DIRECTION_LOSS,
-    PNL_DIRECTION_PROFIT,
-    TRANSFER_KIND_CANCEL_VOID,
-    TRANSFER_KIND_EXECUTION_COST,
-    TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_KIND_FILL_POST,
-    TRANSFER_KIND_REJECT_VOID,
-    TRANSFER_KIND_RUNTIME_NET_PNL,
-    TRANSFER_KIND_SUBMITTED_PENDING,
     TigerBeetleAccountSpec,
     TigerBeetleTransferSpec,
-    decimal_usd_to_nearest_micros,
-    transfer_code_for_kind,
-    transfer_kind_for_event,
 )
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 SOURCE_TYPE_EXECUTION = "execution"
@@ -142,7 +110,7 @@ def _normalize_result_status(
     return str(value or "").split(".")[-1].lower()
 
 
-def _result_status(result: object, *, status_type_names: Sequence[str]) -> str:
+def result_status(result: object, *, status_type_names: Sequence[str]) -> str:
     if isinstance(result, Mapping):
         result_mapping = cast(Mapping[str, object], result)
         return _normalize_result_status(
@@ -155,7 +123,7 @@ def _result_status(result: object, *, status_type_names: Sequence[str]) -> str:
     )
 
 
-def _result_index(result: object, fallback: int) -> int:
+def result_index(result: object, fallback: int) -> int:
     if isinstance(result, Mapping):
         result_mapping = cast(Mapping[str, object], result)
         raw_index = result_mapping.get("index")
@@ -169,7 +137,7 @@ def _result_index(result: object, fallback: int) -> int:
         raise RuntimeError(f"tigerbeetle_result_index_invalid:{raw_index}") from exc
 
 
-def _result_statuses_by_index(
+def result_statuses_by_index(
     results: Sequence[object],
     *,
     count: int,
@@ -178,17 +146,17 @@ def _result_statuses_by_index(
 ) -> dict[int, str]:
     statuses = {index: default_status for index in range(count)}
     for fallback_index, result in enumerate(results):
-        index = _result_index(result, fallback_index)
+        index = result_index(result, fallback_index)
         if index < 0 or index >= count:
             raise RuntimeError(f"tigerbeetle_result_index_out_of_range:{index}")
-        statuses[index] = _result_status(
+        statuses[index] = result_status(
             result,
             status_type_names=status_type_names,
         )
     return statuses
 
 
-def _transfer_attr(transfer: object, name: str) -> Any:
+def transfer_attr(transfer: object, name: str) -> Any:
     if isinstance(transfer, Mapping):
         transfer_mapping = cast(Mapping[str, Any], transfer)
         value = transfer_mapping.get(name)
@@ -202,7 +170,7 @@ def _transfer_attr(transfer: object, name: str) -> Any:
     raise AttributeError(name)
 
 
-def _lookup_payload_decimal(
+def lookup_payload_decimal(
     payload: Mapping[str, Any], keys: Sequence[str]
 ) -> Decimal | None:
     for key in keys:
@@ -216,7 +184,7 @@ def _lookup_payload_decimal(
     return None
 
 
-def _nested_mapping(value: object) -> Mapping[str, Any]:
+def nested_mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
 
 
@@ -276,14 +244,7 @@ def _payload_account_ids(
 
 
 def tigerbeetle_stable_ref_payload(
-    *,
-    cluster_id: int,
-    account_specs: Sequence[TigerBeetleAccountSpec],
-    transfer_spec: TigerBeetleTransferSpec,
-    source_type: str,
-    source_id: str,
-    payload_json: Mapping[str, object],
-    event_fingerprint: str | None = None,
+    request: StableRefPayloadInput | None = None, **legacy_fields: object
 ) -> dict[str, object]:
     """Return a signed, deterministic audit-ref payload for a transfer ref.
 
@@ -293,26 +254,29 @@ def tigerbeetle_stable_ref_payload(
     authority.
     """
 
-    account_label = _stable_ref_account_label(account_specs, payload_json)
+    request = _stable_ref_payload_input(request, legacy_fields)
+    account_label = _stable_ref_account_label(
+        request.account_specs, request.payload_json
+    )
     source_signature = _stable_ref_source_signature(
-        payload_json,
-        event_fingerprint=event_fingerprint,
+        request.payload_json,
+        event_fingerprint=request.event_fingerprint,
     )
     components = {
-        "cluster_id": int(cluster_id),
+        "cluster_id": int(request.cluster_id),
         "account_label": account_label or "unknown",
-        "source_type": source_type,
-        "source_id": source_id,
-        "transfer_kind": transfer_spec.transfer_kind,
+        "source_type": request.source_type,
+        "source_id": request.source_id,
+        "transfer_kind": request.transfer_spec.transfer_kind,
         "source_signature": source_signature or "none",
     }
     stable_ref_id = u128_decimal(
         stable_ref_u128(
-            cluster_id=int(cluster_id),
+            cluster_id=int(request.cluster_id),
             account_label=account_label,
-            source_type=source_type,
-            source_id=source_id,
-            transfer_kind=transfer_spec.transfer_kind,
+            source_type=request.source_type,
+            source_id=request.source_id,
+            transfer_kind=request.transfer_spec.transfer_kind,
             source_signature=source_signature,
         )
     )
@@ -321,12 +285,14 @@ def tigerbeetle_stable_ref_payload(
         "derivation_namespace": TIGERBEETLE_STABLE_REF_NAMESPACE,
         "stable_ref_id": stable_ref_id,
         "components": components,
-        "account_ids": _payload_account_ids(payload_json, account_specs),
-        "account_keys": sorted({spec.account_key for spec in account_specs}),
-        "transfer_id": u128_decimal(transfer_spec.transfer_id),
-        "ledger": transfer_spec.ledger,
-        "code": transfer_spec.code,
-        "amount": str(transfer_spec.amount),
+        "account_ids": _payload_account_ids(
+            request.payload_json, request.account_specs
+        ),
+        "account_keys": sorted({spec.account_key for spec in request.account_specs}),
+        "transfer_id": u128_decimal(request.transfer_spec.transfer_id),
+        "ledger": request.transfer_spec.ledger,
+        "code": request.transfer_spec.code,
+        "amount": str(request.transfer_spec.amount),
         "authority": "accounting_parity_only",
         "promotion_authority": False,
         "overrides_runtime_ledger_authority": False,
@@ -355,7 +321,7 @@ def runtime_ledger_bucket_source_authority_blockers(
     context is not present on the persisted bucket payload.
     """
 
-    payload = _nested_mapping(bucket.payload_json)
+    payload = nested_mapping(bucket.payload_json)
     source_refs = [
         source_ref
         for source_ref in [
@@ -365,14 +331,14 @@ def runtime_ledger_bucket_source_authority_blockers(
         if "tigerbeetle" not in source_ref
         and "strategy_runtime_ledger_buckets" not in source_ref
     ]
-    source_row_counts = _nested_mapping(payload.get("source_row_counts"))
+    source_row_counts = nested_mapping(payload.get("source_row_counts"))
     source_window_refs = [
         *(_payload_text_list(payload.get("source_window_refs"))),
         *(_payload_text_list(payload.get("runtime_ledger_source_window_refs"))),
         *(_payload_text_list(payload.get("source_window_id"))),
     ]
     has_source_rows = bool(source_refs) or any(
-        _positive_payload_count(value)
+        positive_payload_count(value)
         for key, value in source_row_counts.items()
         if str(key).startswith(
             (
@@ -395,21 +361,80 @@ def runtime_ledger_bucket_source_authority_blockers(
     return blockers
 
 
-def _positive_payload_count(value: object) -> bool:
+def positive_payload_count(value: object) -> bool:
     try:
         return Decimal(str(value or "0")) > 0
     except Exception:
         return False
 
 
+def _runtime_ledger_journal_refs(
+    request: RuntimeLedgerJournalPayloadInput,
+) -> _RuntimeLedgerJournalRefs:
+    account_ids: list[str] = []
+    transfer_ids: list[str] = []
+    source_refs = [f"postgres:strategy_runtime_ledger_buckets:{request.bucket.id}"]
+    cluster_ids: list[int] = []
+    transfer_payload: Mapping[str, object] = {}
+    if request.ref is not None:
+        transfer_ids.append(request.ref.transfer_id)
+        source_refs.append(f"postgres:tigerbeetle_transfer_refs:{request.ref.id}")
+        cluster_ids.append(request.ref.cluster_id)
+        transfer_payload = nested_mapping(request.ref.payload_json)
+        _append_transfer_account_ids(account_ids, transfer_payload)
+    stable_ref_payload = nested_mapping(transfer_payload.get("stable_ref"))
+    stable_ref_id = str(stable_ref_payload.get("stable_ref_id") or "").strip()
+    stable_refs = [stable_ref_payload] if stable_ref_id else []
+    for account_ref in request.account_refs:
+        if account_ref.account_id not in account_ids:
+            account_ids.append(account_ref.account_id)
+        if account_ref.cluster_id not in cluster_ids:
+            cluster_ids.append(account_ref.cluster_id)
+    return _RuntimeLedgerJournalRefs(
+        account_ids=account_ids,
+        transfer_ids=transfer_ids,
+        source_refs=source_refs,
+        cluster_ids=cluster_ids,
+        transfer_payload=transfer_payload,
+        stable_ref_id=stable_ref_id,
+        stable_refs=stable_refs,
+    )
+
+
+def _append_transfer_account_ids(
+    account_ids: list[str], transfer_payload: Mapping[str, object]
+) -> None:
+    for key in ("debit_account_id", "credit_account_id"):
+        raw_account_id = transfer_payload.get(key)
+        if raw_account_id is None:
+            continue
+        account_id = str(raw_account_id)
+        if account_id not in account_ids:
+            account_ids.append(account_id)
+
+
+def _stable_ref_payload_input(
+    request: StableRefPayloadInput | None, legacy_fields: Mapping[str, object]
+) -> StableRefPayloadInput:
+    if request is not None:
+        if legacy_fields:
+            raise TypeError("stable ref request cannot be mixed with keyword fields")
+        return request
+    return StableRefPayloadInput(
+        cluster_id=int(cast(str | int, legacy_fields["cluster_id"])),
+        account_specs=cast(
+            Sequence[TigerBeetleAccountSpec], legacy_fields["account_specs"]
+        ),
+        transfer_spec=cast(TigerBeetleTransferSpec, legacy_fields["transfer_spec"]),
+        source_type=str(legacy_fields["source_type"]),
+        source_id=str(legacy_fields["source_id"]),
+        payload_json=cast(Mapping[str, object], legacy_fields["payload_json"]),
+        event_fingerprint=cast(str | None, legacy_fields.get("event_fingerprint")),
+    )
+
+
 def tigerbeetle_runtime_ledger_journal_payload(
-    *,
-    bucket: StrategyRuntimeLedgerBucket,
-    ref: TigerBeetleTransferRef | None,
-    status: str,
-    blockers: Sequence[str] = (),
-    account_refs: Sequence[TigerBeetleAccountRef] = (),
-    error: str | None = None,
+    request: RuntimeLedgerJournalPayloadInput | None = None, **legacy_fields: object
 ) -> dict[str, object]:
     """Build stable bucket metadata for TigerBeetle journal parity.
 
@@ -419,79 +444,80 @@ def tigerbeetle_runtime_ledger_journal_payload(
     disabled, skipped, or degraded.
     """
 
-    account_ids: list[str] = []
-    transfer_ids: list[str] = []
-    source_refs = [f"postgres:strategy_runtime_ledger_buckets:{bucket.id}"]
-    cluster_ids: list[int] = []
-    transfer_payload: Mapping[str, object] = {}
-    if ref is not None:
-        transfer_ids.append(ref.transfer_id)
-        source_refs.append(f"postgres:tigerbeetle_transfer_refs:{ref.id}")
-        cluster_ids.append(ref.cluster_id)
-        transfer_payload = _nested_mapping(ref.payload_json)
-        for key in ("debit_account_id", "credit_account_id"):
-            raw_account_id = transfer_payload.get(key)
-            if raw_account_id is not None:
-                account_id = str(raw_account_id)
-                if account_id not in account_ids:
-                    account_ids.append(account_id)
-    stable_ref_payload = _nested_mapping(transfer_payload.get("stable_ref"))
-    stable_ref_id = str(stable_ref_payload.get("stable_ref_id") or "").strip()
-    stable_refs = [stable_ref_payload] if stable_ref_id else []
-    for account_ref in account_refs:
-        if account_ref.account_id not in account_ids:
-            account_ids.append(account_ref.account_id)
-        if account_ref.cluster_id not in cluster_ids:
-            cluster_ids.append(account_ref.cluster_id)
+    request = _runtime_ledger_payload_input(request, legacy_fields)
+    refs = _runtime_ledger_journal_refs(request)
+    bucket = request.bucket
 
     return coerce_json_payload(
         {
             "schema_version": (
                 TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_PARITY_SCHEMA_VERSION
             ),
-            "status": status,
-            "journal_record_available": ref is not None,
+            "status": request.status,
+            "journal_record_available": request.ref is not None,
             "authority": "accounting_parity_only",
             "promotion_authority": False,
             "overrides_runtime_ledger_authority": False,
-            "blockers": sorted({str(item) for item in blockers if str(item)}),
+            "blockers": sorted({str(item) for item in request.blockers if str(item)}),
             "authority_blockers": runtime_ledger_bucket_source_authority_blockers(
                 bucket
             ),
-            "error": error,
+            "error": request.error,
             "runtime_ledger_bucket_id": str(bucket.id),
-            "cluster_ids": sorted(cluster_ids),
-            "account_count": len(account_refs),
-            "account_ids": sorted(account_ids),
-            "account_keys": sorted({row.account_key for row in account_refs}),
-            "transfer_count": len(transfer_ids),
-            "transfer_ids": sorted(transfer_ids),
-            "stable_ref_count": len(stable_refs),
-            "stable_ref_ids": [stable_ref_id] if stable_ref_id else [],
-            "stable_refs": stable_refs,
-            "source_refs": source_refs,
+            "cluster_ids": sorted(refs.cluster_ids),
+            "account_count": len(request.account_refs),
+            "account_ids": sorted(refs.account_ids),
+            "account_keys": sorted({row.account_key for row in request.account_refs}),
+            "transfer_count": len(refs.transfer_ids),
+            "transfer_ids": sorted(refs.transfer_ids),
+            "stable_ref_count": len(refs.stable_refs),
+            "stable_ref_ids": [refs.stable_ref_id] if refs.stable_ref_id else [],
+            "stable_refs": refs.stable_refs,
+            "source_refs": refs.source_refs,
             "transfer": {
-                "cluster_id": ref.cluster_id,
-                "transfer_id": ref.transfer_id,
-                "stable_ref_id": stable_ref_id or None,
-                "transfer_kind": ref.transfer_kind,
-                "ledger": ref.ledger,
-                "code": ref.code,
-                "amount": str(ref.amount),
-                "status": ref.status,
-                "debit_account_id": transfer_payload.get("debit_account_id"),
-                "credit_account_id": transfer_payload.get("credit_account_id"),
+                "cluster_id": request.ref.cluster_id,
+                "transfer_id": request.ref.transfer_id,
+                "stable_ref_id": refs.stable_ref_id or None,
+                "transfer_kind": request.ref.transfer_kind,
+                "ledger": request.ref.ledger,
+                "code": request.ref.code,
+                "amount": str(request.ref.amount),
+                "status": request.ref.status,
+                "debit_account_id": refs.transfer_payload.get("debit_account_id"),
+                "credit_account_id": refs.transfer_payload.get("credit_account_id"),
             }
-            if ref is not None
+            if request.ref is not None
             else None,
         }
+    )
+
+
+def _runtime_ledger_payload_input(
+    request: RuntimeLedgerJournalPayloadInput | None,
+    legacy_fields: Mapping[str, object],
+) -> RuntimeLedgerJournalPayloadInput:
+    if request is not None:
+        if legacy_fields:
+            raise TypeError(
+                "runtime ledger request cannot be mixed with keyword fields"
+            )
+        return request
+    return RuntimeLedgerJournalPayloadInput(
+        bucket=cast(StrategyRuntimeLedgerBucket, legacy_fields["bucket"]),
+        ref=cast(TigerBeetleTransferRef | None, legacy_fields.get("ref")),
+        status=str(legacy_fields["status"]),
+        blockers=cast(Sequence[str], legacy_fields.get("blockers", ())),
+        account_refs=cast(
+            Sequence[TigerBeetleAccountRef], legacy_fields.get("account_refs", ())
+        ),
+        error=cast(str | None, legacy_fields.get("error")),
     )
 
 
 FILL_POST_EVENT_TYPES = {"fill", "filled", "partial_fill", "partially_filled"}
 
 
-def _event_amount_usd(
+def event_amount_usd(
     event: ExecutionOrderEvent,
     transfer_kind: str,
     *,
@@ -515,9 +541,9 @@ def _event_amount_usd(
 
 
 def _explicit_fill_delta_notional_usd(event: ExecutionOrderEvent) -> Decimal | None:
-    raw_event = _nested_mapping(event.raw_event)
-    nested_order = _nested_mapping(raw_event.get("order"))
-    value = _lookup_payload_decimal(
+    raw_event = nested_mapping(event.raw_event)
+    nested_order = nested_mapping(raw_event.get("order"))
+    value = lookup_payload_decimal(
         raw_event,
         (
             "fill_notional",
@@ -527,7 +553,7 @@ def _explicit_fill_delta_notional_usd(event: ExecutionOrderEvent) -> Decimal | N
         ),
     )
     if value is None:
-        value = _lookup_payload_decimal(
+        value = lookup_payload_decimal(
             nested_order,
             (
                 "fill_notional",
@@ -542,27 +568,25 @@ def _explicit_fill_delta_notional_usd(event: ExecutionOrderEvent) -> Decimal | N
 def _event_cumulative_amount_usd(
     event: ExecutionOrderEvent, transfer_kind: str
 ) -> Decimal | None:
-    raw_event = _nested_mapping(event.raw_event)
-    nested_order = _nested_mapping(raw_event.get("order"))
-    notional = _lookup_payload_decimal(raw_event, ("notional", "filled_notional"))
+    raw_event = nested_mapping(event.raw_event)
+    nested_order = nested_mapping(raw_event.get("order"))
+    notional = lookup_payload_decimal(raw_event, ("notional", "filled_notional"))
     if notional is None:
-        notional = _lookup_payload_decimal(
-            nested_order, ("notional", "filled_notional")
-        )
+        notional = lookup_payload_decimal(nested_order, ("notional", "filled_notional"))
     if notional is not None:
         return abs(notional)
 
     qty = event.filled_qty if transfer_kind == TRANSFER_KIND_FILL_POST else event.qty
     if qty is None:
-        qty = _lookup_payload_decimal(raw_event, ("qty", "quantity", "filled_qty"))
+        qty = lookup_payload_decimal(raw_event, ("qty", "quantity", "filled_qty"))
     price = event.avg_fill_price
     if price is None:
-        price = _lookup_payload_decimal(
+        price = lookup_payload_decimal(
             raw_event,
             ("avg_fill_price", "filled_avg_price", "limit_price", "price"),
         )
     if price is None:
-        price = _lookup_payload_decimal(
+        price = lookup_payload_decimal(
             nested_order,
             ("avg_fill_price", "filled_avg_price", "limit_price", "price"),
         )
@@ -597,7 +621,7 @@ def _prior_cumulative_fill_notional_usd(
     prior_amounts = [
         _event_cumulative_amount_usd(candidate, TRANSFER_KIND_FILL_POST)
         for candidate in candidates
-        if _is_fill_post_event(candidate) and _order_event_precedes(candidate, event)
+        if _is_fill_post_event(candidate) and order_event_precedes(candidate, event)
     ]
     usable_amounts = [amount for amount in prior_amounts if amount is not None]
     if not usable_amounts:
@@ -610,7 +634,7 @@ def _is_fill_post_event(event: ExecutionOrderEvent) -> bool:
     return normalized in FILL_POST_EVENT_TYPES
 
 
-def _order_event_precedes(
+def order_event_precedes(
     candidate: ExecutionOrderEvent, event: ExecutionOrderEvent
 ) -> bool:
     if (
@@ -627,7 +651,7 @@ def _order_event_precedes(
     return candidate.created_at < event.created_at
 
 
-def _account_id(account_key: str) -> int:
+def account_id_for_key(account_key: str) -> int:
     return stable_u128("torghut.tigerbeetle.account", account_key)
 
 
@@ -657,7 +681,7 @@ class TigerBeetleSourceTransferPlan:
 
 
 @dataclass(frozen=True)
-class _PreparedTigerBeetleTransferWrite:
+class PreparedTigerBeetleTransferWrite:
     account_specs: tuple[TigerBeetleAccountSpec, ...]
     transfer_spec: TigerBeetleTransferSpec
     trade_decision_id: object | None
@@ -671,7 +695,39 @@ class _PreparedTigerBeetleTransferWrite:
     payload_json: Mapping[str, object]
 
 
-def _submitted_pending_key(event: ExecutionOrderEvent) -> str:
+@dataclass(frozen=True)
+class StableRefPayloadInput:
+    cluster_id: int
+    account_specs: Sequence[TigerBeetleAccountSpec]
+    transfer_spec: TigerBeetleTransferSpec
+    source_type: str
+    source_id: str
+    payload_json: Mapping[str, object]
+    event_fingerprint: str | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeLedgerJournalPayloadInput:
+    bucket: StrategyRuntimeLedgerBucket
+    ref: TigerBeetleTransferRef | None
+    status: str
+    blockers: Sequence[str] = ()
+    account_refs: Sequence[TigerBeetleAccountRef] = ()
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class _RuntimeLedgerJournalRefs:
+    account_ids: list[str]
+    transfer_ids: list[str]
+    source_refs: list[str]
+    cluster_ids: list[int]
+    transfer_payload: Mapping[str, object]
+    stable_ref_id: str
+    stable_refs: list[Mapping[str, object]]
+
+
+def submitted_pending_key(event: ExecutionOrderEvent) -> str:
     source_id = (
         str(event.execution_id)
         if event.execution_id is not None
@@ -680,10 +736,7 @@ def _submitted_pending_key(event: ExecutionOrderEvent) -> str:
     return f"{event.alpaca_account_label}:{source_id}"
 
 
-def _economic_decimal_text(value: object) -> str:
+def economic_decimal_text(value: object) -> str:
     if value is None:
         return "null"
     return format(Decimal(str(value)).normalize(), "f")
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

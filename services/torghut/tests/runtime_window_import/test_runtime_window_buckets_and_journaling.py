@@ -191,7 +191,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                     False,
                 ),
                 patch(
-                    "app.trading.tigerbeetle_journal_modules.part_04_tigerbeetleledgerjournal.create_tigerbeetle_client",
+                    "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
                     return_value=fake_client,
                 ),
             ):
