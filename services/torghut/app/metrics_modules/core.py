@@ -1,13 +1,9 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Prometheus-formatted metrics for Torghut trading counters."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import cast
-
-# ruff: noqa: F401,F403,F405,F811,F821
 
 
 def _escape_label_value(value: str | int | float) -> str:
@@ -15,7 +11,7 @@ def _escape_label_value(value: str | int | float) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _render_labeled_metric(
+def render_labeled_metric(
     metric_name: str,
     labels: Mapping[str, str],
     value: int | float,
@@ -28,7 +24,7 @@ def _render_labeled_metric(
     return [f"{metric_name}{{{label_text}}} {value}"]
 
 
-def _coerce_int(value: object) -> int:
+def coerce_int(value: object) -> int:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -40,7 +36,7 @@ def _coerce_int(value: object) -> int:
     return 0
 
 
-_SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
+SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
     "execution_requests_total": (
         "torghut_trading_execution_requests_total",
         "Count of execution requests by adapter.",
@@ -379,14 +375,14 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
     ),
 }
 
-_STRATEGY_RUNTIME_METRICS: dict[str, tuple[str, str]] = {
+STRATEGY_RUNTIME_METRICS: dict[str, tuple[str, str]] = {
     "strategy_events_total": ("torghut_trading_strategy_events_total", "counter"),
     "strategy_intents_total": ("torghut_trading_strategy_intents_total", "counter"),
     "strategy_errors_total": ("torghut_trading_strategy_errors_total", "counter"),
     "strategy_latency_ms": ("torghut_trading_strategy_latency_ms", "gauge"),
 }
 
-_SERVICE_LABEL_GAUGES: dict[str, tuple[str, str]] = {
+SERVICE_LABEL_GAUGES: dict[str, tuple[str, str]] = {
     "signal_lag_seconds": (
         "torghut_trading_signal_lag_seconds",
         "Latest signal ingestion lag in seconds.",
@@ -429,7 +425,7 @@ _SERVICE_LABEL_GAUGES: dict[str, tuple[str, str]] = {
     ),
 }
 
-_DIRECT_GAUGES: dict[str, tuple[str, str]] = {
+DIRECT_GAUGES: dict[str, tuple[str, str]] = {
     "feature_staleness_ms_p95": (
         "torghut_trading_feature_staleness_ms_p95",
         "Feature staleness p95 for the latest ingest batch.",
@@ -480,7 +476,7 @@ _DIRECT_GAUGES: dict[str, tuple[str, str]] = {
     ),
 }
 
-_AUTONOMY_WINDOW_GAUGES: dict[str, tuple[str, str]] = {
+AUTONOMY_WINDOW_GAUGES: dict[str, tuple[str, str]] = {
     "calibration_coverage_error": (
         "torghut_trading_calibration_coverage_error",
         "Absolute conformal coverage error for the latest autonomy window.",
@@ -495,14 +491,14 @@ _AUTONOMY_WINDOW_GAUGES: dict[str, tuple[str, str]] = {
     ),
 }
 
-_EVIDENCE_CONTINUITY_KEYS = {
+EVIDENCE_CONTINUITY_KEYS = {
     "evidence_continuity_last_checked_ts_seconds",
     "evidence_continuity_last_success_ts_seconds",
     "evidence_continuity_last_failed_runs",
 }
 
 
-def _metric_headers(metric_name: str, help_text: str, metric_type: str) -> list[str]:
+def metric_headers(metric_name: str, help_text: str, metric_type: str) -> list[str]:
     return [f"# HELP {metric_name} {help_text}", f"# TYPE {metric_name} {metric_type}"]
 
 
@@ -516,7 +512,7 @@ def _parse_metric_value(value: object, numeric_kind: str) -> int | float | None:
     return None
 
 
-def _sorted_metric_items(
+def sorted_metric_items(
     values: Mapping[str, object],
     *,
     numeric_kind: str,
@@ -530,17 +526,17 @@ def _sorted_metric_items(
     return sorted(items)
 
 
-def _render_simple_map_metric(key: str, values: Mapping[str, object]) -> list[str]:
-    metric_name, help_text, metric_type, label_name, numeric_kind = _SIMPLE_MAP_METRICS[
+def render_simple_map_metric(key: str, values: Mapping[str, object]) -> list[str]:
+    metric_name, help_text, metric_type, label_name, numeric_kind = SIMPLE_MAP_METRICS[
         key
     ]
-    lines = _metric_headers(metric_name, help_text, metric_type)
-    for label, numeric_value in _sorted_metric_items(
+    lines = metric_headers(metric_name, help_text, metric_type)
+    for label, numeric_value in sorted_metric_items(
         values,
         numeric_kind=numeric_kind,
     ):
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={label_name: label},
                 value=numeric_value,
@@ -549,20 +545,20 @@ def _render_simple_map_metric(key: str, values: Mapping[str, object]) -> list[st
     return lines
 
 
-def _render_execution_fallback_total_map(values: Mapping[str, object]) -> list[str]:
+def render_execution_fallback_total_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_trading_execution_fallback_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of execution fallbacks by adapter transition.",
         "counter",
     )
-    for transition, count in _sorted_metric_items(values, numeric_kind="int"):
+    for transition, count in sorted_metric_items(values, numeric_kind="int"):
         expected_adapter = "unknown"
         actual_adapter = "unknown"
         if "->" in transition:
             expected_adapter, actual_adapter = transition.split("->", 1)
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"from": expected_adapter, "to": actual_adapter},
                 value=count,
@@ -571,20 +567,20 @@ def _render_execution_fallback_total_map(values: Mapping[str, object]) -> list[s
     return lines
 
 
-def _render_lean_failure_taxonomy_total_map(values: Mapping[str, object]) -> list[str]:
+def render_lean_failure_taxonomy_total_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_trading_lean_failure_taxonomy_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of LEAN failures by operation and taxonomy.",
         "counter",
     )
-    for label, count in _sorted_metric_items(values, numeric_kind="int"):
+    for label, count in sorted_metric_items(values, numeric_kind="int"):
         operation = "unknown"
         taxonomy = "unknown"
         if ":" in label:
             operation, taxonomy = label.split(":", 1)
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"operation": operation, "taxonomy": taxonomy},
                 value=count,
@@ -593,11 +589,11 @@ def _render_lean_failure_taxonomy_total_map(values: Mapping[str, object]) -> lis
     return lines
 
 
-def _render_route_provenance_map(values: Mapping[str, object]) -> list[str]:
-    total = _coerce_int(values.get("total"))
-    missing = _coerce_int(values.get("missing"))
-    unknown = _coerce_int(values.get("unknown"))
-    mismatch = _coerce_int(values.get("mismatch"))
+def render_route_provenance_map(values: Mapping[str, object]) -> list[str]:
+    total = coerce_int(values.get("total"))
+    missing = coerce_int(values.get("missing"))
+    unknown = coerce_int(values.get("unknown"))
+    mismatch = coerce_int(values.get("mismatch"))
     lines: list[str] = []
     ratio_metrics: list[tuple[str, str]] = [
         ("coverage_ratio", "torghut_trading_route_provenance_coverage_ratio"),
@@ -606,7 +602,7 @@ def _render_route_provenance_map(values: Mapping[str, object]) -> list[str]:
     ]
     for source_key, metric_name in ratio_metrics:
         lines.extend(
-            _metric_headers(
+            metric_headers(
                 metric_name,
                 "Route provenance continuity ratio for recent executions.",
                 "gauge",
@@ -615,7 +611,7 @@ def _render_route_provenance_map(values: Mapping[str, object]) -> list[str]:
         ratio = values.get(source_key)
         if isinstance(ratio, (int, float, Decimal)):
             lines.extend(
-                _render_labeled_metric(
+                render_labeled_metric(
                     metric_name=metric_name,
                     labels={},
                     value=float(ratio),
@@ -644,9 +640,9 @@ def _render_route_provenance_map(values: Mapping[str, object]) -> list[str]:
         ),
     ]
     for metric_name, metric_value, help_text in count_metrics:
-        lines.extend(_metric_headers(metric_name, help_text, "gauge"))
+        lines.extend(metric_headers(metric_name, help_text, "gauge"))
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={},
                 value=metric_value,
@@ -655,20 +651,20 @@ def _render_route_provenance_map(values: Mapping[str, object]) -> list[str]:
     return lines
 
 
-def _render_universe_resolution_total_map(values: Mapping[str, object]) -> list[str]:
+def render_universe_resolution_total_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_trading_universe_resolution_total"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Count of universe resolution outcomes by status and reason.",
         "counter",
     )
-    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+    for key, count in sorted_metric_items(values, numeric_kind="int"):
         status = "unknown"
         reason = "unknown"
         if "|" in key:
             status, reason = key.split("|", 1)
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={"status": status, "reason": reason},
                 value=count,
@@ -677,9 +673,9 @@ def _render_universe_resolution_total_map(values: Mapping[str, object]) -> list[
     return lines
 
 
-def _render_forecast_calibration_error_map(values: Mapping[str, object]) -> list[str]:
+def render_forecast_calibration_error_map(values: Mapping[str, object]) -> list[str]:
     metric_name = "torghut_forecast_calibration_error"
-    lines = _metric_headers(
+    lines = metric_headers(
         metric_name,
         "Forecast calibration error by model family, symbol, and horizon.",
         "gauge",
@@ -700,7 +696,7 @@ def _render_forecast_calibration_error_map(values: Mapping[str, object]) -> list
         except (ValueError, TypeError):
             continue
         lines.extend(
-            _render_labeled_metric(
+            render_labeled_metric(
                 metric_name=metric_name,
                 labels={
                     "model_family": family,
@@ -711,6 +707,3 @@ def _render_forecast_calibration_error_map(values: Mapping[str, object]) -> list
             )
         )
     return lines
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
