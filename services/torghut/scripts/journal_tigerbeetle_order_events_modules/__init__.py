@@ -30,6 +30,7 @@ from .journal_payloads import (
     _payload,
     _progress_int,
     _safe_payload_allows_success,
+    _write_supervised_output,
 )
 
 __all__ = (
@@ -57,6 +58,7 @@ __all__ = (
     "_select_unlinked_runtime_buckets",
     "_select_unlinked_tca_metrics",
     "_sqlalchemy_dsn",
+    "_write_supervised_output",
     "build_order_event_transfer_plan",
     "main",
 )
