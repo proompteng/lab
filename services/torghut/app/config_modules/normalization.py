@@ -1,33 +1,34 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-"""Application configuration for the torghut service."""
+"""Settings normalization and validation mixins."""
 
 import json
-import logging
-import tempfile
 import os
-from decimal import Decimal
-from functools import lru_cache
-from http.client import HTTPConnection, HTTPSConnection
-from pathlib import Path
-import string
-from typing import Any, List, Literal, Optional, cast
+from typing import Literal, Optional, cast
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from ..logging_config import configure_logging
-
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_20 import *
-from .part_02_settingsfieldspart1 import *
-from .part_03_settingsfieldspart2 import *
-from .part_04_settingsfieldspart3 import *
-from .part_05_settingsfieldspart4 import *
+from .common import (
+    BooleanFeatureFlagRequest,
+    FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD,
+    logger,
+    resolve_boolean_feature_flag,
+)
+from .autonomy_execution_fields import AutonomyExecutionSettingsFields
+from .llm_fields import LlmSettingsFields
+from .runtime_risk_fields import RuntimeRiskSettingsFields
+from .service_fields import CoreSettingsFields
 
 
-class _SettingsMethodsPart1:
+def validate_fragility_map(name: str, values: dict[str, float]) -> None:
+    for state, value in values.items():
+        if value < 0 or value > 1:
+            raise ValueError(f"{name}[{state}] must be within [0, 1]")
+
+
+class SettingsNormalizationMixin(
+    CoreSettingsFields,
+    AutonomyExecutionSettingsFields,
+    RuntimeRiskSettingsFields,
+    LlmSettingsFields,
+):
     def _apply_feature_flag_overrides(self) -> None:
         if not self.trading_feature_flags_enabled:
             return
@@ -49,13 +50,15 @@ class _SettingsMethodsPart1:
         self.trading_feature_flags_entity_id = entity_id
         for field_name, flag_key in FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD.items():
             default_value = bool(getattr(self, field_name))
-            resolved, success = _resolve_boolean_feature_flag(
-                endpoint=endpoint,
-                namespace_key=namespace_key,
-                entity_id=entity_id,
-                flag_key=flag_key,
-                default_value=default_value,
-                timeout_ms=self.trading_feature_flags_timeout_ms,
+            resolved, success = resolve_boolean_feature_flag(
+                BooleanFeatureFlagRequest(
+                    endpoint=endpoint,
+                    namespace_key=namespace_key,
+                    entity_id=entity_id,
+                    flag_key=flag_key,
+                    default_value=default_value,
+                    timeout_ms=self.trading_feature_flags_timeout_ms,
+                )
             )
             setattr(self, field_name, resolved)
             if not success:
@@ -662,19 +665,19 @@ class _SettingsMethodsPart1:
             raise ValueError(
                 "TRADING_FRAGILITY thresholds must satisfy elevated <= stress <= crisis"
             )
-        _validate_fragility_map(
+        validate_fragility_map(
             "TRADING_FRAGILITY_STATE_BUDGET_MULTIPLIERS",
             self.trading_fragility_state_budget_multipliers,
         )
-        _validate_fragility_map(
+        validate_fragility_map(
             "TRADING_FRAGILITY_STATE_CAPACITY_MULTIPLIERS",
             self.trading_fragility_state_capacity_multipliers,
         )
-        _validate_fragility_map(
+        validate_fragility_map(
             "TRADING_FRAGILITY_STATE_PARTICIPATION_CLAMPS",
             self.trading_fragility_state_participation_clamps,
         )
-        _validate_fragility_map(
+        validate_fragility_map(
             "TRADING_FRAGILITY_STATE_ABSTAIN_BIAS",
             self.trading_fragility_state_abstain_bias,
         )
@@ -683,6 +686,67 @@ class _SettingsMethodsPart1:
             for key, value in self.trading_allocator_symbol_correlation_groups.items()
             if str(key).strip() and str(value).strip()
         }
+
+    @property
+    def llm_live_fail_open_requested(self) -> bool:
+        return self.llm_live_fail_open_requested_for_stage(self.llm_rollout_stage)
+
+    def llm_live_fail_open_requested_for_stage(self, rollout_stage: str) -> bool:
+        if self.trading_mode != "live":
+            return False
+        normalized_stage = self._normalize_rollout_stage(rollout_stage)
+        if normalized_stage in {"stage1", "stage2"}:
+            return (
+                self.llm_effective_fail_mode(rollout_stage=normalized_stage)
+                == "pass_through"
+            )
+        return self.llm_effective_fail_mode() == "pass_through"
+
+    def llm_effective_fail_mode_for_current_rollout(
+        self,
+    ) -> Literal["veto", "pass_through"]:
+        rollout_stage = self._normalize_rollout_stage(self.llm_rollout_stage)
+        if rollout_stage in {"stage1", "stage2"}:
+            return self.llm_effective_fail_mode(rollout_stage=rollout_stage)
+        return self.llm_effective_fail_mode()
+
+    def llm_effective_fail_mode(
+        self, *, rollout_stage: Optional[str] = None
+    ) -> Literal["veto", "pass_through"]:
+        if rollout_stage == "stage1":
+            if self.llm_fail_mode_enforcement == "strict_veto":
+                return "veto"
+            return "pass_through"
+
+        if rollout_stage == "stage2":
+            return "pass_through"
+
+        if self.llm_fail_mode_enforcement == "strict_veto":
+            return "veto"
+        return self.llm_fail_mode
+
+    @staticmethod
+    def _normalize_rollout_stage(stage: str) -> str:
+        if stage.startswith("stage0"):
+            return "stage0"
+        if stage.startswith("stage1"):
+            return "stage1"
+        if stage.startswith("stage2"):
+            return "stage2"
+        if stage.startswith("stage3"):
+            return "stage3"
+        return "stage3"
+
+    @staticmethod
+    def _matches_model_version_lock(model: str, version_lock: str) -> bool:
+        if not version_lock:
+            return False
+        if model == version_lock:
+            return True
+        if "@" in version_lock:
+            locked_model = version_lock.split("@", 1)[0].strip()
+            return bool(locked_model) and model == locked_model
+        return False
 
     def _validate_llm_settings(self) -> None:
         if (
@@ -758,4 +822,4 @@ class _SettingsMethodsPart1:
         )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ["SettingsNormalizationMixin", "validate_fragility_map"]

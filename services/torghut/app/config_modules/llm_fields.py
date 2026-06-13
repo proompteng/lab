@@ -1,32 +1,12 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-"""Application configuration for the torghut service."""
+"""LLM rollout, committee, and DSPy runtime settings."""
 
-import json
-import logging
-import tempfile
-import os
-from decimal import Decimal
-from functools import lru_cache
-from http.client import HTTPConnection, HTTPSConnection
-from pathlib import Path
-import string
-from typing import Any, List, Literal, Optional, cast
-from urllib.parse import urlsplit
+from typing import Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ..logging_config import configure_logging
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_20 import *
-from .part_02_settingsfieldspart1 import *
-from .part_03_settingsfieldspart2 import *
-from .part_04_settingsfieldspart3 import *
-
-
-class _SettingsFieldsPart4(BaseSettings):
+class LlmSettingsFields(BaseSettings):
     llm_rollout_stage: Literal[
         "stage0",
         "stage1",
@@ -164,4 +144,4 @@ class _SettingsFieldsPart4(BaseSettings):
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ["LlmSettingsFields"]
