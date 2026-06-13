@@ -1,89 +1,198 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_part_modules__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_01_discover_runtime_root"
+from .context import (
+    discover_runtime_root,
+    REPO_ROOT,
+    MIN_SIMULATION_PARITY_SAMPLE_COUNT,
+    MAX_SIMULATION_LIVE_FILL_ERROR_BPS,
+    MAX_ADVERSE_SELECTION_ERROR_BPS,
+    EXECUTION_REALISM_PASS_STATUSES,
+    to_string,
+    to_mapping,
+    to_mapping_list,
+    to_string_tuple,
+    to_int,
+    to_float,
+    to_decimal,
+    decimal_to_string,
+    optional_decimal_to_string,
+    p10,
+    MICROBAR_PORTFOLIO_SIGNAL_SETTINGS,
+    MICROBAR_PORTFOLIO_RUNTIME_PARAM_KEYS,
+    PORTFOLIO_POLICY_REF_PREFIX,
+    json_dumps,
+    write_json,
+    sha256_path,
+    sha256_json,
+    now_iso,
+    git_output,
+    runtime_run_context,
+    RuntimeClosureExecutionContext,
+    date_from_iso,
+    daily_filled_notional,
+    daily_liquidity_notional,
+    runtime_execution_realism_summary,
+    execution_realism_missing_evidence,
+    max_drawdown_from_daily_net,
+    rolling_lower_bound,
+    max_best_day_share_of_total_pnl,
+    objective_veto_policy,
+    runtime_family,
+    runtime_strategy_name,
+    candidate_params,
+    candidate_strategy_overrides,
+    disable_other_strategies,
+    portfolio_payload,
+    text_tuple,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
 
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_02_portfolio_candidate_runtime_payload"
+from .candidate_payloads import (
+    RuntimeReplayRequest,
+    portfolio_candidate_runtime_payload,
+    runtime_best_candidate_payload,
+    portfolio_optimizer_evidence,
+    portfolio_symbols,
+    is_microbar_portfolio_candidate,
+    microbar_portfolio_strategy_name,
+    portfolio_runtime_strategy_names,
+    policy_ref_slug,
+    portfolio_policy_refs,
+    portfolio_promotion_v2,
+    runtime_closure_policy,
+    portfolio_proof_receipt_payload,
+    materialized_microbar_portfolio_runtime_strategies,
+    materialized_generic_portfolio_runtime_strategies,
+    candidate_symbols,
+    window_bounds,
+    load_strategy_configmap_payload,
+    materialize_candidate_configmap,
+    default_replay_executor,
+    run_runtime_replay,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_03_replay_analysis")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_04_market_impact_stress_report"
+from .replay_analysis import (
+    BacktestSummaryRequest,
+    CandidateStateRequest,
+    GateReportRequest,
+    ReplayAnalysisRequest,
+    replay_analysis,
+    shadow_validation_artifact,
+    summary_status_and_next_steps,
+    candidate_spec,
+    candidate_generation_manifest,
+    gate_report,
+    candidate_state,
+    backtest_summary,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
 
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_05_double_oos_walkforward_report"
+from .delay_depth import delay_adjusted_depth_stress_report
+
+from .market_impact import (
+    market_impact_stress_report,
+    runtime_replay_net_pnl_per_day,
+    double_oos_window_row,
+    double_oos_cost_shock_net_pnl_per_day,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
 
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_06_write_runtime_closure_bundle"
+from .walkforward import (
+    DoubleOosWalkforwardRequest,
+    ProfitabilityStageManifestRequest,
+    double_oos_walkforward_report,
+    stress_metrics_payload,
+    profitability_stage_manifest,
+    RuntimeClosureBundleSummary,
 )
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
 
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-__all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
-]
-del __compat_module__
+from .bundle_writer import RuntimeClosureBundleRequest, write_runtime_closure_bundle
+
+__all__ = (
+    "discover_runtime_root",
+    "REPO_ROOT",
+    "MIN_SIMULATION_PARITY_SAMPLE_COUNT",
+    "MAX_SIMULATION_LIVE_FILL_ERROR_BPS",
+    "MAX_ADVERSE_SELECTION_ERROR_BPS",
+    "EXECUTION_REALISM_PASS_STATUSES",
+    "to_string",
+    "to_mapping",
+    "to_mapping_list",
+    "to_string_tuple",
+    "to_int",
+    "to_float",
+    "to_decimal",
+    "decimal_to_string",
+    "optional_decimal_to_string",
+    "p10",
+    "MICROBAR_PORTFOLIO_SIGNAL_SETTINGS",
+    "MICROBAR_PORTFOLIO_RUNTIME_PARAM_KEYS",
+    "PORTFOLIO_POLICY_REF_PREFIX",
+    "json_dumps",
+    "write_json",
+    "sha256_path",
+    "sha256_json",
+    "now_iso",
+    "git_output",
+    "runtime_run_context",
+    "runtime_closure_policy",
+    "portfolio_proof_receipt_payload",
+    "RuntimeClosureExecutionContext",
+    "date_from_iso",
+    "daily_filled_notional",
+    "daily_liquidity_notional",
+    "runtime_execution_realism_summary",
+    "execution_realism_missing_evidence",
+    "max_drawdown_from_daily_net",
+    "rolling_lower_bound",
+    "max_best_day_share_of_total_pnl",
+    "objective_veto_policy",
+    "runtime_family",
+    "runtime_strategy_name",
+    "candidate_params",
+    "candidate_strategy_overrides",
+    "disable_other_strategies",
+    "portfolio_payload",
+    "text_tuple",
+    "portfolio_candidate_runtime_payload",
+    "runtime_best_candidate_payload",
+    "portfolio_optimizer_evidence",
+    "portfolio_symbols",
+    "is_microbar_portfolio_candidate",
+    "microbar_portfolio_strategy_name",
+    "portfolio_runtime_strategy_names",
+    "policy_ref_slug",
+    "portfolio_policy_refs",
+    "portfolio_promotion_v2",
+    "RuntimeReplayRequest",
+    "materialized_microbar_portfolio_runtime_strategies",
+    "materialized_generic_portfolio_runtime_strategies",
+    "candidate_symbols",
+    "window_bounds",
+    "load_strategy_configmap_payload",
+    "materialize_candidate_configmap",
+    "default_replay_executor",
+    "run_runtime_replay",
+    "BacktestSummaryRequest",
+    "CandidateStateRequest",
+    "GateReportRequest",
+    "ReplayAnalysisRequest",
+    "replay_analysis",
+    "shadow_validation_artifact",
+    "summary_status_and_next_steps",
+    "candidate_spec",
+    "candidate_generation_manifest",
+    "gate_report",
+    "candidate_state",
+    "backtest_summary",
+    "market_impact_stress_report",
+    "delay_adjusted_depth_stress_report",
+    "runtime_replay_net_pnl_per_day",
+    "double_oos_window_row",
+    "double_oos_cost_shock_net_pnl_per_day",
+    "DoubleOosWalkforwardRequest",
+    "ProfitabilityStageManifestRequest",
+    "double_oos_walkforward_report",
+    "stress_metrics_payload",
+    "profitability_stage_manifest",
+    "RuntimeClosureBundleSummary",
+    "RuntimeClosureBundleRequest",
+    "write_runtime_closure_bundle",
+)

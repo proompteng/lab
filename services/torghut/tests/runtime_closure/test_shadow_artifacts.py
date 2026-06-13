@@ -1,10 +1,22 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.runtime_closure.support import *
+from tests.runtime_closure.support import (
+    json,
+    Decimal,
+    Path,
+    TemporaryDirectory,
+    RuntimeClosurePolicy,
+    StrategyAutoresearchProgram,
+    StrategyObjective,
+    build_mlx_snapshot_manifest,
+    RuntimeClosureExecutionContext,
+    write_runtime_closure_bundle,
+    _program,
+    _TestRuntimeClosureBase,
+)
 
 
-class TestRuntimeClosurePart4(_TestRuntimeClosureBase):
+class TestRuntimeClosureShadowArtifacts(_TestRuntimeClosureBase):
     def test_write_runtime_closure_bundle_consumes_within_budget_shadow_artifact(
         self,
     ) -> None:

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 import json
 import subprocess
+from importlib import import_module
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
+
+import yaml
 
 import app.trading.discovery.runtime_closure as runtime_closure
 from app.trading.discovery.autoresearch import (
@@ -27,6 +29,13 @@ from app.trading.discovery.portfolio_candidates import (
 from app.trading.discovery.runtime_closure import (
     RuntimeClosureExecutionContext,
     write_runtime_closure_bundle,
+)
+
+runtime_closure_candidate_payloads = import_module(
+    "app.trading.discovery.runtime_closure_modules.candidate_payloads"
+)
+runtime_closure_replay_analysis = import_module(
+    "app.trading.discovery.runtime_closure_modules.replay_analysis"
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -91,4 +100,29 @@ class _TestRuntimeClosureBase(TestCase):
     pass
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "json",
+    "subprocess",
+    "Decimal",
+    "Path",
+    "TemporaryDirectory",
+    "patch",
+    "runtime_closure",
+    "runtime_closure_candidate_payloads",
+    "runtime_closure_replay_analysis",
+    "yaml",
+    "ProposalModelPolicy",
+    "ReplayBudget",
+    "RuntimeClosurePolicy",
+    "SnapshotPolicy",
+    "StrategyAutoresearchProgram",
+    "StrategyObjective",
+    "build_mlx_snapshot_manifest",
+    "PORTFOLIO_CANDIDATE_SCHEMA_VERSION",
+    "PortfolioCandidateSpec",
+    "RuntimeClosureExecutionContext",
+    "write_runtime_closure_bundle",
+    "_REPO_ROOT",
+    "_program",
+    "_TestRuntimeClosureBase",
+)

@@ -1,10 +1,29 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-from tests.runtime_closure.support import *
+from tests.runtime_closure.support import (
+    json,
+    subprocess,
+    Decimal,
+    Path,
+    TemporaryDirectory,
+    patch,
+    runtime_closure,
+    runtime_closure_replay_analysis,
+    RuntimeClosurePolicy,
+    StrategyAutoresearchProgram,
+    StrategyObjective,
+    build_mlx_snapshot_manifest,
+    PORTFOLIO_CANDIDATE_SCHEMA_VERSION,
+    PortfolioCandidateSpec,
+    RuntimeClosureExecutionContext,
+    write_runtime_closure_bundle,
+    _REPO_ROOT,
+    _program,
+    _TestRuntimeClosureBase,
+)
 
 
-class TestRuntimeClosurePart2(_TestRuntimeClosureBase):
+class TestRuntimeClosureBundleGenerationAndReplay(_TestRuntimeClosureBase):
     def test_runtime_closure_accepts_portfolio_spec_and_requires_optimizer_evidence(
         self,
     ) -> None:
@@ -184,15 +203,17 @@ class TestRuntimeClosurePart2(_TestRuntimeClosureBase):
         }
 
         with patch.object(
-            runtime_closure,
+            runtime_closure_replay_analysis,
             "build_replay_decomposition",
             side_effect=RuntimeError("boom"),
         ):
-            analysis = runtime_closure._replay_analysis(
-                window_name="full_window",
-                replay_payload=replay_payload,
-                best_candidate=best_candidate,
-                program=_program(),
+            analysis = runtime_closure.replay_analysis(
+                runtime_closure.ReplayAnalysisRequest(
+                    window_name="full_window",
+                    replay_payload=replay_payload,
+                    best_candidate=best_candidate,
+                    program=_program(),
+                )
             )
 
         self.assertEqual(analysis["decomposition_error"], "boom")
@@ -619,7 +640,7 @@ data:
     def test_market_impact_stress_report_passes_only_after_square_root_cost(
         self,
     ) -> None:
-        report = runtime_closure._market_impact_stress_report(
+        report = runtime_closure.market_impact_stress_report(
             runner_run_id="run-impact",
             best_candidate={
                 "candidate_id": "cand-impact",
@@ -663,7 +684,7 @@ data:
     def test_market_impact_stress_report_fails_without_real_liquidity_evidence(
         self,
     ) -> None:
-        report = runtime_closure._market_impact_stress_report(
+        report = runtime_closure.market_impact_stress_report(
             runner_run_id="run-impact",
             best_candidate={
                 "candidate_id": "cand-impact",
@@ -699,7 +720,7 @@ data:
     def test_delay_adjusted_depth_stress_report_blocks_no_delay_fill_assumption(
         self,
     ) -> None:
-        report = runtime_closure._delay_adjusted_depth_stress_report(
+        report = runtime_closure.delay_adjusted_depth_stress_report(
             runner_run_id="run-depth-delay",
             best_candidate={
                 "candidate_id": "cand-depth-delay",
