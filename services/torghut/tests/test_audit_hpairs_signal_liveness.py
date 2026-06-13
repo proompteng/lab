@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import runpy
 from pathlib import Path
 
 from scripts import audit_hpairs_signal_liveness as audit
+from scripts import audit_hpairs_signal_liveness_modules as audit_modules
 from scripts.audit_hpairs_signal_liveness_modules import liveness_core, veto_report
 
 
@@ -259,6 +261,22 @@ def test_ready_fixture_classifies_ready_to_submit_sim_order(
     assert payload["blocker_codes"] == []
     assert payload["ready_to_submit_sim_order"] is True
     assert "H-PAIRS liveness READY" in captured.err
+
+
+def test_cli_module_entrypoint_exits_with_main_result(monkeypatch: object) -> None:
+    def _fake_main() -> int:
+        return 17
+
+    monkeypatch.setattr(audit_modules, "main", _fake_main)
+    audit_path = audit.__file__
+    assert audit_path is not None
+
+    try:
+        runpy.run_path(audit_path, run_name="__main__")
+    except SystemExit as exc:
+        assert exc.code == 17
+    else:  # pragma: no cover - entrypoint must raise SystemExit
+        raise AssertionError("expected CLI entrypoint to raise SystemExit")
 
 
 def _expectations() -> audit.AuditExpectations:
