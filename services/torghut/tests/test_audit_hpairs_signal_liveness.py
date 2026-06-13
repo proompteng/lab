@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from scripts import audit_hpairs_signal_liveness as audit
+from scripts.audit_hpairs_signal_liveness_modules import liveness_core, veto_report
 
 
 def _base_fixture() -> dict[str, object]:
@@ -391,21 +392,21 @@ def test_paper_route_probe_symbols_drive_market_data_liveness() -> None:
 
 
 def test_helper_normalizers_cover_non_fixture_shapes(tmp_path: Path) -> None:
-    assert audit._text(123) == "123"
-    assert audit._bool_or_none("enabled") is True
-    assert audit._bool_or_none("disabled") is False
-    assert audit._bool_or_none(1) is True
-    assert audit._float_or_none("") is None
-    assert audit._float_or_none("bad") is None
-    assert audit._unique_text_items({"a": 1, "b": 2}) == ["a", "b"]
-    assert audit._unique_text_items(7) == ["7"]
-    assert audit._unique_text_items(["x", "x", None]) == ["x"]
-    assert audit.stable_json({"value": object()}).endswith("\n")
+    assert liveness_core._text(123) == "123"
+    assert liveness_core._bool_or_none("enabled") is True
+    assert liveness_core._bool_or_none("disabled") is False
+    assert liveness_core._bool_or_none(1) is True
+    assert liveness_core._float_or_none("") is None
+    assert liveness_core._float_or_none("bad") is None
+    assert liveness_core._unique_text_items({"a": 1, "b": 2}) == ["a", "b"]
+    assert liveness_core._unique_text_items(7) == ["7"]
+    assert liveness_core._unique_text_items(["x", "x", None]) == ["x"]
+    assert liveness_core.stable_json({"value": object()}).endswith("\n")
 
     non_object = tmp_path / "array.json"
     non_object.write_text("[]")
     try:
-        audit._read_json_path(non_object)
+        liveness_core._read_json_path(non_object)
     except ValueError as exc:
         assert "must contain a JSON object" in str(exc)
     else:  # pragma: no cover - defensive assertion branch
@@ -436,7 +437,7 @@ def test_cli_inputs_support_overrides_status_url_errors_and_fail_on_blockers(
         assert timeout == 0.25
         return _FakeResponse()
 
-    monkeypatch.setattr(audit.urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(liveness_core.urllib.request, "urlopen", _fake_urlopen)
     args = audit.parse_args(
         [
             "--fixture-json",
@@ -449,7 +450,7 @@ def test_cli_inputs_support_overrides_status_url_errors_and_fail_on_blockers(
             "0.25",
         ]
     )
-    merged = audit._load_cli_source(args)
+    merged = veto_report._load_cli_source(args)
     assert merged["target"] == {"account_label": "ALPACA_PAPER"}
     assert merged["status"] == {"simple_lane": {"submit_enabled": False}}
 

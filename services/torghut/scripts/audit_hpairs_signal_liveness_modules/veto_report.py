@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 #!/usr/bin/env python
 """Read-only H-PAIRS signal/route liveness diagnostics.
 
@@ -14,14 +13,38 @@ import json
 import sys
 import urllib.error
 import urllib.request
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from pathlib import Path
+from collections.abc import Mapping, Sequence
 from typing import cast
 
-# ruff: noqa: F401,F403,F405,F811,F821
-
-from .part_01_statements_21 import *
+from .liveness_core import (
+    DEFAULT_HPAIRS_ACCOUNT_LABEL,
+    DEFAULT_HPAIRS_CANDIDATE_ID,
+    DEFAULT_HPAIRS_HYPOTHESIS_ID,
+    DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+    DEFAULT_OBSERVED_STAGE,
+    HPAIRS_SIGNAL_LIVENESS_SCHEMA_VERSION,
+    AuditExpectations,
+    _availability_report,
+    _bool_or_none,
+    _candidate_identity,
+    _first_mapping_from_keys,
+    _mapping,
+    _merge_inputs,
+    _normalize_symbols,
+    _read_json_path,
+    _read_status_url,
+    _runtime_materialization_report,
+    _symbol_payload,
+    _symbols_from_target,
+    _signal_drift_readiness_report,
+    _signal_threshold_report,
+    _target_from_source,
+    _unique_text_items,
+    _EVIDENCE_COLLECTION_KEYS,
+    _ROUTE_FLAG_KEYS,
+    _SIMPLE_SUBMIT_KEYS,
+    stable_json,
+)
 
 
 def _veto_report(
@@ -391,6 +414,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
