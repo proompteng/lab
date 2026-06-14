@@ -1,64 +1,29 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading pipeline implementation."""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import inspect
 import logging
-import os
-from collections.abc import Callable, Mapping
-from datetime import date, datetime, timedelta, timezone
+from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from pathlib import Path
-from typing import Any, Optional, Sequence, cast
+from typing import Any, Optional, cast
 
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ....alpaca_client import TorghutAlpacaClient
 from ....config import settings
-from ....db import SessionLocal
 from ....models import (
-    Execution,
     LLMDecisionReview,
-    PositionSnapshot,
-    RejectedSignalOutcomeEvent,
-    Strategy,
     TradeDecision,
     coerce_json_payload,
 )
-from ....observability import capture_posthog_event
 from ....snapshots import snapshot_account_and_positions
-from ....strategies import StrategyCatalog
-from ...autonomy.phase_manifest_contract import AUTONOMY_PHASE_ORDER
-from ...decisions import DecisionEngine
-from ...empirical_jobs import build_empirical_jobs_status
-from ...execution import OrderExecutor
-from ...execution_adapters import ExecutionAdapter
-from ...execution_policy import ExecutionPolicy
-from ...feature_quality import (
-    REASON_STALENESS,
-    FeatureQualityThresholds,
-    evaluate_feature_batch_quality,
-)
-from ...features import extract_executable_price, optional_decimal, payload_value
-from ...firewall import OrderFirewall, OrderFirewallBlocked
-from ...ingest import ClickHouseSignalIngestor, SignalBatch
-from ...lean_lanes import LeanLaneManager
-from ...llm import LLMReviewEngine, apply_policy
 from ...llm.dspy_programs.runtime import (
-    DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
 )
-from ...llm.guardrails import evaluate_llm_guardrails
 from ...llm.policy import allowed_order_types
 from ...llm.schema import MarketContextBundle
 from ...llm.schema import MarketSnapshot as LLMMarketSnapshot
 from ...market_context import (
-    MarketContextClient,
     MarketContextStatus,
     evaluate_market_context,
 )
@@ -67,121 +32,46 @@ from ...market_context_domains import (
     active_market_context_reasons,
 )
 from ...models import SignalEnvelope, StrategyDecision
-from ...order_feed import OrderFeedIngestor
-from ...paper_route_evidence import (
-    PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
-    PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
-)
-from ...portfolio import (
-    AllocationResult,
-    PortfolioSizingResult,
-    allocator_from_settings,
-    sizer_from_settings,
-)
-from ...prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
-from ...quote_quality import (
-    QuoteQualityPolicy,
-    QuoteQualityStatus,
-    SignalQuoteQualityTracker,
-    assess_signal_quote_quality,
-)
-from ...quantity_rules import (
-    min_qty_for_symbol,
-    quantize_qty_for_symbol,
-    resolve_quantity_resolution,
-)
-from ...reconcile import Reconciler
-from ...regime_hmm import (
-    HMMRegimeContext,
-    resolve_hmm_context,
-    resolve_regime_context_authority_reason,
-)
-from ...risk import RiskEngine
-from ...session_context import regular_session_open_utc_for
-from ...tca import derive_adaptive_execution_policy
+from ...prices import MarketSnapshot
 from ...time_source import trading_now
-from ...universe import UniverseResolver
-from ...submission_council import (
-    build_hypothesis_runtime_summary,
-    build_live_submission_gate_payload,
-    build_submission_gate_market_context_status,
-    load_quant_evidence_status,
+from ..pipeline_helpers import build_llm_policy_resolution
+
+from .contexts import (
+    LLMReviewErrorRequest,
+    LLMReviewRecord,
+    LLMUnavailableRequest,
+    MarketContextBlockRequest,
 )
-from ..pipeline_helpers import (
-    _allocator_rejection_reasons,
-    _apply_projected_position_decision,
-    _attach_dspy_lineage,
-    _autonomy_gate_report_is_saturated_fail_sentinel,
-    _build_committee_veto_alignment_payload,
-    _build_llm_policy_resolution,
-    _build_portfolio_snapshot,
-    _classify_llm_error,
-    _clone_positions,
-    _coerce_bool,
-    _coerce_json,
-    _coerce_runtime_uncertainty_gate_action,
-    _coerce_strategy_symbols,
-    _committee_trace_has_veto,
-    _extract_json_error_payload,
-    _format_order_submit_rejection,
-    _hash_payload,
-    _is_runtime_risk_increasing_entry,
-    _llm_guardrail_controls_snapshot,
-    _load_recent_decisions,
-    _normalize_rollout_stage,
-    _optional_decimal,
-    _optional_int,
-    _price_snapshot_payload,
-    _project_open_orders_onto_positions,
-    _resolve_decision_regime_label_with_source,
-    _resolve_llm_review_error_reject_reason,
-    _resolve_llm_unavailable_reject_reason,
-    _resolve_signal_regime,
-    _select_strictest_runtime_uncertainty_gate,
-    _uncertainty_gate_staleness_reason,
-)
-from ..safety import (
-    _FRESH_TAIL_NO_SIGNAL_REASONS,
-    _is_market_session_open,
-    _latch_signal_continuity_alert_state,
-    _record_signal_continuity_recovery_cycle,
-    _signal_bootstrap_grace_active,
-    _signal_tail_is_fresh,
-)
-from ..state import (
-    RuntimeUncertaintyGate,
-    RuntimeUncertaintyGateAction,
-    TradingState,
-    _normalize_reason_metric,
+from .shared import TradingPipelineBase
+from .support import (
+    attach_dspy_lineage,
+    build_committee_veto_alignment_payload,
+    build_portfolio_snapshot,
+    classify_llm_error,
+    coerce_json,
+    committee_trace_has_veto,
+    hash_payload,
+    llm_guardrail_controls_snapshot,
+    load_recent_decisions,
+    normalize_rollout_stage,
+    optional_decimal,
+    optional_int,
+    price_snapshot_payload,
+    resolve_llm_review_error_reject_reason,
+    resolve_llm_unavailable_reject_reason,
 )
 
-# ruff: noqa: F401,F403,F405,F821,F821,F821
-
-from .part_01_statements_158 import *
-from .part_02_tradingpipelinemethodspart1 import *
-from .part_03_tradingpipelinemethodspart2 import *
-from .part_04_tradingpipelinemethodspart3 import *
-from .part_05_tradingpipelinemethodspart4 import *
-from .part_06_tradingpipelinemethodspart5 import *
-from .part_07_tradingpipelinemethodspart6 import *
+logger = logging.getLogger(__name__)
 
 
-class _TradingPipelineMethodsPart7:
+class TradingPipelineReviewOutcomeMixin(TradingPipelineBase):
     def _maybe_handle_market_context_block(
         self,
-        *,
-        session: Session,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        guardrails: Any,
-        policy_resolution: dict[str, Any],
-        market_context: Optional[MarketContextBundle],
-        market_context_error: Optional[str],
+        request: MarketContextBlockRequest,
     ) -> tuple[StrategyDecision, Optional[str]] | None:
+        market_context = request.market_context
         market_context_status = evaluate_market_context(market_context)
-        if market_context_error is not None:
+        if request.market_context_error is not None:
             market_context_status = MarketContextStatus(
                 allow_llm=False,
                 reason="market_context_fetch_error",
@@ -192,7 +82,7 @@ class _TradingPipelineMethodsPart7:
 
         self.state.metrics.llm_market_context_block_total += 1
         market_context_shadow_mode = (
-            guardrails.shadow_mode
+            request.guardrails.shadow_mode
             or settings.trading_market_context_fail_mode == "shadow_only"
         )
         self.state.metrics.record_market_context_result(
@@ -200,24 +90,23 @@ class _TradingPipelineMethodsPart7:
             shadow_mode=market_context_shadow_mode,
         )
         return self._handle_llm_unavailable(
-            session,
-            decision,
-            decision_row,
-            account,
-            positions,
-            reason=market_context_status.reason or "market_context_unavailable",
-            reject_reason="market_context_block",
-            shadow_mode=market_context_shadow_mode,
-            effective_fail_mode=guardrails.effective_fail_mode,
-            risk_flags=market_context_status.risk_flags,
-            market_context=market_context,
-            response_payload_extra={
-                "market_context": {
-                    "reason": market_context_status.reason,
-                    "risk_flags": list(market_context_status.risk_flags),
-                }
-            },
-            policy_resolution=policy_resolution,
+            LLMUnavailableRequest(
+                context=request.context,
+                decision=request.decision,
+                reason=market_context_status.reason or "market_context_unavailable",
+                reject_reason="market_context_block",
+                shadow_mode=market_context_shadow_mode,
+                effective_fail_mode=request.guardrails.effective_fail_mode,
+                risk_flags=market_context_status.risk_flags,
+                market_context=market_context,
+                response_payload_extra={
+                    "market_context": {
+                        "reason": market_context_status.reason,
+                        "risk_flags": list(market_context_status.risk_flags),
+                    }
+                },
+                policy_resolution=request.policy_resolution,
+            )
         )
 
     def _record_market_context_observation(
@@ -309,15 +198,15 @@ class _TradingPipelineMethodsPart7:
         if guardrails.reasons:
             response_json["mrm_guardrails"] = list(guardrails.reasons)
         response_json["policy_resolution"] = policy_resolution
-        response_json["guardrail_controls"] = _llm_guardrail_controls_snapshot()
-        committee_veto = _committee_trace_has_veto(response_json)
+        response_json["guardrail_controls"] = llm_guardrail_controls_snapshot()
+        committee_veto = committee_trace_has_veto(response_json)
         response_json["committee_veto_alignment"] = (
-            _build_committee_veto_alignment_payload(
+            build_committee_veto_alignment_payload(
                 committee_veto=committee_veto,
                 deterministic_veto=policy_outcome.verdict == "veto",
             )
         )
-        _attach_dspy_lineage(
+        attach_dspy_lineage(
             response_json,
             artifact_source="runtime_review",
         )
@@ -337,7 +226,7 @@ class _TradingPipelineMethodsPart7:
             self.state.metrics.record_llm_committee_member(
                 role=str(role),
                 verdict=str(role_data.get("verdict", "unknown")),
-                latency_ms=_optional_int(role_data.get("latency_ms")),
+                latency_ms=optional_int(role_data.get("latency_ms")),
                 schema_error=bool(role_data.get("schema_error", False)),
             )
 
@@ -379,7 +268,7 @@ class _TradingPipelineMethodsPart7:
         policy_outcome: Any,
         guardrails: Any,
     ) -> tuple[StrategyDecision, Optional[str]]:
-        committee_veto = _committee_trace_has_veto(outcome.response_json)
+        committee_veto = committee_trace_has_veto(outcome.response_json)
         if committee_veto:
             self.state.metrics.record_llm_committee_veto_alignment(
                 committee_veto=True,
@@ -396,27 +285,24 @@ class _TradingPipelineMethodsPart7:
 
     def _handle_llm_review_error(
         self,
-        *,
-        session: Session,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        guardrails: Any,
-        policy_resolution: dict[str, Any],
-        engine: LLMReviewEngine,
-        request_json: dict[str, Any],
-        error: Exception,
+        request: LLMReviewErrorRequest,
     ) -> tuple[StrategyDecision, Optional[str]]:
+        decision = request.decision
+        request_json = request.request_json
+        policy_resolution = request.policy_resolution
         self.state.metrics.llm_error_total += 1
-        unsupported_state_error = isinstance(error, DSPyRuntimeUnsupportedStateError)
+        unsupported_state_error = isinstance(
+            request.error, DSPyRuntimeUnsupportedStateError
+        )
         if not unsupported_state_error:
-            engine.circuit_breaker.record_error()
+            request.engine.circuit_breaker.record_error()
         if unsupported_state_error:
-            policy_resolution = _build_llm_policy_resolution(
-                rollout_stage=guardrails.rollout_stage,
+            policy_resolution = build_llm_policy_resolution(
+                rollout_stage=request.guardrails.rollout_stage,
                 effective_fail_mode="veto",
-                guardrail_reasons=guardrails.reasons,
+                guardrail_reasons=request.guardrails.reasons,
             )
-        error_label = _classify_llm_error(error)
+        error_label = classify_llm_error(request.error)
         if error_label == "llm_response_not_json":
             self.state.metrics.llm_parse_error_total += 1
         elif error_label == "llm_response_invalid":
@@ -425,47 +311,50 @@ class _TradingPipelineMethodsPart7:
         fallback = (
             "veto"
             if unsupported_state_error
-            else self._resolve_llm_fallback(guardrails.effective_fail_mode)
+            else self._resolve_llm_fallback(request.guardrails.effective_fail_mode)
         )
         effective_verdict = "veto" if fallback == "veto" else "approve"
         if not request_json:
             request_json = {"decision": decision.model_dump(mode="json")}
         response_json: dict[str, Any] = {
-            "error": str(error),
+            "error": str(request.error),
             "fallback": fallback,
             "effective_verdict": effective_verdict,
             "policy_resolution": policy_resolution,
-            "guardrail_controls": _llm_guardrail_controls_snapshot(),
+            "guardrail_controls": llm_guardrail_controls_snapshot(),
             "advisory_only": True,
         }
-        if guardrails.reasons:
-            response_json["mrm_guardrails"] = list(guardrails.reasons)
-        response_json["request_hash"] = _hash_payload(request_json)
-        response_json["response_hash"] = _hash_payload(response_json)
+        if request.guardrails.reasons:
+            response_json["mrm_guardrails"] = list(request.guardrails.reasons)
+        response_json["request_hash"] = hash_payload(request_json)
+        response_json["response_hash"] = hash_payload(response_json)
         self._persist_llm_review(
-            session=session,
-            decision_row=decision_row,
-            model=self._llm_runtime_model_identifier(),
-            prompt_version=self._llm_runtime_prompt_identifier(),
-            request_json=request_json,
-            response_json=response_json,
-            verdict="error",
-            confidence=None,
-            adjusted_qty=None,
-            adjusted_order_type=None,
-            rationale=f"llm_error_{fallback}",
-            risk_flags=[type(error).__name__] + list(guardrails.reasons),
-            tokens_prompt=None,
-            tokens_completion=None,
+            LLMReviewRecord(
+                session=request.context.session,
+                decision_row=request.context.decision_row,
+                model=self._llm_runtime_model_identifier(),
+                prompt_version=self._llm_runtime_prompt_identifier(),
+                request_json=request_json,
+                response_json=response_json,
+                verdict="error",
+                confidence=None,
+                adjusted_qty=None,
+                adjusted_order_type=None,
+                rationale=f"llm_error_{fallback}",
+                risk_flags=[type(request.error).__name__]
+                + list(request.guardrails.reasons),
+                tokens_prompt=None,
+                tokens_completion=None,
+            )
         )
         if unsupported_state_error:
             logger.warning(
                 "Unsupported DSPy runtime state; vetoing decision_id=%s error=%s",
-                decision_row.id,
-                error,
+                request.context.decision_row.id,
+                request.error,
             )
             return decision, "llm_unavailable_dspy_runtime_unsupported_state"
-        if guardrails.shadow_mode:
+        if request.guardrails.shadow_mode:
             self.state.metrics.llm_shadow_total += 1
             if not settings.llm_shadow_mode:
                 self.state.metrics.llm_guardrail_shadow_total += 1
@@ -473,58 +362,50 @@ class _TradingPipelineMethodsPart7:
         if fallback == "veto":
             logger.warning(
                 "LLM review failed; vetoing decision_id=%s error=%s",
-                decision_row.id,
-                error,
+                request.context.decision_row.id,
+                request.error,
             )
-            return decision, _resolve_llm_review_error_reject_reason(error)
+            return decision, resolve_llm_review_error_reject_reason(request.error)
         logger.warning(
             "LLM review failed; pass-through decision_id=%s error=%s",
-            decision_row.id,
-            error,
+            request.context.decision_row.id,
+            request.error,
         )
         return decision, None
 
     def _handle_llm_unavailable(
         self,
-        session: Session,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        reason: str,
-        shadow_mode: bool,
-        effective_fail_mode: Optional[str] = None,
-        risk_flags: Optional[list[str]] = None,
-        market_context: Optional[MarketContextBundle] = None,
-        reject_reason: Optional[str] = None,
-        response_payload_extra: Optional[dict[str, Any]] = None,
-        policy_resolution: Optional[dict[str, Any]] = None,
+        request: LLMUnavailableRequest,
     ) -> tuple[StrategyDecision, Optional[str]]:
-        fallback = self._resolve_llm_fallback(effective_fail_mode)
+        context = request.context
+        decision = request.decision
+        fallback = self._resolve_llm_fallback(request.effective_fail_mode)
         effective_verdict = "veto" if fallback == "veto" else "approve"
         reject_reason = (
-            _resolve_llm_unavailable_reject_reason(reason)
-            if fallback == "veto" and not shadow_mode
+            resolve_llm_unavailable_reject_reason(request.reason)
+            if fallback == "veto" and not request.shadow_mode
             else None
         )
         self.state.metrics.record_llm_unavailable(
-            reason=reason, reject_reason=reject_reason
+            reason=request.reason, reject_reason=reject_reason
         )
-        portfolio_snapshot = _build_portfolio_snapshot(account, positions)
+        portfolio_snapshot = build_portfolio_snapshot(
+            context.account, context.positions
+        )
         market_snapshot = self._build_market_snapshot(decision)
-        recent_decisions = _load_recent_decisions(
-            session,
+        recent_decisions = load_recent_decisions(
+            context.session,
             decision.strategy_id,
             decision.symbol,
         )
         if self.llm_review_engine is not None:
             request_payload = self.llm_review_engine.build_request(
                 decision=decision,
-                account=account,
-                positions=positions,
+                account=context.account,
+                positions=context.positions,
                 portfolio=portfolio_snapshot,
                 market=market_snapshot,
-                market_context=market_context,
+                market_context=request.market_context,
                 recent_decisions=recent_decisions,
             ).model_dump(mode="json")
         else:
@@ -534,14 +415,14 @@ class _TradingPipelineMethodsPart7:
                 "market": market_snapshot.model_dump(mode="json")
                 if market_snapshot is not None
                 else None,
-                "market_context": market_context.model_dump(mode="json")
-                if market_context is not None
+                "market_context": request.market_context.model_dump(mode="json")
+                if request.market_context is not None
                 else None,
                 "recent_decisions": [
                     summary.model_dump(mode="json") for summary in recent_decisions
                 ],
-                "account": account,
-                "positions": positions,
+                "account": context.account,
+                "positions": context.positions,
                 "policy": {
                     "adjustment_allowed": settings.llm_adjustment_allowed,
                     "min_qty_multiplier": str(settings.llm_min_qty_multiplier),
@@ -554,60 +435,64 @@ class _TradingPipelineMethodsPart7:
                 "prompt_version": f"dspy:{settings.llm_dspy_signature_version}",
             }
         response_payload = {
-            "error": reason,
+            "error": request.reason,
             "fallback": fallback,
             "effective_verdict": effective_verdict,
             "reject_reason": reject_reason,
-            "policy_resolution": policy_resolution
-            or _build_llm_policy_resolution(
-                rollout_stage=_normalize_rollout_stage(settings.llm_rollout_stage),
+            "policy_resolution": request.policy_resolution
+            or build_llm_policy_resolution(
+                rollout_stage=normalize_rollout_stage(settings.llm_rollout_stage),
                 effective_fail_mode=fallback,
-                guardrail_reasons=risk_flags or [],
+                guardrail_reasons=request.risk_flags or [],
             ),
             "advisory_only": True,
         }
-        if response_payload_extra:
-            response_payload.update(response_payload_extra)
+        if request.response_payload_extra:
+            response_payload.update(request.response_payload_extra)
         decision_metadata_update: dict[str, Any] = {}
-        if response_payload_extra:
-            llm_runtime_payload = response_payload_extra.get("llm_runtime")
+        if request.response_payload_extra:
+            llm_runtime_payload = request.response_payload_extra.get("llm_runtime")
             if isinstance(llm_runtime_payload, Mapping):
                 decision_metadata_update["llm_runtime"] = dict(
                     cast(Mapping[str, Any], llm_runtime_payload)
                 )
-            market_context_payload = response_payload_extra.get("market_context")
+            market_context_payload = request.response_payload_extra.get(
+                "market_context"
+            )
             if isinstance(market_context_payload, Mapping):
                 decision_metadata_update["market_context"] = dict(
                     cast(Mapping[str, Any], market_context_payload)
                 )
         if decision_metadata_update:
             self.executor.update_decision_json(
-                session,
-                decision_row,
+                context.session,
+                context.decision_row,
                 decision_metadata_update,
             )
-        response_payload["request_hash"] = _hash_payload(request_payload)
-        response_payload["response_hash"] = _hash_payload(response_payload)
+        response_payload["request_hash"] = hash_payload(request_payload)
+        response_payload["response_hash"] = hash_payload(response_payload)
         self._persist_llm_review(
-            session=session,
-            decision_row=decision_row,
-            model=self._llm_runtime_model_identifier(),
-            prompt_version=self._llm_runtime_prompt_identifier(),
-            request_json=request_payload,
-            response_json={
-                **response_payload,
-                "guardrail_controls": _llm_guardrail_controls_snapshot(),
-            },
-            verdict="error",
-            confidence=None,
-            adjusted_qty=None,
-            adjusted_order_type=None,
-            rationale=reason,
-            risk_flags=[reason] + (risk_flags or []),
-            tokens_prompt=None,
-            tokens_completion=None,
+            LLMReviewRecord(
+                session=context.session,
+                decision_row=context.decision_row,
+                model=self._llm_runtime_model_identifier(),
+                prompt_version=self._llm_runtime_prompt_identifier(),
+                request_json=request_payload,
+                response_json={
+                    **response_payload,
+                    "guardrail_controls": llm_guardrail_controls_snapshot(),
+                },
+                verdict="error",
+                confidence=None,
+                adjusted_qty=None,
+                adjusted_order_type=None,
+                rationale=request.reason,
+                risk_flags=[request.reason] + (request.risk_flags or []),
+                tokens_prompt=None,
+                tokens_completion=None,
+            )
         )
-        if shadow_mode:
+        if request.shadow_mode:
             self.state.metrics.llm_shadow_total += 1
             if not settings.llm_shadow_mode:
                 self.state.metrics.llm_guardrail_shadow_total += 1
@@ -641,8 +526,8 @@ class _TradingPipelineMethodsPart7:
             snapshot = MarketSnapshot(
                 symbol=decision.symbol,
                 as_of=decision.event_ts,
-                price=_optional_decimal(price),
-                spread=_optional_decimal(spread),
+                price=optional_decimal(price),
+                spread=optional_decimal(spread),
                 source=source,
             )
         else:
@@ -683,7 +568,7 @@ class _TradingPipelineMethodsPart7:
         caps = output_mapping.get("caps")
         per_symbol_cap = None
         if isinstance(caps, Mapping):
-            per_symbol_cap = _optional_decimal(
+            per_symbol_cap = optional_decimal(
                 cast(Mapping[str, Any], caps).get("per_symbol")
             )
         if limiting_constraint == "symbol_capacity_exhausted" or (
@@ -692,8 +577,8 @@ class _TradingPipelineMethodsPart7:
             return "symbol_capacity_exhausted"
 
         fractional_allowed = output_mapping.get("fractional_allowed")
-        final_qty = _optional_decimal(output_mapping.get("final_qty"))
-        min_executable_qty = _optional_decimal(output_mapping.get("min_executable_qty"))
+        final_qty = optional_decimal(output_mapping.get("final_qty"))
+        min_executable_qty = optional_decimal(output_mapping.get("min_executable_qty"))
         if (
             fractional_allowed is False
             and final_qty is not None
@@ -722,7 +607,7 @@ class _TradingPipelineMethodsPart7:
         updated_params = dict(decision.params)
         if signal_price is None:
             updated_params["price"] = snapshot.price
-        updated_params["price_snapshot"] = _price_snapshot_payload(snapshot)
+        updated_params["price_snapshot"] = price_snapshot_payload(snapshot)
         if snapshot.spread is not None and "spread" not in updated_params:
             updated_params["spread"] = snapshot.spread
         return decision.model_copy(update={"params": updated_params}), snapshot
@@ -768,24 +653,11 @@ class _TradingPipelineMethodsPart7:
 
     @staticmethod
     def _persist_llm_review(
-        session: Session,
-        decision_row: TradeDecision,
-        model: str,
-        prompt_version: str,
-        request_json: dict[str, Any],
-        response_json: dict[str, Any],
-        verdict: str,
-        confidence: Optional[float],
-        adjusted_qty: Optional[Decimal],
-        adjusted_order_type: Optional[str],
-        rationale: Optional[str],
-        risk_flags: list[str],
-        tokens_prompt: Optional[int],
-        tokens_completion: Optional[int],
+        record: LLMReviewRecord,
     ) -> None:
-        request_payload = coerce_json_payload(request_json)
-        response_payload_json = dict(response_json)
-        _attach_dspy_lineage(
+        request_payload = coerce_json_payload(record.request_json)
+        response_payload_json = dict(record.response_json)
+        attach_dspy_lineage(
             response_payload_json,
             artifact_source="runtime_persisted_review",
         )
@@ -793,30 +665,32 @@ class _TradingPipelineMethodsPart7:
             response_payload_json.get("committee_veto_alignment"), Mapping
         ):
             response_payload_json["committee_veto_alignment"] = (
-                _build_committee_veto_alignment_payload(
-                    committee_veto=_committee_trace_has_veto(response_payload_json),
-                    deterministic_veto=verdict == "veto",
+                build_committee_veto_alignment_payload(
+                    committee_veto=committee_trace_has_veto(response_payload_json),
+                    deterministic_veto=record.verdict == "veto",
                 )
             )
         response_payload = coerce_json_payload(response_payload_json)
-        risk_payload = coerce_json_payload(risk_flags)
+        risk_payload = coerce_json_payload(record.risk_flags)
         review = LLMDecisionReview(
-            trade_decision_id=decision_row.id,
-            model=model,
-            prompt_version=prompt_version,
+            trade_decision_id=record.decision_row.id,
+            model=record.model,
+            prompt_version=record.prompt_version,
             input_json=request_payload,
             response_json=response_payload,
-            verdict=verdict,
-            confidence=Decimal(str(confidence)) if confidence is not None else None,
-            adjusted_qty=adjusted_qty,
-            adjusted_order_type=adjusted_order_type,
-            rationale=rationale,
+            verdict=record.verdict,
+            confidence=Decimal(str(record.confidence))
+            if record.confidence is not None
+            else None,
+            adjusted_qty=record.adjusted_qty,
+            adjusted_order_type=record.adjusted_order_type,
+            rationale=record.rationale,
             risk_flags=risk_payload,
-            tokens_prompt=tokens_prompt,
-            tokens_completion=tokens_completion,
+            tokens_prompt=record.tokens_prompt,
+            tokens_completion=record.tokens_completion,
         )
-        session.add(review)
-        session.commit()
+        record.session.add(review)
+        record.session.commit()
 
     @staticmethod
     def _persist_llm_adjusted_decision(
@@ -824,13 +698,10 @@ class _TradingPipelineMethodsPart7:
         decision_row: TradeDecision,
         decision: StrategyDecision,
     ) -> None:
-        decision_json = _coerce_json(decision_row.decision_json)
+        decision_json = coerce_json(decision_row.decision_json)
         decision_json["llm_adjusted_decision"] = coerce_json_payload(
             decision.model_dump(mode="json")
         )
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

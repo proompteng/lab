@@ -1,7 +1,30 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    CursorAdvancingFakeIngestor,
+    Decimal,
+    DecisionEngine,
+    FakeAlpacaClient,
+    FakeIngestor,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RecordingDecisionEngine,
+    RiskEngine,
+    SignalBatch,
+    SignalEnvelope,
+    Strategy,
+    TradingPipeline,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    WarmupIngestor,
+    _with_default_executable_quote,
+    datetime,
+    patch,
+    timedelta,
+    timezone,
+)
 
 
 class TestTradingPipelineRouteExecutionB(TradingPipelineTestCaseBase):
@@ -152,7 +175,7 @@ class TestTradingPipelineRouteExecutionB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with self.session_local() as session:
             prepared = pipeline._prepare_batch_for_decisions(
@@ -210,7 +233,7 @@ class TestTradingPipelineRouteExecutionB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             with self.session_local() as session:
                 prepared = pipeline._prepare_batch_for_decisions(
@@ -404,7 +427,7 @@ class TestTradingPipelineRouteExecutionB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             with patch(
                 "app.trading.features.simulation_context_enabled",
@@ -468,10 +491,10 @@ class TestTradingPipelineRouteExecutionB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             with patch(
-                "app.trading.scheduler.pipeline._signal_bootstrap_grace_active",
+                "app.trading.scheduler.pipeline_modules.decision_lifecycle.signal_bootstrap_grace_active",
                 return_value=True,
             ):
                 pipeline.record_no_signal_batch(
@@ -529,7 +552,7 @@ class TestTradingPipelineRouteExecutionB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             pipeline.record_no_signal_batch(
                 SignalBatch(
@@ -593,7 +616,7 @@ class TestTradingPipelineRouteExecutionB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             pipeline.record_no_signal_batch(
                 SignalBatch(

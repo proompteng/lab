@@ -1,7 +1,33 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Decimal,
+    DecisionEngine,
+    FakeAlpacaClient,
+    FakeIngestor,
+    FakePriceFetcher,
+    Mapping,
+    MarketSnapshot,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RejectedSignalOutcomeEvent,
+    RiskEngine,
+    SQLAlchemyError,
+    Session,
+    SignalEnvelope,
+    TimelinePriceFetcher,
+    TradingPipeline,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    build_hypothesis_runtime_summary,
+    cast,
+    datetime,
+    select,
+    timedelta,
+    timezone,
+)
 
 
 class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
@@ -536,7 +562,9 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
             session_factory=failing_session_factory
         )
 
-        with self.assertLogs("app.trading.scheduler.pipeline", level="ERROR"):
+        with self.assertLogs(
+            "app.trading.scheduler.pipeline_modules.signal_processing", level="ERROR"
+        ):
             pipeline._persist_rejected_signal_outcome_event(
                 {
                     "event_id": "reject-event-1",

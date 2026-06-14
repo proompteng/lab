@@ -1,7 +1,37 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    Mapping,
+    OrderExecutor,
+    OrderFirewall,
+    PositionedAlpacaClient,
+    Reconciler,
+    RiskEngine,
+    SignalEnvelope,
+    SimpleTradingPipeline,
+    SimulationExecutionAdapter,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _bounded_sim_collection_target_with_runtime_account_audit,
+    _paper_route_probe_lineage_from_params,
+    _target_probe_symbol_notional_budget,
+    cast,
+    datetime,
+    patch,
+    select,
+    timezone,
+    uuid4,
+)
 
 
 class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
@@ -115,7 +145,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
         with (
             patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",
@@ -591,7 +621,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: False
         with (
             patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",
@@ -767,7 +797,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         proof_floor = {
             "route_state": "repair_only",

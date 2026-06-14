@@ -1,7 +1,38 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    Mapping,
+    OrderExecutor,
+    OrderFirewall,
+    PositionedAlpacaClient,
+    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+    Reconciler,
+    RiskEngine,
+    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+    SignalEnvelope,
+    SimpleTradingPipeline,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _bounded_paper_route_collection_entry_metadata,
+    _paper_route_probe_entry_metadata,
+    _strategy_signal_paper_entry_metadata,
+    cast,
+    datetime,
+    patch,
+    select,
+    timezone,
+)
 
 
 class TestTradingPipelineProbeExitsA(TradingPipelineTestCaseBase):
@@ -102,7 +133,7 @@ class TestTradingPipelineProbeExitsA(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(

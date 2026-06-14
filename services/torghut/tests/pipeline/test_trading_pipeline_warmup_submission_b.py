@@ -1,7 +1,35 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    MarketContextBundle,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RiskEngine,
+    Session,
+    SignalEnvelope,
+    SimpleNamespace,
+    SimpleTradingPipeline,
+    Strategy,
+    TradeDecision,
+    TradingPipeline,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _market_context_bundle,
+    cast,
+    datetime,
+    patch,
+    select,
+    timedelta,
+    timezone,
+)
 
 
 class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
@@ -62,7 +90,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(
@@ -177,7 +205,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with patch.object(
             SimpleTradingPipeline,
@@ -454,7 +482,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
             fetch_calls.append(symbol)
             return _market_context_bundle(symbol=symbol), None
 
-        pipeline._fetch_market_context = _fetch  # type: ignore[method-assign]
+        pipeline._fetch_market_context = _fetch
         now = datetime.now(timezone.utc)
         pipeline.state.last_market_context_checked_at = now - timedelta(seconds=15)
 
@@ -695,7 +723,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with patch.object(
             SimpleTradingPipeline,
@@ -784,7 +812,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with patch.object(
             TradingPipeline,
@@ -882,7 +910,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with patch.object(
             SimpleTradingPipeline,

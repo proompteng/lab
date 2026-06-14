@@ -1,188 +1,69 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading pipeline implementation."""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import inspect
 import logging
-import os
-from collections.abc import Callable, Mapping
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
-from pathlib import Path
-from typing import Any, Optional, Sequence, cast
+from collections.abc import Mapping
+from typing import Any, Optional, cast
 
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ....alpaca_client import TorghutAlpacaClient
 from ....config import settings
-from ....db import SessionLocal
 from ....models import (
-    Execution,
-    LLMDecisionReview,
-    PositionSnapshot,
-    RejectedSignalOutcomeEvent,
-    Strategy,
     TradeDecision,
-    coerce_json_payload,
 )
 from ....observability import capture_posthog_event
-from ....snapshots import snapshot_account_and_positions
-from ....strategies import StrategyCatalog
-from ...autonomy.phase_manifest_contract import AUTONOMY_PHASE_ORDER
-from ...decisions import DecisionEngine
-from ...empirical_jobs import build_empirical_jobs_status
-from ...execution import OrderExecutor
-from ...execution_adapters import ExecutionAdapter
-from ...execution_policy import ExecutionPolicy
-from ...feature_quality import (
-    REASON_STALENESS,
-    FeatureQualityThresholds,
-    evaluate_feature_batch_quality,
-)
-from ...features import extract_executable_price, optional_decimal, payload_value
-from ...firewall import OrderFirewall, OrderFirewallBlocked
-from ...ingest import ClickHouseSignalIngestor, SignalBatch
-from ...lean_lanes import LeanLaneManager
-from ...llm import LLMReviewEngine, apply_policy
-from ...llm.dspy_programs.runtime import (
-    DSPyReviewRuntime,
-    DSPyRuntimeUnsupportedStateError,
-)
-from ...llm.guardrails import evaluate_llm_guardrails
-from ...llm.policy import allowed_order_types
-from ...llm.schema import MarketContextBundle
-from ...llm.schema import MarketSnapshot as LLMMarketSnapshot
-from ...market_context import (
-    MarketContextClient,
-    MarketContextStatus,
-    evaluate_market_context,
-)
-from ...market_context_domains import (
-    active_market_context_domain_states,
-    active_market_context_reasons,
-)
-from ...models import SignalEnvelope, StrategyDecision
-from ...order_feed import OrderFeedIngestor
-from ...paper_route_evidence import (
-    PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
-    PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
-)
-from ...portfolio import (
-    AllocationResult,
-    PortfolioSizingResult,
-    allocator_from_settings,
-    sizer_from_settings,
-)
-from ...prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
-from ...quote_quality import (
-    QuoteQualityPolicy,
-    QuoteQualityStatus,
-    SignalQuoteQualityTracker,
-    assess_signal_quote_quality,
-)
-from ...quantity_rules import (
-    min_qty_for_symbol,
-    quantize_qty_for_symbol,
-    resolve_quantity_resolution,
-)
-from ...reconcile import Reconciler
-from ...regime_hmm import (
-    HMMRegimeContext,
-    resolve_hmm_context,
-    resolve_regime_context_authority_reason,
-)
-from ...risk import RiskEngine
-from ...session_context import regular_session_open_utc_for
+from ...models import StrategyDecision
+from ...prices import MarketSnapshot
 from ...tca import derive_adaptive_execution_policy
-from ...time_source import trading_now
-from ...universe import UniverseResolver
-from ...submission_council import (
-    build_hypothesis_runtime_summary,
-    build_live_submission_gate_payload,
-    build_submission_gate_market_context_status,
-    load_quant_evidence_status,
-)
-from ..pipeline_helpers import (
-    _allocator_rejection_reasons,
-    _apply_projected_position_decision,
-    _attach_dspy_lineage,
-    _autonomy_gate_report_is_saturated_fail_sentinel,
-    _build_committee_veto_alignment_payload,
-    _build_llm_policy_resolution,
-    _build_portfolio_snapshot,
-    _classify_llm_error,
-    _clone_positions,
-    _coerce_bool,
-    _coerce_json,
-    _coerce_runtime_uncertainty_gate_action,
-    _coerce_strategy_symbols,
-    _committee_trace_has_veto,
-    _extract_json_error_payload,
-    _format_order_submit_rejection,
-    _hash_payload,
-    _is_runtime_risk_increasing_entry,
-    _llm_guardrail_controls_snapshot,
-    _load_recent_decisions,
-    _normalize_rollout_stage,
-    _optional_decimal,
-    _optional_int,
-    _price_snapshot_payload,
-    _project_open_orders_onto_positions,
-    _resolve_decision_regime_label_with_source,
-    _resolve_llm_review_error_reject_reason,
-    _resolve_llm_unavailable_reject_reason,
-    _resolve_signal_regime,
-    _select_strictest_runtime_uncertainty_gate,
-    _uncertainty_gate_staleness_reason,
-)
-from ..safety import (
-    _FRESH_TAIL_NO_SIGNAL_REASONS,
-    _is_market_session_open,
-    _latch_signal_continuity_alert_state,
-    _record_signal_continuity_recovery_cycle,
-    _signal_bootstrap_grace_active,
-    _signal_tail_is_fresh,
-)
 from ..state import (
     RuntimeUncertaintyGate,
     RuntimeUncertaintyGateAction,
-    TradingState,
-    _normalize_reason_metric,
 )
 
-# ruff: noqa: F401,F403,F405,F821,F821,F821
+from .contexts import (
+    DecisionBlockRequest,
+    DecisionRejectionRequest,
+    DecisionSubmissionContext,
+    DomainTelemetryEvent,
+    ExecutionPolicyRequest,
+    ExecutionFallbackRequest,
+    LLMReviewContext,
+    LiveSubmissionGateInputs,
+    OrderSubmissionRequest,
+    RiskVerdictRequest,
+)
+from .shared import TradingPipelineBase
+from .support import (
+    allocator_rejection_reasons,
+    autonomy_gate_report_is_saturated_fail_sentinel,
+    coerce_json,
+    coerce_runtime_uncertainty_gate_action,
+    is_runtime_risk_increasing_entry,
+    optional_decimal,
+    optional_int,
+    resolve_decision_regime_label_with_source,
+)
 
-from .part_01_statements_158 import *
-from .part_02_tradingpipelinemethodspart1 import *
-from .part_03_tradingpipelinemethodspart2 import *
-from .part_04_tradingpipelinemethodspart3 import *
+logger = logging.getLogger(__name__)
 
 
-class _TradingPipelineMethodsPart4:
+class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
     def _prepare_decision_for_submission(
         self,
         *,
-        session: Session,
+        context: DecisionSubmissionContext,
         decision: StrategyDecision,
-        decision_row: TradeDecision,
-        strategy: Strategy,
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
     ) -> tuple[StrategyDecision, Optional[MarketSnapshot]] | None:
-        allocator_rejection = _allocator_rejection_reasons(decision)
+        allocator_rejection = allocator_rejection_reasons(decision)
         if allocator_rejection:
             self._record_decision_rejection(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reasons=allocator_rejection,
-                log_template=(
-                    "Decision rejected by allocator strategy_id=%s symbol=%s reason=%s"
+                DecisionRejectionRequest(
+                    context.session,
+                    decision,
+                    context.decision_row,
+                    allocator_rejection,
+                    "Decision rejected by allocator strategy_id=%s symbol=%s reason=%s",
                 ),
             )
             return None
@@ -196,38 +77,42 @@ class _TradingPipelineMethodsPart4:
                 decision.model_dump(mode="json").get("params", {}),
             )
             self.executor.update_decision_params(
-                session, decision_row, price_params_update
+                context.session, context.decision_row, price_params_update
             )
 
         sizing_result = self._apply_portfolio_sizing(
-            decision, strategy, account, positions
+            decision, context.strategy, context.account, context.positions
         )
         decision = sizing_result.decision
         sizing_params = decision.model_dump(mode="json").get("params", {})
-        self.executor.sync_decision_state(session, decision_row, decision)
+        self.executor.sync_decision_state(
+            context.session, context.decision_row, decision
+        )
         if isinstance(sizing_params, Mapping) and "portfolio_sizing" in sizing_params:
             self.executor.update_decision_params(
-                session, decision_row, cast(Mapping[str, Any], sizing_params)
+                context.session,
+                context.decision_row,
+                cast(Mapping[str, Any], sizing_params),
             )
         if not sizing_result.approved:
             self._record_decision_rejection(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reasons=sizing_result.reasons,
-                log_template=(
-                    "Decision rejected by portfolio sizing strategy_id=%s symbol=%s reason=%s"
+                DecisionRejectionRequest(
+                    context.session,
+                    decision,
+                    context.decision_row,
+                    sizing_result.reasons,
+                    "Decision rejected by portfolio sizing strategy_id=%s symbol=%s reason=%s",
                 ),
             )
             return None
 
         decision, gate_payload, gate_rejection = self._apply_runtime_uncertainty_gate(
-            decision, positions=positions
+            decision, positions=context.positions
         )
         self._persist_runtime_uncertainty_gate_payload(
-            session=session,
+            session=context.session,
             decision=decision,
-            decision_row=decision_row,
+            decision_row=context.decision_row,
             gate_payload=gate_payload,
         )
         if gate_rejection:
@@ -236,39 +121,45 @@ class _TradingPipelineMethodsPart4:
                 gate_rejection=gate_rejection,
             )
             self._record_decision_rejection(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reasons=[gate_rejection],
-                log_template=(
-                    "Decision rejected by execution gate strategy_id=%s symbol=%s reason=%s"
+                DecisionRejectionRequest(
+                    context.session,
+                    decision,
+                    context.decision_row,
+                    [gate_rejection],
+                    "Decision rejected by execution gate strategy_id=%s symbol=%s reason=%s",
                 ),
             )
             return None
 
-        decision, llm_reject_reason = self._apply_llm_review(
-            session, decision, decision_row, account, positions
+        llm_context = LLMReviewContext(
+            session=context.session,
+            decision_row=context.decision_row,
+            account=context.account,
+            positions=context.positions,
         )
-        self.executor.sync_decision_state(session, decision_row, decision)
+        decision, llm_reject_reason = self._apply_llm_review(llm_context, decision)
+        self.executor.sync_decision_state(
+            context.session, context.decision_row, decision
+        )
         if llm_reject_reason:
             self._record_runtime_uncertainty_gate_result(
                 gate_payload=gate_payload,
                 gate_rejection=None,
             )
             self._record_decision_rejection(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reasons=[llm_reject_reason],
-                log_template="Decision rejected by llm review strategy_id=%s symbol=%s reason=%s",
+                DecisionRejectionRequest(
+                    context.session,
+                    decision,
+                    context.decision_row,
+                    [llm_reject_reason],
+                    "Decision rejected by llm review strategy_id=%s symbol=%s reason=%s",
+                ),
             )
             return None
 
         gate_rejection = self._recheck_runtime_uncertainty_gate_after_llm(
-            session=session,
+            context=context,
             decision=decision,
-            decision_row=decision_row,
-            positions=positions,
             gate_payload=gate_payload,
         )
         if gate_rejection:
@@ -277,12 +168,12 @@ class _TradingPipelineMethodsPart4:
                 gate_rejection=gate_rejection,
             )
             self._record_decision_rejection(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reasons=[gate_rejection],
-                log_template=(
-                    "Decision rejected by execution gate strategy_id=%s symbol=%s reason=%s"
+                DecisionRejectionRequest(
+                    context.session,
+                    decision,
+                    context.decision_row,
+                    [gate_rejection],
+                    "Decision rejected by execution gate strategy_id=%s symbol=%s reason=%s",
                 ),
             )
             return None
@@ -398,7 +289,7 @@ class _TradingPipelineMethodsPart4:
     ) -> bool:
         if uncertainty_gate.source != "autonomy_gate_report":
             return False
-        return _autonomy_gate_report_is_saturated_fail_sentinel(
+        return autonomy_gate_report_is_saturated_fail_sentinel(
             action=gate.action,
             coverage_error=uncertainty_gate.coverage_error,
             shift_score=uncertainty_gate.shift_score,
@@ -414,14 +305,14 @@ class _TradingPipelineMethodsPart4:
             != "autonomy_gate_report"
         ):
             return False
-        action = _coerce_runtime_uncertainty_gate_action(gate_payload.get("action"))
+        action = coerce_runtime_uncertainty_gate_action(gate_payload.get("action"))
         if action is None:
             return False
-        return _autonomy_gate_report_is_saturated_fail_sentinel(
+        return autonomy_gate_report_is_saturated_fail_sentinel(
             action=action,
-            coverage_error=_optional_decimal(gate_payload.get("coverage_error")),
-            shift_score=_optional_decimal(gate_payload.get("shift_score")),
-            conformal_interval_width=_optional_decimal(
+            coverage_error=optional_decimal(gate_payload.get("coverage_error")),
+            shift_score=optional_decimal(gate_payload.get("shift_score")),
+            conformal_interval_width=optional_decimal(
                 gate_payload.get("conformal_interval_width")
             ),
         )
@@ -443,14 +334,14 @@ class _TradingPipelineMethodsPart4:
             decision=decision,
             regime_gate=regime_gate,
         )
-        allocator = _coerce_json(params.get("allocator"))
-        current_override = _optional_decimal(
+        allocator = coerce_json(params.get("allocator"))
+        current_override = optional_decimal(
             allocator.get("max_participation_rate_override")
         )
         if current_override is None or current_override > max_participation_rate:
             allocator["max_participation_rate_override"] = str(max_participation_rate)
         params["allocator"] = allocator
-        execution_seconds = _optional_int(params.get("execution_seconds"))
+        execution_seconds = optional_int(params.get("execution_seconds"))
         if execution_seconds is None or execution_seconds < min_execution_seconds:
             params["execution_seconds"] = min_execution_seconds
 
@@ -472,10 +363,8 @@ class _TradingPipelineMethodsPart4:
     def _recheck_runtime_uncertainty_gate_after_llm(
         self,
         *,
-        session: Session,
+        context: DecisionSubmissionContext,
         decision: StrategyDecision,
-        decision_row: TradeDecision,
-        positions: list[dict[str, Any]],
         gate_payload: dict[str, Any],
     ) -> str | None:
         gate_action = str(gate_payload.get("action") or "pass").strip().lower()
@@ -489,23 +378,25 @@ class _TradingPipelineMethodsPart4:
             gate_payload["entry_blocked"] = False
             gate_payload["block_reason"] = None
             self._persist_runtime_uncertainty_gate_payload(
-                session=session,
+                session=context.session,
                 decision=decision,
-                decision_row=decision_row,
+                decision_row=context.decision_row,
                 gate_payload=gate_payload,
             )
             return None
         if gate_action not in {"abstain", "fail"}:
             return None
-        risk_increasing_entry = _is_runtime_risk_increasing_entry(decision, positions)
+        risk_increasing_entry = is_runtime_risk_increasing_entry(
+            decision, context.positions
+        )
         gate_payload["risk_increasing_entry"] = risk_increasing_entry
         if not risk_increasing_entry:
             gate_payload["entry_blocked"] = False
             gate_payload["block_reason"] = None
             self._persist_runtime_uncertainty_gate_payload(
-                session=session,
+                session=context.session,
                 decision=decision,
-                decision_row=decision_row,
+                decision_row=context.decision_row,
                 gate_payload=gate_payload,
             )
             return None
@@ -517,139 +408,152 @@ class _TradingPipelineMethodsPart4:
         gate_payload["entry_blocked"] = True
         gate_payload["block_reason"] = reason
         self._persist_runtime_uncertainty_gate_payload(
-            session=session,
+            session=context.session,
             decision=decision,
-            decision_row=decision_row,
+            decision_row=context.decision_row,
             gate_payload=gate_payload,
         )
         return reason
 
     def _record_decision_rejection(
         self,
-        *,
-        session: Session,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        reasons: list[str],
-        log_template: str,
+        request: DecisionRejectionRequest | None = None,
+        **legacy_kwargs: Any,
     ) -> None:
+        request = self._decision_rejection_request(request, legacy_kwargs)
+        reasons = request.reasons
         if not reasons:
             return
         self.state.metrics.orders_rejected_total += 1
         self.state.metrics.record_decision_rejection_reasons(reasons)
         self.state.metrics.record_decision_state("rejected")
         for reason in reasons:
-            logger.info(log_template, decision.strategy_id, decision.symbol, reason)
+            logger.info(
+                request.log_template,
+                request.decision.strategy_id,
+                request.decision.symbol,
+                reason,
+            )
         self.executor.mark_rejected(
-            session,
-            decision_row,
+            request.session,
+            request.decision_row,
             ";".join(reasons),
             metadata_update=self._decision_lifecycle_metadata(
                 submission_stage="rejected_pre_submit"
             ),
         )
         self._emit_domain_telemetry(
-            event_name="torghut.decision.blocked",
-            severity="warning",
-            decision=decision,
-            decision_row=decision_row,
-            reason_codes=reasons,
-            extra_properties={"decision_status": "rejected"},
+            DomainTelemetryEvent(
+                event_name="torghut.decision.blocked",
+                severity="warning",
+                decision=request.decision,
+                decision_row=request.decision_row,
+                reason_codes=reasons,
+                extra_properties={"decision_status": "rejected"},
+            )
+        )
+
+    @staticmethod
+    def _decision_rejection_request(
+        request: DecisionRejectionRequest | None,
+        legacy_kwargs: Mapping[str, Any],
+    ) -> DecisionRejectionRequest:
+        if request is not None:
+            return request
+        return DecisionRejectionRequest(
+            session=legacy_kwargs["session"],
+            decision=legacy_kwargs["decision"],
+            decision_row=legacy_kwargs["decision_row"],
+            reasons=legacy_kwargs["reasons"],
+            log_template=legacy_kwargs["log_template"],
         )
 
     def _emit_domain_telemetry(
         self,
-        *,
-        event_name: str,
-        severity: str,
-        decision: StrategyDecision | None = None,
-        decision_row: TradeDecision | None = None,
-        execution: Any | None = None,
-        reason_codes: Sequence[str] | None = None,
-        extra_properties: Mapping[str, Any] | None = None,
+        event: DomainTelemetryEvent,
     ) -> None:
         properties: dict[str, Any] = {
             "account_label": self.account_label,
             "trading_mode": settings.trading_mode,
         }
-        if decision is not None:
+        if event.decision is not None:
             properties.update(
                 {
-                    "strategy_id": decision.strategy_id,
-                    "symbol": decision.symbol,
-                    "timeframe": decision.timeframe,
-                    "decision_action": decision.action,
+                    "strategy_id": event.decision.strategy_id,
+                    "symbol": event.decision.symbol,
+                    "timeframe": event.decision.timeframe,
+                    "decision_action": event.decision.action,
                 }
             )
-        if decision_row is not None:
-            properties["trade_decision_id"] = str(decision_row.id)
-            properties["decision_hash"] = decision_row.decision_hash
-            properties["decision_status"] = decision_row.status
-        if execution is not None:
-            properties["execution_id"] = str(getattr(execution, "id", ""))
-            properties["execution_status"] = str(getattr(execution, "status", ""))
+        if event.decision_row is not None:
+            properties["trade_decision_id"] = str(event.decision_row.id)
+            properties["decision_hash"] = event.decision_row.decision_hash
+            properties["decision_status"] = event.decision_row.status
+        if event.execution is not None:
+            properties["execution_id"] = str(getattr(event.execution, "id", ""))
+            properties["execution_status"] = str(getattr(event.execution, "status", ""))
             properties["execution_correlation_id"] = str(
-                getattr(execution, "execution_correlation_id", "") or ""
+                getattr(event.execution, "execution_correlation_id", "") or ""
             )
             properties["execution_idempotency_key"] = str(
-                getattr(execution, "execution_idempotency_key", "") or ""
+                getattr(event.execution, "execution_idempotency_key", "") or ""
             )
             properties["execution_fallback_reason"] = str(
-                getattr(execution, "execution_fallback_reason", "") or ""
+                getattr(event.execution, "execution_fallback_reason", "") or ""
             )
-        if reason_codes:
+        if event.reason_codes:
             properties["reason_codes"] = sorted(
-                {str(reason).strip() for reason in reason_codes if str(reason).strip()}
+                {
+                    str(reason).strip()
+                    for reason in event.reason_codes
+                    if str(reason).strip()
+                }
             )
-        if extra_properties:
+        if event.extra_properties:
             properties.update(
-                {str(key): value for key, value in extra_properties.items()}
+                {str(key): value for key, value in event.extra_properties.items()}
             )
         emitted, drop_reason = capture_posthog_event(
-            event_name,
-            severity=severity,
+            event.event_name,
+            severity=event.severity,
             distinct_id=f"torghut-{self.account_label}",
             properties=properties,
         )
         self.state.metrics.record_domain_telemetry(
-            event_name=event_name,
+            event_name=event.event_name,
             emitted=emitted,
             drop_reason=drop_reason,
         )
 
     def _evaluate_execution_policy_outcome(
         self,
-        *,
-        session: Session,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        strategy: Strategy,
-        positions: list[dict[str, Any]],
-        snapshot: Optional[MarketSnapshot],
+        request: ExecutionPolicyRequest,
     ) -> tuple[StrategyDecision, Any] | None:
+        context = request.context
+        decision = request.decision
         regime_label, regime_source, regime_fallback = (
-            _resolve_decision_regime_label_with_source(decision)
+            resolve_decision_regime_label_with_source(decision)
         )
         self.state.metrics.record_decision_regime_resolution(
             source=regime_source,
             fallback_reason=regime_fallback,
         )
         adaptive_policy = derive_adaptive_execution_policy(
-            session,
+            context.session,
             symbol=decision.symbol,
             regime_label=regime_label,
         )
         policy_outcome = self.execution_policy.evaluate(
             decision,
-            strategy=strategy,
-            positions=positions,
-            market_snapshot=snapshot,
+            strategy=context.strategy,
+            positions=context.positions,
+            market_snapshot=request.snapshot,
             kill_switch_enabled=self.order_firewall.status().kill_switch_enabled,
             adaptive_policy=adaptive_policy,
         )
         decision = policy_outcome.decision
         self.executor.update_decision_params(
-            session, decision_row, policy_outcome.params_update()
+            context.session, context.decision_row, policy_outcome.params_update()
         )
         self.state.metrics.record_execution_advisor_result(
             policy_outcome.advisor_metadata
@@ -660,49 +564,46 @@ class _TradingPipelineMethodsPart4:
                 policy_outcome.adaptive is not None and policy_outcome.adaptive.applied
             ),
         )
-        self.executor.sync_decision_state(session, decision_row, decision)
+        self.executor.sync_decision_state(
+            context.session, context.decision_row, decision
+        )
         if not policy_outcome.approved:
             self._record_decision_rejection(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reasons=list(policy_outcome.reasons),
-                log_template=(
-                    "Decision rejected by execution policy strategy_id=%s symbol=%s reason=%s"
-                ),
+                DecisionRejectionRequest(
+                    context.session,
+                    decision,
+                    context.decision_row,
+                    list(policy_outcome.reasons),
+                    "Decision rejected by execution policy strategy_id=%s symbol=%s reason=%s",
+                )
             )
             return None
         return decision, policy_outcome
 
     def _passes_risk_verdict(
         self,
-        *,
-        session: Session,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        strategy: Strategy,
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        symbol_allowlist: set[str],
-        execution_advisor: Mapping[str, Any] | None,
+        request: RiskVerdictRequest,
     ) -> bool:
+        context = request.context
         verdict = self.risk_engine.evaluate(
-            session,
-            decision,
-            strategy,
-            account,
-            positions,
-            symbol_allowlist,
-            execution_advisor=execution_advisor,
+            context.session,
+            request.decision,
+            context.strategy,
+            context.account,
+            context.positions,
+            context.symbol_allowlist,
+            execution_advisor=request.execution_advisor,
         )
         if verdict.approved:
             return True
         self._record_decision_rejection(
-            session=session,
-            decision=decision,
-            decision_row=decision_row,
-            reasons=list(verdict.reasons),
-            log_template="Decision rejected strategy_id=%s symbol=%s reason=%s",
+            DecisionRejectionRequest(
+                context.session,
+                request.decision,
+                context.decision_row,
+                list(verdict.reasons),
+                "Decision rejected strategy_id=%s symbol=%s reason=%s",
+            )
         )
         return False
 
@@ -715,11 +616,13 @@ class _TradingPipelineMethodsPart4:
     ) -> bool:
         if not settings.trading_enabled:
             self._block_decision_submission(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reason="trading_disabled",
-                submission_stage="blocked_trading_disabled",
+                DecisionBlockRequest(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    reason="trading_disabled",
+                    submission_stage="blocked_trading_disabled",
+                )
             )
             logger.warning(
                 "Decision blocked because trading is disabled strategy_id=%s decision_id=%s symbol=%s",
@@ -728,18 +631,22 @@ class _TradingPipelineMethodsPart4:
                 decision.symbol,
             )
             return False
-        live_submission_gate = self._live_submission_gate(session=session)
+        live_submission_gate = self._live_submission_gate(
+            inputs=LiveSubmissionGateInputs(session=session)
+        )
         if settings.trading_mode == "live" and not bool(
             live_submission_gate.get("allowed", False)
         ):
             self._block_decision_submission(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-                reason="capital_stage_shadow",
-                submission_stage="blocked_capital_stage_shadow",
-                capital_stage="shadow",
-                extra_metadata={"live_submission_gate": live_submission_gate},
+                DecisionBlockRequest(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    reason="capital_stage_shadow",
+                    submission_stage="blocked_capital_stage_shadow",
+                    capital_stage="shadow",
+                    extra_metadata={"live_submission_gate": live_submission_gate},
+                )
             )
             logger.info(
                 "Decision held in shadow stage strategy_id=%s decision_id=%s symbol=%s gate_reason=%s",
@@ -755,11 +662,13 @@ class _TradingPipelineMethodsPart4:
             return True
         reason = self.state.emergency_stop_reason or "emergency_stop_active"
         self._block_decision_submission(
-            session=session,
-            decision=decision,
-            decision_row=decision_row,
-            reason=reason,
-            submission_stage="blocked_emergency_stop",
+            DecisionBlockRequest(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reason=reason,
+                submission_stage="blocked_emergency_stop",
+            )
         )
         logger.error(
             "Decision blocked by emergency stop strategy_id=%s decision_id=%s symbol=%s reason=%s",
@@ -809,23 +718,27 @@ class _TradingPipelineMethodsPart4:
         )
 
         execution, rejected = self._submit_order_with_handling(
-            session=session,
-            execution_client=execution_client,
-            decision=decision,
-            decision_row=decision_row,
-            selected_adapter_name=selected_adapter_name,
-            retry_delays=policy_outcome.retry_delays,
+            OrderSubmissionRequest(
+                session=session,
+                execution_client=execution_client,
+                decision=decision,
+                decision_row=decision_row,
+                selected_adapter_name=selected_adapter_name,
+                retry_delays=policy_outcome.retry_delays,
+            )
         )
         if rejected:
             return False
         self._emit_domain_telemetry(
-            event_name="torghut.decision.generated",
-            severity="info",
-            decision=decision,
-            decision_row=decision_row,
-            extra_properties={
-                "selected_execution_adapter": selected_adapter_name,
-            },
+            DomainTelemetryEvent(
+                event_name="torghut.decision.generated",
+                severity="info",
+                decision=decision,
+                decision_row=decision_row,
+                extra_properties={
+                    "selected_execution_adapter": selected_adapter_name,
+                },
+            )
         )
         if execution is None:
             self._sync_lean_observability(execution_client)
@@ -845,14 +758,16 @@ class _TradingPipelineMethodsPart4:
                 self._decision_lifecycle_metadata(submission_stage="submitted"),
             )
             self._emit_domain_telemetry(
-                event_name="torghut.execution.submitted",
-                severity="info",
-                decision=decision,
-                decision_row=decision_row,
-                extra_properties={
-                    "execution_expected_adapter": selected_adapter_name,
-                    "execution_actual_adapter": selected_adapter_name,
-                },
+                DomainTelemetryEvent(
+                    event_name="torghut.execution.submitted",
+                    severity="info",
+                    decision=decision,
+                    decision_row=decision_row,
+                    extra_properties={
+                        "execution_expected_adapter": selected_adapter_name,
+                        "execution_actual_adapter": selected_adapter_name,
+                    },
+                )
             )
             return True
 
@@ -862,12 +777,14 @@ class _TradingPipelineMethodsPart4:
         if actual_adapter_name == "alpaca_fallback":
             actual_adapter_name = "alpaca"
         self._handle_execution_fallback(
-            session=session,
-            decision=decision,
-            decision_row=decision_row,
-            execution=execution,
-            selected_adapter_name=selected_adapter_name,
-            actual_adapter_name=actual_adapter_name,
+            ExecutionFallbackRequest(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                execution=execution,
+                selected_adapter_name=selected_adapter_name,
+                actual_adapter_name=actual_adapter_name,
+            )
         )
         self._record_lean_shadow_from_execution(execution)
         self._sync_lean_observability(execution_client)
@@ -882,15 +799,17 @@ class _TradingPipelineMethodsPart4:
             adapter=actual_adapter_name,
         )
         self._emit_domain_telemetry(
-            event_name="torghut.execution.submitted",
-            severity="info",
-            decision=decision,
-            decision_row=decision_row,
-            execution=execution,
-            extra_properties={
-                "execution_expected_adapter": selected_adapter_name,
-                "execution_actual_adapter": actual_adapter_name,
-            },
+            DomainTelemetryEvent(
+                event_name="torghut.execution.submitted",
+                severity="info",
+                decision=decision,
+                decision_row=decision_row,
+                execution=execution,
+                extra_properties={
+                    "execution_expected_adapter": selected_adapter_name,
+                    "execution_actual_adapter": actual_adapter_name,
+                },
+            )
         )
         logger.info(
             "Order submitted strategy_id=%s decision_id=%s symbol=%s adapter=%s alpaca_order_id=%s",
@@ -901,6 +820,3 @@ class _TradingPipelineMethodsPart4:
             execution.alpaca_order_id,
         )
         return True
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

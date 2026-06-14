@@ -1,209 +1,117 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading pipeline implementation."""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import inspect
 import logging
-import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, Optional, Sequence, cast
 
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ....alpaca_client import TorghutAlpacaClient
 from ....config import settings
 from ....db import SessionLocal
 from ....models import (
     Execution,
-    LLMDecisionReview,
     PositionSnapshot,
-    RejectedSignalOutcomeEvent,
     Strategy,
     TradeDecision,
-    coerce_json_payload,
 )
-from ....observability import capture_posthog_event
-from ....snapshots import snapshot_account_and_positions
-from ....strategies import StrategyCatalog
-from ...autonomy.phase_manifest_contract import AUTONOMY_PHASE_ORDER
-from ...decisions import DecisionEngine
-from ...empirical_jobs import build_empirical_jobs_status
-from ...execution import OrderExecutor
-from ...execution_adapters import ExecutionAdapter
 from ...execution_policy import ExecutionPolicy
 from ...feature_quality import (
     REASON_STALENESS,
     FeatureQualityThresholds,
     evaluate_feature_batch_quality,
 )
-from ...features import extract_executable_price, optional_decimal, payload_value
-from ...firewall import OrderFirewall, OrderFirewallBlocked
-from ...ingest import ClickHouseSignalIngestor, SignalBatch
+from ...ingest import SignalBatch
 from ...lean_lanes import LeanLaneManager
-from ...llm import LLMReviewEngine, apply_policy
-from ...llm.dspy_programs.runtime import (
-    DSPyReviewRuntime,
-    DSPyRuntimeUnsupportedStateError,
-)
-from ...llm.guardrails import evaluate_llm_guardrails
-from ...llm.policy import allowed_order_types
-from ...llm.schema import MarketContextBundle
-from ...llm.schema import MarketSnapshot as LLMMarketSnapshot
 from ...market_context import (
     MarketContextClient,
-    MarketContextStatus,
-    evaluate_market_context,
 )
-from ...market_context_domains import (
-    active_market_context_domain_states,
-    active_market_context_reasons,
-)
-from ...models import SignalEnvelope, StrategyDecision
+from ...models import SignalEnvelope
 from ...order_feed import OrderFeedIngestor
 from ...paper_route_evidence import (
     PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
     PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
 )
-from ...portfolio import (
-    AllocationResult,
-    PortfolioSizingResult,
-    allocator_from_settings,
-    sizer_from_settings,
-)
-from ...prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
+from ...prices import ClickHousePriceFetcher
 from ...quote_quality import (
     QuoteQualityPolicy,
-    QuoteQualityStatus,
     SignalQuoteQualityTracker,
-    assess_signal_quote_quality,
 )
-from ...quantity_rules import (
-    min_qty_for_symbol,
-    quantize_qty_for_symbol,
-    resolve_quantity_resolution,
-)
-from ...reconcile import Reconciler
-from ...regime_hmm import (
-    HMMRegimeContext,
-    resolve_hmm_context,
-    resolve_regime_context_authority_reason,
-)
-from ...risk import RiskEngine
 from ...session_context import regular_session_open_utc_for
-from ...tca import derive_adaptive_execution_policy
 from ...time_source import trading_now
-from ...universe import UniverseResolver
-from ...submission_council import (
-    build_hypothesis_runtime_summary,
-    build_live_submission_gate_payload,
-    build_submission_gate_market_context_status,
-    load_quant_evidence_status,
-)
-from ..pipeline_helpers import (
-    _allocator_rejection_reasons,
-    _apply_projected_position_decision,
-    _attach_dspy_lineage,
-    _autonomy_gate_report_is_saturated_fail_sentinel,
-    _build_committee_veto_alignment_payload,
-    _build_llm_policy_resolution,
-    _build_portfolio_snapshot,
-    _classify_llm_error,
-    _clone_positions,
-    _coerce_bool,
-    _coerce_json,
-    _coerce_runtime_uncertainty_gate_action,
-    _coerce_strategy_symbols,
-    _committee_trace_has_veto,
-    _extract_json_error_payload,
-    _format_order_submit_rejection,
-    _hash_payload,
-    _is_runtime_risk_increasing_entry,
-    _llm_guardrail_controls_snapshot,
-    _load_recent_decisions,
-    _normalize_rollout_stage,
-    _optional_decimal,
-    _optional_int,
-    _price_snapshot_payload,
-    _project_open_orders_onto_positions,
-    _resolve_decision_regime_label_with_source,
-    _resolve_llm_review_error_reject_reason,
-    _resolve_llm_unavailable_reject_reason,
-    _resolve_signal_regime,
-    _select_strictest_runtime_uncertainty_gate,
-    _uncertainty_gate_staleness_reason,
-)
 from ..safety import (
-    _FRESH_TAIL_NO_SIGNAL_REASONS,
-    _is_market_session_open,
-    _latch_signal_continuity_alert_state,
-    _record_signal_continuity_recovery_cycle,
-    _signal_bootstrap_grace_active,
-    _signal_tail_is_fresh,
-)
-from ..state import (
-    RuntimeUncertaintyGate,
-    RuntimeUncertaintyGateAction,
-    TradingState,
-    _normalize_reason_metric,
+    latch_signal_continuity_alert_state,
+    record_signal_continuity_recovery_cycle,
 )
 
-# ruff: noqa: F401,F403,F405,F821,F821,F821
 
-from .part_01_statements_158 import *
+from .contexts import (
+    BatchSignalProcessingContext,
+    SessionWarmupWindow,
+    StrategyPositionExposureUpdate,
+    TradingPipelineRuntimeDependencies,
+)
+from .shared import (
+    TradingPipelineBase,
+    STRATEGY_POSITION_TAG_LOOKBACK,
+    aware_utc,
+    normalized_symbol,
+    same_side_position_exposure,
+)
+from .support import (
+    clone_positions,
+    coerce_strategy_symbols,
+    optional_decimal,
+    project_open_orders_onto_positions,
+)
+
+logger = logging.getLogger(__name__)
 
 
-class _TradingPipelineMethodsPart1:
+class TradingPipelineRunCycleMixin(TradingPipelineBase):
     def __init__(
         self,
-        alpaca_client: TorghutAlpacaClient,
-        order_firewall: OrderFirewall,
-        ingestor: ClickHouseSignalIngestor,
-        decision_engine: DecisionEngine,
-        risk_engine: RiskEngine,
-        executor: OrderExecutor,
-        execution_adapter: ExecutionAdapter,
-        reconciler: Reconciler,
-        universe_resolver: UniverseResolver,
-        state: TradingState,
-        account_label: str,
-        session_factory: Callable[[], Session] = SessionLocal,
-        llm_review_engine: Optional[LLMReviewEngine] = None,
-        price_fetcher: Optional[PriceFetcher] = None,
-        strategy_catalog: StrategyCatalog | None = None,
-        execution_policy: Optional[ExecutionPolicy] = None,
-        order_feed_ingestor: OrderFeedIngestor | None = None,
+        dependencies: TradingPipelineRuntimeDependencies | None = None,
+        *legacy_args: Any,
+        **legacy_kwargs: Any,
     ) -> None:
-        self.alpaca_client = alpaca_client
-        self.order_firewall = order_firewall
-        self.ingestor = ingestor
-        self.decision_engine = decision_engine
-        self.risk_engine = risk_engine
-        self.executor = executor
-        self.execution_adapter = execution_adapter
-        self.reconciler = reconciler
-        self.universe_resolver = universe_resolver
-        self.state = state
-        self.account_label = account_label
-        self.session_factory = session_factory
-        self.price_fetcher = price_fetcher or ClickHousePriceFetcher()
+        dependencies = (
+            dependencies
+            or TradingPipelineRuntimeDependencies.from_legacy_call(
+                legacy_args,
+                legacy_kwargs,
+                default_session_factory=SessionLocal,
+            )
+        )
+        self.alpaca_client = dependencies.alpaca_client
+        self.order_firewall = dependencies.order_firewall
+        self.ingestor = dependencies.ingestor
+        self.decision_engine = dependencies.decision_engine
+        self.risk_engine = dependencies.risk_engine
+        self.executor = dependencies.executor
+        self.execution_adapter = dependencies.execution_adapter
+        self.reconciler = dependencies.reconciler
+        self.universe_resolver = dependencies.universe_resolver
+        self.state = dependencies.state
+        self.account_label = dependencies.account_label
+        self.session_factory = dependencies.session_factory
+        self.price_fetcher = dependencies.price_fetcher or ClickHousePriceFetcher()
         if self.decision_engine.price_fetcher is None:
             self.decision_engine.price_fetcher = self.price_fetcher
         self._snapshot_cache = None
         self._snapshot_cached_at: Optional[datetime] = None
-        self.strategy_catalog = strategy_catalog
-        self.execution_policy = execution_policy or ExecutionPolicy()
-        self.order_feed_ingestor = order_feed_ingestor or OrderFeedIngestor()
+        self.strategy_catalog = dependencies.strategy_catalog
+        self.execution_policy = dependencies.execution_policy or ExecutionPolicy()
+        self.order_feed_ingestor = (
+            dependencies.order_feed_ingestor or OrderFeedIngestor()
+        )
         self.market_context_client = MarketContextClient()
         self.lean_lane_manager = LeanLaneManager()
-        self.llm_review_engine = llm_review_engine
+        self.llm_review_engine = dependencies.llm_review_engine
         self._last_live_submission_gate: dict[str, object] | None = None
         self._signal_quote_quality = SignalQuoteQualityTracker(
             policy=QuoteQualityPolicy(
@@ -249,13 +157,15 @@ class _TradingPipelineMethodsPart1:
             ):
                 return
             self._process_batch_signals(
-                session=session,
-                batch=batch,
-                strategies=strategies,
-                account_snapshot=account_snapshot,
-                account=account,
-                positions=positions,
-                allowed_symbols=allowed_symbols,
+                context=BatchSignalProcessingContext(
+                    session=session,
+                    batch=batch,
+                    strategies=strategies,
+                    account_snapshot=account_snapshot,
+                    account=account,
+                    positions=positions,
+                    allowed_symbols=allowed_symbols,
+                )
             )
             self.ingestor.commit_cursor(session, batch)
 
@@ -281,6 +191,34 @@ class _TradingPipelineMethodsPart1:
         if not callable(fetch_with_reason) or not callable(get_cursor):
             return
 
+        window = self._resolve_session_warmup_window(session, get_cursor)
+        if window is None:
+            return
+        warmup_batch = self._fetch_session_warmup_batch(fetch_with_reason, window)
+        if warmup_batch is None:
+            return
+        warmed = self._warm_session_context_signals(
+            warmup_batch,
+            strategies=strategies,
+            allowed_symbols=allowed_symbols,
+        )
+        self._session_context_warmup_day = window.session_day
+        logger.info(
+            "Session context warmup complete account=%s start=%s end=%s limit=%s signals=%s max_seconds=%s max_signals=%s",
+            self.account_label,
+            window.start.isoformat(),
+            window.end.isoformat(),
+            window.limit,
+            warmed,
+            window.max_seconds,
+            window.max_signals,
+        )
+
+    def _resolve_session_warmup_window(
+        self,
+        session: Session,
+        get_cursor: Any,
+    ) -> SessionWarmupWindow | None:
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
         session_open = regular_session_open_utc_for(now)
         session_day = session_open.date()
@@ -326,24 +264,44 @@ class _TradingPipelineMethodsPart1:
             1,
             int(settings.trading_session_context_warmup_signal_limit),
         )
-        warmup_limit = min(warmup_signal_limit, max_warmup_signals)
+        return SessionWarmupWindow(
+            session_day=session_day,
+            start=warmup_start,
+            end=warmup_end,
+            limit=min(warmup_signal_limit, max_warmup_signals),
+            max_seconds=max_warmup_seconds,
+            max_signals=max_warmup_signals,
+        )
+
+    def _fetch_session_warmup_batch(
+        self,
+        fetch_with_reason: Any,
+        window: SessionWarmupWindow,
+    ) -> SignalBatch | None:
         try:
-            warmup_batch = cast(
+            return cast(
                 SignalBatch,
                 fetch_with_reason(
-                    start=warmup_start,
-                    end=warmup_end,
-                    limit=warmup_limit,
+                    start=window.start,
+                    end=window.end,
+                    limit=window.limit,
                 ),
             )
         except Exception:
             logger.exception(
                 "Failed to fetch session context warmup signals start=%s end=%s",
-                warmup_start.isoformat(),
-                warmup_end.isoformat(),
+                window.start.isoformat(),
+                window.end.isoformat(),
             )
-            return
+            return None
 
+    def _warm_session_context_signals(
+        self,
+        warmup_batch: SignalBatch,
+        *,
+        strategies: Sequence[Strategy] | None,
+        allowed_symbols: set[str] | None,
+    ) -> int:
         relevant_symbols = self._relevant_signal_symbols(
             strategies=strategies,
             allowed_symbols=allowed_symbols,
@@ -352,7 +310,7 @@ class _TradingPipelineMethodsPart1:
         for signal in warmup_batch.signals:
             if (
                 relevant_symbols
-                and _normalized_symbol(signal.symbol) not in relevant_symbols
+                and normalized_symbol(signal.symbol) not in relevant_symbols
             ):
                 continue
             try:
@@ -367,17 +325,7 @@ class _TradingPipelineMethodsPart1:
                     signal.event_ts,
                     exc_info=True,
                 )
-        self._session_context_warmup_day = session_day
-        logger.info(
-            "Session context warmup complete account=%s start=%s end=%s limit=%s signals=%s max_seconds=%s max_signals=%s",
-            self.account_label,
-            warmup_start.isoformat(),
-            warmup_end.isoformat(),
-            warmup_limit,
-            warmed,
-            max_warmup_seconds,
-            max_warmup_signals,
-        )
+        return warmed
 
     def _capture_runtime_window_account_snapshot_if_due(self, session: Session) -> None:
         if not (
@@ -447,7 +395,7 @@ class _TradingPipelineMethodsPart1:
         *,
         quality_signals: list[SignalEnvelope],
     ) -> bool:
-        market_session_open = self._is_market_session_open()
+        market_session_open = self.is_market_session_open()
         self.state.market_session_open = market_session_open
         self.state.metrics.market_session_open = 1 if market_session_open else 0
         if not batch.signals:
@@ -548,7 +496,7 @@ class _TradingPipelineMethodsPart1:
         self.state.last_signal_continuity_state = "signals_present"
         self.state.last_signal_continuity_reason = None
         self.state.last_signal_continuity_actionable = False
-        _record_signal_continuity_recovery_cycle(
+        record_signal_continuity_recovery_cycle(
             self.state,
             required_recovery_cycles=max(
                 1, int(settings.trading_signal_continuity_recovery_cycles)
@@ -572,7 +520,7 @@ class _TradingPipelineMethodsPart1:
         filtered = [
             signal
             for signal in signals
-            if _normalized_symbol(signal.symbol) in relevant_symbols
+            if normalized_symbol(signal.symbol) in relevant_symbols
         ]
         return filtered
 
@@ -585,22 +533,22 @@ class _TradingPipelineMethodsPart1:
         if strategies is None:
             return set()
         normalized_allowed_symbols = {
-            _normalized_symbol(symbol)
+            normalized_symbol(symbol)
             for symbol in (
                 allowed_symbols
                 if allowed_symbols is not None
                 else self.universe_resolver.get_resolution().symbols
             )
-            if _normalized_symbol(symbol)
+            if normalized_symbol(symbol)
         }
         relevant_symbols: set[str] = set()
         for strategy in strategies:
             if not strategy.enabled:
                 continue
             strategy_symbols = {
-                _normalized_symbol(symbol)
-                for symbol in _coerce_strategy_symbols(strategy.universe_symbols)
-                if _normalized_symbol(symbol)
+                normalized_symbol(symbol)
+                for symbol in coerce_strategy_symbols(strategy.universe_symbols)
+                if normalized_symbol(symbol)
             }
             if strategy_symbols and normalized_allowed_symbols:
                 relevant_symbols.update(strategy_symbols & normalized_allowed_symbols)
@@ -619,7 +567,7 @@ class _TradingPipelineMethodsPart1:
             "cash": str(account_snapshot.cash),
             "buying_power": str(account_snapshot.buying_power),
         }
-        snapshot_positions = _clone_positions(account_snapshot.positions)
+        snapshot_positions = clone_positions(account_snapshot.positions)
         positions = self._resolve_execution_context_positions(
             snapshot_positions,
             session=session,
@@ -662,7 +610,7 @@ class _TradingPipelineMethodsPart1:
                 "universe_source_unavailable"
             )
             self.state.metrics.record_universe_fail_safe_block(universe_reason)
-            _latch_signal_continuity_alert_state(
+            latch_signal_continuity_alert_state(
                 self.state, "universe_source_unavailable"
             )
             self.state.last_error = (
@@ -683,45 +631,61 @@ class _TradingPipelineMethodsPart1:
         *,
         session: Session | None = None,
     ) -> list[dict[str, Any]]:
-        normalized_positions = _clone_positions(snapshot_positions)
+        normalized_positions = self._seed_execution_context_positions(
+            snapshot_positions
+        )
+        self._project_open_orders_into_positions(normalized_positions)
+        if session is not None:
+            normalized_positions = self._attach_current_session_strategy_position_tags(
+                session,
+                normalized_positions,
+            )
+        return normalized_positions
+
+    def _seed_execution_context_positions(
+        self,
+        snapshot_positions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        fallback_positions = clone_positions(snapshot_positions)
         seed_snapshot = getattr(self.execution_adapter, "seed_positions_snapshot", None)
-        if callable(seed_snapshot):
-            try:
-                seed_snapshot(_clone_positions(snapshot_positions))
-            except Exception as exc:
-                logger.warning(
-                    "Failed to seed simulation execution positions account=%s error=%s",
-                    self.account_label,
-                    exc,
-                )
-            else:
-                list_positions = getattr(self.execution_adapter, "list_positions", None)
-                if callable(list_positions):
-                    try:
-                        seeded_positions = list_positions()
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to read simulation execution positions account=%s error=%s",
-                            self.account_label,
-                            exc,
-                        )
-                    else:
-                        if isinstance(seeded_positions, list):
-                            normalized_positions: list[dict[str, Any]] = []
-                            for raw_position in cast(list[Any], seeded_positions):
-                                if not isinstance(raw_position, Mapping):
-                                    continue
-                                normalized_positions.append(
-                                    {
-                                        str(key): value
-                                        for key, value in cast(
-                                            Mapping[object, Any], raw_position
-                                        ).items()
-                                    }
-                                )
+        if not callable(seed_snapshot):
+            return fallback_positions
+        try:
+            seed_snapshot(clone_positions(snapshot_positions))
+        except Exception as exc:
+            logger.warning(
+                "Failed to seed simulation execution positions account=%s error=%s",
+                self.account_label,
+                exc,
+            )
+            return fallback_positions
+        list_positions = getattr(self.execution_adapter, "list_positions", None)
+        if not callable(list_positions):
+            return fallback_positions
+        try:
+            seeded_positions = list_positions()
+        except Exception as exc:
+            logger.warning(
+                "Failed to read simulation execution positions account=%s error=%s",
+                self.account_label,
+                exc,
+            )
+            return fallback_positions
+        if not isinstance(seeded_positions, list):
+            return fallback_positions
+        return [
+            {str(key): value for key, value in cast(Mapping[object, Any], item).items()}
+            for item in cast(list[Any], seeded_positions)
+            if isinstance(item, Mapping)
+        ]
+
+    def _project_open_orders_into_positions(
+        self,
+        normalized_positions: list[dict[str, Any]],
+    ) -> None:
         projected_open_orders = self._resolve_execution_context_open_orders()
         if projected_open_orders:
-            projected_count = _project_open_orders_onto_positions(
+            projected_count = project_open_orders_onto_positions(
                 normalized_positions,
                 projected_open_orders,
             )
@@ -731,12 +695,6 @@ class _TradingPipelineMethodsPart1:
                     self.account_label,
                     projected_count,
                 )
-        if session is not None:
-            normalized_positions = self._attach_current_session_strategy_position_tags(
-                session,
-                normalized_positions,
-            )
-        return normalized_positions
 
     def _attach_current_session_strategy_position_tags(
         self,
@@ -748,9 +706,31 @@ class _TradingPipelineMethodsPart1:
         session_open = regular_session_open_utc_for(
             trading_now(account_label=self.account_label).astimezone(timezone.utc)
         )
-        lookback_start = session_open - _STRATEGY_POSITION_TAG_LOOKBACK
+        lookback_start = session_open - STRATEGY_POSITION_TAG_LOOKBACK
+        rows = self._load_strategy_position_tag_rows(session, lookback_start)
+        if rows is None:
+            return positions
+        exposures = self._build_strategy_position_exposures(rows, session_open)
+        if not exposures:
+            return positions
+        tagged_positions: list[dict[str, Any]] = []
+        for position in positions:
+            tagged_positions.extend(
+                self._attach_strategy_position_tags(
+                    position,
+                    exposures=exposures,
+                    session_open=session_open,
+                )
+            )
+        return tagged_positions
+
+    def _load_strategy_position_tag_rows(
+        self,
+        session: Session,
+        lookback_start: datetime,
+    ) -> Sequence[Any] | None:
         try:
-            rows = session.execute(
+            return session.execute(
                 select(Execution, TradeDecision)
                 .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
                 .where(
@@ -766,99 +746,112 @@ class _TradingPipelineMethodsPart1:
                 "Failed to resolve strategy position tags account=%s",
                 self.account_label,
             )
-            return positions
+            return None
 
+    def _build_strategy_position_exposures(
+        self,
+        rows: Sequence[Any],
+        session_open: datetime,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
         exposures: dict[str, dict[str, dict[str, Any]]] = {}
         for execution, decision_row in rows:
-            symbol = _normalized_symbol(execution.symbol or decision_row.symbol)
-            strategy_id = str(decision_row.strategy_id)
-            if not symbol or not strategy_id:
+            update = self._strategy_position_exposure_update(execution, decision_row)
+            if update is None:
                 continue
-            execution_created_at = _aware_utc(execution.created_at)
-            filled_qty = _optional_decimal(execution.filled_qty)
-            if filled_qty is None or filled_qty <= 0:
-                continue
-            side = str(execution.side or "").strip().lower()
-            if side not in {"buy", "sell"}:
-                continue
-            signed_qty = filled_qty if side == "buy" else -filled_qty
-            strategy_exposures = exposures.setdefault(symbol, {})
-            exposure = strategy_exposures.setdefault(
-                strategy_id,
-                {
-                    "qty": Decimal("0"),
-                    "buy_qty": Decimal("0"),
-                    "buy_notional": Decimal("0"),
-                    "session_qty": Decimal("0"),
-                    "latest_execution_at": None,
-                    "earliest_execution_at": None,
-                },
+            self._record_strategy_position_exposure(
+                exposures,
+                update=update,
+                session_open=session_open,
             )
-            exposure["qty"] = cast(Decimal, exposure["qty"]) + signed_qty
-            if execution_created_at >= session_open:
-                exposure["session_qty"] = (
-                    cast(Decimal, exposure["session_qty"]) + signed_qty
-                )
-            avg_fill_price = _optional_decimal(execution.avg_fill_price)
-            if side == "buy" and avg_fill_price is not None and avg_fill_price > 0:
-                exposure["buy_qty"] = cast(Decimal, exposure["buy_qty"]) + filled_qty
-                exposure["buy_notional"] = cast(
-                    Decimal,
-                    exposure["buy_notional"],
-                ) + (filled_qty * avg_fill_price)
-            earliest_execution_at = exposure.get("earliest_execution_at")
-            if (
-                earliest_execution_at is None
-                or execution_created_at < earliest_execution_at
-            ):
-                exposure["earliest_execution_at"] = execution_created_at
-            latest_execution_at = exposure.get("latest_execution_at")
-            if (
-                latest_execution_at is None
-                or execution_created_at > latest_execution_at
-            ):
-                exposure["latest_execution_at"] = execution_created_at
-
-        if not exposures:
-            return positions
-
-        tagged_positions: list[dict[str, Any]] = []
-        for position in positions:
-            tagged_positions.extend(
-                self._attach_strategy_position_tags(
-                    position,
-                    exposures=exposures,
-                    session_open=session_open,
-                )
-            )
-        return tagged_positions
+        return exposures
 
     @staticmethod
-    def _same_side_position_exposure(
+    def _strategy_position_exposure_update(
+        execution: Any,
+        decision_row: Any,
+    ) -> StrategyPositionExposureUpdate | None:
+        symbol = normalized_symbol(execution.symbol or decision_row.symbol)
+        strategy_id = str(decision_row.strategy_id)
+        if not symbol or not strategy_id:
+            return None
+        filled_qty = optional_decimal(execution.filled_qty)
+        if filled_qty is None or filled_qty <= 0:
+            return None
+        side = str(execution.side or "").strip().lower()
+        if side not in {"buy", "sell"}:
+            return None
+        signed_qty = filled_qty if side == "buy" else -filled_qty
+        return StrategyPositionExposureUpdate(
+            symbol=symbol,
+            strategy_id=strategy_id,
+            signed_qty=signed_qty,
+            filled_qty=filled_qty,
+            side=side,
+            execution_created_at=aware_utc(execution.created_at),
+            avg_fill_price=optional_decimal(execution.avg_fill_price),
+        )
+
+    @staticmethod
+    def _empty_strategy_position_exposure() -> dict[str, Any]:
+        return {
+            "qty": Decimal("0"),
+            "buy_qty": Decimal("0"),
+            "buy_notional": Decimal("0"),
+            "session_qty": Decimal("0"),
+            "latest_execution_at": None,
+            "earliest_execution_at": None,
+        }
+
+    @staticmethod
+    def _record_strategy_position_exposure(
+        exposures: dict[str, dict[str, dict[str, Any]]],
+        *,
+        update: StrategyPositionExposureUpdate,
+        session_open: datetime,
+    ) -> None:
+        strategy_exposures = exposures.setdefault(update.symbol, {})
+        exposure = strategy_exposures.setdefault(
+            update.strategy_id,
+            TradingPipelineRunCycleMixin._empty_strategy_position_exposure(),
+        )
+        exposure["qty"] = cast(Decimal, exposure["qty"]) + update.signed_qty
+        if update.execution_created_at >= session_open:
+            exposure["session_qty"] = (
+                cast(Decimal, exposure["session_qty"]) + update.signed_qty
+            )
+        if (
+            update.side == "buy"
+            and update.avg_fill_price is not None
+            and update.avg_fill_price > 0
+        ):
+            exposure["buy_qty"] = cast(Decimal, exposure["buy_qty"]) + update.filled_qty
+            exposure["buy_notional"] = cast(
+                Decimal,
+                exposure["buy_notional"],
+            ) + (update.filled_qty * update.avg_fill_price)
+        TradingPipelineRunCycleMixin._record_position_exposure_window(
+            exposure,
+            update.execution_created_at,
+        )
+
+    @staticmethod
+    def _record_position_exposure_window(
+        exposure: dict[str, Any],
+        execution_created_at: datetime,
+    ) -> None:
+        earliest_execution_at = exposure.get("earliest_execution_at")
+        if (
+            earliest_execution_at is None
+            or execution_created_at < earliest_execution_at
+        ):
+            exposure["earliest_execution_at"] = execution_created_at
+        latest_execution_at = exposure.get("latest_execution_at")
+        if latest_execution_at is None or execution_created_at > latest_execution_at:
+            exposure["latest_execution_at"] = execution_created_at
+
+    @staticmethod
+    def same_side_position_exposure(
         position_qty: Decimal,
         exposure_qty: Decimal,
     ) -> bool:
-        if position_qty == 0 or exposure_qty == 0:
-            return False
-        return (position_qty > 0 and exposure_qty > 0) or (
-            position_qty < 0 and exposure_qty < 0
-        )
-
-    @staticmethod
-    def _attach_strategy_position_tag(
-        position: dict[str, Any],
-        *,
-        exposures: Mapping[str, Mapping[str, Mapping[str, Any]]],
-        session_open: datetime,
-    ) -> dict[str, Any]:
-        tagged_positions = TradingPipeline._attach_strategy_position_tags(
-            position,
-            exposures=exposures,
-            session_open=session_open,
-        )
-        if len(tagged_positions) == 1:
-            return tagged_positions[0]
-        return position
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
+        return same_side_position_exposure(position_qty, exposure_qty)

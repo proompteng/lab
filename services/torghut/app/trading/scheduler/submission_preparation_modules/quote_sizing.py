@@ -1,29 +1,17 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
-
 from __future__ import annotations
 
-import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Literal, Optional, cast
 
-from sqlalchemy.orm import Session
 
 from ....config import settings
 from ....models import (
     Strategy,
-    TradeDecision,
 )
-from ...firewall import OrderFirewallBlocked
 from ...models import SignalEnvelope, StrategyDecision
 from ...prices import MarketSnapshot
-from ...quote_quality import (
-    QuoteQualityPolicy,
-    QuoteQualityStatus,
-    _status,
-    assess_signal_quote_quality,
-)
 from ...quantity_rules import quantize_qty_for_symbol, resolve_quantity_resolution
 from ...runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -33,50 +21,44 @@ from ...runtime_decision_authority import (
 )
 from ...simple_risk import (
     position_qty_for_symbol,
-    prepare_simple_decision,
 )
-from ..pipeline_helpers import (
-    _extract_json_error_payload,
-    _price_snapshot_payload,
-)
+from ..pipeline_modules.support import price_snapshot_payload
 from ..target_plan_helpers import (
-    _PAPER_ROUTE_PROBE_QTY_STEP,
-    _TargetProbeQuantityResolution,
-    _bounded_collection_decision_requires_target_notional_sizing,
-    _bounded_paper_route_collection_entry_metadata,
-    _bounded_sim_collection_metadata_from_decision,
-    _decimal_from_mapping,
-    _executable_bid_ask_present,
-    _first_decimal,
-    _mapping_value,
-    _min_optional_decimal,
-    _optional_decimal,
-    _paper_route_probe_entry_metadata,
-    _parse_target_datetime,
-    _pct_cap_to_notional,
-    _quote_snapshot_from_mapping,
-    _quote_snapshot_reference_price,
-    _safe_int,
-    _safe_text,
-    _simple_buying_power_consumption,
-    _simple_decision_notional,
-    _snapshot_has_executable_quote,
-    _target_metadata_quote_snapshot,
-    _target_notional_sizing_audit_from_params,
-    _target_probe_cap,
-    _target_probe_symbol_actions,
-    _target_probe_symbol_notional_budget,
-    _target_probe_symbol_quantities,
-    _target_symbols,
-    _text_from_mapping,
+    PAPER_ROUTE_PROBE_QTY_STEP,
+    TargetProbeQuantityResolution,
+    bounded_collection_decision_requires_target_notional_sizing,
+    bounded_paper_route_collection_entry_metadata,
+    decimal_from_mapping,
+    executable_bid_ask_present,
+    mapping_value,
+    optional_decimal,
+    parse_target_datetime,
+    quote_snapshot_from_mapping,
+    quote_snapshot_reference_price,
+    safe_text,
+    snapshot_has_executable_quote as target_snapshot_has_executable_quote,
+    target_metadata_quote_snapshot,
+    target_probe_cap,
+    target_probe_symbol_actions,
+    target_probe_symbol_notional_budget,
+    target_probe_symbol_quantities,
+    target_plan_symbols,
+    text_from_mapping,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
 
-from .part_01_statements_74 import *
+from ..pipeline_modules.shared import TradingPipelineBase
+
+from .shared import (
+    TargetQuantityDecisionRequest,
+    TargetQuantityResolutionRequest,
+    TargetSizingContext,
+    TargetSizingPriceRequest,
+    logger,
+)
 
 
-class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
+class SimplePipelineSubmissionQuoteSizingMixin(TradingPipelineBase):
     def _submission_control_plane_snapshot(
         self,
         *,
@@ -116,11 +98,11 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
                 timeframe=decision.timeframe,
             )
         )
-        target_snapshot = _target_metadata_quote_snapshot(
+        target_snapshot = target_metadata_quote_snapshot(
             decision.params,
             symbol=decision.symbol,
         )
-        snapshot_has_executable_quote = (
+        snapshot_quote_executable = (
             snapshot is not None
             and snapshot.bid is not None
             and snapshot.ask is not None
@@ -131,10 +113,10 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
             (
                 snapshot is None
                 or snapshot.price is None
-                or (requires_executable_quote and not snapshot_has_executable_quote)
+                or (requires_executable_quote and not snapshot_quote_executable)
             )
             and target_snapshot is not None
-            and _snapshot_has_executable_quote(target_snapshot)
+            and target_snapshot_has_executable_quote(target_snapshot)
         ):
             updated_params = self._paper_route_params_with_quote_snapshot(
                 decision.params,
@@ -168,19 +150,19 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
         signal_price: Any,
     ) -> dict[str, Any]:
         updated_params = dict(params)
-        price = _decimal_from_mapping(
+        price = decimal_from_mapping(
             snapshot, ("price", "mid", "mid_price", "midpoint")
         )
-        bid = _decimal_from_mapping(snapshot, ("bid", "bid_px", "bid_price", "bp"))
-        ask = _decimal_from_mapping(snapshot, ("ask", "ask_px", "ask_price", "ap"))
-        spread = _decimal_from_mapping(snapshot, ("spread", "imbalance_spread"))
+        bid = decimal_from_mapping(snapshot, ("bid", "bid_px", "bid_price", "bp"))
+        ask = decimal_from_mapping(snapshot, ("ask", "ask_px", "ask_price", "ap"))
+        spread = decimal_from_mapping(snapshot, ("spread", "imbalance_spread"))
         computed_spread = ask - bid if bid is not None and ask is not None else None
         quote_as_of = (
-            _parse_target_datetime(snapshot.get("quote_as_of"))
-            or _parse_target_datetime(snapshot.get("as_of"))
-            or _parse_target_datetime(snapshot.get("timestamp"))
+            parse_target_datetime(snapshot.get("quote_as_of"))
+            or parse_target_datetime(snapshot.get("as_of"))
+            or parse_target_datetime(snapshot.get("timestamp"))
         )
-        source = _text_from_mapping(snapshot, ("quote_source", "source", "feed"))
+        source = text_from_mapping(snapshot, ("quote_source", "source", "feed"))
         if price is None and bid is not None and ask is not None:
             price = (bid + ask) / Decimal("2")
         if signal_price is None and price is not None:
@@ -210,18 +192,18 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
     @staticmethod
     def _decision_has_executable_quote_payload(decision: StrategyDecision) -> bool:
         params = decision.params
-        if _executable_bid_ask_present(params):
+        if executable_bid_ask_present(params):
             return True
         price_snapshot = params.get("price_snapshot")
         if isinstance(price_snapshot, Mapping):
-            return _executable_bid_ask_present(cast(Mapping[str, Any], price_snapshot))
+            return executable_bid_ask_present(cast(Mapping[str, Any], price_snapshot))
         return False
 
     @staticmethod
     def _paper_route_price_snapshot_payload(
         snapshot: MarketSnapshot,
     ) -> dict[str, Any]:
-        payload = _price_snapshot_payload(snapshot)
+        payload = price_snapshot_payload(snapshot)
         if snapshot.bid is not None:
             payload["bid"] = str(snapshot.bid)
         if snapshot.ask is not None:
@@ -234,21 +216,18 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
 
     def _paper_route_target_sizing_price(
         self,
-        *,
-        target: Mapping[str, Any],
-        symbol: str,
-        action: Literal["buy", "sell"],
-        event_ts: datetime,
-        timeframe: str,
+        request: TargetSizingPriceRequest | None = None,
+        **legacy_kwargs: Any,
     ) -> tuple[Decimal | None, dict[str, Any], str | None]:
-        target_snapshot = _target_metadata_quote_snapshot(
-            target,
-            symbol=symbol,
-        ) or _quote_snapshot_from_mapping(target, symbol=symbol)
+        request = self._target_sizing_price_request(request, legacy_kwargs)
+        target_snapshot = target_metadata_quote_snapshot(
+            request.target,
+            symbol=request.symbol,
+        ) or quote_snapshot_from_mapping(request.target, symbol=request.symbol)
         if target_snapshot is not None:
-            reference_price = _quote_snapshot_reference_price(
+            reference_price = quote_snapshot_reference_price(
                 target_snapshot,
-                action=action,
+                action=request.action,
             )
             if reference_price is not None and reference_price > 0:
                 price_params = self._paper_route_params_with_quote_snapshot(
@@ -266,25 +245,25 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
         try:
             snapshot = price_fetcher.fetch_market_snapshot(
                 SignalEnvelope(
-                    event_ts=event_ts,
-                    symbol=symbol,
+                    event_ts=request.event_ts,
+                    symbol=request.symbol,
                     payload={},
-                    timeframe=timeframe,
+                    timeframe=request.timeframe,
                 )
             )
         except Exception:
             logger.exception(
                 "Failed to fetch paper-route target sizing quote symbol=%s timeframe=%s",
-                symbol,
-                timeframe,
+                request.symbol,
+                request.timeframe,
             )
             return None, {}, None
         if snapshot is None:
             return None, {}, None
         snapshot_payload = self._paper_route_price_snapshot_payload(snapshot)
-        reference_price = _quote_snapshot_reference_price(
+        reference_price = quote_snapshot_reference_price(
             snapshot_payload,
-            action=action,
+            action=request.action,
         )
         if reference_price is None or reference_price <= 0:
             return None, {"price_snapshot": snapshot_payload}, "price_fetcher_snapshot"
@@ -298,80 +277,78 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
             "price_fetcher_snapshot",
         )
 
+    @staticmethod
+    def _target_sizing_price_request(
+        request: TargetSizingPriceRequest | None,
+        legacy_kwargs: Mapping[str, Any],
+    ) -> TargetSizingPriceRequest:
+        if request is not None:
+            return request
+        return TargetSizingPriceRequest(
+            target=legacy_kwargs["target"],
+            symbol=legacy_kwargs["symbol"],
+            action=legacy_kwargs["action"],
+            event_ts=legacy_kwargs["event_ts"],
+            timeframe=legacy_kwargs["timeframe"],
+        )
+
     def _paper_route_target_quantity_resolution(
         self,
-        *,
-        target: Mapping[str, Any],
-        symbol: str,
-        symbols: Sequence[str],
-        action: Literal["buy", "sell"],
-        requested_qty: Decimal,
-        symbol_quantities: Mapping[str, Decimal],
-        max_notional: Decimal,
-        event_ts: datetime,
-        timeframe: str,
-    ) -> _TargetProbeQuantityResolution | None:
-        if requested_qty <= 0:
+        request: TargetQuantityResolutionRequest | None = None,
+        **legacy_kwargs: Any,
+    ) -> TargetProbeQuantityResolution | None:
+        request = self._target_quantity_resolution_request(request, legacy_kwargs)
+        if request.requested_qty <= 0:
             return None
-        normalized_symbol = symbol.strip().upper()
-        symbol_budget = _target_probe_symbol_notional_budget(
-            target=target,
+        normalized_symbol = request.symbol.strip().upper()
+        symbol_budget = target_probe_symbol_notional_budget(
+            target=request.target,
             symbol=normalized_symbol,
-            symbols=symbols,
-            symbol_quantities=symbol_quantities,
-            max_notional=max_notional,
+            symbols=request.symbols,
+            symbol_quantities=request.symbol_quantities,
+            max_notional=request.max_notional,
         )
         reference_price, price_params, price_source = (
             self._paper_route_target_sizing_price(
-                target=target,
-                symbol=normalized_symbol,
-                action=action,
-                event_ts=event_ts,
-                timeframe=timeframe,
+                TargetSizingPriceRequest(
+                    target=request.target,
+                    symbol=normalized_symbol,
+                    action=request.action,
+                    event_ts=request.event_ts,
+                    timeframe=request.timeframe,
+                )
             )
         )
-        audit: dict[str, Any] = {
-            "schema_version": "torghut.paper-route-target-notional-sizing.v1",
-            "symbol": normalized_symbol,
-            "action": action,
-            "sizing_source": "quantity_fallback",
-            "requested_qty": str(requested_qty),
-            "resolved_qty": str(requested_qty),
-            "target_notional": str(_target_probe_cap(target) or max_notional),
-            "paper_route_probe_max_notional": str(max_notional),
-            "symbol_notional_budget": (
-                str(symbol_budget) if symbol_budget is not None else None
-            ),
-            "reference_price": (
-                str(reference_price) if reference_price is not None else None
-            ),
-            "reference_price_source": price_source,
-            "symbols": [item.strip().upper() for item in symbols if item.strip()],
-            "blockers": [],
-        }
+        audit = self._target_quantity_resolution_audit(
+            request,
+            normalized_symbol=normalized_symbol,
+            symbol_budget=symbol_budget,
+            reference_price=reference_price,
+            price_source=price_source,
+        )
         if reference_price is not None and reference_price > 0:
-            requested_notional = requested_qty * reference_price
+            requested_notional = request.requested_qty * reference_price
             audit["requested_notional"] = str(requested_notional)
             if symbol_budget is not None and requested_notional > 0:
                 audit["notional_scale_gap"] = str(symbol_budget / requested_notional)
 
         if symbol_budget is None or symbol_budget <= 0:
             audit["blockers"] = ["paper_route_target_symbol_notional_budget_missing"]
-            return _TargetProbeQuantityResolution(
-                qty=requested_qty,
+            return TargetProbeQuantityResolution(
+                qty=request.requested_qty,
                 audit=audit,
                 price_params=price_params,
             )
         if reference_price is None or reference_price <= 0:
             audit["blockers"] = ["paper_route_target_notional_price_missing"]
-            return _TargetProbeQuantityResolution(
-                qty=requested_qty,
+            return TargetProbeQuantityResolution(
+                qty=request.requested_qty,
                 audit=audit,
                 price_params=price_params,
             )
 
         resolved_qty = (symbol_budget / reference_price).quantize(
-            _PAPER_ROUTE_PROBE_QTY_STEP,
+            PAPER_ROUTE_PROBE_QTY_STEP,
             rounding=ROUND_DOWN,
         )
         if resolved_qty <= 0:
@@ -380,37 +357,89 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
         audit["sizing_source"] = "target_notional"
         audit["resolved_qty"] = str(resolved_qty)
         audit["resolved_notional"] = str(resolved_qty * reference_price)
-        audit["overrode_requested_qty"] = resolved_qty != requested_qty
-        return _TargetProbeQuantityResolution(
+        audit["overrode_requested_qty"] = resolved_qty != request.requested_qty
+        return TargetProbeQuantityResolution(
             qty=resolved_qty,
             audit=audit,
             price_params=price_params,
         )
 
     @staticmethod
+    def _target_quantity_resolution_request(
+        request: TargetQuantityResolutionRequest | None,
+        legacy_kwargs: Mapping[str, Any],
+    ) -> TargetQuantityResolutionRequest:
+        if request is not None:
+            return request
+        return TargetQuantityResolutionRequest(
+            target=legacy_kwargs["target"],
+            symbol=legacy_kwargs["symbol"],
+            symbols=legacy_kwargs["symbols"],
+            action=legacy_kwargs["action"],
+            requested_qty=legacy_kwargs["requested_qty"],
+            symbol_quantities=legacy_kwargs["symbol_quantities"],
+            max_notional=legacy_kwargs["max_notional"],
+            event_ts=legacy_kwargs["event_ts"],
+            timeframe=legacy_kwargs["timeframe"],
+        )
+
+    @staticmethod
+    def _target_quantity_resolution_audit(
+        request: TargetQuantityResolutionRequest,
+        *,
+        normalized_symbol: str,
+        symbol_budget: Decimal | None,
+        reference_price: Decimal | None,
+        price_source: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": "torghut.paper-route-target-notional-sizing.v1",
+            "symbol": normalized_symbol,
+            "action": request.action,
+            "sizing_source": "quantity_fallback",
+            "requested_qty": str(request.requested_qty),
+            "resolved_qty": str(request.requested_qty),
+            "target_notional": str(
+                target_probe_cap(request.target) or request.max_notional
+            ),
+            "paper_route_probe_max_notional": str(request.max_notional),
+            "symbol_notional_budget": (
+                str(symbol_budget) if symbol_budget is not None else None
+            ),
+            "reference_price": (
+                str(reference_price) if reference_price is not None else None
+            ),
+            "reference_price_source": price_source,
+            "symbols": [
+                item.strip().upper() for item in request.symbols if item.strip()
+            ],
+            "blockers": [],
+        }
+
+    @staticmethod
     def _decision_quote_snapshot_for_target_sizing(
         decision: StrategyDecision,
     ) -> dict[str, Any] | None:
         normalized_symbol = decision.symbol.strip().upper()
-        snapshot = _quote_snapshot_from_mapping(
+        snapshot = quote_snapshot_from_mapping(
             decision.params,
             symbol=normalized_symbol,
         )
         if snapshot is not None:
             return dict(snapshot)
-        price = _decimal_from_mapping(
+        price = decimal_from_mapping(
             decision.params,
             ("price", "reference_price", "mid", "mid_price"),
         )
-        bid = _decimal_from_mapping(
+        bid = decimal_from_mapping(
             decision.params,
             ("imbalance_bid_px", "bid", "bid_px", "bid_price"),
         )
-        ask = _decimal_from_mapping(
+        ask = decimal_from_mapping(
             decision.params,
             ("imbalance_ask_px", "ask", "ask_px", "ask_price"),
         )
-        spread = _decimal_from_mapping(
+        spread = decimal_from_mapping(
             decision.params,
             ("imbalance_spread", "spread"),
         )
@@ -436,7 +465,7 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
     ) -> dict[str, Any]:
         normalized_symbol = decision.symbol.strip().upper()
         target = dict(metadata)
-        if _quote_snapshot_from_mapping(target, symbol=normalized_symbol) is None:
+        if quote_snapshot_from_mapping(target, symbol=normalized_symbol) is None:
             snapshot = self._decision_quote_snapshot_for_target_sizing(decision)
             if snapshot is not None:
                 target["price_snapshot"] = snapshot
@@ -448,7 +477,7 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
         decision: StrategyDecision,
         metadata: Mapping[str, Any],
     ) -> tuple[datetime, datetime] | None:
-        exit_due_at = _parse_target_datetime(metadata.get("exit_due_at"))
+        exit_due_at = parse_target_datetime(metadata.get("exit_due_at"))
         if exit_due_at is None:
             return None
         event_ts = decision.event_ts
@@ -490,7 +519,7 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
             "paper_route_target_plan",
             "paper_route_probe",
         ):
-            metadata = _mapping_value(params.get(key))
+            metadata = mapping_value(params.get(key))
             if metadata is None:
                 continue
             updated_metadata = dict(metadata)
@@ -505,7 +534,7 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
     ) -> tuple[StrategyDecision, str | None]:
         if self._paper_route_probe_exit_metadata(decision) is not None:
             return decision, None
-        metadata = _bounded_paper_route_collection_entry_metadata(decision.params)
+        metadata = bounded_paper_route_collection_entry_metadata(decision.params)
         if metadata is None:
             return decision, None
         elapsed = self._bounded_collection_exit_window_elapsed(
@@ -537,13 +566,13 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
         audit_payload = dict(audit)
         params["paper_route_target_notional_sizing"] = audit_payload
 
-        reference_price = _optional_decimal(audit_payload.get("reference_price"))
+        reference_price = optional_decimal(audit_payload.get("reference_price"))
         notional = qty * reference_price if reference_price is not None else None
         simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
         simple_lane["final_qty"] = str(qty)
         simple_lane["paper_route_target_notional_sizing"] = audit_payload
         simple_lane["target_source_notional_sized"] = (
-            _safe_text(audit_payload.get("sizing_source")) == "target_notional"
+            safe_text(audit_payload.get("sizing_source")) == "target_notional"
         )
         if notional is not None:
             simple_lane["notional"] = str(notional)
@@ -554,13 +583,13 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
             "paper_route_target_plan",
             "paper_route_probe",
         ):
-            metadata = _mapping_value(params.get(key))
+            metadata = mapping_value(params.get(key))
             if metadata is None:
                 continue
             updated_metadata = dict(metadata)
             updated_metadata["paper_route_target_notional_sizing"] = audit_payload
             updated_metadata["target_source_notional_sized"] = (
-                _safe_text(audit_payload.get("sizing_source")) == "target_notional"
+                safe_text(audit_payload.get("sizing_source")) == "target_notional"
             )
             params[key] = updated_metadata
 
@@ -579,27 +608,9 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
         if self._paper_route_probe_exit_metadata(decision) is not None:
             return decision, None
 
-        metadata = _bounded_paper_route_collection_entry_metadata(decision.params)
+        metadata = bounded_paper_route_collection_entry_metadata(decision.params)
         if metadata is None:
-            if not _bounded_collection_decision_requires_target_notional_sizing(
-                decision.params
-            ):
-                return decision, None
-            audit = {
-                "schema_version": "torghut.paper-route-target-notional-sizing.v1",
-                "symbol": decision.symbol.strip().upper(),
-                "action": decision.action,
-                "sizing_source": "missing",
-                "requested_qty": str(decision.qty),
-                "resolved_qty": str(decision.qty),
-                "blockers": ["bounded_paper_route_target_metadata_missing"],
-            }
-            updated = self._apply_bounded_collection_target_sizing_audit(
-                decision,
-                audit=audit,
-                qty=decision.qty,
-            )
-            return updated, "bounded_paper_route_target_notional_sizing_missing"
+            return self._missing_target_sizing_metadata_decision(decision)
 
         exit_guarded_decision, exit_window_reason = (
             self._bounded_collection_exit_window_guarded_decision(decision)
@@ -607,96 +618,160 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
         if exit_window_reason is not None:
             return exit_guarded_decision, exit_window_reason
 
+        _ = strategy
+        sizing_context = self._target_sizing_context(decision, metadata)
+        if sizing_context.max_notional is None or sizing_context.max_notional <= 0:
+            return self._missing_target_notional_cap_decision(decision, sizing_context)
+
+        quantity_resolution = self._paper_route_target_quantity_resolution(
+            TargetQuantityResolutionRequest(
+                target=sizing_context.target,
+                symbol=sizing_context.symbol,
+                symbols=sizing_context.symbols,
+                action=sizing_context.action,
+                requested_qty=sizing_context.requested_qty,
+                symbol_quantities=sizing_context.symbol_quantities,
+                max_notional=sizing_context.max_notional,
+                event_ts=decision.event_ts,
+                timeframe=decision.timeframe,
+            )
+        )
+        return self._target_quantity_sized_decision(
+            TargetQuantityDecisionRequest(
+                decision=decision,
+                sizing_context=sizing_context,
+                quantity_resolution=quantity_resolution,
+                positions=positions,
+            )
+        )
+
+    def _missing_target_sizing_metadata_decision(
+        self,
+        decision: StrategyDecision,
+    ) -> tuple[StrategyDecision, str | None]:
+        if not bounded_collection_decision_requires_target_notional_sizing(
+            decision.params
+        ):
+            return decision, None
+        audit = {
+            "schema_version": "torghut.paper-route-target-notional-sizing.v1",
+            "symbol": decision.symbol.strip().upper(),
+            "action": decision.action,
+            "sizing_source": "missing",
+            "requested_qty": str(decision.qty),
+            "resolved_qty": str(decision.qty),
+            "blockers": ["bounded_paper_route_target_metadata_missing"],
+        }
+        updated = self._apply_bounded_collection_target_sizing_audit(
+            decision,
+            audit=audit,
+            qty=decision.qty,
+        )
+        return updated, "bounded_paper_route_target_notional_sizing_missing"
+
+    def _target_sizing_context(
+        self,
+        decision: StrategyDecision,
+        metadata: Mapping[str, Any],
+    ) -> TargetSizingContext:
         target = self._bounded_collection_target_sizing_payload(
             decision=decision,
             metadata=metadata,
         )
         normalized_symbol = decision.symbol.strip().upper()
-        target_symbols = sorted(_target_symbols(target))
+        target_symbols = sorted(target_plan_symbols(target))
         if normalized_symbol not in target_symbols:
             target_symbols.append(normalized_symbol)
-        symbol_quantities = _target_probe_symbol_quantities(target, target_symbols)
+        symbol_quantities = target_probe_symbol_quantities(target, target_symbols)
         requested_qty = symbol_quantities.get(normalized_symbol) or decision.qty
         action: Literal["buy", "sell"] = (
             "sell" if str(decision.action).strip().lower() == "sell" else "buy"
         )
-        action = _target_probe_symbol_actions(target, target_symbols).get(
-            normalized_symbol,
-            action,
-        )
-        max_notional = _target_probe_cap(target)
-        if max_notional is None or max_notional <= 0:
-            audit = {
-                "schema_version": "torghut.paper-route-target-notional-sizing.v1",
-                "symbol": normalized_symbol,
-                "action": action,
-                "sizing_source": "missing",
-                "requested_qty": str(requested_qty),
-                "resolved_qty": str(decision.qty),
-                "symbols": target_symbols,
-                "blockers": ["bounded_paper_route_target_notional_cap_missing"],
-            }
-            updated = self._apply_bounded_collection_target_sizing_audit(
-                decision,
-                audit=audit,
-                qty=decision.qty,
-                action=action,
-            )
-            return updated, "bounded_paper_route_target_notional_sizing_missing"
-
-        quantity_resolution = self._paper_route_target_quantity_resolution(
+        return TargetSizingContext(
             target=target,
             symbol=normalized_symbol,
             symbols=target_symbols,
-            action=action,
-            requested_qty=requested_qty,
             symbol_quantities=symbol_quantities,
-            max_notional=max_notional,
-            event_ts=decision.event_ts,
-            timeframe=decision.timeframe,
+            requested_qty=requested_qty,
+            action=target_probe_symbol_actions(target, target_symbols).get(
+                normalized_symbol,
+                action,
+            ),
+            max_notional=target_probe_cap(target),
         )
+
+    def _missing_target_notional_cap_decision(
+        self,
+        decision: StrategyDecision,
+        sizing_context: TargetSizingContext,
+    ) -> tuple[StrategyDecision, str | None]:
+        audit = {
+            "schema_version": "torghut.paper-route-target-notional-sizing.v1",
+            "symbol": sizing_context.symbol,
+            "action": sizing_context.action,
+            "sizing_source": "missing",
+            "requested_qty": str(sizing_context.requested_qty),
+            "resolved_qty": str(decision.qty),
+            "symbols": sizing_context.symbols,
+            "blockers": ["bounded_paper_route_target_notional_cap_missing"],
+        }
+        updated = self._apply_bounded_collection_target_sizing_audit(
+            decision,
+            audit=audit,
+            qty=decision.qty,
+            action=sizing_context.action,
+        )
+        return updated, "bounded_paper_route_target_notional_sizing_missing"
+
+    def _target_quantity_sized_decision(
+        self,
+        request: TargetQuantityDecisionRequest,
+    ) -> tuple[StrategyDecision, str | None]:
+        decision = request.decision
+        sizing_context = request.sizing_context
+        quantity_resolution = request.quantity_resolution
         if quantity_resolution is None:
             audit = {
                 "schema_version": "torghut.paper-route-target-notional-sizing.v1",
-                "symbol": normalized_symbol,
-                "action": action,
+                "symbol": sizing_context.symbol,
+                "action": sizing_context.action,
                 "sizing_source": "missing",
-                "requested_qty": str(requested_qty),
+                "requested_qty": str(sizing_context.requested_qty),
                 "resolved_qty": str(decision.qty),
-                "target_notional": str(max_notional),
-                "symbols": target_symbols,
+                "target_notional": str(sizing_context.max_notional),
+                "symbols": sizing_context.symbols,
                 "blockers": ["paper_route_target_notional_qty_below_min_step"],
             }
             updated = self._apply_bounded_collection_target_sizing_audit(
                 decision,
                 audit=audit,
                 qty=decision.qty,
-                action=action,
+                action=sizing_context.action,
             )
             return updated, "bounded_paper_route_target_notional_sizing_missing"
 
         audit = dict(quantity_resolution.audit)
-        if _safe_text(audit.get("sizing_source")) != "target_notional":
+        if safe_text(audit.get("sizing_source")) != "target_notional":
             updated = self._apply_bounded_collection_target_sizing_audit(
                 decision,
                 audit=audit,
                 qty=quantity_resolution.qty,
-                action=action,
+                action=sizing_context.action,
                 price_params=quantity_resolution.price_params,
             )
             return updated, "bounded_paper_route_target_notional_sizing_missing"
 
-        position_qty = position_qty_for_symbol(positions, normalized_symbol)
+        position_qty = position_qty_for_symbol(request.positions, sizing_context.symbol)
         broker_resolution = resolve_quantity_resolution(
-            normalized_symbol,
-            action=action,
+            sizing_context.symbol,
+            action=sizing_context.action,
             global_enabled=settings.trading_fractional_equities_enabled,
             allow_shorts=settings.trading_allow_shorts,
             position_qty=position_qty,
             requested_qty=quantity_resolution.qty,
         )
         broker_qty = quantize_qty_for_symbol(
-            normalized_symbol,
+            sizing_context.symbol,
             quantity_resolution.qty,
             fractional_equities_enabled=broker_resolution.fractional_allowed,
         )
@@ -709,12 +784,12 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
                 decision,
                 audit=audit,
                 qty=decision.qty,
-                action=action,
+                action=sizing_context.action,
                 price_params=quantity_resolution.price_params,
             )
             return updated, "bounded_paper_route_target_notional_sizing_missing"
 
-        reference_price = _optional_decimal(audit.get("reference_price"))
+        reference_price = optional_decimal(audit.get("reference_price"))
         audit["target_notional_resolved_qty"] = audit.get("resolved_qty")
         audit["target_notional_resolved_notional"] = audit.get("resolved_notional")
         audit["broker_quantity_resolution"] = broker_resolution.to_payload()
@@ -729,7 +804,7 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
             decision,
             audit=audit,
             qty=broker_qty,
-            action=action,
+            action=sizing_context.action,
             price_params=quantity_resolution.price_params,
         )
         return updated, None
@@ -757,6 +832,3 @@ class _SimplePipelineSubmissionPreparationMixinMethodsPart1:
             ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
             STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
         }
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
