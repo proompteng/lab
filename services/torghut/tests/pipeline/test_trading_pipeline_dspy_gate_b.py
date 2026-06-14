@@ -1,7 +1,30 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    CountingLLMReviewEngine,
+    DSPyReviewRuntime,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    LLMDecisionReview,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RiskEngine,
+    SignalEnvelope,
+    Strategy,
+    TradingPipeline,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _set_llm_guardrails,
+    datetime,
+    patch,
+    select,
+    timezone,
+)
 
 
 class TestTradingPipelineDspyGateB(TradingPipelineTestCaseBase):
@@ -91,7 +114,7 @@ class TestTradingPipelineDspyGateB(TradingPipelineTestCaseBase):
             )
 
             with patch(
-                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings"
+                "app.trading.scheduler.pipeline_modules.llm_review.DSPyReviewRuntime.from_settings"
             ) as from_settings:
                 pipeline = TradingPipeline(
                     alpaca_client=FakeAlpacaClient(),
@@ -227,7 +250,7 @@ class TestTradingPipelineDspyGateB(TradingPipelineTestCaseBase):
 
             engine = CountingLLMReviewEngine()
             with patch(
-                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings"
+                "app.trading.scheduler.pipeline_modules.llm_review.DSPyReviewRuntime.from_settings"
             ) as from_settings:
                 pipeline = TradingPipeline(
                     alpaca_client=FakeAlpacaClient(),

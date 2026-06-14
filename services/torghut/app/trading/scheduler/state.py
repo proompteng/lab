@@ -12,10 +12,17 @@ from .state_modules import (
     split_reason_codes as _split_reason_codes,
 )
 
+normalize_reason_metric = _normalize_reason_metric
+optional_decimal = _optional_decimal
+split_reason_codes = _split_reason_codes
+
 __all__ = [
     "_normalize_reason_metric",
     "_split_reason_codes",
     "_optional_decimal",
+    "normalize_reason_metric",
+    "split_reason_codes",
+    "optional_decimal",
     "RuntimeUncertaintyGateAction",
     "RuntimeUncertaintyGate",
     "TradingMetrics",

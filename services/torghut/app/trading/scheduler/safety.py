@@ -1,5 +1,4 @@
 """Scheduler safety and market-session helpers."""
-# pyright: reportUnusedImport=false, reportPrivateUsage=false
 
 from __future__ import annotations
 
@@ -145,6 +144,14 @@ def _signal_bootstrap_grace_active(
     return (reference - started_at).total_seconds() < max(0, int(grace_seconds))
 
 
+FRESH_TAIL_NO_SIGNAL_REASONS = _FRESH_TAIL_NO_SIGNAL_REASONS
+is_market_session_open = _is_market_session_open
+latch_signal_continuity_alert_state = _latch_signal_continuity_alert_state
+record_signal_continuity_recovery_cycle = _record_signal_continuity_recovery_cycle
+signal_bootstrap_grace_active = _signal_bootstrap_grace_active
+signal_tail_is_fresh = _signal_tail_is_fresh
+
+
 __all__ = [
     "_coerce_recovery_reason_sequence",
     "_FRESH_TAIL_NO_SIGNAL_REASONS",
@@ -156,4 +163,10 @@ __all__ = [
     "_signal_bootstrap_grace_active",
     "_signal_tail_is_fresh",
     "_split_emergency_stop_reasons",
+    "FRESH_TAIL_NO_SIGNAL_REASONS",
+    "is_market_session_open",
+    "latch_signal_continuity_alert_state",
+    "record_signal_continuity_recovery_cycle",
+    "signal_bootstrap_grace_active",
+    "signal_tail_is_fresh",
 ]

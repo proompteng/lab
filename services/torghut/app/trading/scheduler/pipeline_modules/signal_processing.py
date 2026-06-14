@@ -1,167 +1,80 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading pipeline implementation."""
 
 from __future__ import annotations
 
+import logging
 import hashlib
 import json
 import inspect
-import logging
-import os
-from collections.abc import Callable, Mapping
-from datetime import date, datetime, timedelta, timezone
+from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from pathlib import Path
-from typing import Any, Optional, Sequence, cast
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
-from ....alpaca_client import TorghutAlpacaClient
 from ....config import settings
-from ....db import SessionLocal
 from ....models import (
-    Execution,
-    LLMDecisionReview,
-    PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
-    TradeDecision,
-    coerce_json_payload,
-)
-from ....observability import capture_posthog_event
-from ....snapshots import snapshot_account_and_positions
-from ....strategies import StrategyCatalog
-from ...autonomy.phase_manifest_contract import AUTONOMY_PHASE_ORDER
-from ...decisions import DecisionEngine
-from ...empirical_jobs import build_empirical_jobs_status
-from ...execution import OrderExecutor
-from ...execution_adapters import ExecutionAdapter
-from ...execution_policy import ExecutionPolicy
-from ...feature_quality import (
-    REASON_STALENESS,
-    FeatureQualityThresholds,
-    evaluate_feature_batch_quality,
 )
 from ...features import extract_executable_price, optional_decimal, payload_value
-from ...firewall import OrderFirewall, OrderFirewallBlocked
-from ...ingest import ClickHouseSignalIngestor, SignalBatch
-from ...lean_lanes import LeanLaneManager
-from ...llm import LLMReviewEngine, apply_policy
-from ...llm.dspy_programs.runtime import (
-    DSPyReviewRuntime,
-    DSPyRuntimeUnsupportedStateError,
-)
-from ...llm.guardrails import evaluate_llm_guardrails
-from ...llm.policy import allowed_order_types
-from ...llm.schema import MarketContextBundle
-from ...llm.schema import MarketSnapshot as LLMMarketSnapshot
-from ...market_context import (
-    MarketContextClient,
-    MarketContextStatus,
-    evaluate_market_context,
-)
-from ...market_context_domains import (
-    active_market_context_domain_states,
-    active_market_context_reasons,
-)
+from ...ingest import SignalBatch
 from ...models import SignalEnvelope, StrategyDecision
-from ...order_feed import OrderFeedIngestor
-from ...paper_route_evidence import (
-    PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
-    PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
-)
 from ...portfolio import (
-    AllocationResult,
-    PortfolioSizingResult,
     allocator_from_settings,
-    sizer_from_settings,
 )
-from ...prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from ...quote_quality import (
-    QuoteQualityPolicy,
     QuoteQualityStatus,
-    SignalQuoteQualityTracker,
     assess_signal_quote_quality,
 )
 from ...quantity_rules import (
-    min_qty_for_symbol,
-    quantize_qty_for_symbol,
     resolve_quantity_resolution,
 )
-from ...reconcile import Reconciler
-from ...regime_hmm import (
-    HMMRegimeContext,
-    resolve_hmm_context,
-    resolve_regime_context_authority_reason,
-)
-from ...risk import RiskEngine
-from ...session_context import regular_session_open_utc_for
-from ...tca import derive_adaptive_execution_policy
-from ...time_source import trading_now
-from ...universe import UniverseResolver
-from ...submission_council import (
-    build_hypothesis_runtime_summary,
-    build_live_submission_gate_payload,
-    build_submission_gate_market_context_status,
-    load_quant_evidence_status,
-)
-from ..pipeline_helpers import (
-    _allocator_rejection_reasons,
-    _apply_projected_position_decision,
-    _attach_dspy_lineage,
-    _autonomy_gate_report_is_saturated_fail_sentinel,
-    _build_committee_veto_alignment_payload,
-    _build_llm_policy_resolution,
-    _build_portfolio_snapshot,
-    _classify_llm_error,
-    _clone_positions,
-    _coerce_bool,
-    _coerce_json,
-    _coerce_runtime_uncertainty_gate_action,
-    _coerce_strategy_symbols,
-    _committee_trace_has_veto,
-    _extract_json_error_payload,
-    _format_order_submit_rejection,
-    _hash_payload,
-    _is_runtime_risk_increasing_entry,
-    _llm_guardrail_controls_snapshot,
-    _load_recent_decisions,
-    _normalize_rollout_stage,
-    _optional_decimal,
-    _optional_int,
-    _price_snapshot_payload,
-    _project_open_orders_onto_positions,
-    _resolve_decision_regime_label_with_source,
-    _resolve_llm_review_error_reject_reason,
-    _resolve_llm_unavailable_reject_reason,
-    _resolve_signal_regime,
-    _select_strictest_runtime_uncertainty_gate,
-    _uncertainty_gate_staleness_reason,
-)
-from ..safety import (
-    _FRESH_TAIL_NO_SIGNAL_REASONS,
-    _is_market_session_open,
-    _latch_signal_continuity_alert_state,
-    _record_signal_continuity_recovery_cycle,
-    _signal_bootstrap_grace_active,
-    _signal_tail_is_fresh,
-)
-from ..state import (
-    RuntimeUncertaintyGate,
-    RuntimeUncertaintyGateAction,
-    TradingState,
-    _normalize_reason_metric,
+from .contexts import (
+    AllocationDecisionContext,
+    BatchSignalProcessingContext,
+    PositionTagContext,
+    StrategyPositionTagRequest,
 )
 
-# ruff: noqa: F401,F403,F405,F821,F821,F821
+from .shared import (
+    TradingPipelineBase,
+    REJECTED_SIGNAL_OUTCOME_FOLLOWUP_HORIZON,
+    REJECTED_SIGNAL_OUTCOME_LABEL_LIMIT,
+    STRATEGY_POSITION_TAG_LOOKBACK,
+    STRATEGY_POSITION_TAG_TOLERANCE,
+    normalized_symbol,
+    same_side_position_exposure,
+)
+from .support import (
+    optional_decimal as scheduler_optional_decimal,
+    resolve_signal_regime,
+)
 
-from .part_01_statements_158 import *
-from .part_02_tradingpipelinemethodspart1 import *
+logger = logging.getLogger(__name__)
 
 
-class _TradingPipelineMethodsPart2:
+class TradingPipelineSignalProcessingMixin(TradingPipelineBase):
+    @staticmethod
+    def _attach_strategy_position_tag(
+        position: dict[str, Any],
+        *,
+        exposures: Mapping[str, Mapping[str, Mapping[str, Any]]],
+        session_open: datetime,
+    ) -> dict[str, Any]:
+        tagged_positions = (
+            TradingPipelineSignalProcessingMixin._attach_strategy_position_tags(
+                position,
+                exposures=exposures,
+                session_open=session_open,
+            )
+        )
+        if len(tagged_positions) == 1:
+            return tagged_positions[0]
+        return position
+
     @staticmethod
     def _attach_strategy_position_tags(
         position: dict[str, Any],
@@ -171,67 +84,84 @@ class _TradingPipelineMethodsPart2:
     ) -> list[dict[str, Any]]:
         if str(position.get("strategy_id") or "").strip():
             return [position]
-        symbol = _normalized_symbol(position.get("symbol"))
-        if not symbol:
-            return [position]
-        symbol_exposures = exposures.get(symbol)
-        if not symbol_exposures:
-            return [position]
-        raw_qty = (
-            position.get("qty")
-            or position.get("quantity")
-            or position.get("qty_available")
-            or "0"
+        tag_context = TradingPipelineSignalProcessingMixin._position_tag_context(
+            position, exposures
         )
-        raw_position_qty = _optional_decimal(raw_qty)
-        if raw_position_qty is None or raw_position_qty == 0:
+        if tag_context is None:
             return [position]
-        side = str(position.get("side") or "").strip().lower()
-        signed_position_qty = (
-            -abs(raw_position_qty)
-            if side == "short" or raw_position_qty < 0
-            else raw_position_qty
-        )
-        position_qty = abs(raw_position_qty)
-        if signed_position_qty < 0:
-            side = "short"
-        elif side not in {"long", "short"}:
-            side = "long"
         same_side_exposures = [
             (strategy_id, exposure)
-            for strategy_id, exposure in symbol_exposures.items()
-            if TradingPipeline._same_side_position_exposure(
-                signed_position_qty,
+            for strategy_id, exposure in tag_context.symbol_exposures.items()
+            if same_side_position_exposure(
+                tag_context.signed_position_qty,
                 cast(Decimal, exposure.get("qty") or Decimal("0")),
             )
         ]
         if len(same_side_exposures) != 1:
-            split_positions = TradingPipeline._split_strategy_position_tags(
-                position,
-                same_side_exposures=same_side_exposures,
-                signed_position_qty=signed_position_qty,
-                session_open=session_open,
+            split_positions = (
+                TradingPipelineSignalProcessingMixin._split_strategy_position_tags(
+                    position,
+                    same_side_exposures=same_side_exposures,
+                    signed_position_qty=tag_context.signed_position_qty,
+                    session_open=session_open,
+                )
             )
             return split_positions or [position]
 
         strategy_id, exposure = same_side_exposures[0]
         exposure_qty = cast(Decimal, exposure.get("qty") or Decimal("0"))
         if (
-            abs(abs(exposure_qty) - abs(signed_position_qty))
-            > _STRATEGY_POSITION_TAG_TOLERANCE
+            abs(abs(exposure_qty) - abs(tag_context.signed_position_qty))
+            > STRATEGY_POSITION_TAG_TOLERANCE
         ):
             return [position]
 
         return [
-            TradingPipeline._strategy_tagged_position(
-                position,
-                strategy_id=strategy_id,
-                exposure=exposure,
-                qty=position_qty,
-                side=side,
-                session_open=session_open,
+            TradingPipelineSignalProcessingMixin._strategy_tagged_position(
+                StrategyPositionTagRequest(
+                    position=position,
+                    strategy_id=strategy_id,
+                    exposure=exposure,
+                    qty=tag_context.position_qty,
+                    side=tag_context.side,
+                    session_open=session_open,
+                )
             )
         ]
+
+    @staticmethod
+    def _position_tag_context(
+        position: dict[str, Any],
+        exposures: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    ) -> PositionTagContext | None:
+        symbol = normalized_symbol(position.get("symbol"))
+        symbol_exposures = exposures.get(symbol) if symbol else None
+        if not symbol_exposures:
+            return None
+        raw_qty = (
+            position.get("qty")
+            or position.get("quantity")
+            or position.get("qty_available")
+            or "0"
+        )
+        raw_position_qty = scheduler_optional_decimal(raw_qty)
+        if raw_position_qty is None or raw_position_qty == 0:
+            return None
+        side = str(position.get("side") or "").strip().lower()
+        signed_position_qty = (
+            -abs(raw_position_qty)
+            if side == "short" or raw_position_qty < 0
+            else raw_position_qty
+        )
+        normalized_side = "short" if signed_position_qty < 0 else side
+        if normalized_side not in {"long", "short"}:
+            normalized_side = "long"
+        return PositionTagContext(
+            symbol_exposures=symbol_exposures,
+            signed_position_qty=signed_position_qty,
+            position_qty=abs(raw_position_qty),
+            side=normalized_side,
+        )
 
     @staticmethod
     def _split_strategy_position_tags(
@@ -252,7 +182,7 @@ class _TradingPipelineMethodsPart2:
         )
         if (
             abs(abs(exposure_total) - abs(signed_position_qty))
-            > _STRATEGY_POSITION_TAG_TOLERANCE
+            > STRATEGY_POSITION_TAG_TOLERANCE
         ):
             return []
         side = "short" if signed_position_qty < 0 else "long"
@@ -262,65 +192,62 @@ class _TradingPipelineMethodsPart2:
             if exposure_qty == 0:
                 continue
             split_positions.append(
-                TradingPipeline._strategy_tagged_position(
-                    position,
-                    strategy_id=strategy_id,
-                    exposure=exposure,
-                    qty=abs(exposure_qty),
-                    side=side,
-                    session_open=session_open,
-                    split_from_aggregate=True,
+                TradingPipelineSignalProcessingMixin._strategy_tagged_position(
+                    StrategyPositionTagRequest(
+                        position=position,
+                        strategy_id=strategy_id,
+                        exposure=exposure,
+                        qty=abs(exposure_qty),
+                        side=side,
+                        session_open=session_open,
+                        split_from_aggregate=True,
+                    )
                 )
             )
         return split_positions
 
     @staticmethod
     def _strategy_tagged_position(
-        position: dict[str, Any],
-        *,
-        strategy_id: str,
-        exposure: Mapping[str, Any],
-        qty: Decimal,
-        side: str,
-        session_open: datetime,
-        split_from_aggregate: bool = False,
+        request: StrategyPositionTagRequest,
     ) -> dict[str, Any]:
-        tagged = dict(position)
-        tagged["strategy_id"] = strategy_id
-        tagged["qty"] = str(qty)
-        tagged["side"] = side or "long"
-        earliest_execution_at = exposure.get("earliest_execution_at")
+        tagged = dict(request.position)
+        tagged["strategy_id"] = request.strategy_id
+        tagged["qty"] = str(request.qty)
+        tagged["side"] = request.side or "long"
+        earliest_execution_at = request.exposure.get("earliest_execution_at")
         stale_position = (
             isinstance(earliest_execution_at, datetime)
-            and earliest_execution_at < session_open
+            and earliest_execution_at < request.session_open
         )
         tagged["strategy_position_source"] = (
             "open_exposure_filled_executions"
             if stale_position
             else "current_session_filled_executions"
         )
-        tagged["strategy_position_session_open"] = session_open.isoformat()
+        tagged["strategy_position_session_open"] = request.session_open.isoformat()
         if stale_position and isinstance(earliest_execution_at, datetime):
             tagged["strategy_position_stale_session_repair"] = True
             tagged["strategy_position_lookback_start"] = (
-                session_open - _STRATEGY_POSITION_TAG_LOOKBACK
+                request.session_open - STRATEGY_POSITION_TAG_LOOKBACK
             ).isoformat()
             tagged["strategy_position_earliest_execution_at"] = (
                 earliest_execution_at.isoformat()
             )
-        if split_from_aggregate:
+        if request.split_from_aggregate:
             tagged["strategy_position_split_from_aggregate"] = True
-        latest_execution_at = exposure.get("latest_execution_at")
+        latest_execution_at = request.exposure.get("latest_execution_at")
         if isinstance(latest_execution_at, datetime):
             tagged["strategy_position_latest_execution_at"] = (
                 latest_execution_at.isoformat()
             )
-        buy_qty = cast(Decimal, exposure.get("buy_qty") or Decimal("0"))
-        buy_notional = cast(Decimal, exposure.get("buy_notional") or Decimal("0"))
+        buy_qty = cast(Decimal, request.exposure.get("buy_qty") or Decimal("0"))
+        buy_notional = cast(
+            Decimal, request.exposure.get("buy_notional") or Decimal("0")
+        )
         if (
             buy_qty > 0
             and buy_notional > 0
-            and not _optional_decimal(tagged.get("avg_entry_price"))
+            and not scheduler_optional_decimal(tagged.get("avg_entry_price"))
         ):
             tagged["avg_entry_price"] = str(buy_notional / buy_qty)
         return tagged
@@ -365,46 +292,42 @@ class _TradingPipelineMethodsPart2:
     def _process_batch_signals(
         self,
         *,
-        session: Session,
-        batch: SignalBatch,
-        strategies: list[Strategy],
-        account_snapshot: Any,
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        allowed_symbols: set[str],
+        context: BatchSignalProcessingContext,
     ) -> None:
-        allocator = allocator_from_settings(account_snapshot.equity)
+        allocator = allocator_from_settings(context.account_snapshot.equity)
         relevant_symbols = self._relevant_signal_symbols(
-            strategies=strategies,
-            allowed_symbols=allowed_symbols,
+            strategies=context.strategies,
+            allowed_symbols=context.allowed_symbols,
         )
-        for signal in batch.signals:
+        for signal in context.batch.signals:
             if (
                 relevant_symbols
-                and _normalized_symbol(signal.symbol) not in relevant_symbols
+                and normalized_symbol(signal.symbol) not in relevant_symbols
             ):
                 continue
             decisions = self._evaluate_signal_decisions(
                 signal,
-                strategies,
-                equity=account_snapshot.equity,
-                positions=positions,
+                context.strategies,
+                equity=context.account_snapshot.equity,
+                positions=context.positions,
             )
             if not decisions:
                 continue
             allocation_results = allocator.allocate(
                 decisions,
-                account=account,
-                positions=positions,
-                regime_label=_resolve_signal_regime(signal),
+                account=context.account,
+                positions=context.positions,
+                regime_label=resolve_signal_regime(signal),
             )
             self._apply_allocation_results(
-                session=session,
+                context=AllocationDecisionContext(
+                    session=context.session,
+                    strategies=context.strategies,
+                    account=context.account,
+                    positions=context.positions,
+                    allowed_symbols=context.allowed_symbols,
+                ),
                 allocation_results=allocation_results,
-                strategies=strategies,
-                account=account,
-                positions=positions,
-                allowed_symbols=allowed_symbols,
             )
 
     def _evaluate_signal_decisions(
@@ -568,10 +491,12 @@ class _TradingPipelineMethodsPart2:
                             reject_reason=str(
                                 event_payload.get("reject_reason") or "unknown"
                             ),
-                            spread_bps=_optional_decimal(
+                            spread_bps=scheduler_optional_decimal(
                                 event_payload.get("spread_bps")
                             ),
-                            jump_bps=_optional_decimal(event_payload.get("jump_bps")),
+                            jump_bps=scheduler_optional_decimal(
+                                event_payload.get("jump_bps")
+                            ),
                             outcome_label_status=str(
                                 event_payload.get("outcome_label_status") or "pending"
                             ),
@@ -591,10 +516,12 @@ class _TradingPipelineMethodsPart2:
                     existing.reject_reason = str(
                         event_payload.get("reject_reason") or existing.reject_reason
                     )
-                    existing.spread_bps = _optional_decimal(
+                    existing.spread_bps = scheduler_optional_decimal(
                         event_payload.get("spread_bps")
                     )
-                    existing.jump_bps = _optional_decimal(event_payload.get("jump_bps"))
+                    existing.jump_bps = scheduler_optional_decimal(
+                        event_payload.get("jump_bps")
+                    )
                     existing.event_payload_json = dict(event_payload)
                 session.commit()
         except (SQLAlchemyError, ValueError):
@@ -608,8 +535,8 @@ class _TradingPipelineMethodsPart2:
         self,
         *,
         now: datetime | None = None,
-        limit: int = _REJECTED_SIGNAL_OUTCOME_LABEL_LIMIT,
-        followup_horizon: timedelta = _REJECTED_SIGNAL_OUTCOME_FOLLOWUP_HORIZON,
+        limit: int = REJECTED_SIGNAL_OUTCOME_LABEL_LIMIT,
+        followup_horizon: timedelta = REJECTED_SIGNAL_OUTCOME_FOLLOWUP_HORIZON,
     ) -> None:
         resolved_now = now or datetime.now(timezone.utc)
         mature_before = resolved_now - followup_horizon
@@ -656,6 +583,28 @@ class _TradingPipelineMethodsPart2:
         row: RejectedSignalOutcomeEvent,
         followup_horizon: timedelta,
     ) -> dict[str, Any] | None:
+        event_payload = self._rejected_signal_event_payload(row)
+        entry_signal = self._rejected_signal_envelope(row, event_payload)
+        snapshots = self._rejected_signal_snapshots(entry_signal, followup_horizon)
+        if snapshots is None:
+            return None
+        entry_snapshot, followup_snapshot = snapshots
+        route_metrics = self._rejected_signal_route_metrics(
+            entry_snapshot,
+            followup_snapshot,
+            followup_horizon,
+        )
+        return self._rejected_signal_outcome_payload(
+            row=row,
+            event_payload=event_payload,
+            entry_snapshot=entry_snapshot,
+            route_metrics=route_metrics,
+        )
+
+    @staticmethod
+    def _rejected_signal_event_payload(
+        row: RejectedSignalOutcomeEvent,
+    ) -> dict[str, Any]:
         event_payload: dict[str, Any] = {}
         raw_event_payload = row.event_payload_json
         if isinstance(raw_event_payload, Mapping):
@@ -663,6 +612,13 @@ class _TradingPipelineMethodsPart2:
                 str(key): value
                 for key, value in cast(Mapping[object, Any], raw_event_payload).items()
             }
+        return event_payload
+
+    @staticmethod
+    def _rejected_signal_envelope(
+        row: RejectedSignalOutcomeEvent,
+        event_payload: Mapping[str, Any],
+    ) -> SignalEnvelope:
         signal_payload = event_payload.get("signal_payload")
         if not isinstance(signal_payload, Mapping):
             signal_payload = {}
@@ -681,8 +637,15 @@ class _TradingPipelineMethodsPart2:
             timeframe=row.timeframe,
             seq=seq,
         )
+        return entry_signal
+
+    def _rejected_signal_snapshots(
+        self,
+        entry_signal: SignalEnvelope,
+        followup_horizon: timedelta,
+    ) -> tuple[Any, Any] | None:
         followup_signal = entry_signal.model_copy(
-            update={"event_ts": event_ts + followup_horizon}
+            update={"event_ts": entry_signal.event_ts + followup_horizon}
         )
         entry_snapshot = self.price_fetcher.fetch_market_snapshot(entry_signal)
         followup_snapshot = self.price_fetcher.fetch_market_snapshot(followup_signal)
@@ -696,6 +659,14 @@ class _TradingPipelineMethodsPart2:
             or entry_snapshot.ask is None
         ):
             return None
+        return entry_snapshot, followup_snapshot
+
+    @staticmethod
+    def _rejected_signal_route_metrics(
+        entry_snapshot: Any,
+        followup_snapshot: Any,
+        followup_horizon: timedelta,
+    ) -> dict[str, Any]:
         counterfactual_return = (
             followup_snapshot.price - entry_snapshot.price
         ) / entry_snapshot.price
@@ -718,6 +689,22 @@ class _TradingPipelineMethodsPart2:
             "horizon_seconds": str(int(followup_horizon.total_seconds())),
         }
         return {
+            "counterfactual_return": counterfactual_return,
+            "post_cost_net_pnl": post_cost_net_pnl,
+            "route_tca": route_tca,
+        }
+
+    @staticmethod
+    def _rejected_signal_outcome_payload(
+        *,
+        row: RejectedSignalOutcomeEvent,
+        event_payload: Mapping[str, Any],
+        entry_snapshot: Any,
+        route_metrics: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        post_cost_net_pnl = cast(Decimal, route_metrics["post_cost_net_pnl"])
+        route_tca = cast(Mapping[str, Any], route_metrics["route_tca"])
+        return {
             "schema_version": "torghut.rejected-signal-outcome.v1",
             "label_status": "labeled",
             "event_id": row.event_id,
@@ -728,19 +715,19 @@ class _TradingPipelineMethodsPart2:
             "execution_signature": event_payload.get("execution_signature"),
             "feedback_shape_key": event_payload.get("feedback_shape_key"),
             "feedback_risk_profile_key": event_payload.get("feedback_risk_profile_key"),
-            "counterfactual_return": str(counterfactual_return),
+            "counterfactual_return": str(route_metrics["counterfactual_return"]),
             "route_tca": route_tca,
             "post_cost_net_pnl": str(post_cost_net_pnl),
             "executable_quote": {
                 "bid": str(entry_snapshot.bid),
                 "ask": str(entry_snapshot.ask),
-                "spread": str(entry_spread),
+                "spread": str(route_tca["entry_spread"]),
                 "source": entry_snapshot.source,
                 "as_of": entry_snapshot.as_of.isoformat(),
             },
             "objective_scorecard": {
                 "net_pnl_per_day": str(post_cost_net_pnl),
-                "counterfactual_return": str(counterfactual_return),
+                "counterfactual_return": str(route_metrics["counterfactual_return"]),
                 "post_cost_net_pnl": str(post_cost_net_pnl),
                 "active_day_ratio": "1",
                 "positive_day_ratio": "1" if post_cost_net_pnl > 0 else "0",
@@ -894,6 +881,3 @@ class _TradingPipelineMethodsPart2:
             outcome=outcome,
             reason=cast(str | None, resolution_payload.get("reason")),
         )
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

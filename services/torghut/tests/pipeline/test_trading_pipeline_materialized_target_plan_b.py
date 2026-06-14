@@ -1,7 +1,37 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    Decimal,
+    DecisionEngine,
+    FakeAlpacaClient,
+    FakeIngestor,
+    FakePriceFetcher,
+    MarketSnapshot,
+    NoSignalReasonIngestor,
+    OrderExecutor,
+    OrderFirewall,
+    PriceFetcher,
+    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+    Reconciler,
+    RiskEngine,
+    SimpleNamespace,
+    SimpleTradingPipeline,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    cast,
+    datetime,
+    materialize_bounded_paper_route_target_plan,
+    patch,
+    select,
+    timezone,
+    uuid4,
+)
 
 
 class TestTradingPipelineMaterializedTargetPlanB(TradingPipelineTestCaseBase):
@@ -158,7 +188,7 @@ class TestTradingPipelineMaterializedTargetPlanB(TradingPipelineTestCaseBase):
                     ask=Decimal("100.01"),
                 ),
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             with (
                 patch.object(
@@ -176,7 +206,10 @@ class TestTradingPipelineMaterializedTargetPlanB(TradingPipelineTestCaseBase):
                     "app.trading.scheduler.simple_pipeline.trading_now",
                     return_value=now,
                 ),
-                patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+                patch(
+                    "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                    return_value=now,
+                ),
                 patch("app.trading.simulation.trading_now", return_value=now),
             ):
                 pipeline.run_once()

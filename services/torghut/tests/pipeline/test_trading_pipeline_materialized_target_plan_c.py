@@ -1,7 +1,35 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    Mapping,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RiskEngine,
+    SimpleTradingPipeline,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _target_price_snapshots,
+    cast,
+    datetime,
+    materialize_bounded_paper_route_target_plan,
+    patch,
+    select,
+    timedelta,
+    timezone,
+    uuid4,
+)
 
 
 class TestTradingPipelineMaterializedTargetPlanC(TradingPipelineTestCaseBase):
@@ -208,7 +236,7 @@ class TestTradingPipelineMaterializedTargetPlanC(TradingPipelineTestCaseBase):
                 account_label="TORGHUT_SIM",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: False
             with patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",
                 return_value=now,
@@ -221,7 +249,7 @@ class TestTradingPipelineMaterializedTargetPlanC(TradingPipelineTestCaseBase):
                         positions=[],
                     )
                 )
-                pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+                pipeline._is_market_session_open = lambda _now=None: True
                 decisions = pipeline._paper_route_materialized_planned_decisions(
                     session=session,
                     strategies=[strategy],
@@ -360,7 +388,7 @@ class TestTradingPipelineMaterializedTargetPlanC(TradingPipelineTestCaseBase):
                 account_label="TORGHUT_SIM",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             matching_projection_positions = [
                 {
@@ -591,7 +619,7 @@ class TestTradingPipelineMaterializedTargetPlanC(TradingPipelineTestCaseBase):
                 account_label="TORGHUT_SIM",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             with patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",

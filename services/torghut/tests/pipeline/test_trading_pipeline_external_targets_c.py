@@ -1,7 +1,34 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    MarketSnapshot,
+    Mock,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RiskEngine,
+    SignalEnvelope,
+    SimpleTradingPipeline,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _target_price_snapshots,
+    cast,
+    datetime,
+    patch,
+    select,
+    timedelta,
+    timezone,
+)
 
 
 class TestTradingPipelineExternalTargetsC(TradingPipelineTestCaseBase):
@@ -38,7 +65,7 @@ class TestTradingPipelineExternalTargetsC(TradingPipelineTestCaseBase):
             account_label="TORGHUT_SIM",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with self.session_local() as session:
             strategy = Strategy(
@@ -139,7 +166,11 @@ class TestTradingPipelineExternalTargetsC(TradingPipelineTestCaseBase):
                     return_value=now,
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.trading_now",
+                    "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                    return_value=now,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
                     return_value=now,
                 ),
             ):

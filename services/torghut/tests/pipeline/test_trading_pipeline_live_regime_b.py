@@ -1,7 +1,31 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    FakePriceFetcher,
+    OrderExecutor,
+    OrderFirewall,
+    Path,
+    Reconciler,
+    RiskEngine,
+    SignalEnvelope,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipeline,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    datetime,
+    patch,
+    select,
+    tempfile,
+    timezone,
+)
 
 
 class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
@@ -85,15 +109,15 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
 
             with (
                 patch(
-                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_hypothesis_runtime_summary",
                     return_value=allowed_summary,
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.load_quant_evidence_status",
                     return_value={
                         "required": True,
                         "ok": False,

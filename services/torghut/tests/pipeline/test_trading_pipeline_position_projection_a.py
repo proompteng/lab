@@ -1,7 +1,23 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    Decimal,
+    Execution,
+    Mock,
+    SimpleNamespace,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipeline,
+    TradingPipelineTestCaseBase,
+    _apply_projected_position_decision,
+    _project_open_orders_onto_positions,
+    datetime,
+    patch,
+    timedelta,
+    timezone,
+)
 
 
 class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
@@ -261,7 +277,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
             pipeline.execution_adapter = AdapterWithoutOpenOrders()
 
             with patch(
-                "app.trading.scheduler.pipeline.trading_now",
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
                 return_value=session_open + timedelta(minutes=150),
             ):
                 positions = pipeline._resolve_execution_context_positions(
@@ -349,7 +365,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
             pipeline.execution_adapter = AdapterWithoutOpenOrders()
 
             with patch(
-                "app.trading.scheduler.pipeline.trading_now",
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
                 return_value=session_open + timedelta(minutes=150),
             ):
                 positions = pipeline._resolve_execution_context_positions(
@@ -444,7 +460,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
             pipeline.execution_adapter = AdapterWithoutOpenOrders()
 
             with patch(
-                "app.trading.scheduler.pipeline.trading_now",
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
                 return_value=session_open + timedelta(minutes=150),
             ):
                 positions = pipeline._resolve_execution_context_positions(
@@ -516,7 +532,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
             pipeline.execution_adapter = AdapterWithoutOpenOrders()
 
             with patch(
-                "app.trading.scheduler.pipeline.trading_now",
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
                 return_value=session_open + timedelta(minutes=150),
             ):
                 positions = pipeline._resolve_execution_context_positions(
@@ -607,7 +623,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
             pipeline.execution_adapter = AdapterWithoutOpenOrders()
 
             with patch(
-                "app.trading.scheduler.pipeline.trading_now",
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
                 return_value=session_open + timedelta(minutes=150),
             ):
                 positions = pipeline._resolve_execution_context_positions(
@@ -642,7 +658,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
         positions = [{"symbol": "AAPL", "qty": "1", "side": "long"}]
 
         with patch(
-            "app.trading.scheduler.pipeline.trading_now",
+            "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
             return_value=session_open + timedelta(minutes=150),
         ):
             tagged = pipeline._attach_current_session_strategy_position_tags(
@@ -695,7 +711,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
         positions = [{"symbol": "AAPL", "qty": "1", "side": "long"}]
 
         with patch(
-            "app.trading.scheduler.pipeline.trading_now",
+            "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
             return_value=session_open + timedelta(minutes=150),
         ):
             tagged = pipeline._attach_current_session_strategy_position_tags(

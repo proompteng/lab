@@ -1,7 +1,28 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    Decimal,
+    DecisionEngine,
+    FakeAlpacaClient,
+    FakeIngestor,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RiskEngine,
+    SimpleTradingPipeline,
+    Strategy,
+    StrategyDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _bounded_sim_collection_metadata_from_decision,
+    cast,
+    datetime,
+    paper_route_target_plan_from_payload,
+    patch,
+    timezone,
+)
 
 
 class TestTradingPipelineExternalTargetsA(TradingPipelineTestCaseBase):
@@ -38,7 +59,7 @@ class TestTradingPipelineExternalTargetsA(TradingPipelineTestCaseBase):
             account_label="TORGHUT_SIM",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
         now = datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc)
         try:
             with (
@@ -120,7 +141,7 @@ class TestTradingPipelineExternalTargetsA(TradingPipelineTestCaseBase):
             account_label="TORGHUT_SIM",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
         now = datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc)
         try:
             with (
@@ -184,7 +205,7 @@ class TestTradingPipelineExternalTargetsA(TradingPipelineTestCaseBase):
             account_label="TORGHUT_SIM",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
         now = datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc)
         try:
             with patch(

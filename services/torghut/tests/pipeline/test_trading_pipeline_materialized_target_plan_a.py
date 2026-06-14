@@ -1,7 +1,35 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    FakePriceFetcher,
+    Mapping,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RiskEngine,
+    Sequence,
+    SimpleTradingPipeline,
+    Strategy,
+    TradeDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _target_price_snapshots,
+    cast,
+    datetime,
+    materialize_bounded_paper_route_target_plan,
+    patch,
+    select,
+    timedelta,
+    timezone,
+)
 
 
 class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
@@ -112,7 +140,7 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                 ask=Decimal("100.01"),
             ),
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(
@@ -134,7 +162,14 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                 "app.trading.scheduler.simple_pipeline.trading_now",
                 return_value=now,
             ),
-            patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+            patch(
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                return_value=now,
+            ),
+            patch(
+                "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
+                return_value=now,
+            ),
             patch("app.trading.simulation.trading_now", return_value=now),
         ):
             pipeline.run_once()
@@ -406,7 +441,7 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                 ask=Decimal("100.01"),
             ),
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(
@@ -424,7 +459,14 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                 "app.trading.scheduler.simple_pipeline.trading_now",
                 return_value=now,
             ),
-            patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+            patch(
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                return_value=now,
+            ),
+            patch(
+                "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
+                return_value=now,
+            ),
             patch("app.trading.simulation.trading_now", return_value=now),
         ):
             pipeline.run_once()
@@ -624,7 +666,7 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                     account_label="TORGHUT_SIM",
                     session_factory=self.session_local,
                 )
-                pipeline._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+                pipeline._is_market_session_open = lambda _now=None: False
                 with patch(
                     "app.trading.scheduler.simple_pipeline.trading_now",
                     return_value=now,

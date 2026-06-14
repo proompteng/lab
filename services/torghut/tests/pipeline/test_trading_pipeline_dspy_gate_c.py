@@ -1,7 +1,33 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    CountingLLMReviewEngine,
+    DSPyReviewRuntime,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    LLMDecisionReview,
+    OrderExecutor,
+    OrderFirewall,
+    PositionedAlpacaClient,
+    Reconciler,
+    RiskEngine,
+    SignalEnvelope,
+    SimulationExecutionAdapter,
+    Strategy,
+    TradeDecision,
+    TradingPipeline,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _set_llm_guardrails,
+    datetime,
+    patch,
+    select,
+    timezone,
+)
 
 
 class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
@@ -102,7 +128,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=CountingLLMReviewEngine(),
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             eligible_summary = {
                 "promotion_eligible_total": 1,
@@ -116,15 +142,15 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             self._seed_promotion_certificate_evidence()
             with (
                 patch(
-                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_hypothesis_runtime_summary",
                     return_value=eligible_summary,
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.load_quant_evidence_status",
                     return_value=self._healthy_live_quant_status(),
                 ),
             ):
@@ -297,15 +323,15 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             self._seed_promotion_certificate_evidence()
             with (
                 patch(
-                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_hypothesis_runtime_summary",
                     return_value=eligible_summary,
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.load_quant_evidence_status",
                     return_value=self._healthy_live_quant_status(),
                 ),
             ):
@@ -485,7 +511,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=CountingLLMReviewEngine(),
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             eligible_summary = {
                 "promotion_eligible_total": 1,
@@ -499,23 +525,27 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             self._seed_promotion_certificate_evidence()
             with (
                 patch(
-                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_hypothesis_runtime_summary",
                     return_value=eligible_summary,
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.load_quant_evidence_status",
                     return_value=self._healthy_live_quant_status(),
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.trading_now",
+                    "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
                     return_value=signal.event_ts,
                 ),
                 patch(
-                    "app.trading.execution_adapters.active_simulation_runtime_context",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
+                    return_value=signal.event_ts,
+                ),
+                patch(
+                    "app.trading.execution_adapters_modules.adapter_types.active_simulation_runtime_context",
                     return_value={"run_id": "sim-test", "dataset_id": "dataset-a"},
                 ),
             ):
@@ -829,15 +859,15 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             self._seed_promotion_certificate_evidence()
             with (
                 patch(
-                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_hypothesis_runtime_summary",
                     return_value=eligible_summary,
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.load_quant_evidence_status",
                     return_value=self._healthy_live_quant_status(),
                 ),
             ):

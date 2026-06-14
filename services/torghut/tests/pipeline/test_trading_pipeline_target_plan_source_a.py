@@ -1,7 +1,41 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    FakePriceFetcher,
+    Mock,
+    OrderExecutor,
+    OrderFirewall,
+    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+    Reconciler,
+    RiskEngine,
+    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+    Session,
+    SignalEnvelope,
+    SimpleTradingPipeline,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _parse_target_datetime,
+    _target_price_snapshots,
+    _target_probe_action,
+    _target_probe_window,
+    cast,
+    datetime,
+    patch,
+    select,
+    timedelta,
+    timezone,
+    uuid4,
+)
 
 
 class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
@@ -105,7 +139,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
                 ask=Decimal("100.01"),
             ),
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(
@@ -132,7 +166,14 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
                 "app.trading.scheduler.simple_pipeline.trading_now",
                 return_value=now,
             ),
-            patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+            patch(
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                return_value=now,
+            ),
+            patch(
+                "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
+                return_value=now,
+            ),
             patch("app.trading.simulation.trading_now", return_value=now),
         ):
             pipeline.run_once()
@@ -226,7 +267,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
             session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(Decimal("100")),
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(
@@ -383,7 +424,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with patch(
             "app.trading.scheduler.simple_pipeline.trading_now",
@@ -409,7 +450,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
             )
 
             config.settings.trading_simple_paper_route_probe_enabled = True
-            pipeline._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: False
             self.assertEqual(
                 pipeline._paper_route_target_source_decisions(
                     strategies=[strategy],
@@ -418,7 +459,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
                 [],
             )
 
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
             for skipped_target in (
                 {
                     **target,
@@ -498,7 +539,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(
@@ -615,7 +656,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            pipeline._is_market_session_open = lambda _now=None: True
 
             with (
                 patch.object(

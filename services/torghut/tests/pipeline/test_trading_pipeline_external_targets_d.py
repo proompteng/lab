@@ -1,7 +1,37 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    Any,
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    FakePriceFetcher,
+    Mock,
+    NoSignalReasonIngestor,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RiskEngine,
+    Session,
+    SignalBatch,
+    SignalEnvelope,
+    SimpleTradingPipeline,
+    Strategy,
+    StrategyDecision,
+    TradeDecision,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    cast,
+    datetime,
+    patch,
+    select,
+    timedelta,
+    timezone,
+)
 
 
 class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
@@ -86,7 +116,7 @@ class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
             session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(Decimal("100")),
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(
@@ -102,7 +132,14 @@ class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
             patch(
                 "app.trading.scheduler.simple_pipeline.trading_now", return_value=now
             ),
-            patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+            patch(
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                return_value=now,
+            ),
+            patch(
+                "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
+                return_value=now,
+            ),
         ):
             pipeline.run_once()
 
@@ -224,7 +261,7 @@ class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
             session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(Decimal("100")),
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
 
         with (
             patch.object(
@@ -246,7 +283,14 @@ class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
             patch(
                 "app.trading.scheduler.simple_pipeline.trading_now", return_value=now
             ),
-            patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+            patch(
+                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                return_value=now,
+            ),
+            patch(
+                "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
+                return_value=now,
+            ),
             patch("app.trading.simulation.trading_now", return_value=now),
         ):
             pipeline.run_once()
@@ -375,7 +419,7 @@ class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
             account_label="TORGHUT_SIM",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        pipeline._is_market_session_open = lambda _now=None: True
         targets = [
             target(paper_route_account_pre_session_blockers=["not_flat"]),
             target(

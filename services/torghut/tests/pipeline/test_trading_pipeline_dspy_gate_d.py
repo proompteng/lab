@@ -1,7 +1,32 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
-from tests.pipeline.trading_pipeline_base import *
+from tests.pipeline.trading_pipeline_base import (
+    CountingLLMReviewEngine,
+    DSPyRuntimeUnsupportedStateError,
+    Decimal,
+    DecisionEngine,
+    Execution,
+    FakeAlpacaClient,
+    FakeIngestor,
+    FakeLLMReviewEngine,
+    LLMDecisionReview,
+    OrderExecutor,
+    OrderFirewall,
+    Reconciler,
+    RiskEngine,
+    SignalEnvelope,
+    Strategy,
+    TradeDecision,
+    TradingPipeline,
+    TradingPipelineTestCaseBase,
+    TradingState,
+    UniverseResolver,
+    _set_llm_guardrails,
+    datetime,
+    patch,
+    select,
+    timezone,
+)
 
 
 class TestTradingPipelineDspyGateD(TradingPipelineTestCaseBase):
@@ -83,7 +108,7 @@ class TestTradingPipelineDspyGateD(TradingPipelineTestCaseBase):
                 error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
             )
             with patch(
-                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings",
+                "app.trading.scheduler.pipeline_modules.llm_review.DSPyReviewRuntime.from_settings",
                 return_value=_UnavailableLiveRuntime(),
             ):
                 pipeline = TradingPipeline(
