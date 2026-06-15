@@ -42,3 +42,9 @@ csi:
   provisionerReplicas: 2
   pluginPriorityClassName: system-node-critical
   provisionerPriorityClassName: system-cluster-critical
+  # Turin is intentionally a control-plane node and needs CSI nodeplugins so
+  # GPU workloads pinned there can mount rook-ceph-block PVCs.
+  pluginTolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
