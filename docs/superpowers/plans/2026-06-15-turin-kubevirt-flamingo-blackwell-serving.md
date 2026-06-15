@@ -52,16 +52,7 @@ spec:
       - resourceType: DaemonSet
         resourceName: virt-handler
         type: strategic
-        patch: |-
-          spec:
-            template:
-              spec:
-                tolerations:
-                  - key: CriticalAddonsOnly
-                    operator: Exists
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: Exists
-                    effect: NoSchedule
+        patch: '{"spec":{"template":{"spec":{"tolerations":[{"key":"CriticalAddonsOnly","operator":"Exists"},{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]}}}}'
 ```
 
 - [ ] **Step 2: After GitOps sync, verify `virt-handler` on Turin.**

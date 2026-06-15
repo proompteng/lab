@@ -24,20 +24,14 @@ spec:
       - resourceType: DaemonSet
         resourceName: virt-handler
         type: strategic
-        patch: |-
-          spec:
-            template:
-              spec:
-                tolerations:
-                  - key: CriticalAddonsOnly
-                    operator: Exists
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: Exists
-                    effect: NoSchedule
+        patch: '{"spec":{"template":{"spec":{"tolerations":[{"key":"CriticalAddonsOnly","operator":"Exists"},{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]}}}}'
 ```
 
 Do not add broad KubeVirt workload placement. VMs that should run on Turin must
 opt in with their own `nodeSelector` and toleration.
+
+KubeVirt validates `customizeComponents.patches[].patch` as JSON even when the
+patch type is `strategic`. Do not use YAML block syntax for this field.
 
 ## Pre-Sync Checks
 
