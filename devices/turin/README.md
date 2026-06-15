@@ -29,6 +29,7 @@ Docs:
 - `devices/turin/docs/cluster-join-plan.md` (join + Ceph OSD migration plan)
 - `devices/turin/docs/bmc-fan-bringup.md` (BMC and fan alert notes)
 - `devices/turin/docs/nvidia-gpu-on-talos.md` (NVIDIA driver/runtime plan)
+- `devices/turin/docs/kubevirt-on-turin.md` (KubeVirt runtime and canary checks)
 - `devices/turin/docs/ceph-recreate-three-osds.md` (destructive no-Kingston OSD recreate runbook)
 - `devices/turin/docs/rook-ceph-turin-recreate-osds-values-draft.yaml` (draft-only Rook storage node snippet; not an Argo input)
 
