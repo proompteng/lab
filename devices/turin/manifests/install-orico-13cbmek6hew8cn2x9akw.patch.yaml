@@ -1,0 +1,4 @@
+machine:
+  install:
+    disk: /dev/disk/by-id/nvme-ORICO_13CBMEK6HEW8CN2X9AKW
+    wipe: true

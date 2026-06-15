@@ -35,8 +35,8 @@ cephClusterSpec:
 
   mon:
     count: 2
-    # Temporary recovery posture while ampone/talos-192-168-1-203 is offline:
-    # run monitors only on the two surviving control-plane nodes.
+    # Run monitors on available control-plane nodes. Turin replaces the old
+    # ampone/talos-192-168-1-203 control-plane slot.
     allowMultiplePerNode: false
 
   # Keep talos-192-168-1-194 as control-plane only (mon node, no OSDs).
@@ -51,7 +51,7 @@ cephClusterSpec:
                   values:
                     - talos-192-168-1-85
                     - talos-192-168-1-194
-                    - talos-192-168-1-203
+                    - turin
 
   mgr:
     count: 2
@@ -90,9 +90,7 @@ cephClusterSpec:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA12R7C
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E
-      - name: talos-192-168-1-203
-        config:
-          metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
+      - name: turin
         devices:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M

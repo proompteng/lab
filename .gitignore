@@ -57,6 +57,13 @@ devices/altra/worker.yaml
 devices/altra/talosconfig
 devices/altra/node-machineconfig.yaml
 devices/altra/manifests/tailscale-extension-service.yaml
+devices/turin/controlplane.yaml
+devices/turin/worker.yaml
+devices/turin/talosconfig
+devices/turin/node-machineconfig.yaml
+devices/turin/manifests/tailscale-extension-service.yaml
+SMCIPMITool.properties
+smcrakp.properties
 **/charts/*.tgz
 **/generated/*
 **/_generated/
