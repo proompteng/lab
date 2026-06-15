@@ -4,7 +4,7 @@
 
 **Goal:** Enable ordinary KubeVirt VM scheduling on Turin and add `flamingo`, a Kubernetes GPU pod app for Blackwell-backed coding-agent model serving.
 
-**Architecture:** KubeVirt gets only the infra placement change needed for `virt-handler` to run on Turin's control-plane-tainted node. Flamingo is a separate Argo CD application pinned to Turin's NVIDIA RuntimeClass and single Blackwell GPU, exposed through an OpenAI-compatible vLLM endpoint for host-side and future in-cluster agents.
+**Architecture:** KubeVirt gets only the component customization needed for `virt-handler` to run on Turin's control-plane-tainted node. Flamingo is a separate Argo CD application pinned to Turin's NVIDIA RuntimeClass and single Blackwell GPU, exposed through an OpenAI-compatible vLLM endpoint for host-side and future in-cluster agents.
 
 **Tech Stack:** Argo CD ApplicationSet, Kustomize, KubeVirt `v1.8.2`, Talos `v1.13.4`, NVIDIA GPU Operator runtime classes, vLLM OpenAI server, Qwen3-Coder-Next-FP8, Tailscale LoadBalancer services.
 
@@ -39,7 +39,7 @@
 
 ### Task 2: Enable KubeVirt Infra Scheduling On Turin
 
-- [x] **Step 1: Patch `KubeVirt.spec.infra.nodePlacement.tolerations`.**
+- [x] **Step 1: Patch `virt-handler` tolerations through `KubeVirt.spec.customizeComponents.patches`.**
 
 Only `virt-handler` placement changes. Do not add global workload node placement and do not change `permittedHostDevices`.
 
@@ -47,12 +47,21 @@ Expected rendered KubeVirt spec includes:
 
 ```yaml
 spec:
-  infra:
-    nodePlacement:
-      tolerations:
-        - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
+  customizeComponents:
+    patches:
+      - resourceType: DaemonSet
+        resourceName: virt-handler
+        type: strategic
+        patch: |-
+          spec:
+            template:
+              spec:
+                tolerations:
+                  - key: CriticalAddonsOnly
+                    operator: Exists
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+                    effect: NoSchedule
 ```
 
 - [ ] **Step 2: After GitOps sync, verify `virt-handler` on Turin.**

@@ -14,21 +14,30 @@ Plain VMs require:
 - `virt-handler` running on the node.
 
 The live Turin readback already showed the host prerequisites. The GitOps change
-for plain VMs is to let KubeVirt infrastructure tolerate Turin's control-plane
-taint:
+for plain VMs is a KubeVirt component customization that lets only
+`virt-handler` tolerate Turin's control-plane taint:
 
 ```yaml
 spec:
-  infra:
-    nodePlacement:
-      tolerations:
-        - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
+  customizeComponents:
+    patches:
+      - resourceType: DaemonSet
+        resourceName: virt-handler
+        type: strategic
+        patch: |-
+          spec:
+            template:
+              spec:
+                tolerations:
+                  - key: CriticalAddonsOnly
+                    operator: Exists
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+                    effect: NoSchedule
 ```
 
-Do not add broad workload placement. VMs that should run on Turin must opt in
-with their own `nodeSelector` and toleration.
+Do not add broad KubeVirt workload placement. VMs that should run on Turin must
+opt in with their own `nodeSelector` and toleration.
 
 ## Pre-Sync Checks
 
