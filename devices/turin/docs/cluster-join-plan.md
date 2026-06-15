@@ -31,7 +31,7 @@ kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph 
 When Turin is in Talos maintenance mode at `100.100.244.171`, inspect disks:
 
 ```bash
-talosctl --insecure -n 100.100.244.171 -e 100.100.244.171 get disks -o yaml
+talosctl get disks --insecure -n 100.100.244.171 -e 100.100.244.171 -o yaml
 ```
 
 If the generated `devices/turin/talosconfig` does not exist yet, use the existing
@@ -84,12 +84,14 @@ Preinstall the required Talos pieces in the machine config:
   `devices/turin/manifests/tailscale-extension-service.template.yaml`
 - Talos DNS patch:
   `devices/turin/manifests/tailscale-dns.patch.yaml`
+- NVIDIA kernel module load patch:
+  `devices/turin/manifests/nvidia-kernel-modules.patch.yaml`
 
 The installer-image patch is generated from
 `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml`, which includes
-the Tailscale system extension plus the NVIDIA LTS kernel module and container
-toolkit extensions. Do not use deprecated `machine.install.extensions` fields
-for Turin.
+the Tailscale system extension plus the NVIDIA open GPU kernel module and
+container toolkit LTS extensions. Do not use deprecated
+`machine.install.extensions` fields for Turin.
 
 Generate the gitignored service config with:
 
@@ -101,6 +103,7 @@ Then include these patches with the first `talosctl apply-config`:
 
 ```bash
 --config-patch @devices/turin/manifests/installer-image.tailscale-nvidia-lts.patch.yaml \
+--config-patch @devices/turin/manifests/nvidia-kernel-modules.patch.yaml \
 --config-patch @devices/turin/manifests/tailscale-extension-service.yaml \
 --config-patch @devices/turin/manifests/tailscale-dns.patch.yaml
 ```
@@ -114,10 +117,34 @@ Validate after install/reboot:
 
 ```bash
 talosctl -n <turin-node-ip> -e <endpoint> get extensions | rg tailscale
+talosctl -n <turin-node-ip> -e <endpoint> read /proc/modules | rg '^nvidia'
 talosctl -n <turin-node-ip> -e <endpoint> service ext-tailscale status
 talosctl -n <turin-node-ip> -e <endpoint> logs ext-tailscale | tail -n 40
 talosctl image pull -n <turin-node-ip> -e <endpoint> registry.ide-newton.ts.net/lab/registry-smoketest:<tag>
 ```
+
+## Post-install validation snapshot
+
+Verified after the Turin install:
+
+- Talos machine status: `stage: running`, `ready: true`, no unmet conditions.
+- Talos health: etcd, apid, kubelet, static pods, CoreDNS, kube-proxy, and node
+  schedulability checks pass.
+- Kubernetes node: `turin`, control-plane, Ready, schedulable, InternalIP
+  `100.100.244.171`.
+- Etcd members: `.141`, `.142`, and `.171` are all voters; Turin is no longer a
+  learner.
+- Tailscale extension: running with live tailnet address `100.114.46.58`.
+  An older offline Tailscale entry for `turin.ide-newton.ts.net` at
+  `100.79.94.63` may still exist; remove that stale tailnet device before
+  relying on the short DNS name `turin`.
+- Talos system volumes: `STATE` and `EPHEMERAL` are on the ORICO OS disk
+  `/dev/nvme1n1` / `/dev/disk/by-id/nvme-ORICO_13CBMEK6HEW8CN2X9AKW`.
+- NVIDIA host driver: loaded with `nvidia-open-gpu-kernel-modules-lts`; the host
+  sees the RTX PRO 6000 Blackwell GPU.
+- Kubernetes GPU scheduling: not enabled yet. The existing GPU Operator values
+  intentionally set `devicePlugin.enabled=false`, so `nvidia.com/gpu` is not
+  allocatable until a separate GitOps change enables the device plugin for Turin.
 
 ## Old 203 removal boundary
 
@@ -186,15 +213,18 @@ Disk and OSD safety notes:
   architecture.
 - The expected NVMe topology is 4x M.2 drives on a PCIe carrier card. The
   motherboard M.2 slots are not intended for this build.
-- After reseating the PCIe carrier connections, Talos maintenance mode enumerates
-  four NVMe disks/controllers:
+- During the maintenance-mode disk check before install, Talos enumerated four
+  NVMe disks/controllers:
   - `/dev/nvme0n1`: Transcend `TS256GMTE652T2`, serial `I203860329`, 256GB
   - `/dev/nvme1n1`: Intel `SSDPEKKF256G8L`, serial `BTHH851313AU256B`, 256GB
   - `/dev/nvme2n1`: Kingston `SNV3S1000G`, serial `50026B76878F0B27`, 1.0TB
   - `/dev/nvme3n1`: `ORICO`, serial `13CBMEK6HEW8CN2X9AKW`, 4.1TB
+- The post-install disk check showed only three NVMe disks visible: the ORICO
+  OS disk plus the Transcend and Intel 256GB devices. The Kingston
+  `nvme-KINGSTON_SNV3S1000G_50026B76878F0B27` path was absent.
 - Talos install target:
   `/dev/disk/by-id/nvme-ORICO_13CBMEK6HEW8CN2X9AKW`, currently visible as
-  `/dev/nvme3n1`.
+  `/dev/nvme1n1` after the installed-system reboot.
 - BIOS path for bifurcation:
   - `Advanced` -> `CPU Configuration` -> `CPU1 Information`
   - Set the PCIe package group for the physical slot holding the 4x M.2 carrier
@@ -225,7 +255,7 @@ After the reset entry finishes, boot `Talos ISO` again and verify that the API i
 available:
 
 ```bash
-talosctl --insecure -n 100.100.244.171 -e 100.100.244.171 get disks -o yaml
+talosctl get disks --insecure -n 100.100.244.171 -e 100.100.244.171 -o yaml
 ```
 
 For a clean Turin install, apply the generated amd64 machine config with the
@@ -237,7 +267,11 @@ talosctl apply-config --insecure -n 100.100.244.171 -e 100.100.244.171 \
   --config-patch @devices/turin/manifests/installer-image.tailscale-nvidia-lts.patch.yaml \
   --config-patch @devices/turin/manifests/install-orico-13cbmek6hew8cn2x9akw.patch.yaml \
   --config-patch @devices/turin/manifests/hostname.patch.yaml \
+  --config-patch @devices/turin/manifests/etcd-lan-subnet.patch.yaml \
+  --config-patch @devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml \
   --config-patch @devices/turin/manifests/kubelet-maxpods.patch.yaml \
+  --config-patch @devices/turin/manifests/nvidia-kernel-modules.patch.yaml \
+  --config-patch @devices/turin/manifests/time-servers.patch.yaml \
   --config-patch @devices/turin/manifests/tailscale-extension-service.yaml \
   --config-patch @devices/turin/manifests/tailscale-dns.patch.yaml \
   --mode=reboot
@@ -245,6 +279,201 @@ talosctl apply-config --insecure -n 100.100.244.171 -e 100.100.244.171 \
 
 Do not pass any HDD path in `--user-disks-to-wipe`, and do not enable
 `useAllDevices` in Rook.
+
+## Ceph OSD adoption or replacement
+
+There are two different paths for the three transferred 24TB OSD disks. Keep
+them separate:
+
+1. **Adopt the existing OSDs without data loss.** This requires the external DB
+   LVs referenced by the OSD LVM tags. Do not update or sync
+   `argocd/applications/rook-ceph/cluster-values.yaml` for Turin on this path
+   while the Kingston metadata NVMe is absent.
+1. **Forget the old external DB device and recreate OSDs on the three HDDs.**
+   This is destructive to the existing OSDs `0`, `1`, and `2`: purge the old
+   OSD identities from Ceph, zap the three transferred HDDs, then let Rook
+   prepare new OSDs on `turin` without a `metadataDevice`.
+
+Pre-recreate live evidence captured after Talos install:
+
+- Turin sees the three transferred HDDs:
+  - `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D`
+  - `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M`
+  - `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9`
+- Before the recreate path was executed, Turin also saw the existing Ceph LVM
+  block volumes:
+  - `dm-name-ceph--4f30c39a--cd26--427b--9d15--18a15333b1d0-osd--block--63a3b2d6--0d39--436f--a517--4296d04e782c`
+  - `dm-name-ceph--af8f93cb--80cc--43fb--9a3b--d927c95534e5-osd--block--834f32e1--93b0--4f79--91ad--5a6771bdf38b`
+  - `dm-name-ceph--c04a0830--d083--47fe--8cc9--b25314cd7137-osd--block--6c12f6b3--23dd--4cb1--b482--673f3c160ffc`
+- Before the GitOps update, the live Rook `CephCluster` still mapped those HDD IDs and the metadata device
+  `/dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27` to
+  `talos-192-168-1-203`.
+- Existing `rook-ceph-osd-0`, `rook-ceph-osd-1`, and `rook-ceph-osd-2`
+  deployments are scaled to zero and still use `ROOK_NODE_NAME` /
+  `ROOK_CRUSHMAP_HOSTNAME` `talos-192-168-1-203`.
+- Those OSD deployments reference old `ROOK_BLOCK_PATH` values under
+  `/dev/ceph-fe2d8c45-670f-4d29-a8a6-a332db785a32/osd-db-*`, which are not
+  visible on Turin while the Kingston device is missing.
+- A privileged read-only inspection pod on Turin saw the three HDD block LVs as
+  OSDs `0`, `1`, and `2`:
+  - OSD `0`: `/dev/sdd`, LV
+    `/dev/ceph-af8f93cb-80cc-43fb-9a3b-d927c95534e5/osd-block-834f32e1-93b0-4f79-91ad-5a6771bdf38b`
+  - OSD `1`: `/dev/sdc`, LV
+    `/dev/ceph-4f30c39a-cd26-427b-9d15-18a15333b1d0/osd-block-63a3b2d6-0d39-436f-a517-4296d04e782c`
+  - OSD `2`: `/dev/sdb`, LV
+    `/dev/ceph-c04a0830-d083-47fe-8cc9-b25314cd7137/osd-block-6c12f6b3-23dd-4cb1-b482-673f3c160ffc`
+- `ceph-volume lvm activate --no-systemd --bluestore` failed for all three OSDs
+  with missing DB UUID errors:
+  - OSD `0`: `could not find db with uuid mkCFn0-dZlx-qwyp-DBpf-hTjy-P8Ox-Ie1uVk`
+  - OSD `1`: `could not find db with uuid 5tt84t-fD4F-LEnh-WyqM-AT8r-OZyy-0APfRc`
+  - OSD `2`: `could not find db with uuid VTAxqx-egqu-IfU4-VonO-zNiJ-zW2s-2yb2Tb`
+- The HDD BlueStore main labels are intact and identify OSD IDs `0`, `1`, and
+  `2`, but the LVM tags still require the missing external DB LVs. Do not expect
+  Rook to activate those existing OSDs from the HDD block LVs alone.
+
+Safe next check after reseating or reconnecting the missing NVMe:
+
+```bash
+talosctl --talosconfig devices/turin/talosconfig \
+  -n 100.114.46.58 -e 100.114.46.58 ls /dev/disk/by-id | rg 'KINGSTON|SNV3|50026B76878F0B27|ceph--'
+```
+
+Only after the Kingston metadata path and transferred HDDs are all visible should
+the non-destructive adoption path move the old storage entry from
+`talos-192-168-1-203` to `turin`. Keep the exact HDD IDs and metadata device
+path; do not enable `useAllDevices`, and do not purge OSD IDs `0`, `1`, or `2`
+when the goal is disk adoption.
+
+If the approved path is to forget the external DB device and recreate the three
+24TB OSDs, the safe order is:
+
+The complete execution checklist for this path is in
+`devices/turin/docs/ceph-recreate-three-osds.md`. Keep that runbook out of Argo.
+The purge/zap steps require explicit destructive approval; that approval was
+given before old OSD IDs `0`, `1`, and `2` were purged and the three old
+HDD-backed LVM block volumes were zapped on Turin.
+
+1. Confirm Ceph has no inactive or stale PGs:
+
+   ```bash
+   kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph pg dump_stuck inactive
+   kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph pg dump_stuck stale
+   ```
+
+1. Purge the old OSD identities only after accepting that old OSDs `0`, `1`,
+   and `2` will not be recovered:
+
+   ```bash
+   kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd purge 0 --yes-i-really-mean-it
+   kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd purge 1 --yes-i-really-mean-it
+   kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd purge 2 --yes-i-really-mean-it
+   ```
+
+1. Zap the three transferred HDDs on Turin using Rook/Ceph tooling, not Talos
+   install flags:
+
+   ```bash
+   # OSD 0 old block device
+   ceph-volume lvm zap --destroy /dev/ceph-af8f93cb-80cc-43fb-9a3b-d927c95534e5/osd-block-834f32e1-93b0-4f79-91ad-5a6771bdf38b
+
+   # OSD 1 old block device
+   ceph-volume lvm zap --destroy /dev/ceph-4f30c39a-cd26-427b-9d15-18a15333b1d0/osd-block-63a3b2d6-0d39-436f-a517-4296d04e782c
+
+   # OSD 2 old block device
+   ceph-volume lvm zap --destroy /dev/ceph-c04a0830-d083-47fe-8cc9-b25314cd7137/osd-block-6c12f6b3-23dd-4cb1-b482-673f3c160ffc
+   ```
+
+1. Change `argocd/applications/rook-ceph/cluster-values.yaml` so the second
+   storage node is `turin`, remove that node's `metadataDevice`, and keep only
+   the three exact HDD IDs:
+
+   ```yaml
+   - name: turin
+     devices:
+       - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
+       - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
+       - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
+   ```
+
+1. Sync Rook and watch prepare/OSD creation, then verify `ceph osd tree` shows
+   three new up OSDs under host `turin`.
+
+## Post-install `Booting` / etcd learner checks
+
+If Turin appears in Kubernetes but the local Talos dashboard still shows
+`Booting`, do not treat that as a stale UI state. Verify Talos readiness and
+local etcd health directly:
+
+```bash
+talosctl --talosconfig devices/turin/talosconfig \
+  -n <turin-tailnet-ip> -e <turin-tailnet-ip> get machinestatus -o yaml
+
+talosctl --talosconfig devices/turin/talosconfig \
+  -n <turin-tailnet-ip> -e <turin-tailnet-ip> service etcd status
+
+talosctl --talosconfig devices/turin/talosconfig \
+  -n <turin-tailnet-ip> -e <turin-tailnet-ip> logs etcd --tail 120
+```
+
+Turin should not be considered joined until `machinestatus.spec.status.ready`
+is `true`, `etcd` is healthy, and the member is no longer a learner:
+
+```bash
+talosctl -n 100.94.129.1 -e 100.94.129.1 etcd members
+```
+
+The LAN uses `100.100.244.128/25`, which sits inside Tailscale's CGNAT range.
+For this cluster, etcd and kubelet must still select the LAN address, not the
+Tailscale address, so keep these patches in the first apply:
+
+- `devices/turin/manifests/etcd-lan-subnet.patch.yaml`
+- `devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml`
+
+If etcd logs show repeated `dial tcp 100.100.244.141:2380: i/o timeout` or
+`dial tcp 100.100.244.142:2380: i/o timeout`, prove the LAN path before
+rebooting or changing etcd membership:
+
+```bash
+nc -vz -G 3 100.100.244.141 2379 2380 6443 50000
+nc -vz -G 3 100.100.244.142 2379 2380 6443 50000
+nc -vz -G 3 100.100.244.171 2379 2380 6443 50000
+
+ping -c 2 100.100.244.141
+ping -c 2 100.100.244.142
+ping -c 2 100.100.244.171
+
+tailscale ping -c 3 <turin-tailnet-ip>
+```
+
+On Turin, inspect routes, rules, and sockets:
+
+```bash
+talosctl --talosconfig devices/turin/talosconfig \
+  -n <turin-tailnet-ip> -e <turin-tailnet-ip> get routes
+
+talosctl --talosconfig devices/turin/talosconfig \
+  -n <turin-tailnet-ip> -e <turin-tailnet-ip> get routingrules
+
+talosctl --talosconfig devices/turin/talosconfig \
+  -n <turin-tailnet-ip> -e <turin-tailnet-ip> netstat -antp
+```
+
+The failure mode observed during Turin bring-up was:
+
+- existing peers `.141` and `.142` were reachable from the workstation;
+- Turin was reachable through Tailscale only, with direct Tailscale connectivity
+  falling back to DERP;
+- the workstation could not ping or open TCP to `100.100.244.171`;
+- Turin kept sockets in `SYN_SENT` to `.141/.142:2380`, `.141/.142:6443`, and
+  `10.96.0.1:443`;
+- packet capture on `eno2np1` showed repeated etcd SYN/SYN-ACK traffic, but the
+  connection did not settle.
+
+That evidence points at the physical LAN/switch port profile or NIC path, not a
+blind reboot fix. Move Turin to the same non-isolated switch/port profile as the
+existing control planes, or fix the LAN policy so bidirectional TCP works between
+`100.100.244.171` and `100.100.244.141` / `100.100.244.142` on ports `2379`,
+`2380`, `6443`, and `50000`.
 
 If Turin replaces `talos-192-168-1-203` and the same OSD disks are present,
 the recovery path uses an amd64 Talos install/config for Turin while preserving

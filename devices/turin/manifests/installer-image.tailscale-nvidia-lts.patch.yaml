@@ -1,3 +1,3 @@
 machine:
   install:
-    image: factory.talos.dev/metal-installer/7d23b2fb67c0f1db1753e2f59bf640389d02efd06c12f9654563aa469416766e:v1.13.4
+    image: factory.talos.dev/metal-installer/6e246b622304aee389cfed7ed4f13dd4dac4a751243ed43bae10d73c63195e7d:v1.13.4

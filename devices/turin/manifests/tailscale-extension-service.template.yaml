@@ -5,5 +5,8 @@ environment:
   - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
   - TS_HOSTNAME=turin
   - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
+  # The physical LAN is 100.100.244.128/25, inside Tailscale's CGNAT range.
+  # nodivert avoids Tailscale's default non-tailscale0 CGNAT drop on LAN peers.
+  - TS_EXTRA_ARGS=--netfilter-mode=nodivert
   # Talos has a read-only root filesystem; let Talos manage /etc/resolv.conf via machine.network.nameservers.
   - TS_ACCEPT_DNS=false

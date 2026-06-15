@@ -62,6 +62,8 @@ devices/turin/worker.yaml
 devices/turin/talosconfig
 devices/turin/node-machineconfig.yaml
 devices/turin/manifests/tailscale-extension-service.yaml
+SMCIPMITool.properties
+smcrakp.properties
 **/charts/*.tgz
 **/generated/*
 **/_generated/

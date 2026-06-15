@@ -23,7 +23,7 @@ Use the tracked schematic:
 It contains:
 
 - `siderolabs/tailscale`
-- `siderolabs/nonfree-kmod-nvidia-lts`
+- `siderolabs/nvidia-open-gpu-kernel-modules-lts`
 - `siderolabs/nvidia-container-toolkit-lts`
 
 Generate or confirm the Image Factory schematic ID:
@@ -36,7 +36,7 @@ curl -sS -X POST --data-binary @devices/turin/manifests/turin-talos-nvidia-lts-s
 Expected ID:
 
 ```text
-7d23b2fb67c0f1db1753e2f59bf640389d02efd06c12f9654563aa469416766e
+6e246b622304aee389cfed7ed4f13dd4dac4a751243ed43bae10d73c63195e7d
 ```
 
 Use the installer patch:
@@ -46,7 +46,7 @@ Use the installer patch:
 That patch points Talos installation at:
 
 ```text
-factory.talos.dev/metal-installer/7d23b2fb67c0f1db1753e2f59bf640389d02efd06c12f9654563aa469416766e:v1.13.4
+factory.talos.dev/metal-installer/6e246b622304aee389cfed7ed4f13dd4dac4a751243ed43bae10d73c63195e7d:v1.13.4
 ```
 
 This keeps system extensions in the Talos image build, not in deprecated machine
@@ -72,7 +72,11 @@ talosctl apply-config --insecure -n 100.100.244.171 -e 100.100.244.171 \
   --config-patch @devices/turin/manifests/installer-image.tailscale-nvidia-lts.patch.yaml \
   --config-patch @devices/turin/manifests/install-orico-13cbmek6hew8cn2x9akw.patch.yaml \
   --config-patch @devices/turin/manifests/hostname.patch.yaml \
+  --config-patch @devices/turin/manifests/etcd-lan-subnet.patch.yaml \
+  --config-patch @devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml \
   --config-patch @devices/turin/manifests/kubelet-maxpods.patch.yaml \
+  --config-patch @devices/turin/manifests/nvidia-kernel-modules.patch.yaml \
+  --config-patch @devices/turin/manifests/time-servers.patch.yaml \
   --config-patch @devices/turin/manifests/tailscale-extension-service.yaml \
   --config-patch @devices/turin/manifests/tailscale-dns.patch.yaml \
   --mode=reboot
