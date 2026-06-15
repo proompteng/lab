@@ -27,6 +27,14 @@ patches:
           argocd.argoproj.io/sync-wave: "1"
           argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
       spec:
+        infra:
+          nodePlacement:
+            tolerations:
+              # Turin is a control-plane node. This only lets KubeVirt's infra
+              # DaemonSets run there; individual VM placement stays explicit.
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
         configuration:
           developerConfiguration:
             featureGates:
