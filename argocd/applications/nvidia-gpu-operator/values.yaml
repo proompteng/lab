@@ -1,23 +1,15 @@
 # KubeVirt VM passthrough mode:
 # - Talos does not support GPU Operator installing host drivers/toolkit.
 # - NVIDIA's KubeVirt sandbox device plugin image is amd64-only, but our GPU node (`altra`) is arm64.
-# We still use the GPU Operator for VFIO binding, and rely on KubeVirt's built-in device-plugin
-# (externalResourceProvider=false in the KubeVirt CR) to advertise the passthrough resource.
+# - KubeVirt's built-in device-plugin advertises passthrough resources
+#   (externalResourceProvider=false in the KubeVirt CR).
+# Do not run GPU Operator VFIO rebinding while a VM owns the passthrough GPU.
 sandboxWorkloads:
   enabled: true
 
 operator:
   # Talos uses containerd.
   defaultRuntime: containerd
-
-daemonsets:
-  tolerations:
-    - key: nvidia.com/gpu
-      operator: Exists
-      effect: NoSchedule
-    - key: node-role.kubernetes.io/control-plane
-      operator: Exists
-      effect: NoSchedule
 
 # Do not attempt to install host NVIDIA drivers/toolkit on Talos.
 driver:
@@ -26,12 +18,8 @@ driver:
 toolkit:
   enabled: false
 
-# Turin uses Talos NVIDIA system extensions for the host driver/toolkit. The
-# device plugin only advertises that already-loaded GPU to Kubernetes.
+# No container workloads use the GPU on the host.
 devicePlugin:
-  enabled: true
-
-migManager:
   enabled: false
 
 # This image is amd64-only; disable it on arm64 nodes.
@@ -39,4 +27,4 @@ sandboxDevicePlugin:
   enabled: false
 
 vfioManager:
-  enabled: true
+  enabled: false
