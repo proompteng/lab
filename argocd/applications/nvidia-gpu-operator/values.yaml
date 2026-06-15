@@ -10,6 +10,15 @@ operator:
   # Talos uses containerd.
   defaultRuntime: containerd
 
+daemonsets:
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
 # Do not attempt to install host NVIDIA drivers/toolkit on Talos.
 driver:
   enabled: false
@@ -17,8 +26,12 @@ driver:
 toolkit:
   enabled: false
 
-# No container workloads use the GPU on the host.
+# Turin uses Talos NVIDIA system extensions for the host driver/toolkit. The
+# device plugin only advertises that already-loaded GPU to Kubernetes.
 devicePlugin:
+  enabled: true
+
+migManager:
   enabled: false
 
 # This image is amd64-only; disable it on arm64 nodes.
