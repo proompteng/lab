@@ -30,6 +30,10 @@ cephClusterSpec:
       osd_pool_default_size: "2"
       osd_pool_default_min_size: "1"
       mon_data_avail_warn: "20"
+    osd:
+      # Temporarily raise recovery/backfill concurrency while Turin rebuilds
+      # the recreated 24 TB OSDs.
+      osd_max_backfills: "3"
 
   dataDirHostPath: /var/lib/rook
 
