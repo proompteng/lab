@@ -42,6 +42,10 @@ cephClusterSpec:
   # Keep talos-192-168-1-194 as control-plane only (mon node, no OSDs).
   placement:
     mon:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       nodeAffinity:
         requiredDuringSchedulingIgnoredDuringExecution:
           nodeSelectorTerms:
@@ -52,6 +56,18 @@ cephClusterSpec:
                     - talos-192-168-1-85
                     - talos-192-168-1-194
                     - turin
+    # Turin is a control-plane node with local OSD disks, so Rook needs the
+    # same taint tolerance for both the prepare job and the OSD daemons.
+    prepareosd:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+    osd:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
 
   mgr:
     count: 2
