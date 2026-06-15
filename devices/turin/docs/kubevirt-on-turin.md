@@ -66,7 +66,9 @@ Expected:
 
 ## Temporary Non-GPU Canary
 
-Use a canary VMI that requests no GPU, no PVC, and no host devices. Delete it
+Use a canary VMI that requests no GPU, no PVC, and no host devices. Set
+`architecture: amd64`; otherwise KubeVirt can default the guest architecture from
+existing components and leave the launcher pod unschedulable on Turin. Delete it
 immediately after the scheduling and boot check.
 
 ```yaml
@@ -76,7 +78,9 @@ metadata:
   name: turin-kubevirt-canary
   namespace: kubevirt
 spec:
+  architecture: amd64
   nodeSelector:
+    kubernetes.io/arch: amd64
     kubernetes.io/hostname: turin
   tolerations:
     - key: node-role.kubernetes.io/control-plane
