@@ -2,6 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: gpu-operator
 
+resources:
+  - turin-nvidia-device-plugin.yaml
+
 helmCharts:
   - name: gpu-operator
     repo: https://nvidia.github.io/gpu-operator
