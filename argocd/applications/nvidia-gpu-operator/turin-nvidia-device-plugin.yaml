@@ -64,6 +64,9 @@ spec:
         - name: nvidia-device-plugin
           image: nvcr.io/nvidia/k8s-device-plugin:v0.19.0
           imagePullPolicy: IfNotPresent
+          args:
+            - --nvidia-driver-root=/
+            - --nvidia-dev-root=/
           env:
             - name: PASS_DEVICE_SPECS
               value: "true"
@@ -77,8 +80,8 @@ spec:
               value: all
             - name: NVIDIA_DRIVER_CAPABILITIES
               value: all
-            - name: NVIDIA_DRIVER_ROOT
-              value: /usr/local
+            - name: NVIDIA_DEV_ROOT
+              value: /
             - name: MIG_STRATEGY
               value: single
             - name: CDI_ENABLED
