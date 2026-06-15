@@ -67,7 +67,7 @@ Expected: a `virt-handler` pod runs on `turin` and the node label is `true`.
 
 - [ ] **Step 3: Run a temporary non-GPU VMI canary pinned to Turin, then delete it.**
 
-The canary must not request GPUs, PVCs, or host devices.
+The canary must set `architecture: amd64` and must not request GPUs, PVCs, or host devices.
 
 ### Task 3: Add Flamingo
 
