@@ -14,6 +14,10 @@ resources:
   - codex-spark-smoke-agent.yaml
   - codex-spark-smoke-agent-system-prompt-configmap.yaml
   - codex-spark-smoke-implspec.yaml
+  - anypi-agentprovider.yaml
+  - anypi-eval-agentprovider.yaml
+  - anypi-agent.yaml
+  - anypi-eval-agent.yaml
   - codex-agentprovider.yaml
   - codex-spark-agentprovider.yaml
   - codex-agent-system-prompt-configmap.yaml

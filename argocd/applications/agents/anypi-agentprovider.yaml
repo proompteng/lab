@@ -1,0 +1,38 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: anypi
+spec:
+  binary: /usr/local/bin/anypi-runner
+  adapter:
+    type: exec
+  envTemplate:
+    ANYPI_PROVIDER: flamingo
+    ANYPI_MODEL: qwen3-coder-flamingo
+    ANYPI_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
+    ANYPI_API_KEY: flamingo-local
+    ANYPI_MODEL_READY_TIMEOUT_SECONDS: "1800"
+    ANYPI_PROMPT_VARIANT: minimal
+    ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE: "false"
+    ANYPI_THINKING_LEVEL: "off"
+    ANYPI_TOOLS: all
+    ANYPI_WORKSPACE: /workspace
+    ANYPI_WORKTREE: /workspace/lab
+    ANYPI_AGENT_DIR: /workspace/.anypi
+    ANYPI_SESSION_DIR: /workspace/.anypi/sessions
+    ANYPI_STATUS_PATH: /workspace/.agent/status.json
+    ANYPI_LOG_PATH: /workspace/.agent/runner.log
+    ANYPI_VALIDATION_POLICY: append
+    ANYPI_NO_CHANGE_REPAIR_ATTEMPTS: "2"
+    ANYPI_VALIDATION_REPAIR_ATTEMPTS: "2"
+    ANYPI_CI_REQUIRED_ONLY: "true"
+    ANYPI_CI_CHECK_TIMEOUT_SECONDS: "3600"
+    ANYPI_CI_CHECK_INTERVAL_SECONDS: "30"
+    ANYPI_CI_REPAIR_ATTEMPTS: "1"
+    AGENT_RUN_NAME: "{{agentRun.name}}"
+    AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
+  outputArtifacts:
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

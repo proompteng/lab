@@ -82,6 +82,7 @@
     "facteur:consume": "bun run packages/scripts/src/facteur/run-consumer.ts",
     "convex:reseal": "bun run packages/scripts/src/convex/reseal-secrets.ts",
     "build:torghut": "bun run packages/scripts/src/torghut/build-image.ts",
+    "build:anypi": "bun run packages/scripts/src/anypi/build-image.ts",
     "build:symphony": "bun run packages/scripts/src/symphony/build-image.ts",
     "khoshut:deploy": "bun run packages/scripts/src/khoshut/deploy-service.ts",
     "deploy:torghut-agentruns": "bun run packages/scripts/src/torghut/deploy-agentruns.ts",
