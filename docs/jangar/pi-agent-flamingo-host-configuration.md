@@ -85,6 +85,73 @@ Expected tool-call result:
 {"name":"add","arguments":"{\"a\": 7, \"b\": 35}"}
 ```
 
+## Pi Binary Smoke
+
+The host `pi` binary supports custom OpenAI-compatible providers through
+`models.json`. For a no-mutation smoke, create a temporary Pi config directory
+instead of editing `~/.pi/agent`.
+
+```bash
+PI_TMP_DIR="$(mktemp -d /tmp/pi-flamingo-smoke.XXXXXX)"
+
+cat > "$PI_TMP_DIR/settings.json" <<'JSON'
+{
+  "defaultProvider": "flamingo",
+  "defaultModel": "qwen3-coder-flamingo",
+  "defaultThinkingLevel": "off",
+  "quietStartup": true,
+  "enableInstallTelemetry": false
+}
+JSON
+
+cat > "$PI_TMP_DIR/models.json" <<'JSON'
+{
+  "providers": {
+    "flamingo": {
+      "baseUrl": "http://flamingo.ide-newton.ts.net/v1",
+      "api": "openai-completions",
+      "apiKey": "flamingo-local",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen3-coder-flamingo",
+          "name": "Qwen3 Coder Flamingo",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 32768,
+          "maxTokens": 4096,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}
+JSON
+
+PI_CODING_AGENT_DIR="$PI_TMP_DIR" \
+PI_SKIP_VERSION_CHECK=1 \
+PI_TELEMETRY=0 \
+pi --provider flamingo \
+  --model qwen3-coder-flamingo \
+  --no-tools \
+  --no-session \
+  -p "Reply with exactly: pi-flamingo-ready"
+```
+
+Expected output:
+
+```text
+pi-flamingo-ready
+```
+
 ## Rollback
 
 For completion rollback to Saigak/Jangar-compatible routing:

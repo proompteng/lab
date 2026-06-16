@@ -157,6 +157,21 @@ OpenWebUI:
   Jangar gateway second as a rollback path.
 - `DEFAULT_MODELS` is `qwen3-coder-flamingo`.
 - `ENABLE_OLLAMA_API=true` keeps Saigak's Ollama endpoint available separately.
+- Playwright UI smoke loaded `http://openwebui.ide-newton.ts.net`, observed
+  selected model `qwen3-coder-flamingo`, submitted `Respond with exactly:
+  openwebui-flamingo-ready`, and the page rendered `openwebui-flamingo-ready`.
+- The captured OpenWebUI request used `POST /api/chat/completions` with
+  `"model":"qwen3-coder-flamingo"` and upstream `urlIdx: 0`.
+- Flamingo logs showed OpenWebUI pod IP `10.244.5.2` calling
+  `GET /v1/models` and `POST /v1/chat/completions` with HTTP `200`.
+
+Pi host harness:
+
+- Host-side `pi` smoke used an isolated temporary `PI_CODING_AGENT_DIR` with a
+  `flamingo` OpenAI-compatible provider pointed at
+  `http://flamingo.ide-newton.ts.net/v1`.
+- `pi --provider flamingo --model qwen3-coder-flamingo --no-tools --no-session
+  -p "Reply with exactly: pi-flamingo-ready"` returned `pi-flamingo-ready`.
 
 ## Optimization Rounds
 
