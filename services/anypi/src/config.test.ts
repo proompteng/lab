@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'vitest'
 
 import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
-import { parseCiChecks, parseCiChecksResult, parsePullRequestList, summarizeChecks } from './git'
+import {
+  isNoRequiredChecksResult,
+  parseCiChecks,
+  parseCiChecksResult,
+  parsePullRequestList,
+  summarizeChecks,
+} from './git'
 import {
   buildAgentPrompt,
   buildNoChangeRepairPrompt,
@@ -290,6 +296,27 @@ describe('Anypi prompt contract', () => {
   })
 
   test('rejects unsupported GitHub check command output instead of treating it as no checks', () => {
+    expect(
+      isNoRequiredChecksResult({
+        command: 'gh',
+        args: ['pr', 'checks', 'branch', '--required', '--json', 'name,workflow,state,bucket,link'],
+        exitCode: 1,
+        stdout: '',
+        stderr: "no checks reported on the 'codex/example' branch",
+        durationMs: 12,
+      }),
+    ).toBe(true)
+    expect(
+      isNoRequiredChecksResult({
+        command: 'gh',
+        args: ['pr', 'checks', 'branch', '--json', 'name,workflow,state,bucket,link'],
+        exitCode: 1,
+        stdout: '',
+        stderr: 'unknown flag: --json',
+        durationMs: 12,
+      }),
+    ).toBe(false)
+
     expect(() =>
       parseCiChecksResult({
         command: 'gh',
