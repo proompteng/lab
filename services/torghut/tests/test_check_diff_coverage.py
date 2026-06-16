@@ -462,7 +462,9 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         self.assertEqual(summary[0].ignored_lines, (90,))
         self.assertFalse(summary[0].missing_from_coverage)
 
-    def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
+    def test_format_summary_includes_missing_from_coverage_suffix_old_format(
+        self,
+    ) -> None:
         text = _format_summary(
             [
                 FileDiffCoverage(
@@ -470,13 +472,14 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
                     executable_changed_lines=2,
                     covered_lines=1,
                     missing_lines=(20,),
+                    ignored_lines=(),
                     missing_from_coverage=True,
                 )
             ]
         )
 
         self.assertIn("missing-from-coverage", text)
-        self.assertIn("missing lines: 20", text)
+        self.assertIn("uncovered executable lines: 20", text)
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")
@@ -664,23 +667,6 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         self.assertIn("ignored non-executable lines: 90, 91", text)
         self.assertIn("scripts/new_tool.py: 2/2 lines covered", text)
         self.assertIn("ignored non-executable lines: 4, 5", text)
-
-    def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
-        text = _format_summary(
-            [
-                FileDiffCoverage(
-                    filename="scripts/check_diff_coverage.py",
-                    executable_changed_lines=2,
-                    covered_lines=1,
-                    missing_lines=(20,),
-                    ignored_lines=(),
-                    missing_from_coverage=True,
-                )
-            ]
-        )
-
-        self.assertIn("missing-from-coverage", text)
-        self.assertIn("uncovered executable lines: 20", text)
 
     def test_summarize_changed_coverage_reports_multi_file_diffs_sorted(self) -> None:
         summary = summarize_changed_coverage(
