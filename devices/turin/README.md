@@ -14,6 +14,9 @@ Inventory:
 - Cooler: SilverStone `XE360-SP5`
 - Expected NVMe: 4x M.2 disks on a PCIe carrier card; motherboard M.2 slots are not used
 - Cluster target: existing Talos cluster `ryzen`, Kubernetes contexts `galactic-lan` / `galactic-tailscale`
+- Kubernetes role: dual-role control-plane and worker node. The cluster only has
+  three nodes, so Turin must accept ordinary workload pods as well as control-plane
+  components.
 
 Safety notes:
 
@@ -38,6 +41,7 @@ Manifests:
 - `devices/turin/manifests/install-orico-13cbmek6hew8cn2x9akw.patch.yaml` (clean Talos install to the 4TB ORICO NVMe, wipe enabled)
 - `devices/turin/manifests/installer-image.tailscale-nvidia-lts.patch.yaml` (Talos v1.13.4 Image Factory installer with Tailscale + NVIDIA open GPU kernel module LTS extensions)
 - `devices/turin/manifests/hostname.patch.yaml` (Talos hostname patch)
+- `devices/turin/manifests/allow-scheduling-controlplane.patch.yaml` (allow ordinary workload scheduling on Turin's control-plane node)
 - `devices/turin/manifests/etcd-lan-subnet.patch.yaml` (pin etcd peer/client addressing to the Turin LAN subnet)
 - `devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml` (pin kubelet node IP selection to the Turin LAN subnet)
 - `devices/turin/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 200)

@@ -1,7 +1,8 @@
 # KubeVirt On Turin
 
-Turin can host ordinary KubeVirt VMs after KubeVirt infra pods are scheduled on
-the node. This is separate from NVIDIA GPU passthrough.
+Turin is a dual-role control-plane and worker node. It can host ordinary KubeVirt
+VMs after KubeVirt infra pods are scheduled on the node. This is separate from
+NVIDIA GPU passthrough.
 
 ## Current Boundary
 
@@ -13,9 +14,14 @@ Plain VMs require:
 - `/dev/net/tun`.
 - `virt-handler` running on the node.
 
-The live Turin readback already showed the host prerequisites. The GitOps change
-for plain VMs is a KubeVirt component customization that lets only
-`virt-handler` tolerate Turin's control-plane taint:
+The live Turin readback already showed the host prerequisites. Turin should not
+keep the default control-plane `NoSchedule` taint because the cluster has only
+three nodes and Turin must also run ordinary workloads. If the taint is still
+present, first apply
+`devices/turin/manifests/allow-scheduling-controlplane.patch.yaml`.
+
+The KubeVirt GitOps change still keeps an explicit `virt-handler` toleration so
+KubeVirt infra remains robust if the taint is temporarily present during a rebuild:
 
 ```yaml
 spec:
@@ -28,7 +34,8 @@ spec:
 ```
 
 Do not add broad KubeVirt workload placement. VMs that should run on Turin must
-opt in with their own `nodeSelector` and toleration.
+opt in with their own `nodeSelector`; a control-plane toleration is only needed
+if the node is being rebuilt and the temporary taint is still present.
 
 KubeVirt validates `customizeComponents.patches[].patch` as JSON even when the
 patch type is `strategic`. Do not use YAML block syntax for this field.
@@ -46,8 +53,9 @@ kubectl -n kubevirt get ds virt-handler -o json | jq '.spec.template.spec.tolera
 Expected before the KubeVirt patch is synced:
 
 - KVM, vhost, and tun are present.
-- Turin has the `node-role.kubernetes.io/control-plane=NoSchedule` taint.
-- `virt-handler` does not yet run on Turin.
+- Turin does not have the `node-role.kubernetes.io/control-plane=NoSchedule`
+  taint.
+- `virt-handler` may already run on Turin after the KubeVirt patch is synced.
 
 ## Post-Sync Checks
 

@@ -60,15 +60,18 @@ sets `machine.install.disk:
 /dev/disk/by-id/nvme-ORICO_13CBMEK6HEW8CN2X9AKW` and
 `machine.install.wipe: true`.
 
-Before applying a config, decide whether Turin is joining as:
+Turin is the third node in a three-node cluster and must be dual-role:
 
-- a control-plane replacement for the maintenance node, or
-- a worker/storage-only node.
+- control-plane voter for quorum, and
+- worker for ordinary application, storage, GPU, and infrastructure pods.
 
-For a control-plane replacement, update the load balancer and apiserver SANs in
-the same style as the existing device runbooks before applying the new config.
-For a worker/storage-only node, do not add it to control-plane load balancer
-backends or etcd.
+Do not leave Turin with the default control-plane-only scheduling posture. Include
+`devices/turin/manifests/allow-scheduling-controlplane.patch.yaml` so Talos sets
+`cluster.allowSchedulingOnControlPlanes: true` and removes the
+`node-role.kubernetes.io/control-plane:NoSchedule` taint it otherwise owns.
+
+If Turin is ever rebuilt as worker/storage-only instead, do not add it to control
+plane load balancer backends or etcd.
 
 ## Tailscale preinstall requirement
 
@@ -103,6 +106,7 @@ Then include these patches with the first `talosctl apply-config`:
 
 ```bash
 --config-patch @devices/turin/manifests/installer-image.tailscale-nvidia-lts.patch.yaml \
+--config-patch @devices/turin/manifests/allow-scheduling-controlplane.patch.yaml \
 --config-patch @devices/turin/manifests/nvidia-kernel-modules.patch.yaml \
 --config-patch @devices/turin/manifests/tailscale-extension-service.yaml \
 --config-patch @devices/turin/manifests/tailscale-dns.patch.yaml
@@ -130,8 +134,10 @@ Verified after the Turin install:
 - Talos machine status: `stage: running`, `ready: true`, no unmet conditions.
 - Talos health: etcd, apid, kubelet, static pods, CoreDNS, kube-proxy, and node
   schedulability checks pass.
-- Kubernetes node: `turin`, control-plane, Ready, schedulable, InternalIP
-  `100.100.244.171`.
+- Kubernetes node: `turin`, dual-role control-plane and worker, Ready,
+  schedulable, InternalIP `100.100.244.171`.
+- Turin has no control-plane `NoSchedule` taint; ordinary pods can schedule there
+  without a special toleration.
 - Etcd members: `.141`, `.142`, and `.171` are all voters; Turin is no longer a
   learner.
 - Tailscale extension: running with live tailnet address `100.114.46.58`.
