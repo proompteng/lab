@@ -113,6 +113,33 @@ schedule the workload. At the time this note was written, registry manifest read
 hanging inside `GetImageManifest`, so the next image publish and `20260616f` eval batch were pending registry recovery or
 a documented local-image import.
 
+Batch `20260616f` was submitted at `2026-06-16T23:49:36Z` as five concurrent AgentRuns after building and smoke-testing
+local image `registry.ide-newton.ts.net/lab/anypi:73516839f-amd64` from commit `73516839f`. Because registry manifest
+reads were still hanging, the image was imported directly into containerd on `talos-192-168-1-194` and `turin`, and the
+live AgentRuns were applied from a temporary manifest using that local tag. This is not a durable image publish and must
+be replaced by a registry-pinned image before the template is promoted as ready for normal reuse.
+
+Batch `20260616f` has not produced runner Jobs yet and is not promotable. Current live evidence:
+
+- `kubectl -n agents get agentrun -l anypi.proompteng.ai/eval-batch=20260616f -o wide` shows all five AgentRuns present
+  with empty phase/status and no start time.
+- `kubectl -n agents get jobs,pods -l app.kubernetes.io/part-of=anypi-prompt-eval -o wide` shows no Jobs or Pods.
+- `agents-controllers` logs repeatedly report `connect ECONNREFUSED 10.98.63.87:5432` while reconciling AgentRuns.
+- `agents-db-next-rw` has no endpoints, and `agents-db-next-1` is `0/1 Running` with startup probes failing because the
+  instance manager cannot establish a PostgreSQL connection.
+- The CNPG cluster reports `Waiting for the instances to become active`, `Cluster Is Not Ready`, and
+  `Instances are present, but none have reported a system ID`.
+- Ceph is `HEALTH_WARN` with `141 pgs down`, `141 pgs inactive`, `osd.3`, `osd.4`, and `osd.5` down on
+  `talos-192-168-1-85`, and `mon.e` pending/down. Do not treat the prompt eval as failed or complete until the Agents DB
+  dependency is healthy enough for the controller to materialize Jobs.
+- The Argo CD `agents` Application remains `OutOfSync`/`Progressing` with stale operation state waiting for hook Job
+  `agents-smoke-run`.
+
+Do not promote a prompt from `20260616f`. The next valid progression is: recover the registry publish path and Agents DB
+dependency, replace the temporary local-import image with a registry-pinned image for the current commit, reconcile the
+Agents app, then either let the existing `20260616f` AgentRuns materialize Jobs or delete/recreate a fresh five-run batch
+with unique names after confirming no Jobs were created from the old batch.
+
 ## Commands
 
 ```bash
