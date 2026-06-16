@@ -9,7 +9,7 @@ Flamingo model.
 - Agent: `anypi-agent`
 - Binary: `/usr/local/bin/anypi-runner`
 - Runtime type: `job`
-- Required workload image: `registry.ide-newton.ts.net/lab/anypi:05c1eeeb8@sha256:ae3f971839388448508b1784e9155313a6f5263f5b1ffe46730ae58e72dd4a75`
+- Required workload image: `registry.ide-newton.ts.net/lab/anypi:7a7036831@sha256:ae96478b7571b3a19d217fea217af4e584a37bb1d549cdd1e0e94348475fa706`
 - Default model endpoint: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Default model: `qwen3-coder-flamingo`
 
@@ -98,7 +98,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:05c1eeeb8@sha256:ae3f971839388448508b1784e9155313a6f5263f5b1ffe46730ae58e72dd4a75
+    image: registry.ide-newton.ts.net/lab/anypi:7a7036831@sha256:ae96478b7571b3a19d217fea217af4e584a37bb1d549cdd1e0e94348475fa706
     resources:
       requests:
         cpu: '2'
