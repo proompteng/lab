@@ -19,7 +19,7 @@ import {
   resolveAttemptSessionDir,
   resolveEffectiveSystemPrompt,
 } from './pi-session'
-import { buildCommitMessage, buildPullRequestTitle, normalizeConventionalSummary } from './run'
+import { buildCommitMessage, buildPullRequestTitle, normalizeConventionalSummary, renderPullRequestBody } from './run'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -139,6 +139,94 @@ describe('Anypi prompt contract', () => {
     expect(buildPullRequestTitle({ implementation: { summary: 'Improve Torghut Diff Coverage' } })).toBe(
       'feat(anypi): improve torghut diff coverage',
     )
+  })
+
+  test('renders PR bodies from the repository template without placeholders', () => {
+    const body = renderPullRequestBody({
+      runSpec: { implementation: { summary: 'Improve Anypi PR body rendering' } },
+      status: {
+        provider: 'anypi',
+        status: 'running',
+        startedAt: '2026-06-16T00:00:00.000Z',
+        runName: 'anypi-eval-runner-repair-20260616',
+        namespace: 'agents',
+        model: 'qwen3-coder-flamingo',
+        providerModel: 'flamingo/qwen3-coder-flamingo',
+        promptVariant: 'repair-loop',
+        promptHash: '0123456789abcdef',
+        tools: ['bash', 'edit'],
+        sessionFile: '/workspace/.anypi/sessions/initial/session.json',
+        validations: [
+          {
+            command: 'bash',
+            args: ['-lc', 'bun run --filter @proompteng/anypi test'],
+            exitCode: 0,
+            stdout: '',
+            stderr: '',
+            durationMs: 42,
+            ok: true,
+          },
+        ],
+        validationPlan: {
+          policy: 'append',
+          sources: ['inferred', 'run-spec'],
+          commands: ['bun run --filter @proompteng/anypi test'],
+        },
+        agentAttempts: 1,
+        validationAttempts: 1,
+        ciAttempts: 1,
+        promptChars: 1200,
+        ci: {
+          ok: true,
+          status: 'passed',
+          requiredOnly: true,
+          attempts: 3,
+          durationMs: 3000,
+          checks: [],
+          summary: '2 passed/skipped, 0 pending, 0 failed/cancelled',
+        },
+      },
+      git: {
+        repository: 'proompteng/lab',
+        baseBranch: 'main',
+        headBranch: 'codex/anypi-eval/runner',
+        cloneUrl: 'https://github.com/proompteng/lab.git',
+        webUrl: 'https://github.com/proompteng/lab',
+        worktree: '/workspace/lab',
+        env: {},
+        writeEnabled: true,
+        pullRequestsEnabled: true,
+      },
+      piText: 'implemented',
+      template: `## Summary
+
+<!-- 3-5 concise bullets describing what changed. -->
+
+## Related Issues
+
+## Testing
+
+## Screenshots (if applicable)
+
+## Breaking Changes
+
+## Checklist
+
+- [ ] Testing section documents the exact validation performed (or \`N/A\` with justification).
+- [ ] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).
+- [ ] Documentation, release notes, and follow-ups are updated or tracked.
+`,
+    })
+
+    expect(body).toContain('## Summary')
+    expect(body).toContain('## Testing')
+    expect(body).toContain('Prompt variant: `repair-loop` (`0123456789abcdef`)')
+    expect(body).toContain('bun run --filter @proompteng/anypi test')
+    expect(body).toContain('- CI: passed: 2 passed/skipped, 0 pending, 0 failed/cancelled')
+    expect(body).toContain('- [x] Testing section documents the exact validation performed.')
+    expect(body).not.toContain('<!--')
+    expect(body).not.toContain('[ ]')
+    expect(body).not.toMatch(/TODO|TBD|<\.\.\.>/)
   })
 
   test('uses run parameters for validation commands when env commands are absent', () => {

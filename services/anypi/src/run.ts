@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 import { applyRunnerArtifacts, loadRunnerSpec, loadRunSpec, resolveConfig, type AnypiConfig } from './config'
 import { createLogger } from './logger'
@@ -63,52 +63,88 @@ export const buildPullRequestTitle = (runSpec: AgentRunSpecPayload) => {
   return `feat(anypi): ${normalizeConventionalSummary(title, 'apply autonomous agent changes')}`
 }
 
-const buildPullRequestBody = (input: {
+const DEFAULT_PULL_REQUEST_HEADINGS = [
+  'Summary',
+  'Related Issues',
+  'Testing',
+  'Screenshots (if applicable)',
+  'Breaking Changes',
+  'Checklist',
+]
+
+const extractPullRequestHeadings = (template: string | undefined) => {
+  const headings = [...(template ?? '').matchAll(/^##\s+(.+?)\s*$/gm)]
+    .map((match) => match[1]?.trim())
+    .filter((heading): heading is string => Boolean(heading))
+  return headings.length > 0 ? headings : DEFAULT_PULL_REQUEST_HEADINGS
+}
+
+const normalizeHeading = (heading: string) => heading.toLowerCase().replace(/\s+/g, ' ').trim()
+
+const validationSummary = (status: AnypiStatus) => {
+  const validations = status.validations
+    .map((result) => `- \`${[result.command, ...result.args].join(' ')}\` exit ${result.exitCode}`)
+    .join('\n')
+  const ci = status.ci
+    ? `${status.ci.status}: ${status.ci.summary}`
+    : 'Pending: pull request checks have not completed yet.'
+  return `${validations || '- N/A'}\n- CI: ${ci}`
+}
+
+export const renderPullRequestBody = (input: {
   runSpec: AgentRunSpecPayload
   status: AnypiStatus
   git: GitContext
   piText: string
+  template?: string
 }) => {
-  const validations = input.status.validations
-    .map((result) => `- \`${[result.command, ...result.args].join(' ')}\` exit ${result.exitCode}`)
-    .join('\n')
-  const ci = input.status.ci
-    ? `${input.status.ci.status}: ${input.status.ci.summary}`
-    : 'Pending: pull request checks have not completed yet.'
-  return `## Summary
+  const sections = new Map([
+    [
+      'summary',
+      [
+        `- Generated for ${input.status.namespace ?? 'agents'}/${input.status.runName ?? 'unknown'}.`,
+        `- Prompt variant: \`${input.status.promptVariant}\` (\`${input.status.promptHash}\`).`,
+        `- Session artifact: \`${input.status.sessionFile ?? 'N/A'}\`.`,
+      ].join('\n'),
+    ],
+    ['related issues', 'None'],
+    ['testing', validationSummary(input.status)],
+    ['screenshots (if applicable)', 'N/A'],
+    ['breaking changes', 'None'],
+    [
+      'checklist',
+      [
+        '- [x] Testing section documents the exact validation performed.',
+        '- [x] Screenshots and Breaking Changes sections are handled appropriately.',
+        '- [x] Documentation, release notes, and follow-ups are updated or tracked.',
+      ].join('\n'),
+    ],
+  ])
 
-- Anypi generated this code change for ${input.status.namespace ?? 'agents'}/${input.status.runName ?? 'unknown'}.
-- Prompt variant: ${input.status.promptVariant} (${input.status.promptHash}).
-- Session artifact: ${input.status.sessionFile ?? 'N/A'}.
-
-## Related Issues
-
-None
-
-## Validation
-
-${validations || '- N/A'}
-
-CI: ${ci}
-
-## Screenshots (if applicable)
-
-N/A
-
-## Breaking Changes
-
-None
-
-## Checklist
-
-- [x] Testing section documents the exact validation performed.
-- [x] Screenshots and Breaking Changes sections are handled appropriately.
-- [x] Documentation, release notes, and follow-ups are updated or tracked.
-
-## Agent Output
-${input.piText.trim().slice(0, 6000) || 'N/A'}
-`
+  return `${extractPullRequestHeadings(input.template)
+    .map((heading) => `## ${heading}\n\n${sections.get(normalizeHeading(heading)) ?? 'N/A'}`)
+    .join('\n\n')}\n`
 }
+
+const loadPullRequestTemplate = async (worktree: string) => {
+  try {
+    return await readFile(join(worktree, '.github/PULL_REQUEST_TEMPLATE.md'), 'utf8')
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+const buildPullRequestBody = async (input: {
+  runSpec: AgentRunSpecPayload
+  status: AnypiStatus
+  git: GitContext
+  piText: string
+}) =>
+  renderPullRequestBody({
+    ...input,
+    template: await loadPullRequestTemplate(input.git.worktree),
+  })
 
 const baseStatus = (
   config: AnypiConfig,
@@ -294,7 +330,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       await pushBranch(git)
       pullRequest = await createOrUpdatePullRequest(git, {
         title: buildPullRequestTitle(runSpec),
-        body: buildPullRequestBody({ runSpec, status, git, piText }),
+        body: await buildPullRequestBody({ runSpec, status, git, piText }),
       })
       status.pullRequest = pullRequest
       await writeStatus(config.statusPath, status)
@@ -349,7 +385,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
           await pushBranch(git)
           pullRequest = await createOrUpdatePullRequest(git, {
             title: buildPullRequestTitle(runSpec),
-            body: buildPullRequestBody({ runSpec, status, git, piText }),
+            body: await buildPullRequestBody({ runSpec, status, git, piText }),
           })
           status.pullRequest = pullRequest
           await writeStatus(config.statusPath, status)
@@ -357,7 +393,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
 
         pullRequest = await createOrUpdatePullRequest(git, {
           title: buildPullRequestTitle(runSpec),
-          body: buildPullRequestBody({ runSpec, status, git, piText }),
+          body: await buildPullRequestBody({ runSpec, status, git, piText }),
         })
         status.pullRequest = pullRequest
         await writeStatus(config.statusPath, status)
