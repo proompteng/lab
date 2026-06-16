@@ -210,11 +210,14 @@ def _load_coverage_index(xml_path: Path) -> dict[str, dict[int, int]]:
                 continue
             normalized = filename.replace("\\", "/").lstrip("./")
             if not normalized.startswith(("app/", "scripts/")):
-                app_path = service_root / "app" / normalized
-                script_path = service_root / "scripts" / normalized
-                if app_path.exists() and not script_path.exists():
+                # Check existence of app/script paths inline to avoid extra local var
+                if (service_root / "app" / normalized).exists() and not (
+                    service_root / "scripts" / normalized
+                ).exists():
                     normalized = f"app/{normalized}"
-                elif script_path.exists() and not app_path.exists():
+                elif (service_root / "scripts" / normalized).exists() and not (
+                    service_root / "app" / normalized
+                ).exists():
                     normalized = f"scripts/{normalized}"
                 elif "/" not in normalized and package_name in {"app", "scripts"}:
                     normalized = f"{package_name}/{normalized}"
