@@ -13,10 +13,12 @@ from scripts.check_diff_coverage import (
     FileDiffCoverage,
     _drop_missing_non_executable_files,
     _executable_source_lines,
+    _find_scope_context,
     _format_summary,
     _git,
     _git_optional,
     _include_untracked_python_files,
+    _load_changed_source_lines,
     _load_coverage_index,
     _list_untracked_python_files,
     _parse_args,
@@ -455,20 +457,173 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         self.assertEqual(summary, [])
 
     def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
-        text = _format_summary(
-            [
-                FileDiffCoverage(
-                    filename="scripts/check_diff_coverage.py",
-                    executable_changed_lines=2,
-                    covered_lines=1,
-                    missing_lines=(20,),
-                    missing_from_coverage=True,
-                )
-            ]
-        )
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            scripts_dir = service_root / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            (scripts_dir / "check_diff_coverage.py").write_text(
+                '#!/usr/bin/env python3\ndef main() -> int:\n    return 0\n',
+                encoding="utf-8",
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="scripts/check_diff_coverage.py",
+                        executable_changed_lines=2,
+                        covered_lines=1,
+                        missing_lines=(20,),
+                        missing_from_coverage=True,
+                    )
+                ],
+                service_root,
+            )
 
         self.assertIn("missing-from-coverage", text)
-        self.assertIn("missing lines: 20", text)
+        self.assertIn("missing lines: scripts/check_diff_coverage.py:20", text)
+
+    def test_format_summary_shows_file_line_with_scope_context(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            app_dir = service_root / "app" / "trading"
+            app_dir.mkdir(parents=True, exist_ok=True)
+            (app_dir / "execution.py").write_text(
+                '"""Execution module."""\n\n'
+                'def execute_order(order_id: int) -> None:\n'
+                '    """Execute an order."""\n'
+                '    if order_id <= 0:\n'
+                '        raise ValueError("Invalid order ID")\n'
+                '    print(f"Executing {order_id}")\n',
+                encoding="utf-8",
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="app/trading/execution.py",
+                        executable_changed_lines=2,
+                        covered_lines=0,
+                        missing_lines=(4, 5),
+                        missing_from_coverage=False,
+                    )
+                ],
+                service_root,
+            )
+
+        self.assertIn("app/trading/execution.py:4", text)
+        self.assertIn("app/trading/execution.py:5", text)
+        self.assertIn("def execute_order(order_id: int)", text)
+
+    def test_format_summary_multi_line_uncovered_shows_context(self) -> None:
+        """Test that multi-line uncovered diffs show proper context."""
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            app_dir = service_root / "app" / "trading"
+            app_dir.mkdir(parents=True, exist_ok=True)
+            (app_dir / "execution.py").write_text(
+                '"""Execution module."""\n\n'
+                'def execute_order(order_id: int) -> None:\n'
+                '    """Execute an order."""\n'
+                '    if order_id <= 0:\n'
+                '        raise ValueError("Invalid order ID")\n'
+                '    if order_id > 100:\n'
+                '        apply_bulk_discount(order_id)\n'
+                '    print(f"Executing {order_id}")\n',
+                encoding="utf-8",
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="app/trading/execution.py",
+                        executable_changed_lines=3,
+                        covered_lines=0,
+                        missing_lines=(4, 5, 7),
+                        missing_from_coverage=False,
+                    )
+                ],
+                service_root,
+            )
+
+        # Should show file:line format for each missing line
+        self.assertIn("app/trading/execution.py:4", text)
+        self.assertIn("app/trading/execution.py:5", text)
+        self.assertIn("app/trading/execution.py:7", text)
+        # Should include scope context for at least some lines
+        self.assertIn("def execute_order(order_id: int)", text)
+
+    def test_find_scope_context_finds_nearest_function(self) -> None:
+        source_lines = (
+            '"""Module."""',
+            "",
+            "def outer_func() -> None:",
+            "    def inner_func() -> int:",
+            "        return 1",
+            "    return inner_func()",
+        )
+        # Line 5 should find inner_func
+        context = _find_scope_context(source_lines, 5)
+        self.assertIsNotNone(context)
+        self.assertIn("def inner_func", context)
+
+    def test_find_scope_context_finds_class_when_no_function(self) -> None:
+        source_lines = (
+            '"""Module."""',
+            "",
+            "class OrderExecutor:",
+            "    def __init__(self) -> None:",
+            "        pass",
+        )
+        context = _find_scope_context(source_lines, 5)
+        self.assertIsNotNone(context)
+        self.assertIn("class OrderExecutor", context)
+        self.assertIn("def __init__", context)
+
+    def test_find_scope_context_finds_both_class_and_function(self) -> None:
+        source_lines = (
+            '"""Module."""',
+            "",
+            "class OrderExecutor:",
+            "    def __init__(self) -> None:",
+            "        pass",
+        )
+        # On line 3 (class definition itself)
+        context = _find_scope_context(source_lines, 3)
+        self.assertIsNotNone(context)
+        self.assertIn("class OrderExecutor", context)
+
+    def test_find_scope_context_finds_nearest_function_first(self) -> None:
+        source_lines = (
+            '"""Module."""',
+            "",
+            "class OrderExecutor:",
+            "    def __init__(self) -> None:",
+            "        pass",
+            "",
+            "def execute_order(order_id: int) -> None:",
+            "    print(order_id)",
+        )
+        # On line 8 (inside execute_order), should find execute_order first
+        context = _find_scope_context(source_lines, 8)
+        self.assertIsNotNone(context)
+        self.assertIn("def execute_order", context)
+        self.assertNotIn("class OrderExecutor", context)
+
+    def test_find_scope_context_returns_none_for_empty_lines(self) -> None:
+        context = _find_scope_context((), 1)
+        self.assertIsNone(context)
+
+    def test_find_scope_context_returns_none_for_invalid_line(self) -> None:
+        context = _find_scope_context(("line1", "line2"), 10)
+        self.assertIsNone(context)
+
+    def test_load_changed_source_lines_loads_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "module.py"
+            path.write_text("line1\nline2\nline3\n", encoding="utf-8")
+            lines = _load_changed_source_lines(path)
+            self.assertEqual(lines, ("line1", "line2", "line3"))
+
+    def test_load_changed_source_lines_returns_empty_for_missing_file(self) -> None:
+        lines = _load_changed_source_lines(Path("/nonexistent/path.py"))
+        self.assertEqual(lines, ())
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")
@@ -628,3 +783,80 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         exit_code = main()
 
         self.assertEqual(exit_code, 0)
+
+    @patch("scripts.check_diff_coverage._parse_args")
+    @patch("scripts.check_diff_coverage._repo_root")
+    @patch("scripts.check_diff_coverage._resolve_diff_base")
+    @patch("scripts.check_diff_coverage._git")
+    @patch("scripts.check_diff_coverage._load_coverage_index")
+    @patch("scripts.check_diff_coverage._include_untracked_python_files")
+    @patch("scripts.check_diff_coverage._load_changed_source_lines")
+    def test_main_shows_multi_line_uncovered_with_scope_context(
+        self,
+        load_source_lines_mock: object,
+        include_untracked: object,
+        load_coverage: object,
+        git_mock: object,
+        resolve_diff_base: object,
+        repo_root: object,
+        parse_args: object,
+    ) -> None:
+        """Test that multi-line uncovered diffs show file:line with scope context."""
+        # Mock the source lines to return our test content - full file with all lines
+        # The diff shows lines 11-14 being added, so we need at least that many lines
+        load_source_lines_mock.return_value = (
+            '"""Execution module."""',  # line 1
+            "",  # line 2
+            '"""Another docstring."""',  # line 3
+            "",  # line 4
+            'class OrderProcessor:',  # line 5
+            '    """Process orders."""',  # line 6
+            '    def __init__(self) -> None:',  # line 7
+            '        pass',  # line 8
+            "",  # line 9
+            "# Some comment",  # line 10
+            'def execute_order(order_id: int) -> None:',  # line 11
+            '    """Execute an order."""',  # line 12
+            '    if order_id <= 0:',  # line 13
+            '        raise ValueError("Invalid")',  # line 14
+            '    print(f"Executing {order_id}")',  # line 15
+        )
+
+        parse_args.return_value = Mock(
+            coverage_xml="coverage.xml", threshold=100.0, base_ref=""
+        )
+        repo_root.return_value = Path("/tmp/repo")
+        resolve_diff_base.return_value = "base"
+        git_mock.return_value = """diff --git a/services/torghut/app/trading/execution.py b/services/torghut/app/trading/execution.py
+index 1111111..2222222 100644
+--- a/services/torghut/app/trading/execution.py
++++ b/services/torghut/app/trading/execution.py
+@@ -10,0 +11,4 @@
++def execute_order(order_id: int) -> None:
++    if order_id <= 0:
++        raise ValueError("Invalid")
++    print(f"Executing {order_id}")
+"""
+        load_coverage.return_value = {
+            "app/trading/execution.py": {11: 1, 12: 0, 13: 0, 14: 0}
+        }
+        include_untracked.return_value = {
+            "app/trading/execution.py": {11, 12, 13, 14}
+        }
+
+        with patch("sys.stderr.write") as stderr_write, patch(
+            "sys.stdout.write"
+        ) as stdout_write:
+            exit_code = main()
+
+        # Should fail due to threshold not being met
+        self.assertEqual(exit_code, 1)
+        # Check that output includes file:line format
+        output = "\n".join(call.args[0] for call in stdout_write.call_args_list)
+        self.assertIn("app/trading/execution.py:12", output)
+        self.assertIn("app/trading/execution.py:13", output)
+        self.assertIn("app/trading/execution.py:14", output)
+        # Check that scope context is included - the context should be the function signature
+        self.assertIn("def execute_order(order_id: int)", output)
+        # Verify the mock was called
+        self.assertTrue(load_source_lines_mock.called)

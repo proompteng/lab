@@ -265,7 +265,88 @@ def summarize_changed_coverage(
     return summary
 
 
-def _format_summary(summary: list[FileDiffCoverage]) -> str:
+def _load_changed_source_lines(path: Path) -> tuple[str, ...]:
+    """Load the source lines for a Python file, handling missing files gracefully."""
+    try:
+        return tuple(path.read_text(encoding="utf-8").splitlines())
+    except (FileNotFoundError, OSError):
+        return ()
+
+
+def _find_scope_context(
+    source_lines: tuple[str, ...], line_number: int
+) -> str | None:
+    """Find the nearest function/class scope for a given line number."""
+    if not source_lines:
+        return None
+
+    target_idx = line_number - 1
+    if target_idx < 0 or target_idx >= len(source_lines):
+        return None
+
+    # Walk backwards to find the nearest def/class statement
+    nearest_class: str | None = None
+    nearest_class_indent: int = -1
+    nearest_def: str | None = None
+    nearest_def_indent: int = -1
+
+    for idx in range(target_idx, -1, -1):
+        line = source_lines[idx]
+        stripped = line.lstrip()
+        current_indent = len(line) - len(stripped)
+
+        if stripped.startswith("class "):
+            if nearest_class is None:
+                # Extract the class signature
+                context_lines: list[str] = [line]
+                # Class definition might be multi-line with inheritance
+                if stripped.endswith(":"):
+                    for next_idx in range(idx + 1, min(idx + 3, len(source_lines))):
+                        next_line = source_lines[next_idx]
+                        stripped_next = next_line.lstrip()
+                        if stripped_next and not stripped_next.startswith("#"):
+                            if stripped_next.endswith(":"):
+                                context_lines.append(next_line)
+                                break
+                            context_lines.append(next_line)
+                nearest_class = "; ".join(context_lines)
+                nearest_class_indent = current_indent
+        if stripped.startswith("def "):
+            if nearest_def is None:
+                # Extract the signature line
+                context_lines: list[str] = [line]
+                # Include continuation lines if the def is multi-line (has open paren)
+                if "(" in stripped and not stripped.rstrip().endswith("):"):
+                    for next_idx in range(idx + 1, min(idx + 3, len(source_lines))):
+                        next_line = source_lines[next_idx]
+                        context_lines.append(next_line)
+                        if next_line.rstrip().endswith(":"):
+                            break
+                nearest_def = "; ".join(context_lines)
+                nearest_def_indent = current_indent
+        # Stop if we've found both or if we've gone past the target line
+        if nearest_class is not None and nearest_def is not None:
+            break
+
+    # Determine which to use:
+    # - If the target line is indented (inside a class), show both class and def
+    # - If the target line is at module level, show just the def
+    target_indent = 0  # The line itself might be blank, so look at the line before
+    if target_idx > 0:
+        target_line = source_lines[target_idx - 1] if target_idx > 0 else ""
+        target_indent = len(target_line) - len(target_line.lstrip())
+
+    # Prefer the function context, but also include class if it's available and indented
+    if nearest_def:
+        if nearest_class and target_indent > 0:
+            return f"{nearest_class}; {nearest_def}"
+        return nearest_def
+    return nearest_class
+
+
+def _format_summary(
+    summary: list[FileDiffCoverage], service_root: Path
+) -> str:
     lines: list[str] = []
     for item in summary:
         coverage_pct = item.coverage_ratio * 100
@@ -274,10 +355,20 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
             f"{item.filename}: {item.covered_lines}/{item.executable_changed_lines} "
             f"lines covered ({coverage_pct:.2f}%){suffix}"
         )
-        if item.missing_lines:
-            lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
-            )
+        if not item.missing_lines:
+            continue
+        # Format each missing line with file:line and scope context
+        for missing_line in item.missing_lines:
+            file_ref = f"{item.filename}:{missing_line}"
+            context = None
+            if not item.missing_from_coverage:
+                source_lines = _load_changed_source_lines(service_root / item.filename)
+                if source_lines:
+                    context = _find_scope_context(source_lines, missing_line)
+            if context:
+                lines.append(f"  {file_ref}: {context}")
+            else:
+                lines.append(f"  missing lines: {file_ref}")
     return "\n".join(lines)
 
 
@@ -329,7 +420,7 @@ def main() -> int:
     coverage_pct = (
         (total_covered / total_executable) * 100 if total_executable else 100.0
     )
-    print(_format_summary(summary))
+    print(_format_summary(summary, service_root))
     print(
         f"total changed-line coverage: {total_covered}/{total_executable} ({coverage_pct:.2f}%)"
     )
