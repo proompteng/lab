@@ -29,20 +29,28 @@ const toErrorMessage = (error: unknown) => (error instanceof Error ? error.messa
 
 const sleep = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms))
 
+export const normalizeConventionalSummary = (raw: string | undefined, fallback: string) => {
+  const summary = (raw?.trim() || fallback)
+    .replace(/\s+/g, ' ')
+    .replace(/[.。]+$/g, '')
+    .toLowerCase()
+  return summary.slice(0, 80)
+}
+
 const writeStatus = async (path: string, status: AnypiStatus) => {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
 }
 
-const buildCommitMessage = (runSpec: AgentRunSpecPayload) => {
+export const buildCommitMessage = (runSpec: AgentRunSpecPayload) => {
   const summary = runSpec.implementation?.summary?.trim() || runSpec.issueTitle?.trim() || runSpec.agentRun?.name
-  return `feat(anypi): ${summary ? summary.slice(0, 80) : 'implement agent task'}`
+  return `feat(anypi): ${normalizeConventionalSummary(summary, 'implement agent task')}`
 }
 
-const buildPullRequestTitle = (runSpec: AgentRunSpecPayload) => {
+export const buildPullRequestTitle = (runSpec: AgentRunSpecPayload) => {
   const title =
     process.env.VCS_PR_TITLE_TEMPLATE?.trim() || runSpec.issueTitle?.trim() || runSpec.implementation?.summary?.trim()
-  return title ? `feat(anypi): ${title.slice(0, 80)}` : 'feat(anypi): apply autonomous agent changes'
+  return `feat(anypi): ${normalizeConventionalSummary(title, 'apply autonomous agent changes')}`
 }
 
 const buildPullRequestBody = (input: {
@@ -163,6 +171,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       await recordPiResult(
         await runPiAgent(config, nextPrompt, logger.info, {
           sessionLabel: attempt === 0 ? 'initial' : `no-change-repair-${attempt}`,
+          systemPrompt: runSpec.systemPrompt,
         }),
         attempt === 0 ? undefined : `No-change repair ${attempt}`,
       )
@@ -204,6 +213,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       })
       const repairResult = await runPiAgent(config, repairPrompt, logger.info, {
         sessionLabel: `validation-repair-${attempt + 1}`,
+        systemPrompt: runSpec.systemPrompt,
       })
       piText = `${piText}\n\n## Validation repair ${attempt + 1}\n${repairResult.text}`
       status.tools = mergeTools(status.tools, repairResult.tools)

@@ -4,11 +4,17 @@ import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } f
 import {
   buildAgentPrompt,
   buildNoChangeRepairPrompt,
+  buildSystemPrompt,
   buildValidationRepairPrompt,
   resolveTaskPrompt,
   resolveValidationCommands,
 } from './prompt'
-import { isBenignAssistantContinuationError, resolveAttemptSessionDir } from './pi-session'
+import {
+  isBenignAssistantContinuationError,
+  resolveAttemptSessionDir,
+  resolveEffectiveSystemPrompt,
+} from './pi-session'
+import { buildCommitMessage, buildPullRequestTitle, normalizeConventionalSummary } from './run'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -66,7 +72,7 @@ describe('Anypi prompt contract', () => {
     ).toBe('rendered')
   })
 
-  test('builds yolo autonomous coding instructions', () => {
+  test('builds focused coding instructions without runtime leakage', () => {
     const prompt = buildAgentPrompt(
       {
         prompt: 'Refactor code and add tests.',
@@ -74,10 +80,34 @@ describe('Anypi prompt contract', () => {
       },
       '/workspace/lab',
     )
-    expect(prompt).toContain('YOLO-mode autonomous coding agent')
-    expect(prompt).toContain('shell, read, edit, write, grep, find, and ls')
+    expect(prompt).toContain('Use repository instructions and existing patterns')
     expect(prompt).toContain('Refactor code and add tests.')
-    expect(prompt).toContain('runner will validate, commit, push, and open or update the PR')
+    expect(prompt).toContain('Leave the final changes in the worktree')
+    expect(prompt).not.toMatch(/Anypi|YOLO|Kubernetes|Pi SDK|shell, read, edit, write/)
+  })
+
+  test('keeps the default system prompt simple and repo-focused', () => {
+    const prompt = buildSystemPrompt()
+    expect(prompt).toContain('Act as a coding agent inside an existing repository')
+    expect(prompt).toContain('Run the checks required for touched files')
+    expect(prompt).not.toMatch(/Anypi|YOLO|Kubernetes|Pi SDK|provider|Flamingo/)
+  })
+
+  test('uses resolved Agent system prompt when provided', () => {
+    expect(resolveEffectiveSystemPrompt('  custom repo prompt  ')).toBe('custom repo prompt')
+    expect(resolveEffectiveSystemPrompt()).toBe(buildSystemPrompt())
+  })
+
+  test('normalizes generated PR metadata to conventional lowercase subjects', () => {
+    expect(normalizeConventionalSummary('Improve Torghut Diff Coverage.', 'fallback')).toBe(
+      'improve torghut diff coverage',
+    )
+    expect(buildCommitMessage({ implementation: { summary: 'Improve Torghut Diff Coverage' } })).toBe(
+      'feat(anypi): improve torghut diff coverage',
+    )
+    expect(buildPullRequestTitle({ implementation: { summary: 'Improve Torghut Diff Coverage' } })).toBe(
+      'feat(anypi): improve torghut diff coverage',
+    )
   })
 
   test('uses run parameters for validation commands when env commands are absent', () => {
@@ -113,7 +143,7 @@ describe('Anypi prompt contract', () => {
     expect(prompt).toContain('Repair attempt: 1 of 2')
     expect(prompt).toContain('git diff --check')
     expect(prompt).toContain('trailing whitespace')
-    expect(prompt).toContain('do not remove tests')
+    expect(prompt).toContain('do not remove or weaken')
   })
 
   test('builds a no-change repair prompt that requires implementation', () => {

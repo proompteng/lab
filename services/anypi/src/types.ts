@@ -30,6 +30,7 @@ export type AgentRunSpecPayload = {
   agentRun?: AgentRunIdentity
   implementation?: ImplementationPayload
   parameters?: Record<string, string>
+  systemPrompt?: string
   prompt?: string
   goal?: {
     objective?: string

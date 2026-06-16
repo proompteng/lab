@@ -25,6 +25,7 @@ export type PiRunResult = {
 
 export type PiRunOptions = {
   sessionLabel?: string
+  systemPrompt?: string
 }
 
 export const isBenignAssistantContinuationError = (error: unknown) =>
@@ -45,7 +46,10 @@ const collectAgentsFiles = async (worktree: string) => {
   return [{ path: rootAgents, content: await readFile(rootAgents, 'utf8') }]
 }
 
-const createResourceLoader = async (worktree: string): Promise<ResourceLoader> => {
+export const resolveEffectiveSystemPrompt = (inlineSystemPrompt?: string) =>
+  inlineSystemPrompt?.trim() || buildSystemPrompt()
+
+const createResourceLoader = async (worktree: string, systemPrompt: string): Promise<ResourceLoader> => {
   const agentsFiles = await collectAgentsFiles(worktree)
   return {
     getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
@@ -53,7 +57,7 @@ const createResourceLoader = async (worktree: string): Promise<ResourceLoader> =
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles }),
-    getSystemPrompt: () => buildSystemPrompt(),
+    getSystemPrompt: () => systemPrompt,
     getAppendSystemPrompt: () => [],
     extendResources: () => {},
     reload: async () => {},
@@ -79,7 +83,8 @@ export const runPiAgent = async (
   const model = modelRegistry.find(config.provider, config.model)
   if (!model) throw new Error(`Pi model not found: ${config.provider}/${config.model}`)
 
-  const resourceLoader = await createResourceLoader(config.worktree)
+  const systemPrompt = resolveEffectiveSystemPrompt(options.systemPrompt)
+  const resourceLoader = await createResourceLoader(config.worktree, systemPrompt)
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: true },
     retry: { enabled: true, maxRetries: 2 },

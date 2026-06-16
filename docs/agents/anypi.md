@@ -34,6 +34,15 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 - `ANYPI_NO_CHANGE_REPAIR_ATTEMPTS=2` gives Pi two bounded continuation prompts if a session exits without leaving
   code changes. The run still fails if the worktree is unchanged after those attempts.
 
+## Prompt Contract
+
+The system prompt is intentionally small and repo-focused. It does not mention Anypi, yolo mode, Kubernetes, Flamingo,
+or the Pi SDK. Runtime details stay in runner config and logs, not in the model's behavioral contract.
+
+The Agents controller resolves `Agent.spec.defaults.systemPrompt` into `/workspace/run.json`; Anypi passes that resolved
+prompt to Pi's `ResourceLoader`. The per-run task prompt only adds the worktree, repository refs, task text, and a short
+set of task rules. Root `AGENTS.md` is injected as repository context.
+
 ## AgentRun Example
 
 ```yaml
@@ -67,7 +76,11 @@ spec:
     validationCommands: |
       git diff --check
       cd services/torghut && uv sync --frozen --extra dev
+      cd services/torghut && uv run --frozen ruff format --check app tests scripts migrations
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.alpha.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.scripts.json
   secrets:
     - github-token
   workload:
