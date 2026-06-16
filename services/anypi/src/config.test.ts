@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
-import { parseCiChecks, summarizeChecks } from './git'
+import { parseCiChecks, parsePullRequestList, summarizeChecks } from './git'
 import {
   buildAgentPrompt,
   buildNoChangeRepairPrompt,
@@ -194,6 +194,14 @@ describe('Anypi prompt contract', () => {
       passed: [checks[0]],
       summary: '1 passed/skipped, 0 pending, 1 failed/cancelled',
     })
+  })
+
+  test('parses GitHub REST pull request lookup results', () => {
+    expect(parsePullRequestList('[{"number":123,"html_url":"https://github.com/proompteng/lab/pull/123"}]')).toEqual({
+      number: 123,
+      url: 'https://github.com/proompteng/lab/pull/123',
+    })
+    expect(parsePullRequestList('[]')).toBeNull()
   })
 
   test('builds a validation repair prompt with failed command output', () => {

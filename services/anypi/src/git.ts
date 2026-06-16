@@ -17,6 +17,11 @@ export type GitContext = {
   pullRequestsEnabled: boolean
 }
 
+type PullRequestLookup = {
+  number: number
+  url?: string
+}
+
 const envFlag = (value: string | undefined, fallback: boolean) => {
   if (!value) return fallback
   const normalized = value.trim().toLowerCase()
@@ -28,6 +33,53 @@ const envFlag = (value: string | undefined, fallback: boolean) => {
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '')
 
 const sleep = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms))
+
+const repositoryOwner = (repository: string) => repository.split('/')[0]
+
+export const parsePullRequestList = (raw: string): PullRequestLookup | null => {
+  const parsed = JSON.parse(raw || '[]') as unknown
+  if (!Array.isArray(parsed)) return null
+  const [first] = parsed
+  if (!first || typeof first !== 'object') return null
+  const record = first as Record<string, unknown>
+  const number = typeof record.number === 'number' ? record.number : Number(record.number)
+  if (!Number.isFinite(number) || number <= 0) return null
+  const url = typeof record.html_url === 'string' ? record.html_url : undefined
+  return { number, url }
+}
+
+const parsePullRequestResponse = (raw: string): PullRequestLookup => {
+  const parsed = JSON.parse(raw || '{}') as Record<string, unknown>
+  const number = typeof parsed.number === 'number' ? parsed.number : Number(parsed.number)
+  if (!Number.isFinite(number) || number <= 0) {
+    throw new Error('GitHub pull request response did not include a pull request number')
+  }
+  const url = typeof parsed.html_url === 'string' ? parsed.html_url : undefined
+  return { number, url }
+}
+
+const writePullRequestInput = async (payload: Record<string, unknown>) => {
+  const path = resolve('/tmp', `anypi-pr-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`)
+  await writeFile(path, `${JSON.stringify(payload)}\n`, 'utf8')
+  return path
+}
+
+const runGitHubPullRequestMutation = async (
+  git: GitContext,
+  endpoint: string,
+  method: 'POST' | 'PATCH',
+  payload: Record<string, unknown>,
+) => {
+  const inputPath = await writePullRequestInput(payload)
+  try {
+    return await runCommand('gh', ['api', endpoint, '-X', method, '--input', inputPath], {
+      cwd: git.worktree,
+      env: git.env,
+    })
+  } finally {
+    await rm(inputPath, { force: true })
+  }
+}
 
 const buildCloneUrl = (cloneBaseUrl: string, repository: string) => {
   const base = trimTrailingSlash(cloneBaseUrl || 'https://github.com')
@@ -157,49 +209,34 @@ export const createOrUpdatePullRequest = async (
   },
 ): Promise<PullRequestResult> => {
   if (!git.pullRequestsEnabled) return { enabled: false }
+  const owner = repositoryOwner(git.repository)
+  const endpoint = `repos/${git.repository}/pulls`
   const view = await runCommand(
     'gh',
-    ['pr', 'view', git.headBranch, '--repo', git.repository, '--json', 'url', '--jq', '.url'],
+    ['api', endpoint, '-X', 'GET', '-f', `head=${owner}:${git.headBranch}`, '-f', 'state=open'],
     {
       cwd: git.worktree,
       env: git.env,
       allowFailure: true,
     },
   )
-  if (view.exitCode === 0 && view.stdout.trim()) {
-    await runCommand(
-      'gh',
-      ['pr', 'edit', git.headBranch, '--repo', git.repository, '--title', input.title, '--body', input.body],
-      {
-        cwd: git.worktree,
-        env: git.env,
-      },
-    )
-    return { enabled: true, url: view.stdout.trim(), created: false }
+  const existing = view.exitCode === 0 ? parsePullRequestList(view.stdout) : null
+  if (existing) {
+    const updated = await runGitHubPullRequestMutation(git, `${endpoint}/${existing.number}`, 'PATCH', {
+      title: input.title,
+      body: input.body,
+    })
+    const parsed = parsePullRequestResponse(updated.stdout)
+    return { enabled: true, url: parsed.url ?? existing.url, created: false }
   }
-  const created = await runCommand(
-    'gh',
-    [
-      'pr',
-      'create',
-      '--repo',
-      git.repository,
-      '--base',
-      git.baseBranch,
-      '--head',
-      git.headBranch,
-      '--title',
-      input.title,
-      '--body',
-      input.body,
-    ],
-    { cwd: git.worktree, env: git.env },
-  )
-  const url = created.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.startsWith('http'))
-  return { enabled: true, url, created: true }
+  const created = await runGitHubPullRequestMutation(git, endpoint, 'POST', {
+    title: input.title,
+    body: input.body,
+    base: git.baseBranch,
+    head: git.headBranch,
+  })
+  const parsed = parsePullRequestResponse(created.stdout)
+  return { enabled: true, url: parsed.url, created: true }
 }
 
 export const runValidationCommands = async (
