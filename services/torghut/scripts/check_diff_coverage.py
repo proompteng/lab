@@ -275,9 +275,10 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
             f"lines covered ({coverage_pct:.2f}%){suffix}"
         )
         if item.missing_lines:
-            lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
+            missing_details = ", ".join(
+                f"{item.filename}:{line}" for line in item.missing_lines
             )
+            lines.append(f"  missing lines: {missing_details}")
     return "\n".join(lines)
 
 

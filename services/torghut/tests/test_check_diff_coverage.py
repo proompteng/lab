@@ -468,7 +468,66 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         )
 
         self.assertIn("missing-from-coverage", text)
-        self.assertIn("missing lines: 20", text)
+        self.assertIn("missing lines: scripts/check_diff_coverage.py:20", text)
+
+    def test_format_summary_reports_uncovered_lines_with_fileline_details(self) -> None:
+        """Uncovered executable changed lines are reported with actionable file:line details."""
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/foo.py",
+                    executable_changed_lines=2,
+                    covered_lines=0,
+                    missing_lines=(11, 12),
+                )
+            ]
+        )
+
+        # Verify actionable file:line details are included
+        self.assertIn("app/trading/foo.py:11", text)
+        self.assertIn("app/trading/foo.py:12", text)
+        self.assertIn("missing lines:", text)
+
+    def test_format_summary_multiple_files_show_fileline_for_each(self) -> None:
+        """Each file's missing lines are reported with their respective file:line details."""
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/foo.py",
+                    executable_changed_lines=1,
+                    covered_lines=0,
+                    missing_lines=(11,),
+                ),
+                FileDiffCoverage(
+                    filename="scripts/new_tool.py",
+                    executable_changed_lines=1,
+                    covered_lines=0,
+                    missing_lines=(1,),
+                ),
+            ]
+        )
+
+        # Each file should have its own file:line details
+        self.assertIn("app/trading/foo.py:11", text)
+        self.assertIn("scripts/new_tool.py:1", text)
+        self.assertEqual(text.count("missing lines:"), 2)
+
+    def test_format_summary_covered_lines_not_in_missing(self) -> None:
+        """Covered lines do not appear in the missing lines output."""
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/foo.py",
+                    executable_changed_lines=2,
+                    covered_lines=1,
+                    missing_lines=(12,),
+                )
+            ]
+        )
+
+        # Line 11 is covered, should not be in missing
+        self.assertNotIn("11", text)
+        self.assertIn("12", text)
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")
