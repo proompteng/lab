@@ -5,7 +5,7 @@
     "jsx": "react-jsx",
     "strict": true,
     "strictNullChecks": true,
-    "types": ["bun-types"],
+    "types": ["@types/bun"],
     "paths": {
       "@/*": ["./src/*"],
       "~/*": ["./src/*"],

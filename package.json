@@ -110,7 +110,7 @@
     "@commitlint/cli": "20.5.3",
     "@commitlint/config-conventional": "20.5.3",
     "@playwright/test": "^1.59.1",
-    "bun-types": "1.3.14",
+    "@types/bun": "1.3.14",
     "lefthook": "2.1.9",
     "lint-staged": "16.4.0",
     "node-gyp": "12.3.0",

@@ -12,7 +12,7 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "types": ["bun-types"]
+    "types": ["@types/bun"]
   },
   "include": ["src/**/*"]
 }

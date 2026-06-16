@@ -5,6 +5,7 @@
 # - Five AgentRuns start together with unique branches.
 # - The batch covers at least three prompt variants and all required task classes.
 # - Runtime node selectors force both amd64 and arm64 runner coverage for the multi-arch Anypi image.
+# - All AgentRuns include audit labels: anypi.proompteng.ai/prompt-variant, anypi.proompteng.ai/task, anypi.proompteng.ai/eval-batch
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -45,6 +46,10 @@ spec:
     promptVariant: minimal
     validationCommands: |
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+      cd services/torghut && uv run --frozen ruff format --check app tests scripts migrations
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.alpha.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.scripts.json
   secrets:
     - github-token
   workload:
@@ -97,6 +102,10 @@ spec:
     promptVariant: repair-loop
     validationCommands: |
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+      cd services/torghut && uv run --frozen ruff format --check app tests scripts migrations
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.alpha.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.scripts.json
   secrets:
     - github-token
   workload:

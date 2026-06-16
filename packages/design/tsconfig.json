@@ -5,7 +5,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "jsx": "react-jsx",
-    "types": ["bun-types", "node", "react"]
+    "types": ["@types/bun", "node", "react"]
   },
   "include": ["src"]
 }

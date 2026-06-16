@@ -68,6 +68,11 @@ kind: AgentRun
 metadata:
   name: anypi-torghut-quality-20260616
   namespace: agents
+  labels:
+    app.kubernetes.io/part-of: anypi-prompt-eval
+    anypi.proompteng.ai/prompt-variant: minimal
+    anypi.proompteng.ai/task: torghut-diff-coverage
+    anypi.proompteng.ai/eval-batch: "20260616"
 spec:
   agentRef:
     name: anypi-agent
@@ -112,8 +117,17 @@ spec:
         ephemeral-storage: 24Gi
 ```
 
-Do not set `spec.parameters.prompt`; the task belongs in `ImplementationSpec.spec.text` or
-`spec.implementation.inline.text`.
+### PR Template Requirements
+
+When an AgentRun opens a pull request, the PR body MUST:
+
+1. Include **all** sections from `.github/PULL_REQUEST_TEMPLATE.md`
+2. Use the template exactly as written (no placeholders, no unchecked items without explanation)
+3. Copy validation commands from `spec.parameters.validationCommands`
+4. Include runner status evidence (commit, validation results, CI status)
+5. Link to the AgentRun for auditability
+
+The runner renders PR bodies from the repository's `.github/PULL_REQUEST_TEMPLATE.md` when present. **Do not** set `spec.parameters.prompt`; the task belongs in `ImplementationSpec.spec.text` or `spec.implementation.inline.text`.
 
 ## Rollout
 
