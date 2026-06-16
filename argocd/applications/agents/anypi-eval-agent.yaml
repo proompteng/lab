@@ -5,6 +5,9 @@ metadata:
 spec:
   providerRef:
     name: anypi-eval
+  defaults:
+    systemPrompt: |
+      Controller-required placeholder. Anypi ignores this by default and uses ANYPI_PROMPT_VARIANT.
   vcsRef:
     name: github
   security:

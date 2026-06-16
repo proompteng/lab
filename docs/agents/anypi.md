@@ -28,7 +28,8 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 - `ANYPI_PROMPT_VARIANT` selects the runner-owned system prompt candidate. Valid values are `minimal`,
   `finish-gated`, `repair-loop`, and `strict-repo`.
 - `ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE=false` keeps `Agent.spec.defaults.systemPrompt` or run-payload prompt drift from
-  bypassing prompt-variant evaluation.
+  bypassing prompt-variant evaluation. The Agent still carries a controller-required placeholder `systemPrompt`; Anypi
+  logs and ignores it unless this override flag is explicitly enabled.
 - Sessions are persisted under `/workspace/.anypi/sessions`; the active session file path is written into
   `/workspace/.agent/status.json`.
 - `ANYPI_MODEL_READY_TIMEOUT_SECONDS=1800` makes the runner wait for `GET /v1/models` before starting Pi, which avoids
@@ -45,7 +46,9 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 ## Prompt Contract
 
 The system prompt is a measured runner artifact, not a fixed Agent default. The default provider starts with `minimal`;
-`anypi-eval-agent` runs comparative variants through `ANYPI_PROMPT_VARIANT={{parameters.promptVariant}}`.
+`anypi-eval-agent` runs comparative variants through `ANYPI_PROMPT_VARIANT={{parameters.promptVariant}}`. The Kubernetes
+`Agent` placeholder exists only because the Agents controller requires a `defaults.systemPrompt` field before it will
+materialize a run.
 
 Prompt variants are intentionally small and repo-focused. They do not mention Anypi, yolo mode, Kubernetes, Flamingo, or
 the Pi SDK. Runtime details stay in runner config and logs, not in the model's behavioral contract. Root `AGENTS.md` is
