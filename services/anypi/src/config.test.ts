@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
-import { parseCiChecks, parsePullRequestList, summarizeChecks } from './git'
+import { parseCiChecks, parseCiChecksResult, parsePullRequestList, summarizeChecks } from './git'
 import {
   buildAgentPrompt,
   buildNoChangeRepairPrompt,
@@ -287,6 +287,19 @@ describe('Anypi prompt contract', () => {
       passed: [checks[0]],
       summary: '1 passed/skipped, 0 pending, 1 failed/cancelled',
     })
+  })
+
+  test('rejects unsupported GitHub check command output instead of treating it as no checks', () => {
+    expect(() =>
+      parseCiChecksResult({
+        command: 'gh',
+        args: ['pr', 'checks', 'branch', '--json', 'name,workflow,state,bucket,link'],
+        exitCode: 1,
+        stdout: '',
+        stderr: 'unknown flag: --json',
+        durationMs: 12,
+      }),
+    ).toThrow(/gh pr checks failed.*unknown flag: --json/)
   })
 
   test('parses GitHub REST pull request lookup results', () => {
