@@ -1,0 +1,12 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: anypi-agent
+spec:
+  providerRef:
+    name: anypi
+  vcsRef:
+    name: github
+  security:
+    allowedSecrets:
+      - github-token

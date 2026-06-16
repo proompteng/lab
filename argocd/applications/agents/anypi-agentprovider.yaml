@@ -1,0 +1,28 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: anypi
+spec:
+  binary: /usr/local/bin/anypi-runner
+  adapter:
+    type: exec
+  envTemplate:
+    ANYPI_PROVIDER: flamingo
+    ANYPI_MODEL: qwen3-coder-flamingo
+    ANYPI_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
+    ANYPI_API_KEY: flamingo-local
+    ANYPI_THINKING_LEVEL: "off"
+    ANYPI_TOOLS: all
+    ANYPI_WORKSPACE: /workspace
+    ANYPI_WORKTREE: /workspace/lab
+    ANYPI_AGENT_DIR: /workspace/.anypi
+    ANYPI_SESSION_DIR: /workspace/.anypi/sessions
+    ANYPI_STATUS_PATH: /workspace/.agent/status.json
+    ANYPI_LOG_PATH: /workspace/.agent/runner.log
+    AGENT_RUN_NAME: "{{agentRun.name}}"
+    AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
+  outputArtifacts:
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json
