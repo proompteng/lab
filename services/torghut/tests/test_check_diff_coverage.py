@@ -455,20 +455,122 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         self.assertEqual(summary, [])
 
     def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
-        text = _format_summary(
-            [
-                FileDiffCoverage(
-                    filename="scripts/check_diff_coverage.py",
-                    executable_changed_lines=2,
-                    covered_lines=1,
-                    missing_lines=(20,),
-                    missing_from_coverage=True,
-                )
-            ]
-        )
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            # Create the file to enable function context
+            scripts_dir = service_root / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            (scripts_dir / "check_diff_coverage.py").write_text(
+                "def main() -> int:\n    return 0\n", encoding="utf-8"
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="scripts/check_diff_coverage.py",
+                        executable_changed_lines=2,
+                        covered_lines=1,
+                        missing_lines=(20,),
+                        missing_from_coverage=True,
+                    )
+                ],
+                {},
+                service_root,
+            )
 
         self.assertIn("missing-from-coverage", text)
         self.assertIn("missing lines: 20", text)
+
+    def test_format_summary_includes_function_context(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            # Create a file with multiple functions
+            scripts_dir = service_root / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            (scripts_dir / "new_tool.py").write_text(
+                """
+def build() -> int:
+    value = 1
+    return value
+
+
+def run() -> str:
+    return "ok"
+""",
+                encoding="utf-8",
+            )
+            # Coverage index has line 4 (inside build) and line 8 (inside run) as missing
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="scripts/new_tool.py",
+                        executable_changed_lines=2,
+                        covered_lines=0,
+                        missing_lines=(4, 8),
+                    )
+                ],
+                {"scripts/new_tool.py": {4: 0, 8: 0}},
+                service_root,
+            )
+
+        self.assertIn("missing lines: 4, 8", text)
+        self.assertIn("build", text)
+        self.assertIn("run", text)
+
+    def test_format_summary_includes_function_context_only_once_per_function(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            scripts_dir = service_root / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            (scripts_dir / "new_tool.py").write_text(
+                """
+def build() -> int:
+    value = 1
+    value += 1
+    return value
+""",
+                encoding="utf-8",
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="scripts/new_tool.py",
+                        executable_changed_lines=3,
+                        covered_lines=0,
+                        missing_lines=(3, 4),
+                    )
+                ],
+                {"scripts/new_tool.py": {3: 0, 4: 0}},
+                service_root,
+            )
+
+        # build should only appear once even though multiple lines are missing
+        self.assertIn("build", text)
+        self.assertEqual(text.count("build"), 1)
+
+    def test_format_summary_shows_sorted_line_numbers(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            scripts_dir = service_root / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            (scripts_dir / "new_tool.py").write_text(
+                "def main() -> int:\n    return 1\n", encoding="utf-8"
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="scripts/new_tool.py",
+                        executable_changed_lines=2,
+                        covered_lines=0,
+                        missing_lines=(2, 1),
+                    )
+                ],
+                {"scripts/new_tool.py": {1: 0, 2: 0}},
+                service_root,
+            )
+
+        self.assertIn("missing lines: 1, 2", text)
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")

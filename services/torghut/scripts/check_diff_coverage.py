@@ -265,7 +265,11 @@ def summarize_changed_coverage(
     return summary
 
 
-def _format_summary(summary: list[FileDiffCoverage]) -> str:
+def _format_summary(
+    summary: list[FileDiffCoverage],
+    coverage_index: dict[str, dict[int, int]],
+    service_root: Path,
+) -> str:
     lines: list[str] = []
     for item in summary:
         coverage_pct = item.coverage_ratio * 100
@@ -276,9 +280,72 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
         )
         if item.missing_lines:
             lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
+                _format_missing_lines(
+                    item.filename,
+                    item.missing_lines,
+                    coverage_index.get(item.filename),
+                    service_root,
+                )
             )
     return "\n".join(lines)
+
+
+def _format_missing_lines(
+    filename: str,
+    missing_lines: tuple[int, ...],
+    line_hits: dict[int, int] | None,
+    service_root: Path,
+) -> str:
+    """Format missing lines with context for better test guidance."""
+    lines: list[str] = []
+    # Sort missing lines for consistent output
+    sorted_missing = tuple(sorted(missing_lines))
+    lines.append(f"  missing lines: {', '.join(str(line) for line in sorted_missing)}")
+
+    # Try to provide function context
+    path = service_root / filename
+    if path.exists() and line_hits is not None:
+        context = _get_function_context(path, sorted_missing)
+        if context:
+            for func_name, line_range in context:
+                lines.append(f"    -> {func_name} (lines {line_range})")
+
+    return "\n".join(lines)
+
+
+def _get_function_context(
+    path: Path, missing_lines: tuple[int, ...]
+) -> list[tuple[str, str]]:
+    """Get function names containing missing lines."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, OSError):
+        return []
+
+    # Build a mapping of line ranges to function names
+    func_ranges: list[tuple[str, int, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            if hasattr(node, "lineno"):
+                func_end = getattr(node, "end_lineno", node.lineno)
+                func_ranges.append((node.name, node.lineno, func_end))
+
+    if not func_ranges:
+        return []
+
+    # Find which functions contain each missing line
+    context: list[tuple[str, str]] = []
+    seen_funcs: set[str] = set()
+
+    for line in missing_lines:
+        for func_name, start_line, end_line in func_ranges:
+            if start_line <= line <= end_line:
+                if func_name not in seen_funcs:
+                    seen_funcs.add(func_name)
+                    context.append((func_name, f"{start_line}-{end_line}"))
+                break
+
+    return context
 
 
 def main() -> int:
@@ -329,7 +396,7 @@ def main() -> int:
     coverage_pct = (
         (total_covered / total_executable) * 100 if total_executable else 100.0
     )
-    print(_format_summary(summary))
+    print(_format_summary(summary, coverage_index, service_root))
     print(
         f"total changed-line coverage: {total_covered}/{total_executable} ({coverage_pct:.2f}%)"
     )
