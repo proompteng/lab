@@ -40,6 +40,7 @@ cephClusterSpec:
       # Temporarily raise recovery/backfill concurrency while Turin rebuilds
       # the recreated 24 TB OSDs.
       osd_max_backfills: "3"
+      osd_recovery_max_single_start: "3"
 
   dataDirHostPath: /var/lib/rook
 
