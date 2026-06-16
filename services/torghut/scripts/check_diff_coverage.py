@@ -265,6 +265,27 @@ def summarize_changed_coverage(
     return summary
 
 
+@dataclass(frozen=True)
+class UncoveredExecutableLine:
+    filename: str
+    line_number: int
+
+
+@dataclass(frozen=True)
+class DiffCoverageReport:
+    file_summaries: list[FileDiffCoverage]
+    uncovered_executable_lines: list[UncoveredExecutableLine]
+    ignored_changed_lines: list[UncoveredExecutableLine]
+
+    @property
+    def has_issues(self) -> bool:
+        return (
+            any(item.missing_from_coverage for item in self.file_summaries)
+            or bool(self.uncovered_executable_lines)
+            or bool(self.ignored_changed_lines)
+        )
+
+
 def _format_summary(summary: list[FileDiffCoverage]) -> str:
     lines: list[str] = []
     for item in summary:
@@ -279,6 +300,28 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
                 f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
             )
     return "\n".join(lines)
+
+
+def _format_uncovered_executable_lines(
+    lines: list[UncoveredExecutableLine],
+) -> str:
+    if not lines:
+        return ""
+    lines_str = []
+    for line in lines:
+        lines_str.append(f"  {line.filename}:{line.line_number}")
+    return "uncovered executable changed lines:\n" + "\n".join(lines_str)
+
+
+def _format_ignored_changed_lines(
+    lines: list[UncoveredExecutableLine],
+) -> str:
+    if not lines:
+        return ""
+    lines_str = []
+    for line in lines:
+        lines_str.append(f"  {line.filename}:{line.line_number}")
+    return "ignored changed lines (non-executable):\n" + "\n".join(lines_str)
 
 
 def main() -> int:
@@ -316,25 +359,66 @@ def main() -> int:
     if not changed_with_untracked:
         print("diff coverage passed: no changed Torghut Python source lines")
         return 0
-    summary = summarize_changed_coverage(
+
+    file_summaries = summarize_changed_coverage(
         changed_lines=changed_with_untracked,
         coverage_index=coverage_index,
     )
-    if not summary:
+
+    uncovered_lines = []
+    ignored_lines = []
+    for filename, lines in changed_with_untracked.items():
+        coverage_file = coverage_index.get(filename)
+        if coverage_file is None:
+            continue
+        executable_lines = _executable_source_lines(service_root / filename)
+        for line in sorted(lines):
+            if line not in coverage_file:
+                continue
+            if line in executable_lines:
+                if coverage_file[line] <= 0:
+                    uncovered_lines.append(
+                        UncoveredExecutableLine(filename=filename, line_number=line)
+                    )
+            else:
+                ignored_lines.append(
+                    UncoveredExecutableLine(filename=filename, line_number=line)
+                )
+
+    report = DiffCoverageReport(
+        file_summaries=file_summaries,
+        uncovered_executable_lines=uncovered_lines,
+        ignored_changed_lines=ignored_lines,
+    )
+
+    if not file_summaries:
         print("diff coverage passed: no changed executable Torghut Python source lines")
         return 0
 
-    total_executable = sum(item.executable_changed_lines for item in summary)
-    total_covered = sum(item.covered_lines for item in summary)
+    total_executable = sum(item.executable_changed_lines for item in file_summaries)
+    total_covered = sum(item.covered_lines for item in file_summaries)
     coverage_pct = (
         (total_covered / total_executable) * 100 if total_executable else 100.0
     )
-    print(_format_summary(summary))
+
+    print(_format_summary(file_summaries))
+    uncovered_text = _format_uncovered_executable_lines(
+        report.uncovered_executable_lines
+    )
+    if uncovered_text:
+        print("")
+        print(uncovered_text)
+    ignored_text = _format_ignored_changed_lines(report.ignored_changed_lines)
+    if ignored_text:
+        print("")
+        print(ignored_text)
     print(
         f"total changed-line coverage: {total_covered}/{total_executable} ({coverage_pct:.2f}%)"
     )
 
-    missing_files = [item.filename for item in summary if item.missing_from_coverage]
+    missing_files = [
+        item.filename for item in file_summaries if item.missing_from_coverage
+    ]
     if missing_files:
         print(
             "diff coverage failed: changed files missing from coverage.xml: "

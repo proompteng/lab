@@ -10,10 +10,14 @@ from unittest.mock import call
 from unittest.mock import patch
 
 from scripts.check_diff_coverage import (
+    DiffCoverageReport,
     FileDiffCoverage,
+    UncoveredExecutableLine,
     _drop_missing_non_executable_files,
     _executable_source_lines,
     _format_summary,
+    _format_uncovered_executable_lines,
+    _format_ignored_changed_lines,
     _git,
     _git_optional,
     _include_untracked_python_files,
@@ -469,6 +473,131 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
 
         self.assertIn("missing-from-coverage", text)
         self.assertIn("missing lines: 20", text)
+
+    def test_diff_coverage_report_tracks_issues(self) -> None:
+        report = DiffCoverageReport(
+            file_summaries=[],
+            uncovered_executable_lines=[],
+            ignored_changed_lines=[],
+        )
+
+        self.assertFalse(report.has_issues)
+
+    def test_diff_coverage_report_flags_uncovered_lines_as_issues(self) -> None:
+        report = DiffCoverageReport(
+            file_summaries=[],
+            uncovered_executable_lines=[
+                UncoveredExecutableLine(filename="app/foo.py", line_number=10)
+            ],
+            ignored_changed_lines=[],
+        )
+
+        self.assertTrue(report.has_issues)
+
+    def test_diff_coverage_report_flags_ignored_lines_as_issues(self) -> None:
+        report = DiffCoverageReport(
+            file_summaries=[],
+            uncovered_executable_lines=[],
+            ignored_changed_lines=[
+                UncoveredExecutableLine(filename="app/foo.py", line_number=10)
+            ],
+        )
+
+        self.assertTrue(report.has_issues)
+
+    def test_diff_coverage_report_with_missing_coverage_file(self) -> None:
+        report = DiffCoverageReport(
+            file_summaries=[
+                FileDiffCoverage(
+                    filename="app/foo.py",
+                    executable_changed_lines=1,
+                    covered_lines=0,
+                    missing_lines=(10,),
+                    missing_from_coverage=True,
+                )
+            ],
+            uncovered_executable_lines=[],
+            ignored_changed_lines=[],
+        )
+
+        self.assertTrue(report.has_issues)
+
+    def test_format_uncovered_executable_lines_formats_stable_order(self) -> None:
+        lines = [
+            UncoveredExecutableLine(filename="app/bar.py", line_number=20),
+            UncoveredExecutableLine(filename="app/foo.py", line_number=10),
+        ]
+
+        text = _format_uncovered_executable_lines(lines)
+
+        self.assertIn("app/bar.py:20", text)
+        self.assertIn("app/foo.py:10", text)
+
+    def test_format_uncovered_executable_lines_empty_string_when_no_lines(self) -> None:
+        text = _format_uncovered_executable_lines([])
+
+        self.assertEqual(text, "")
+
+    def test_format_ignored_changed_lines_formats_stable_order(self) -> None:
+        lines = [
+            UncoveredExecutableLine(filename="app/bar.py", line_number=20),
+            UncoveredExecutableLine(filename="app/foo.py", line_number=10),
+        ]
+
+        text = _format_ignored_changed_lines(lines)
+
+        self.assertIn("app/bar.py:20", text)
+        self.assertIn("app/foo.py:10", text)
+
+    def test_format_ignored_changed_lines_empty_string_when_no_lines(self) -> None:
+        text = _format_ignored_changed_lines([])
+
+        self.assertEqual(text, "")
+
+    def test_format_uncovered_executable_lines(self) -> None:
+        lines = [
+            UncoveredExecutableLine(filename="app/foo.py", line_number=15),
+            UncoveredExecutableLine(filename="scripts/bar.py", line_number=30),
+        ]
+
+        text = _format_uncovered_executable_lines(lines)
+
+        self.assertIn("uncovered executable changed lines:", text)
+        self.assertIn("app/foo.py:15", text)
+        self.assertIn("scripts/bar.py:30", text)
+
+    def test_format_ignored_changed_lines(self) -> None:
+        lines = [
+            UncoveredExecutableLine(filename="app/foo.py", line_number=5),
+        ]
+
+        text = _format_ignored_changed_lines(lines)
+
+        self.assertIn("ignored changed lines (non-executable):", text)
+        self.assertIn("app/foo.py:5", text)
+
+    def test_summarize_changed_coverage_with_multi_file_diff(self) -> None:
+        coverage_index = {
+            "app/foo.py": {10: 1, 11: 0, 20: 0},
+            "app/bar.py": {5: 1},
+        }
+
+        summary = summarize_changed_coverage(
+            changed_lines={
+                "app/foo.py": {10, 11, 20},
+                "app/bar.py": {5, 10},
+            },
+            coverage_index=coverage_index,
+        )
+
+        self.assertEqual(len(summary), 2)
+        self.assertEqual(summary[0].filename, "app/bar.py")
+        self.assertEqual(summary[0].covered_lines, 1)
+        self.assertEqual(summary[0].executable_changed_lines, 1)
+        self.assertEqual(summary[1].filename, "app/foo.py")
+        self.assertEqual(summary[1].covered_lines, 1)
+        self.assertEqual(summary[1].executable_changed_lines, 3)
+        self.assertEqual(summary[1].missing_lines, (11, 20))
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")
