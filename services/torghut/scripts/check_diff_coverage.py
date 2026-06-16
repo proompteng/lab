@@ -269,15 +269,17 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
     lines: list[str] = []
     for item in summary:
         coverage_pct = item.coverage_ratio * 100
-        suffix = " missing-from-coverage" if item.missing_from_coverage else ""
+        lines.append(f"{item.filename}:")
         lines.append(
-            f"{item.filename}: {item.covered_lines}/{item.executable_changed_lines} "
-            f"lines covered ({coverage_pct:.2f}%){suffix}"
+            f"  changed: {item.executable_changed_lines}, "
+            f"covered: {item.covered_lines}, "
+            f"missing: {len(item.missing_lines)} ({coverage_pct:.1f}% covered)"
         )
+        if item.missing_from_coverage:
+            lines.append("  (missing from coverage.xml)")
         if item.missing_lines:
-            lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
-            )
+            missing = ", ".join(str(line) for line in sorted(item.missing_lines))
+            lines.append(f"  missing: {missing}")
     return "\n".join(lines)
 
 

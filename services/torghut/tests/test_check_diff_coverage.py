@@ -467,8 +467,88 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
             ]
         )
 
-        self.assertIn("missing-from-coverage", text)
-        self.assertIn("missing lines: 20", text)
+        self.assertIn("missing from coverage.xml", text)
+        self.assertIn("missing: 20", text)
+        self.assertIn("changed: 2", text)
+        self.assertIn("missing: 1", text)
+
+    def test_format_summary_groups_by_file_with_concise_counts(self) -> None:
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/foo.py",
+                    executable_changed_lines=5,
+                    covered_lines=3,
+                    missing_lines=(12, 25, 40),
+                ),
+                FileDiffCoverage(
+                    filename="scripts/check_diff_coverage.py",
+                    executable_changed_lines=2,
+                    covered_lines=1,
+                    missing_lines=(20,),
+                ),
+            ]
+        )
+
+        # Files are grouped with headers
+        self.assertIn("app/trading/foo.py:", text)
+        self.assertIn("scripts/check_diff_coverage.py:", text)
+        # Concise counts for each file
+        self.assertIn("changed: 5", text)
+        self.assertIn("covered: 3", text)
+        self.assertIn("missing: 3", text)
+        self.assertIn("changed: 2", text)
+        self.assertIn("covered: 1", text)
+        self.assertIn("missing: 1", text)
+        # Sorted missing line numbers
+        self.assertIn("missing: 12, 25, 40", text)
+        self.assertIn("missing: 20", text)
+        self.assertIn("60.0%", text)
+
+    def test_format_summary_handles_empty_missing_lines(self) -> None:
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/bar.py",
+                    executable_changed_lines=3,
+                    covered_lines=3,
+                    missing_lines=(),
+                ),
+            ]
+        )
+
+        self.assertIn("app/trading/bar.py:", text)
+        self.assertIn("changed: 3", text)
+        self.assertIn("covered: 3", text)
+        self.assertIn("missing: 0", text)
+        self.assertIn("100.0%", text)
+        # No extra missing: line when all covered
+        lines = text.split("\n")
+        missing_lines = [l for l in lines if l.startswith("  missing:")]
+        self.assertEqual(len(missing_lines), 0)
+
+    def test_format_summary_sorts_files_alphabetically(self) -> None:
+        # The summary list from summarize_changed_coverage is already sorted,
+        # but _format_summary preserves that order in output
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/alpha.py",
+                    executable_changed_lines=1,
+                    covered_lines=0,
+                    missing_lines=(5,),
+                ),
+                FileDiffCoverage(
+                    filename="scripts/zoo.py",
+                    executable_changed_lines=1,
+                    covered_lines=0,
+                    missing_lines=(10,),
+                ),
+            ]
+        )
+
+        # Files should appear in sorted order in output
+        self.assertLess(text.index("app/alpha.py:"), text.index("scripts/zoo.py:"))
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")
