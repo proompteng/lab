@@ -1,29 +1,37 @@
-# Templates only. Do not add this file to the Argo CD kustomization.
+# Apply this file as one batch to schedule five substantial Anypi prompt-eval AgentRuns concurrently.
+# Do not add this file to the Argo CD kustomization; these are evaluation runs, not steady-state resources.
 #
-# Duplicate each AgentRun per prompt variant by setting:
-#   metadata.name
-#   spec.parameters.head
-#   spec.parameters.promptVariant: minimal | finish-gated | repair-loop | strict-repo
+# Batch contract:
+# - Five AgentRuns start together with unique branches.
+# - The batch covers at least three prompt variants and all required task classes.
+# - Runtime node selectors force both amd64 and arm64 runner coverage for the multi-arch Anypi image.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-torghut-strict-repo-20260616
+  name: anypi-eval-torghut-minimal-20260616a
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
+    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/prompt-variant: minimal
+    anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
   agentRef:
     name: anypi-eval-agent
   implementation:
     inline:
-      summary: Improve Torghut diff coverage reporting
+      summary: Improve Torghut diff coverage executable-line reporting
       text: |
-        Improve services/torghut/scripts/check_diff_coverage.py so uncovered executable changed lines are reported
-        with actionable file:line details. Add regression tests in services/torghut/tests/test_check_diff_coverage.py.
-        Preserve existing behavior for covered lines and non-executable changed lines.
+        Improve services/torghut/scripts/check_diff_coverage.py so uncovered executable changed lines are reported with
+        actionable file:line details, stable ordering, and clear separation between executable and ignored changed lines.
+        Add regression tests in services/torghut/tests/test_check_diff_coverage.py that cover multi-file diffs and
+        uncovered executable lines. Preserve existing behavior for covered lines and non-executable changed lines.
   runtime:
     type: job
+    config:
+      nodeSelector:
+        kubernetes.io/arch: amd64
   ttlSecondsAfterFinished: 86400
   vcsRef:
     name: github
@@ -33,8 +41,8 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/strict-repo/torghut-diff-coverage-20260616
-    promptVariant: strict-repo
+    head: codex/anypi-eval/minimal/torghut-diff-coverage-20260616a
+    promptVariant: minimal
     validationCommands: |
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
   secrets:
@@ -43,7 +51,7 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
     resources:
       requests:
-        cpu: '2'
+        cpu: "2"
         memory: 4Gi
         ephemeral-storage: 12Gi
       limits:
@@ -53,21 +61,29 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-runner-strict-repo-20260616
+  name: anypi-eval-torghut-repair-20260616a
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
+    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/prompt-variant: repair-loop
+    anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
   agentRef:
     name: anypi-eval-agent
   implementation:
     inline:
-      summary: Improve Anypi status evidence tests
+      summary: Improve Torghut diff coverage diagnostic grouping
       text: |
-        Improve services/anypi tests so status evidence for prompt variants, validation plans, and CI checks is covered.
-        Keep the change focused on runner behavior and tests.
+        Improve services/torghut/scripts/check_diff_coverage.py reporting so uncovered executable changed lines are grouped
+        by file with concise counts, sorted line numbers, and enough context to decide the next test to write. Add or update
+        regression tests in services/torghut/tests/test_check_diff_coverage.py. Keep the diff focused on the reporting path
+        and preserve existing coverage accounting semantics.
   runtime:
     type: job
+    config:
+      nodeSelector:
+        kubernetes.io/arch: arm64
   ttlSecondsAfterFinished: 86400
   vcsRef:
     name: github
@@ -76,8 +92,112 @@ spec:
     mode: read-write
   parameters:
     repository: proompteng/lab
-    base: codex/flamingo-rollout-complete
-    head: codex/anypi-eval/strict-repo/runner-status-evidence-20260616
+    base: main
+    head: codex/anypi-eval/repair-loop/torghut-diff-coverage-20260616a
+    promptVariant: repair-loop
+    validationCommands: |
+      cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+  secrets:
+    - github-token
+  workload:
+    image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+        ephemeral-storage: 12Gi
+      limits:
+        memory: 12Gi
+        ephemeral-storage: 24Gi
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: anypi-eval-runner-finish-20260616a
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: anypi-prompt-eval
+    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/prompt-variant: finish-gated
+    anypi.proompteng.ai/task: anypi-status-evidence
+spec:
+  agentRef:
+    name: anypi-eval-agent
+  implementation:
+    inline:
+      summary: Improve Anypi status evidence for prompt evaluation
+      text: |
+        Improve services/anypi so prompt-evaluation status evidence is easier to audit after an AgentRun. Add focused
+        TypeScript tests that verify status metadata includes prompt variant/hash, validation plan sources, validation
+        attempts, CI attempts, session artifact paths, and PR metadata. Keep runtime details out of model-facing prompts.
+  runtime:
+    type: job
+    config:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+  ttlSecondsAfterFinished: 86400
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/anypi-eval/finish-gated/runner-status-evidence-20260616a
+    promptVariant: finish-gated
+    validationCommands: |
+      bun run --filter @proompteng/anypi tsc
+      bun run --filter @proompteng/anypi test
+      bun run --filter @proompteng/anypi lint
+  secrets:
+    - github-token
+  workload:
+    image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+        ephemeral-storage: 12Gi
+      limits:
+        memory: 12Gi
+        ephemeral-storage: 24Gi
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: anypi-eval-runner-strict-20260616a
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: anypi-prompt-eval
+    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/prompt-variant: strict-repo
+    anypi.proompteng.ai/task: anypi-ci-watcher
+spec:
+  agentRef:
+    name: anypi-eval-agent
+  implementation:
+    inline:
+      summary: Improve Anypi CI watcher regression coverage
+      text: |
+        Improve services/anypi CI watcher coverage with regression tests for required-check fallback, pending-check timeout
+        summaries, failed-check repair signals, and PR body testing output. Keep the implementation focused on runner
+        behavior and do not weaken validation or CI gates.
+  runtime:
+    type: job
+    config:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+  ttlSecondsAfterFinished: 86400
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/anypi-eval/strict-repo/runner-ci-watcher-20260616a
     promptVariant: strict-repo
     validationCommands: |
       bun run --filter @proompteng/anypi tsc
@@ -89,7 +209,7 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
     resources:
       requests:
-        cpu: '2'
+        cpu: "2"
         memory: 4Gi
         ephemeral-storage: 12Gi
       limits:
@@ -99,21 +219,28 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-agents-strict-repo-20260616
+  name: anypi-eval-agents-repair-20260616a
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
+    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/prompt-variant: repair-loop
+    anypi.proompteng.ai/task: agents-docs-manifests
 spec:
   agentRef:
     name: anypi-eval-agent
   implementation:
     inline:
-      summary: Improve Anypi eval documentation and manifests
+      summary: Improve Agents Anypi evaluation docs and manifest validation
       text: |
-        Improve the Anypi eval documentation and agents manifests so prompt evaluation runs are easier to audit.
-        Keep manifests renderable and avoid changing unrelated providers.
+        Improve the Anypi evaluation documentation and Agents manifests so prompt-eval batches are easier to audit and less
+        likely to produce invalid AgentRuns. Include code or manifest validation changes where useful, preserve Argo render
+        behavior, and ensure PR-template requirements remain explicit. Do not change unrelated providers.
   runtime:
     type: job
+    config:
+      nodeSelector:
+        kubernetes.io/arch: amd64
   ttlSecondsAfterFinished: 86400
   vcsRef:
     name: github
@@ -122,9 +249,9 @@ spec:
     mode: read-write
   parameters:
     repository: proompteng/lab
-    base: codex/flamingo-rollout-complete
-    head: codex/anypi-eval/strict-repo/agents-docs-manifests-20260616
-    promptVariant: strict-repo
+    base: main
+    head: codex/anypi-eval/repair-loop/agents-docs-manifests-20260616a
+    promptVariant: repair-loop
     validationCommands: |
       kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
   secrets:
@@ -133,7 +260,7 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
     resources:
       requests:
-        cpu: '2'
+        cpu: "2"
         memory: 4Gi
         ephemeral-storage: 12Gi
       limits:

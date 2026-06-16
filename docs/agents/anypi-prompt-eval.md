@@ -18,8 +18,9 @@ The prompt text is resolved inside `services/anypi/src/prompt.ts`. Runtime detai
 
 ## Evaluation Matrix
 
-Run at least three substantial tasks against at least three variants. Prefer two repetitions when GPU/queue capacity is
-available. Every run must use a unique branch:
+Run at least three substantial tasks against at least three variants. Evaluation batches should schedule five AgentRuns at
+the same time when the cluster has runner capacity, then collect results from all five before deciding the next batch. Every
+run must use a unique branch:
 
 ```text
 codex/anypi-eval/<variant>/<task>/<yyyymmddhhmm>
@@ -32,6 +33,10 @@ Required task classes:
 - Anypi: improve runner behavior or tests under `services/anypi` with TypeScript validation.
 - Infra/docs plus code: touch `argocd/applications/agents` and docs while preserving manifest rendering and PR-template
   compliance.
+
+The ready-to-apply batch template is `docs/agents/anypi-prompt-eval-agentruns.yaml`. Apply it as one file so the five runs
+start concurrently. The template pins the multi-arch Anypi image and uses `runtime.config.nodeSelector` to force coverage on
+both `amd64` and `arm64` nodes.
 
 ## Scoring
 
@@ -69,4 +74,5 @@ failures. If no variant passes, leave `anypi-agent` on `minimal`, record the fai
 kubectl -n agents get agentprovider anypi-eval
 kubectl -n agents get agent anypi-eval-agent
 kubectl -n agents get agentrun -l app.kubernetes.io/part-of=anypi-prompt-eval
+kubectl apply -f docs/agents/anypi-prompt-eval-agentruns.yaml
 ```

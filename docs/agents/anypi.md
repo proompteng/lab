@@ -17,6 +17,8 @@ Flamingo model.
 The provider is an Agents `exec` provider. The controller mounts `/workspace/run.json`, injects `VCS_*` and
 `GH_TOKEN/GITHUB_TOKEN`, then starts the Anypi binary directly. Anypi clones the repository, checks out the AgentRun head
 branch, invokes Pi through the TypeScript SDK, validates the result, commits, pushes, and opens or updates a PR.
+PR bodies are rendered from the target repository's `.github/PULL_REQUEST_TEMPLATE.md` when present, with every template
+section filled and validation commands copied from runner status.
 
 ## Pi SDK Configuration
 
