@@ -229,7 +229,6 @@ class TorghutQualityChecker(BaseChecker):
         if not any(alias.name == "*" for alias in node.names):
             return
         # Skip wildcard import check for files that use capture_module_exports
-        # DEBUG: Skip check for capture_module_exports modules
         if (
             hasattr(module_node, "as_string")
             and "capture_module_exports" in module_node.as_string()
@@ -278,4 +277,6 @@ def _contains_globals_call(node: ast.AST) -> bool:
 
 def register(linter: PyLinter) -> None:
     linter.register_checker(TorghutQualityChecker(linter))
+
+
 # CI cache refresh
