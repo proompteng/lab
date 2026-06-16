@@ -76,7 +76,7 @@ spec:
     mode: read-write
   parameters:
     repository: proompteng/lab
-    base: main
+    base: codex/flamingo-rollout-complete
     head: codex/anypi-eval/strict-repo/runner-status-evidence-20260616
     promptVariant: strict-repo
     validationCommands: |
@@ -122,7 +122,7 @@ spec:
     mode: read-write
   parameters:
     repository: proompteng/lab
-    base: main
+    base: codex/flamingo-rollout-complete
     head: codex/anypi-eval/strict-repo/agents-docs-manifests-20260616
     promptVariant: strict-repo
     validationCommands: |
