@@ -19,6 +19,7 @@ spec:
     ANYPI_SESSION_DIR: /workspace/.anypi/sessions
     ANYPI_STATUS_PATH: /workspace/.agent/status.json
     ANYPI_LOG_PATH: /workspace/.agent/runner.log
+    ANYPI_VALIDATION_REPAIR_ATTEMPTS: "2"
     AGENT_RUN_NAME: "{{agentRun.name}}"
     AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
   outputArtifacts:

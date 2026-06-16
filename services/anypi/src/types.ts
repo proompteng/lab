@@ -90,9 +90,11 @@ export type AnypiStatus = {
   providerModel: string
   tools: string[]
   sessionFile?: string
+  sessionFiles?: string[]
   commit?: string
   pullRequest?: PullRequestResult
   validations: ValidationResult[]
+  validationAttempts: number
   promptChars: number
   error?: string
 }

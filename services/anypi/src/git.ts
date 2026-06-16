@@ -219,7 +219,8 @@ export const runValidationCommands = async (
     })
     results.push(result)
     if (result.exitCode !== 0) {
-      throw new Error(`validation failed (${result.exitCode}): ${command}`)
+      await log(`validation failed (${result.exitCode}): ${command}`)
+      break
     }
   }
   return results

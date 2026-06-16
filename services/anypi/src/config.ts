@@ -27,6 +27,7 @@ export type AnypiConfig = {
   tools: string[]
   allowNoVcs: boolean
   validationCommands: string[]
+  validationRepairAttempts: number
 }
 
 const readEnv = (env: NodeJS.ProcessEnv, name: string, fallback: string) => {
@@ -106,6 +107,7 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): AnypiConfig
     tools: parseTools(env.ANYPI_TOOLS),
     allowNoVcs: readBoolean(env, 'ANYPI_ALLOW_NO_VCS', false),
     validationCommands: parseCommandList(env.ANYPI_VALIDATION_COMMANDS),
+    validationRepairAttempts: readNumber(env, 'ANYPI_VALIDATION_REPAIR_ATTEMPTS', 2),
   }
 }
 

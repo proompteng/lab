@@ -1,4 +1,4 @@
-import type { AgentRunSpecPayload } from './types'
+import type { AgentRunSpecPayload, ValidationResult } from './types'
 
 export const resolveTaskPrompt = (runSpec: AgentRunSpecPayload) => {
   const candidates = [runSpec.prompt, runSpec.implementation?.text, runSpec.implementation?.summary]
@@ -46,6 +46,42 @@ Operational rules:
 
 Task:
 ${task}`
+}
+
+const trimOutput = (value: string, maxLength = 6000) => {
+  const trimmed = value.trim()
+  if (trimmed.length <= maxLength) return trimmed || 'N/A'
+  return `${trimmed.slice(0, maxLength)}\n...[truncated]`
+}
+
+const formatValidationResult = (result: ValidationResult) => `Command: \`${[result.command, ...result.args].join(' ')}\`
+Exit: ${result.exitCode}
+stdout:
+\`\`\`
+${trimOutput(result.stdout)}
+\`\`\`
+stderr:
+\`\`\`
+${trimOutput(result.stderr)}
+\`\`\``
+
+export const buildValidationRepairPrompt = (input: {
+  attempt: number
+  maxAttempts: number
+  worktree: string
+  results: ValidationResult[]
+}) => {
+  const failures = input.results.filter((result) => !result.ok)
+  return `Validation failed after your previous changes.
+
+Worktree: ${input.worktree}
+Repair attempt: ${input.attempt} of ${input.maxAttempts}
+
+Fix the repository so every validation command passes. Preserve the requested feature work, do not remove tests to make
+the suite pass, and run the failing command(s) again before stopping. Leave the final code changes in the worktree.
+
+Failures:
+${failures.map(formatValidationResult).join('\n\n')}`
 }
 
 export const buildSystemPrompt = () =>

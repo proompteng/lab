@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
-import { buildAgentPrompt, resolveTaskPrompt, resolveValidationCommands } from './prompt'
+import { buildAgentPrompt, buildValidationRepairPrompt, resolveTaskPrompt, resolveValidationCommands } from './prompt'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -11,6 +11,7 @@ describe('Anypi config', () => {
     expect(config.baseUrl).toBe('http://flamingo.flamingo.svc.cluster.local/v1')
     expect(config.thinkingLevel).toBe('off')
     expect(config.tools).toEqual([...ALL_PI_TOOL_NAMES])
+    expect(config.validationRepairAttempts).toBe(2)
   })
 
   test('renders Pi custom models.json for vLLM OpenAI-compatible serving', () => {
@@ -71,5 +72,28 @@ describe('Anypi prompt contract', () => {
         [],
       ),
     ).toEqual(['git diff --check', 'uv run pytest tests/test_check_diff_coverage.py'])
+  })
+
+  test('builds a validation repair prompt with failed command output', () => {
+    const prompt = buildValidationRepairPrompt({
+      attempt: 1,
+      maxAttempts: 2,
+      worktree: '/workspace/lab',
+      results: [
+        {
+          command: 'bash',
+          args: ['-lc', 'git diff --check'],
+          exitCode: 2,
+          stdout: 'file.py:1: trailing whitespace.',
+          stderr: '',
+          durationMs: 12,
+          ok: false,
+        },
+      ],
+    })
+    expect(prompt).toContain('Repair attempt: 1 of 2')
+    expect(prompt).toContain('git diff --check')
+    expect(prompt).toContain('trailing whitespace')
+    expect(prompt).toContain('do not remove tests')
   })
 })

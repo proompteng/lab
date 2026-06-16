@@ -27,6 +27,8 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 - `ANYPI_BASE_URL`, `ANYPI_PROVIDER`, and `ANYPI_MODEL` configure the generated Pi `models.json`.
 - Sessions are persisted under `/workspace/.anypi/sessions`; the active session file path is written into
   `/workspace/.agent/status.json`.
+- `ANYPI_VALIDATION_REPAIR_ATTEMPTS=2` gives Pi two bounded repair passes when a runner-side validation command fails.
+  The runner still refuses to commit or push unless all validation commands pass.
 
 ## AgentRun Example
 
@@ -68,7 +70,7 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:<tag>@<digest>
     resources:
       requests:
-        cpu: "2"
+        cpu: '2'
         memory: 4Gi
         ephemeral-storage: 12Gi
       limits:

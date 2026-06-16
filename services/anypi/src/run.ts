@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { applyRunnerArtifacts, loadRunnerSpec, loadRunSpec, resolveConfig, type AnypiConfig } from './config'
 import { createLogger } from './logger'
 import { runPiAgent } from './pi-session'
-import { buildAgentPrompt, resolveValidationCommands } from './prompt'
+import { buildAgentPrompt, buildValidationRepairPrompt, resolveValidationCommands } from './prompt'
 import {
   commitIfNeeded,
   countCommitsAhead,
@@ -76,8 +76,16 @@ const baseStatus = (config: AnypiConfig, runSpec: AgentRunSpecPayload, git: GitC
   providerModel: `${config.provider}/${config.model}`,
   tools: [],
   validations: [],
+  validationAttempts: 0,
   promptChars: 0,
 })
+
+const mergeTools = (left: string[], right: string[]) => [...new Set([...left, ...right])]
+
+const failedValidation = (results: ValidationResult[]) => results.find((result) => !result.ok)
+
+const formatValidationError = (result: ValidationResult) =>
+  `validation failed (${result.exitCode}): ${[result.command, ...result.args].join(' ')}`
 
 export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<AnypiStatus> => {
   let config = resolveConfig(env)
@@ -95,9 +103,12 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     const prompt = buildAgentPrompt(runSpec, config.worktree)
     status.promptChars = prompt.length
 
-    const piResult = await runPiAgent(config, prompt, logger.info)
+    let piResult = await runPiAgent(config, prompt, logger.info)
+    let piText = piResult.text
+    const sessionFiles = piResult.sessionFile ? [piResult.sessionFile] : []
     status.tools = piResult.tools
     status.sessionFile = piResult.sessionFile
+    status.sessionFiles = sessionFiles
 
     const changed = await gitStatusShort(config.worktree, git?.env)
     const commitsAhead = git ? await countCommitsAhead(git) : 0
@@ -106,8 +117,36 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     }
 
     const validationCommands = resolveValidationCommands(runSpec, config.validationCommands)
-    const validationResults = await runValidationCommands(validationCommands, git, config.worktree, logger.info)
-    status.validations = validationResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+    let validationResults: ValidationResult[] = []
+    for (let attempt = 0; attempt <= config.validationRepairAttempts; attempt += 1) {
+      const rawResults = await runValidationCommands(validationCommands, git, config.worktree, logger.info)
+      validationResults = rawResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+      status.validationAttempts = attempt + 1
+      status.validations = validationResults
+      await writeStatus(config.statusPath, status)
+
+      const failed = failedValidation(validationResults)
+      if (!failed) break
+      if (attempt >= config.validationRepairAttempts) throw new Error(formatValidationError(failed))
+
+      await logger.error(
+        `${formatValidationError(failed)}; starting validation repair ${attempt + 1}/${config.validationRepairAttempts}`,
+      )
+      const repairPrompt = buildValidationRepairPrompt({
+        attempt: attempt + 1,
+        maxAttempts: config.validationRepairAttempts,
+        worktree: config.worktree,
+        results: validationResults,
+      })
+      const repairResult = await runPiAgent(config, repairPrompt, logger.info)
+      piText = `${piText}\n\n## Validation repair ${attempt + 1}\n${repairResult.text}`
+      status.tools = mergeTools(status.tools, repairResult.tools)
+      if (repairResult.sessionFile) {
+        sessionFiles.push(repairResult.sessionFile)
+        status.sessionFile = repairResult.sessionFile
+        status.sessionFiles = sessionFiles
+      }
+    }
 
     let pullRequest: PullRequestResult | undefined
     if (git) {
@@ -117,7 +156,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       await pushBranch(git)
       pullRequest = await createOrUpdatePullRequest(git, {
         title: buildPullRequestTitle(runSpec),
-        body: buildPullRequestBody({ runSpec, status, git, piText: piResult.text }),
+        body: buildPullRequestBody({ runSpec, status, git, piText }),
       })
       status.pullRequest = pullRequest
     }
