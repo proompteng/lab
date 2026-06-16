@@ -89,6 +89,57 @@ class RunTigerBeetleJournalCronTest(TestCase):
             5000,
         )
 
+    def test_live_and_sim_presets_build_journal_script_commands(self) -> None:
+        with patch(
+            "scripts.run_tigerbeetle_journal_cron.sys.argv",
+            ["run_tigerbeetle_journal_cron.py", "--preset", "live", "--json"],
+        ):
+            live_args = runner._parse_args()
+
+        live_command = runner._commands_for_preset(live_args)[0]
+        live_argv = runner._argv_for_command(
+            live_command,
+            json_output=True,
+            supervise_timeout_seconds=float(live_args.supervise_timeout_seconds),
+        )
+
+        self.assertEqual(live_argv[0], runner.sys.executable)
+        self.assertTrue(live_argv[1].endswith("journal_tigerbeetle_order_events.py"))
+        self.assertEqual(live_argv[live_argv.index("--dsn-env") + 1], "DB_DSN")
+        self.assertEqual(
+            live_argv[live_argv.index("--sources") + 1],
+            SOURCE_TYPE_EXECUTION,
+        )
+        self.assertIn("--supervise-timeout-seconds", live_argv)
+        self.assertIn("--json", live_argv)
+
+        with patch(
+            "scripts.run_tigerbeetle_journal_cron.sys.argv",
+            ["run_tigerbeetle_journal_cron.py", "--preset", "sim", "--json"],
+        ):
+            sim_args = runner._parse_args()
+
+        sim_command = runner._commands_for_preset(sim_args)[0]
+        sim_argv = runner._argv_for_command(
+            sim_command,
+            json_output=True,
+            supervise_timeout_seconds=float(sim_args.supervise_timeout_seconds),
+        )
+
+        self.assertEqual(sim_argv[0], runner.sys.executable)
+        self.assertTrue(sim_argv[1].endswith("journal_tigerbeetle_order_events.py"))
+        self.assertEqual(sim_argv[sim_argv.index("--dsn-env") + 1], "SIM_DB_DSN")
+        self.assertEqual(
+            sim_argv[sim_argv.index("--account-label") + 1],
+            "TORGHUT_SIM",
+        )
+        self.assertEqual(
+            sim_argv[sim_argv.index("--sources") + 1],
+            SOURCE_TYPE_EXECUTION,
+        )
+        self.assertIn("--supervise-timeout-seconds", sim_argv)
+        self.assertIn("--json", sim_argv)
+
     def test_default_live_execution_slices_drain_source_ref_backlog(self) -> None:
         with patch(
             "scripts.run_tigerbeetle_journal_cron.sys.argv",
