@@ -13,6 +13,7 @@ import {
   resolveTaskPrompt,
   resolveValidationCommands,
   resolveValidationPlan,
+  validatePromptVariant,
 } from './prompt'
 import {
   isBenignAssistantContinuationError,
@@ -68,6 +69,17 @@ describe('Anypi config', () => {
       promptVariant: 'repair-loop',
       validationPolicy: 'override',
     })
+  })
+
+  test('validates prompt variants and throws on invalid values', () => {
+    expect(() => validatePromptVariant('')).toThrow('promptVariant is required')
+    expect(() => validatePromptVariant('unknown')).toThrow('Invalid promptVariant')
+    expect(() => validatePromptVariant('  ')).toThrow('promptVariant is required')
+    expect(validatePromptVariant('minimal')).toBe('minimal')
+    expect(validatePromptVariant('finish-gated')).toBe('finish-gated')
+    expect(validatePromptVariant('repair-loop')).toBe('repair-loop')
+    expect(validatePromptVariant('strict-repo')).toBe('strict-repo')
+    expect(validatePromptVariant('  REPAIR-LOOP  ')).toBe('repair-loop')
   })
 
   test('isolates persisted sessions per agent attempt', () => {
@@ -326,5 +338,16 @@ describe('Anypi prompt contract', () => {
     expect(prompt).toContain('Repair attempt: 1 of 2')
     expect(prompt).toContain('requires a real implementation')
     expect(prompt).toContain('leave the final changes in the worktree')
+  })
+
+  test('validates promptVariant in runAnypi early exit', () => {
+    // This test verifies that invalid promptVariant throws early
+    expect(() => validatePromptVariant('')).toThrow('promptVariant is required')
+    expect(() => validatePromptVariant('invalid-variant')).toThrow('Invalid promptVariant')
+    // Valid values should not throw
+    expect(validatePromptVariant('minimal')).toBe('minimal')
+    expect(validatePromptVariant('finish-gated')).toBe('finish-gated')
+    expect(validatePromptVariant('repair-loop')).toBe('repair-loop')
+    expect(validatePromptVariant('strict-repo')).toBe('strict-repo')
   })
 })

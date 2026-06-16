@@ -7,6 +7,21 @@ Status: implementation/evaluation protocol
 Anypi does not promote a final system prompt by taste. Prompt variants are compared with real AgentRuns that must create
 code and tests, pass local validation, open PRs, and wait for required GitHub checks.
 
+## AgentRun Manifest Validation
+
+Before applying a batch, validate each AgentRun manifest:
+
+```bash
+# Validate individual manifests
+bun run lint:argocd
+
+# Validate Argo CD rendering
+kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
+
+# Validate against CRD schemas (requires kubeconform)
+kustomize build --enable-helm argocd/applications/agents | kubeconform --summary --strict
+```
+
 ## Variants
 
 - `minimal`: short repo-coding contract.
@@ -38,9 +53,21 @@ The ready-to-apply batch template is `docs/agents/anypi-prompt-eval-agentruns.ya
 start concurrently. The template pins the multi-arch Anypi image and uses `runtime.config.nodeSelector` to force coverage on
 both `amd64` and `arm64` nodes.
 
-## Scoring
+### Manifest Checklist
 
-Hard gates:
+Each AgentRun in a batch should:
+- Use a unique `head` branch: `codex/anypi-eval/<variant>/<task>/<yyyymmddhhmm>`
+- Include `promptVariant` in parameters matching the variant being tested
+- Have a `validationCommands` section with service-aware validation (not just `git diff --check`)
+- Specify workload image with digest (not just tag)
+- Include `ttlSecondsAfterFinished` for automatic cleanup
+- Set appropriate `nodeSelector` to cover both `amd64` and `arm64` across the batch
+
+## AgentRun Audit Checklist
+
+Before opening a PR from an evaluation AgentRun, verify:
+
+**Hard gates:
 
 - AgentRun reaches `Succeeded`.
 - Worktree contains a real code/test diff.
@@ -68,11 +95,31 @@ failures. If no variant passes, leave `anypi-agent` on `minimal`, record the fai
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | pending | pending | pending | pending | pending | pending | pending | pending |
 
+## PR Template Compliance
+
+Every evaluation PR must:
+
+- [ ] Testing section documents the exact validation performed (or `N/A` with justification)
+- [ ] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in)
+- [ ] Documentation, release notes, and follow-ups are updated or tracked
+- [ ] AgentRun manifests validate with `bun run lint:argocd`
+- [ ] Argo CD rendering succeeds with `kustomize build --enable-helm argocd/applications/agents`
+- [ ] No placeholder text (TODO, TBD, <...>, [...]) remains in PR description
+
 ## Commands
 
 ```bash
+# Validate manifests before applying
+bun run lint:argocd
+
+# Apply evaluation batch
+kubectl apply -f docs/agents/anypi-prompt-eval-agentruns.yaml
+
+# Monitor runs
 kubectl -n agents get agentprovider anypi-eval
 kubectl -n agents get agent anypi-eval-agent
 kubectl -n agents get agentrun -l app.kubernetes.io/part-of=anypi-prompt-eval
-kubectl apply -f docs/agents/anypi-prompt-eval-agentruns.yaml
+
+# Watch a specific run
+kubectl -n agents get agentrun -w -l agents.proompteng.ai/agent-run=<name>
 ```

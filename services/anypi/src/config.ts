@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 
-import { resolvePromptVariant, resolveValidationPolicy } from './prompt'
+import { resolvePromptVariant, resolveValidationPolicy, validatePromptVariant } from './prompt'
 import type { AgentRunnerSpecPayload, AgentRunSpecPayload, PromptVariant, ValidationPolicy } from './types'
 
 export const ALL_PI_TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const

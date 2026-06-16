@@ -11,6 +11,7 @@ import {
   buildValidationRepairPrompt,
   hashSystemPrompt,
   resolveValidationPlan,
+  validatePromptVariant,
 } from './prompt'
 import {
   commitIfNeeded,
@@ -222,6 +223,12 @@ const waitForModelEndpoint = async (config: AnypiConfig, log: (message: string) 
 }
 
 export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<AnypiStatus> => {
+  // Validate environment early
+  if (!env.ANYPI_PROMPT_VARIANT?.trim()) {
+    throw new Error('ANYPI_PROMPT_VARIANT is required. Valid values: minimal, finish-gated, repair-loop, strict-repo')
+  }
+  validatePromptVariant(env.ANYPI_PROMPT_VARIANT)
+
   let config = resolveConfig(env)
   const runnerSpec = await loadRunnerSpec(config)
   config = applyRunnerArtifacts(config, runnerSpec)

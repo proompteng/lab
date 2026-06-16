@@ -68,6 +68,13 @@ kind: AgentRun
 metadata:
   name: anypi-torghut-quality-20260616
   namespace: agents
+  labels:
+    # Evaluation batches use this label for batch filtering
+    app.kubernetes.io/part-of: anypi-prompt-eval
+    # Add these labels for better auditability
+    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/prompt-variant: minimal
+    anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
   agentRef:
     name: anypi-agent
@@ -125,15 +132,21 @@ Do not set `spec.parameters.prompt`; the task belongs in `ImplementationSpec.spe
    ```
 
 2. Pin the resulting image digest in the validation AgentRun `spec.workload.image`.
-3. Sync `argocd/agents`.
-4. Verify:
+3. Validate the manifest before applying:
+
+   ```bash
+   kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
+   ```
+
+4. Sync `argocd/agents`.
+5. Verify:
 
    ```bash
    kubectl -n agents get agentprovider anypi
    kubectl -n agents get agent anypi-agent
    ```
 
-5. Submit the Torghut validation AgentRun and monitor:
+6. Submit the Torghut validation AgentRun and monitor:
 
    ```bash
    kubectl -n agents get agentrun anypi-torghut-quality-20260616
@@ -142,3 +155,19 @@ Do not set `spec.parameters.prompt`; the task belongs in `ImplementationSpec.spe
 
 Acceptance requires a Succeeded AgentRun, a pushed `codex/...` branch, and an opened PR containing real Torghut code and
 test changes with required GitHub checks green. The runner does not auto-merge.
+
+## PR Template Compliance
+
+Every evaluation PR must include:
+
+- **Summary section**: 3-5 concise bullets describing what changed (no placeholders)
+- **Testing section**: Exact validation commands run and their outputs (or `N/A` with justification)
+- **Checklist**: All items marked `[x]` as completed or removed if not applicable
+
+The runner automatically populates PR bodies with:
+- Prompt variant and hash
+- Session artifact path
+- Validation results with exit codes
+- CI status and check details
+
+Do not submit PRs with placeholder text (TODO, TBD, <...>, [...], or unchecked checklist items).

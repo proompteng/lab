@@ -12,6 +12,17 @@ export const resolvePromptVariant = (raw: string | undefined): PromptVariant => 
   return DEFAULT_PROMPT_VARIANT
 }
 
+export const validatePromptVariant = (variant: string): PromptVariant => {
+  const normalized = variant?.trim().toLowerCase()
+  if (!normalized) {
+    throw new Error('promptVariant is required. Valid values: minimal, finish-gated, repair-loop, strict-repo')
+  }
+  if (!PROMPT_VARIANTS.some((v) => v === normalized)) {
+    throw new Error(`Invalid promptVariant '${variant}'. Valid values: minimal, finish-gated, repair-loop, strict-repo`)
+  }
+  return normalized as PromptVariant
+}
+
 const dedupeCommands = (commands: string[]) => [...new Set(commands.map((command) => command.trim()).filter(Boolean))]
 
 export const resolveTaskPrompt = (runSpec: AgentRunSpecPayload) => {

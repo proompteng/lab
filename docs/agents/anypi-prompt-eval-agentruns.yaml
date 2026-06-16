@@ -5,6 +5,16 @@
 # - Five AgentRuns start together with unique branches.
 # - The batch covers at least three prompt variants and all required task classes.
 # - Runtime node selectors force both amd64 and arm64 runner coverage for the multi-arch Anypi image.
+# - Every AgentRun includes validation commands (not just 'git diff --check').
+#
+# Before applying, validate:
+#   kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
+#
+# Apply with:
+#   kubectl apply -f docs/agents/anypi-prompt-eval-agentruns.yaml
+#
+# Monitor with:
+#   kubectl -n agents get agentrun -l app.kubernetes.io/part-of=anypi-prompt-eval
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -44,7 +54,14 @@ spec:
     head: codex/anypi-eval/minimal/torghut-diff-coverage-20260616a
     promptVariant: minimal
     validationCommands: |
+      # Service-aware validation for Torghut
+      cd services/torghut && uv sync --frozen --extra dev
+      cd services/torghut && uv run --frozen ruff format --check app tests scripts migrations
+      cd services/torghut && uv run --frozen ruff check app tests scripts migrations
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.alpha.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.scripts.json
   secrets:
     - github-token
   workload:
@@ -96,7 +113,14 @@ spec:
     head: codex/anypi-eval/repair-loop/torghut-diff-coverage-20260616a
     promptVariant: repair-loop
     validationCommands: |
+      # Service-aware validation for Torghut
+      cd services/torghut && uv sync --frozen --extra dev
+      cd services/torghut && uv run --frozen ruff format --check app tests scripts migrations
+      cd services/torghut && uv run --frozen ruff check app tests scripts migrations
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.alpha.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.scripts.json
   secrets:
     - github-token
   workload:
@@ -147,9 +171,12 @@ spec:
     head: codex/anypi-eval/finish-gated/runner-status-evidence-20260616a
     promptVariant: finish-gated
     validationCommands: |
-      bun run --filter @proompteng/anypi tsc
-      bun run --filter @proompteng/anypi test
-      bun run --filter @proompteng/anypi lint
+      # Service-aware validation for Anypi
+      cd services/anypi && bun run --filter @proompteng/anypi tsc
+      cd services/anypi && bun run --filter @proompteng/anypi test
+      cd services/anypi && bun run --filter @proompteng/anypi lint
+      cd services/anypi && bun run --filter @proompteng/anypi lint:oxlint
+      cd services/anypi && bun run --filter @proompteng/anypi lint:oxlint:type
   secrets:
     - github-token
   workload:
@@ -200,9 +227,12 @@ spec:
     head: codex/anypi-eval/strict-repo/runner-ci-watcher-20260616a
     promptVariant: strict-repo
     validationCommands: |
-      bun run --filter @proompteng/anypi tsc
-      bun run --filter @proompteng/anypi test
-      bun run --filter @proompteng/anypi lint
+      # Service-aware validation for Anypi
+      cd services/anypi && bun run --filter @proompteng/anypi tsc
+      cd services/anypi && bun run --filter @proompteng/anypi test
+      cd services/anypi && bun run --filter @proompteng/anypi lint
+      cd services/anypi && bun run --filter @proompteng/anypi lint:oxlint
+      cd services/anypi && bun run --filter @proompteng/anypi lint:oxlint:type
   secrets:
     - github-token
   workload:
@@ -253,7 +283,12 @@ spec:
     head: codex/anypi-eval/repair-loop/agents-docs-manifests-20260616a
     promptVariant: repair-loop
     validationCommands: |
+      # Validate Argo CD rendering for Agents manifests
       kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
+      # Check for valid Kubernetes manifest syntax
+      grep -E '^(apiVersion|kind|metadata|spec):' /tmp/anypi-agents.yaml | head -20
+      # Validate that anypi resources are included
+      grep -q 'anypi' /tmp/anypi-agents.yaml || { echo 'ERROR: anypi resources not found in rendered output'; exit 1; }
   secrets:
     - github-token
   workload:
