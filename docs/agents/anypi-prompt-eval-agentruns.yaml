@@ -40,7 +40,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:3675fe829@sha256:69e428a22540b940f2d40eed83be3bfe97bb5807bbc9d27087d366f56dfad0ad
+    image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
     resources:
       requests:
         cpu: '2'
@@ -86,7 +86,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:3675fe829@sha256:69e428a22540b940f2d40eed83be3bfe97bb5807bbc9d27087d366f56dfad0ad
+    image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
     resources:
       requests:
         cpu: '2'
@@ -130,7 +130,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:3675fe829@sha256:69e428a22540b940f2d40eed83be3bfe97bb5807bbc9d27087d366f56dfad0ad
+    image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
     resources:
       requests:
         cpu: '2'

@@ -29,8 +29,8 @@ controlPlane:
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: 4a010a93
-    digest: sha256:ba27e25e5aed4c331e4e931e29663546cfabb28eb7276e0ee905005fd8287174
+    tag: b18caf3d8
+    digest: sha256:4e1cb399c4ec0d458622e2689b02f5166bd9205b64a33fe904e5756b3d89f004
 agentRuntime:
   native:
     rerunOrchestration: codex-rerun
@@ -99,8 +99,7 @@ readinessProbe:
   timeoutSeconds: 5
 controller:
   defaultWorkload:
-    nodeSelector:
-      kubernetes.io/arch: arm64
+    nodeSelector: {}
     resources:
       requests:
         cpu: "1"

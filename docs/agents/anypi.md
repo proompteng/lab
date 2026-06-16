@@ -9,9 +9,10 @@ Flamingo model.
 - Agent: `anypi-agent`
 - Binary: `/usr/local/bin/anypi-runner`
 - Runtime type: `job`
-- Required workload image: `registry.ide-newton.ts.net/lab/anypi:3675fe829@sha256:69e428a22540b940f2d40eed83be3bfe97bb5807bbc9d27087d366f56dfad0ad`
+- Required workload image: `registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874`
 - Default model endpoint: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Default model: `qwen3-coder-flamingo`
+- Supported workload image platforms: `linux/amd64`, `linux/arm64`
 
 The provider is an Agents `exec` provider. The controller mounts `/workspace/run.json`, injects `VCS_*` and
 `GH_TOKEN/GITHUB_TOKEN`, then starts the Anypi binary directly. Anypi clones the repository, checks out the AgentRun head
@@ -98,7 +99,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:3675fe829@sha256:69e428a22540b940f2d40eed83be3bfe97bb5807bbc9d27087d366f56dfad0ad
+    image: registry.ide-newton.ts.net/lab/anypi:b18caf3d8@sha256:101b15a3323213c45d29665d9855a67e07a132b13b366107f307476dcb96b874
     resources:
       requests:
         cpu: '2'
