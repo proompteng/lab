@@ -47,7 +47,7 @@ spec:
             - --served-model-name
             - qwen3-coder-flamingo
             - --max-model-len
-            - "32768"
+            - "262144"
             - --gpu-memory-utilization
             - "0.92"
             - --max-num-seqs
