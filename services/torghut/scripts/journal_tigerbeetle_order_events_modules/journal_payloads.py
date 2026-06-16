@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -26,6 +25,15 @@ from .journal_core import (
 )
 
 
+def _has_text_items(value: object) -> bool:
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        return any(str(item).strip() for item in value)
+    return bool(value)
+
+
 def _fresh_reconciliation_for_empty_selection(
     session: Any,
     *,
@@ -38,28 +46,18 @@ def _fresh_reconciliation_for_empty_selection(
     )
     if latest is None:
         return None
-    if not bool(latest.get("ok")):
-        return None
-    if str(latest.get("status") or "") != "ok":
-        return None
-    if bool(latest.get("reconciliation_stale")):
-        return None
     max_age_seconds = int(latest.get("reconciliation_max_age_seconds") or 0)
-    if max_age_seconds <= 0:
-        return None
-    raw_blockers = latest.get("blockers")
-    if isinstance(raw_blockers, Sequence) and not isinstance(
-        raw_blockers,
-        (str, bytes, bytearray),
-    ):
-        if any(str(item).strip() for item in raw_blockers):
-            return None
-    elif raw_blockers:
-        return None
-    if not bool(latest.get("client_lookup_ok", True)):
-        return None
     latest_account_label = latest.get("account_label")
-    if account_label and latest_account_label != account_label:
+    blocked = (
+        not bool(latest.get("ok"))
+        or str(latest.get("status") or "") != "ok"
+        or bool(latest.get("reconciliation_stale"))
+        or max_age_seconds <= 0
+        or _has_text_items(latest.get("blockers"))
+        or not bool(latest.get("client_lookup_ok", True))
+        or bool(account_label and latest_account_label != account_label)
+    )
+    if blocked:
         return None
     return {
         "ok": True,
@@ -312,7 +310,8 @@ def _args_for_source(
 def _supervised_worker_argv(source: str | None = None) -> list[str]:
     return [
         sys.executable,
-        os.path.abspath(__file__),
+        "-m",
+        "scripts.journal_tigerbeetle_order_events",
         *_with_source_arg(sys.argv[1:], source),
         "--supervised-worker",
     ]
@@ -380,10 +379,8 @@ def _completed_progress_batch_from_timeout(
     *,
     worker_args: argparse.Namespace,
 ) -> dict[str, Any] | None:
-    if not bool(getattr(worker_args, "skip_reconcile", False)):
-        return None
     sources = _parse_sources(getattr(worker_args, "sources", "all"))
-    if len(sources) != 1:
+    if not bool(getattr(worker_args, "skip_reconcile", False)) or len(sources) != 1:
         return None
     source = sources[0]
     events = _journal_progress_events(text)
@@ -400,14 +397,13 @@ def _completed_progress_batch_from_timeout(
     journaled = _progress_int(complete.get("journaled"))
     skipped = _progress_int(complete.get("skipped"))
     failed = _progress_int(complete.get("failed"))
-    if failed != 0:
-        return None
-    if (
-        bool(complete.get("stopped_early"))
+    incomplete_progress = (
+        failed != 0
+        or bool(complete.get("stopped_early"))
         or str(complete.get("stop_reason") or "").strip()
-    ):
-        return None
-    if journaled + skipped + failed != selected:
+        or journaled + skipped + failed != selected
+    )
+    if incomplete_progress:
         return None
     chunk_events = [
         event
@@ -474,27 +470,17 @@ def _payload_from_completed_timeout_progress(
 def _safe_payload_allows_success(payload: Mapping[str, Any] | None) -> bool:
     if not payload:
         return False
-    if payload.get("schema_version") != "torghut.tigerbeetle-journal-order-events.v1":
-        return False
-    if bool(payload.get("exit_nonzero", True)):
-        return False
-    if bool(payload.get("promotion_authority", True)):
-        return False
-    if bool(payload.get("overrides_runtime_ledger_authority", True)):
-        return False
-    if int(payload.get("failed") or 0) != 0:
-        return False
-    for key in ("hard_failure_reasons", "stop_reasons"):
-        raw_value = payload.get(key)
-        if isinstance(raw_value, Sequence) and not isinstance(
-            raw_value,
-            (str, bytes, bytearray),
-        ):
-            if any(str(item).strip() for item in raw_value):
-                return False
-        elif raw_value:
-            return False
-    return True
+    return (
+        payload.get("schema_version") == "torghut.tigerbeetle-journal-order-events.v1"
+        and not bool(payload.get("exit_nonzero", True))
+        and not bool(payload.get("promotion_authority", True))
+        and not bool(payload.get("overrides_runtime_ledger_authority", True))
+        and int(payload.get("failed") or 0) == 0
+        and not any(
+            _has_text_items(payload.get(key))
+            for key in ("hard_failure_reasons", "stop_reasons")
+        )
+    )
 
 
 def _normalize_supervised_returncode(

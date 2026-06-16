@@ -13,9 +13,11 @@ from tests.journal_tigerbeetle_order_events.support import (
     json,
     os,
     patch,
+    Path,
     redirect_stderr,
     redirect_stdout,
     script,
+    script_payloads,
     subprocess,
     sys,
     timezone,
@@ -284,6 +286,54 @@ class TestJournalPayloadAndSupervision(_TestJournalTigerBeetleOrderEventsScriptB
 
         self.assertEqual(events, [json.loads(progress)])
         self.assertEqual(script._progress_int("not-an-int"), 0)
+
+    def test_supervised_worker_argv_uses_package_entrypoint(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "journal_tigerbeetle_order_events.py",
+                "--dsn-env",
+                "DB_DSN",
+                "--sources",
+                "execution,execution_tca_metric",
+                "--supervised-worker",
+            ],
+        ):
+            argv = script_payloads._supervised_worker_argv(script.SOURCE_TYPE_EXECUTION)
+
+        self.assertEqual(
+            argv[:3],
+            [sys.executable, "-m", "scripts.journal_tigerbeetle_order_events"],
+        )
+        self.assertNotIn("journal_payloads.py", " ".join(argv))
+        self.assertEqual(argv.count("--supervised-worker"), 1)
+        self.assertEqual(
+            argv[argv.index("--sources") + 1],
+            script.SOURCE_TYPE_EXECUTION,
+        )
+
+    def test_module_entrypoint_help_imports_with_package_context(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "scripts.journal_tigerbeetle_order_events",
+                "--help",
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
+        combined_output = f"{completed.stdout}\n{completed.stderr}"
+        self.assertEqual(completed.returncode, 0, combined_output)
+        self.assertIn(
+            "Journal unlinked Torghut order-feed lifecycle events", combined_output
+        )
+        self.assertNotIn("ImportError", combined_output)
 
     def test_completed_timeout_progress_rejects_untrusted_progress(self) -> None:
         def worker_args(
