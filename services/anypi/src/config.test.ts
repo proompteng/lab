@@ -8,6 +8,7 @@ import {
   resolveTaskPrompt,
   resolveValidationCommands,
 } from './prompt'
+import { isBenignAssistantContinuationError, resolveAttemptSessionDir } from './pi-session'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -42,6 +43,16 @@ describe('Anypi config', () => {
   test('parses validation commands from newline text or JSON', () => {
     expect(parseCommandList('git diff --check\nbun test')).toEqual(['git diff --check', 'bun test'])
     expect(parseCommandList('["git diff --check","bun test"]')).toEqual(['git diff --check', 'bun test'])
+  })
+
+  test('isolates persisted sessions per agent attempt', () => {
+    const sessionDir = resolveAttemptSessionDir('/workspace/.anypi/sessions', 'Validation repair #1')
+    expect(sessionDir).toMatch(/^\/workspace\/\.anypi\/sessions\/validation-repair-1-[a-f0-9]{8}$/)
+  })
+
+  test('recognizes the narrow assistant continuation terminal error', () => {
+    expect(isBenignAssistantContinuationError(new Error('Cannot continue from message role: assistant'))).toBe(true)
+    expect(isBenignAssistantContinuationError(new Error('rate limit'))).toBe(false)
   })
 })
 

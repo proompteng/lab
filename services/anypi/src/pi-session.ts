@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 import {
   AuthStorage,
@@ -20,6 +21,22 @@ export type PiRunResult = {
   text: string
   tools: string[]
   sessionFile?: string
+}
+
+export type PiRunOptions = {
+  sessionLabel?: string
+}
+
+export const isBenignAssistantContinuationError = (error: unknown) =>
+  error instanceof Error && error.message.includes('Cannot continue from message role: assistant')
+
+export const resolveAttemptSessionDir = (sessionDir: string, sessionLabel = 'attempt') => {
+  const safeLabel = sessionLabel
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+  return join(sessionDir, `${safeLabel || 'attempt'}-${randomUUID().slice(0, 8)}`)
 }
 
 const collectAgentsFiles = async (worktree: string) => {
@@ -47,12 +64,15 @@ export const runPiAgent = async (
   config: AnypiConfig,
   prompt: string,
   log: (message: string) => Promise<void>,
+  options: PiRunOptions = {},
 ): Promise<PiRunResult> => {
   await mkdir(config.agentDir, { recursive: true })
   await mkdir(config.sessionDir, { recursive: true })
   await mkdir(dirname(config.authPath), { recursive: true })
   if (!existsSync(config.authPath)) await writeFile(config.authPath, '{}\n', 'utf8')
   await writeModelsFile(config)
+  const attemptSessionDir = resolveAttemptSessionDir(config.sessionDir, options.sessionLabel)
+  await mkdir(attemptSessionDir, { recursive: true })
 
   const authStorage = AuthStorage.create(config.authPath)
   const modelRegistry = ModelRegistry.create(authStorage, config.modelsPath)
@@ -76,11 +96,12 @@ export const runPiAgent = async (
     thinkingLevel: config.thinkingLevel,
     resourceLoader,
     tools: config.tools,
-    sessionManager: SessionManager.create(config.worktree, config.sessionDir),
+    sessionManager: SessionManager.create(config.worktree, attemptSessionDir),
     settingsManager,
   })
 
   if (modelFallbackMessage) await log(`pi model fallback: ${modelFallbackMessage}`)
+  await log(`pi session dir: ${attemptSessionDir}`)
   session.setActiveToolsByName(session.getAllTools().map((tool) => tool.name))
   await log(`pi active tools: ${session.getActiveToolNames().join(', ')}`)
 
@@ -100,7 +121,12 @@ export const runPiAgent = async (
   })
 
   try {
-    await session.prompt(prompt)
+    try {
+      await session.prompt(prompt)
+    } catch (error) {
+      if (!text.trim() || !isBenignAssistantContinuationError(error)) throw error
+      await log(`pi stopped after assistant final response: ${(error as Error).message}`)
+    }
     return {
       text,
       tools: session.getActiveToolNames(),

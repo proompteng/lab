@@ -161,7 +161,9 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
               worktree: config.worktree,
             })
       await recordPiResult(
-        await runPiAgent(config, nextPrompt, logger.info),
+        await runPiAgent(config, nextPrompt, logger.info, {
+          sessionLabel: attempt === 0 ? 'initial' : `no-change-repair-${attempt}`,
+        }),
         attempt === 0 ? undefined : `No-change repair ${attempt}`,
       )
       status.agentAttempts = attempt + 1
@@ -200,7 +202,9 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
         worktree: config.worktree,
         results: validationResults,
       })
-      const repairResult = await runPiAgent(config, repairPrompt, logger.info)
+      const repairResult = await runPiAgent(config, repairPrompt, logger.info, {
+        sessionLabel: `validation-repair-${attempt + 1}`,
+      })
       piText = `${piText}\n\n## Validation repair ${attempt + 1}\n${repairResult.text}`
       status.tools = mergeTools(status.tools, repairResult.tools)
       if (repairResult.sessionFile) {
