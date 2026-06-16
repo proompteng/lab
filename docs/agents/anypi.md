@@ -25,23 +25,34 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 - `ANYPI_THINKING_LEVEL=off` is the default because Flamingo/Qwen3 Coder is served through vLLM without reasoning-effort
   support.
 - `ANYPI_BASE_URL`, `ANYPI_PROVIDER`, and `ANYPI_MODEL` configure the generated Pi `models.json`.
+- `ANYPI_PROMPT_VARIANT` selects the runner-owned system prompt candidate. Valid values are `minimal`,
+  `finish-gated`, `repair-loop`, and `strict-repo`.
+- `ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE=false` keeps `Agent.spec.defaults.systemPrompt` or run-payload prompt drift from
+  bypassing prompt-variant evaluation.
 - Sessions are persisted under `/workspace/.anypi/sessions`; the active session file path is written into
   `/workspace/.agent/status.json`.
 - `ANYPI_MODEL_READY_TIMEOUT_SECONDS=1800` makes the runner wait for `GET /v1/models` before starting Pi, which avoids
   empty runs while Flamingo is cold-loading the model.
+- `ANYPI_VALIDATION_POLICY=append` combines inferred service checks, run-provided checks, and provider checks. The runner
+  refuses to continue when the only validation command is `git diff --check`.
 - `ANYPI_VALIDATION_REPAIR_ATTEMPTS=2` gives Pi two bounded repair passes when a runner-side validation command fails.
   The runner still refuses to commit or push unless all validation commands pass.
 - `ANYPI_NO_CHANGE_REPAIR_ATTEMPTS=2` gives Pi two bounded continuation prompts if a session exits without leaving
   code changes. The run still fails if the worktree is unchanged after those attempts.
+- `ANYPI_CI_REPAIR_ATTEMPTS=1` makes the runner wait for required GitHub checks after opening the PR and run one bounded
+  repair pass if those checks fail.
 
 ## Prompt Contract
 
-The system prompt is intentionally small and repo-focused. It does not mention Anypi, yolo mode, Kubernetes, Flamingo,
-or the Pi SDK. Runtime details stay in runner config and logs, not in the model's behavioral contract.
+The system prompt is a measured runner artifact, not a fixed Agent default. The default provider starts with `minimal`;
+`anypi-eval-agent` runs comparative variants through `ANYPI_PROMPT_VARIANT={{parameters.promptVariant}}`.
 
-The Agents controller resolves `Agent.spec.defaults.systemPrompt` into `/workspace/run.json`; Anypi passes that resolved
-prompt to Pi's `ResourceLoader`. The per-run task prompt only adds the worktree, repository refs, task text, and a short
-set of task rules. Root `AGENTS.md` is injected as repository context.
+Prompt variants are intentionally small and repo-focused. They do not mention Anypi, yolo mode, Kubernetes, Flamingo, or
+the Pi SDK. Runtime details stay in runner config and logs, not in the model's behavioral contract. Root `AGENTS.md` is
+injected as repository context.
+
+Status evidence is written to `/workspace/.agent/status.json`: `promptVariant`, `promptHash`, `validationPlan`,
+`validations`, `ci`, `ciAttempts`, `sessionFiles`, `commit`, and `pullRequest`.
 
 ## AgentRun Example
 
@@ -124,4 +135,4 @@ Do not set `spec.parameters.prompt`; the task belongs in `ImplementationSpec.spe
    ```
 
 Acceptance requires a Succeeded AgentRun, a pushed `codex/...` branch, and an opened PR containing real Torghut code and
-test changes. The runner does not auto-merge.
+test changes with required GitHub checks green. The runner does not auto-merge.

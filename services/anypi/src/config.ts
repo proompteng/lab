@@ -2,7 +2,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 
-import type { AgentRunnerSpecPayload, AgentRunSpecPayload } from './types'
+import { resolvePromptVariant, resolveValidationPolicy } from './prompt'
+import type { AgentRunnerSpecPayload, AgentRunSpecPayload, PromptVariant, ValidationPolicy } from './types'
 
 export const ALL_PI_TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const
 
@@ -22,14 +23,21 @@ export type AnypiConfig = {
   baseUrl: string
   apiKey: string
   modelReadyTimeoutSeconds: number
+  promptVariant: PromptVariant
+  allowSystemPromptOverride: boolean
   thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
   contextWindow: number
   maxTokens: number
   tools: string[]
   allowNoVcs: boolean
   validationCommands: string[]
+  validationPolicy: ValidationPolicy
   noChangeRepairAttempts: number
   validationRepairAttempts: number
+  ciCheckTimeoutSeconds: number
+  ciCheckIntervalSeconds: number
+  ciRepairAttempts: number
+  ciRequiredOnly: boolean
 }
 
 const readEnv = (env: NodeJS.ProcessEnv, name: string, fallback: string) => {
@@ -104,14 +112,21 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): AnypiConfig
     baseUrl: readEnv(env, 'ANYPI_BASE_URL', 'http://flamingo.flamingo.svc.cluster.local/v1'),
     apiKey: readEnv(env, 'ANYPI_API_KEY', 'flamingo-local'),
     modelReadyTimeoutSeconds: readNumber(env, 'ANYPI_MODEL_READY_TIMEOUT_SECONDS', 1800),
+    promptVariant: resolvePromptVariant(env.ANYPI_PROMPT_VARIANT),
+    allowSystemPromptOverride: readBoolean(env, 'ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE', false),
     thinkingLevel: normalizeThinkingLevel(readEnv(env, 'ANYPI_THINKING_LEVEL', 'off')),
     contextWindow: readNumber(env, 'ANYPI_CONTEXT_WINDOW', 32768),
     maxTokens: readNumber(env, 'ANYPI_MAX_TOKENS', 4096),
     tools: parseTools(env.ANYPI_TOOLS),
     allowNoVcs: readBoolean(env, 'ANYPI_ALLOW_NO_VCS', false),
     validationCommands: parseCommandList(env.ANYPI_VALIDATION_COMMANDS),
+    validationPolicy: resolveValidationPolicy(env.ANYPI_VALIDATION_POLICY),
     noChangeRepairAttempts: readNumber(env, 'ANYPI_NO_CHANGE_REPAIR_ATTEMPTS', 2),
     validationRepairAttempts: readNumber(env, 'ANYPI_VALIDATION_REPAIR_ATTEMPTS', 2),
+    ciCheckTimeoutSeconds: readNumber(env, 'ANYPI_CI_CHECK_TIMEOUT_SECONDS', 3600),
+    ciCheckIntervalSeconds: readNumber(env, 'ANYPI_CI_CHECK_INTERVAL_SECONDS', 30),
+    ciRepairAttempts: readNumber(env, 'ANYPI_CI_REPAIR_ATTEMPTS', 1),
+    ciRequiredOnly: readBoolean(env, 'ANYPI_CI_REQUIRED_ONLY', true),
   }
 }
 

@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 
 import { runCommand, runShell } from './command'
 import type { AnypiConfig } from './config'
-import type { AgentRunSpecPayload, CommandResult, PullRequestResult } from './types'
+import type { AgentRunSpecPayload, CiCheck, CiWaitResult, CommandResult, PullRequestResult } from './types'
 
 export type GitContext = {
   repository: string
@@ -26,6 +26,8 @@ const envFlag = (value: string | undefined, fallback: boolean) => {
 }
 
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '')
+
+const sleep = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms))
 
 const buildCloneUrl = (cloneBaseUrl: string, repository: string) => {
   const base = trimTrailingSlash(cloneBaseUrl || 'https://github.com')
@@ -224,4 +226,112 @@ export const runValidationCommands = async (
     }
   }
   return results
+}
+
+export const parseCiChecks = (raw: string): CiCheck[] => {
+  if (!raw.trim()) return []
+  const parsed = JSON.parse(raw) as unknown
+  if (!Array.isArray(parsed)) throw new Error('gh pr checks JSON output was not an array')
+  return parsed.map((entry) => {
+    const record = entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : {}
+    return {
+      name: String(record.name ?? 'unknown'),
+      workflow: record.workflow ? String(record.workflow) : undefined,
+      state: record.state ? String(record.state) : undefined,
+      bucket: record.bucket ? String(record.bucket) : undefined,
+      link: record.link ? String(record.link) : undefined,
+    }
+  })
+}
+
+export const summarizeChecks = (checks: CiCheck[]) => {
+  const failed = checks.filter((check) => ['fail', 'cancel'].includes(check.bucket ?? ''))
+  const pending = checks.filter((check) => check.bucket === 'pending')
+  const passed = checks.filter((check) => ['pass', 'skipping'].includes(check.bucket ?? ''))
+  return {
+    failed,
+    pending,
+    passed,
+    summary: `${passed.length} passed/skipped, ${pending.length} pending, ${failed.length} failed/cancelled`,
+  }
+}
+
+export const waitForPullRequestChecks = async (
+  git: GitContext,
+  options: {
+    timeoutSeconds: number
+    intervalSeconds: number
+    requiredOnly: boolean
+  },
+  log: (message: string) => Promise<void>,
+): Promise<CiWaitResult> => {
+  const started = Date.now()
+  const deadline = started + options.timeoutSeconds * 1000
+  let attempts = 0
+  let lastChecks: CiCheck[] = []
+  let lastSummary = 'checks not started'
+
+  while (Date.now() <= deadline) {
+    attempts += 1
+    const args = ['pr', 'checks', git.headBranch, '--repo', git.repository, '--json', 'name,workflow,state,bucket,link']
+    if (options.requiredOnly) args.push('--required')
+    const result = await runCommand('gh', args, {
+      cwd: git.worktree,
+      env: git.env,
+      allowFailure: true,
+    })
+
+    try {
+      lastChecks = parseCiChecks(result.stdout)
+    } catch (error) {
+      return {
+        ok: false,
+        status: 'unavailable',
+        requiredOnly: options.requiredOnly,
+        attempts,
+        durationMs: Date.now() - started,
+        checks: [],
+        summary: error instanceof Error ? error.message : String(error),
+      }
+    }
+
+    const summary = summarizeChecks(lastChecks)
+    lastSummary = summary.summary
+    await log(`ci checks: ${lastSummary}`)
+
+    if (summary.failed.length > 0) {
+      return {
+        ok: false,
+        status: 'failed',
+        requiredOnly: options.requiredOnly,
+        attempts,
+        durationMs: Date.now() - started,
+        checks: lastChecks,
+        summary: lastSummary,
+      }
+    }
+    if (summary.pending.length === 0) {
+      return {
+        ok: true,
+        status: 'passed',
+        requiredOnly: options.requiredOnly,
+        attempts,
+        durationMs: Date.now() - started,
+        checks: lastChecks,
+        summary: lastChecks.length === 0 ? 'no required checks reported' : lastSummary,
+      }
+    }
+
+    await sleep(options.intervalSeconds * 1000)
+  }
+
+  return {
+    ok: false,
+    status: 'timed-out',
+    requiredOnly: options.requiredOnly,
+    attempts,
+    durationMs: Date.now() - started,
+    checks: lastChecks,
+    summary: lastSummary,
+  }
 }

@@ -1,7 +1,7 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentProvider
 metadata:
-  name: anypi
+  name: anypi-eval
 spec:
   binary: /usr/local/bin/anypi-runner
   adapter:
@@ -12,7 +12,7 @@ spec:
     ANYPI_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
     ANYPI_API_KEY: flamingo-local
     ANYPI_MODEL_READY_TIMEOUT_SECONDS: "1800"
-    ANYPI_PROMPT_VARIANT: minimal
+    ANYPI_PROMPT_VARIANT: "{{parameters.promptVariant}}"
     ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE: "false"
     ANYPI_THINKING_LEVEL: "off"
     ANYPI_TOOLS: all

@@ -46,8 +46,8 @@ const collectAgentsFiles = async (worktree: string) => {
   return [{ path: rootAgents, content: await readFile(rootAgents, 'utf8') }]
 }
 
-export const resolveEffectiveSystemPrompt = (inlineSystemPrompt?: string) =>
-  inlineSystemPrompt?.trim() || buildSystemPrompt()
+export const resolveEffectiveSystemPrompt = (config: Pick<AnypiConfig, 'promptVariant'>, inlineSystemPrompt?: string) =>
+  inlineSystemPrompt?.trim() || buildSystemPrompt(config.promptVariant)
 
 const createResourceLoader = async (worktree: string, systemPrompt: string): Promise<ResourceLoader> => {
   const agentsFiles = await collectAgentsFiles(worktree)
@@ -83,7 +83,7 @@ export const runPiAgent = async (
   const model = modelRegistry.find(config.provider, config.model)
   if (!model) throw new Error(`Pi model not found: ${config.provider}/${config.model}`)
 
-  const systemPrompt = resolveEffectiveSystemPrompt(options.systemPrompt)
+  const systemPrompt = resolveEffectiveSystemPrompt(config, options.systemPrompt)
   const resourceLoader = await createResourceLoader(config.worktree, systemPrompt)
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: true },

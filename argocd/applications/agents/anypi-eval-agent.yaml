@@ -1,10 +1,10 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
-  name: anypi-agent
+  name: anypi-eval-agent
 spec:
   providerRef:
-    name: anypi
+    name: anypi-eval
   vcsRef:
     name: github
   security:

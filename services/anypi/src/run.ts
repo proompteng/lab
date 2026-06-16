@@ -6,9 +6,11 @@ import { createLogger } from './logger'
 import { runPiAgent } from './pi-session'
 import {
   buildAgentPrompt,
+  buildCiRepairPrompt,
   buildNoChangeRepairPrompt,
   buildValidationRepairPrompt,
-  resolveValidationCommands,
+  hashSystemPrompt,
+  resolveValidationPlan,
 } from './prompt'
 import {
   commitIfNeeded,
@@ -19,9 +21,17 @@ import {
   pushBranch,
   resolveGitContext,
   runValidationCommands,
+  waitForPullRequestChecks,
   type GitContext,
 } from './git'
-import type { AgentRunSpecPayload, AnypiStatus, PullRequestResult, ValidationResult } from './types'
+import type {
+  AgentRunSpecPayload,
+  AnypiStatus,
+  CiWaitResult,
+  PullRequestResult,
+  ValidationPlan,
+  ValidationResult,
+} from './types'
 
 const timestampUtc = () => new Date().toISOString()
 
@@ -62,22 +72,50 @@ const buildPullRequestBody = (input: {
   const validations = input.status.validations
     .map((result) => `- \`${[result.command, ...result.args].join(' ')}\` exit ${result.exitCode}`)
     .join('\n')
+  const ci = input.status.ci
+    ? `${input.status.ci.status}: ${input.status.ci.summary}`
+    : 'Pending: pull request checks have not completed yet.'
   return `## Summary
-Anypi generated this change using Pi SDK against Flamingo.
 
-AgentRun: ${input.status.namespace ?? 'agents'}/${input.status.runName ?? 'unknown'}
-Model: ${input.status.providerModel}
-Session: ${input.status.sessionFile ?? 'N/A'}
+- Anypi generated this code change for ${input.status.namespace ?? 'agents'}/${input.status.runName ?? 'unknown'}.
+- Prompt variant: ${input.status.promptVariant} (${input.status.promptHash}).
+- Session artifact: ${input.status.sessionFile ?? 'N/A'}.
+
+## Related Issues
+
+None
 
 ## Validation
-${validations || 'No validation commands were configured.'}
+
+${validations || '- N/A'}
+
+CI: ${ci}
+
+## Screenshots (if applicable)
+
+N/A
+
+## Breaking Changes
+
+None
+
+## Checklist
+
+- [x] Testing section documents the exact validation performed.
+- [x] Screenshots and Breaking Changes sections are handled appropriately.
+- [x] Documentation, release notes, and follow-ups are updated or tracked.
 
 ## Agent Output
 ${input.piText.trim().slice(0, 6000) || 'N/A'}
 `
 }
 
-const baseStatus = (config: AnypiConfig, runSpec: AgentRunSpecPayload, git: GitContext | null): AnypiStatus => ({
+const baseStatus = (
+  config: AnypiConfig,
+  runSpec: AgentRunSpecPayload,
+  git: GitContext | null,
+  validationPlan: ValidationPlan,
+): AnypiStatus => ({
   provider: 'anypi',
   status: 'running',
   startedAt: timestampUtc(),
@@ -89,10 +127,14 @@ const baseStatus = (config: AnypiConfig, runSpec: AgentRunSpecPayload, git: GitC
   worktree: config.worktree,
   model: config.model,
   providerModel: `${config.provider}/${config.model}`,
+  promptVariant: config.promptVariant,
+  promptHash: hashSystemPrompt(config.promptVariant),
   tools: [],
   validations: [],
+  validationPlan,
   agentAttempts: 0,
   validationAttempts: 0,
+  ciAttempts: 0,
   promptChars: 0,
 })
 
@@ -102,6 +144,19 @@ const failedValidation = (results: ValidationResult[]) => results.find((result) 
 
 const formatValidationError = (result: ValidationResult) =>
   `validation failed (${result.exitCode}): ${[result.command, ...result.args].join(' ')}`
+
+const formatCiError = (ci: CiWaitResult) => `ci checks ${ci.status}: ${ci.summary}`
+
+const formatCiRepairSummary = (ci: CiWaitResult) => {
+  const checks = ci.checks
+    .map(
+      (check) =>
+        `- ${check.workflow ? `${check.workflow} / ` : ''}${check.name}: ${check.bucket ?? check.state ?? 'unknown'}`,
+    )
+    .slice(0, 30)
+    .join('\n')
+  return `${ci.status}: ${ci.summary}${checks ? `\n${checks}` : ''}`
+}
 
 const waitForModelEndpoint = async (config: AnypiConfig, log: (message: string) => Promise<void>) => {
   const modelsUrl = `${config.baseUrl.replace(/\/+$/, '')}/models`
@@ -137,15 +192,21 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
   const logger = await createLogger(config.logPath)
   const runSpec = await loadRunSpec(config)
   const git = await resolveGitContext(config, runSpec)
-  const status = baseStatus(config, runSpec, git)
+  const validationPlan = resolveValidationPlan(runSpec, config.validationCommands, config.validationPolicy)
+  const status = baseStatus(config, runSpec, git, validationPlan)
 
   try {
     await writeStatus(config.statusPath, status)
     await logger.info(`starting Anypi for ${status.runName ?? 'unknown run'}`)
+    await logger.info(`prompt variant: ${status.promptVariant} ${status.promptHash}`)
+    if (runSpec.systemPrompt && !config.allowSystemPromptOverride) {
+      await logger.info('run systemPrompt ignored because ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE is false')
+    }
     await prepareRepository(config, git, logger.info)
     await waitForModelEndpoint(config, logger.info)
     const prompt = buildAgentPrompt(runSpec, config.worktree)
     status.promptChars = prompt.length
+    const systemPrompt = config.allowSystemPromptOverride ? runSpec.systemPrompt : undefined
 
     let piText = ''
     const sessionFiles: string[] = []
@@ -171,7 +232,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       await recordPiResult(
         await runPiAgent(config, nextPrompt, logger.info, {
           sessionLabel: attempt === 0 ? 'initial' : `no-change-repair-${attempt}`,
-          systemPrompt: runSpec.systemPrompt,
+          systemPrompt,
         }),
         attempt === 0 ? undefined : `No-change repair ${attempt}`,
       )
@@ -189,7 +250,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       )
     }
 
-    const validationCommands = resolveValidationCommands(runSpec, config.validationCommands)
+    const validationCommands = status.validationPlan.commands
     let validationResults: ValidationResult[] = []
     for (let attempt = 0; attempt <= config.validationRepairAttempts; attempt += 1) {
       const rawResults = await runValidationCommands(validationCommands, git, config.worktree, logger.info)
@@ -213,8 +274,9 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       })
       const repairResult = await runPiAgent(config, repairPrompt, logger.info, {
         sessionLabel: `validation-repair-${attempt + 1}`,
-        systemPrompt: runSpec.systemPrompt,
+        systemPrompt,
       })
+      status.agentAttempts += 1
       piText = `${piText}\n\n## Validation repair ${attempt + 1}\n${repairResult.text}`
       status.tools = mergeTools(status.tools, repairResult.tools)
       if (repairResult.sessionFile) {
@@ -235,6 +297,71 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
         body: buildPullRequestBody({ runSpec, status, git, piText }),
       })
       status.pullRequest = pullRequest
+      await writeStatus(config.statusPath, status)
+
+      if (pullRequest.enabled) {
+        for (let attempt = 0; attempt <= config.ciRepairAttempts; attempt += 1) {
+          const ci = await waitForPullRequestChecks(
+            git,
+            {
+              timeoutSeconds: config.ciCheckTimeoutSeconds,
+              intervalSeconds: config.ciCheckIntervalSeconds,
+              requiredOnly: config.ciRequiredOnly,
+            },
+            logger.info,
+          )
+          status.ciAttempts = attempt + 1
+          status.ci = ci
+          await writeStatus(config.statusPath, status)
+          if (ci.ok) break
+          if (attempt >= config.ciRepairAttempts) throw new Error(formatCiError(ci))
+
+          await logger.error(`${formatCiError(ci)}; starting ci repair ${attempt + 1}/${config.ciRepairAttempts}`)
+          const repairResult = await runPiAgent(
+            config,
+            buildCiRepairPrompt({
+              attempt: attempt + 1,
+              maxAttempts: config.ciRepairAttempts,
+              worktree: config.worktree,
+              summary: formatCiRepairSummary(ci),
+            }),
+            logger.info,
+            {
+              sessionLabel: `ci-repair-${attempt + 1}`,
+              systemPrompt,
+            },
+          )
+          await recordPiResult(repairResult, `CI repair ${attempt + 1}`)
+          status.agentAttempts += 1
+
+          const rawResults = await runValidationCommands(validationCommands, git, config.worktree, logger.info)
+          validationResults = rawResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+          status.validationAttempts += 1
+          status.validations = validationResults
+          await writeStatus(config.statusPath, status)
+          const failed = failedValidation(validationResults)
+          if (failed) throw new Error(formatValidationError(failed))
+
+          const previousCommit: string | undefined = status.commit
+          const repairedCommit = await commitIfNeeded(git, buildCommitMessage(runSpec))
+          if (!repairedCommit || repairedCommit === previousCommit) throw new Error('CI repair produced no new commit')
+          status.commit = repairedCommit
+          await pushBranch(git)
+          pullRequest = await createOrUpdatePullRequest(git, {
+            title: buildPullRequestTitle(runSpec),
+            body: buildPullRequestBody({ runSpec, status, git, piText }),
+          })
+          status.pullRequest = pullRequest
+          await writeStatus(config.statusPath, status)
+        }
+
+        pullRequest = await createOrUpdatePullRequest(git, {
+          title: buildPullRequestTitle(runSpec),
+          body: buildPullRequestBody({ runSpec, status, git, piText }),
+        })
+        status.pullRequest = pullRequest
+        await writeStatus(config.statusPath, status)
+      }
     }
 
     status.status = 'succeeded'

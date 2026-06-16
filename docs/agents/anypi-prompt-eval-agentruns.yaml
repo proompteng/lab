@@ -1,0 +1,141 @@
+# Templates only. Do not add this file to the Argo CD kustomization.
+#
+# Duplicate each AgentRun per prompt variant by setting:
+#   metadata.name
+#   spec.parameters.head
+#   spec.parameters.promptVariant: minimal | finish-gated | repair-loop | strict-repo
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: anypi-eval-torghut-strict-repo-20260616
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: anypi-prompt-eval
+spec:
+  agentRef:
+    name: anypi-eval-agent
+  implementation:
+    inline:
+      summary: Improve Torghut diff coverage reporting
+      text: |
+        Improve services/torghut/scripts/check_diff_coverage.py so uncovered executable changed lines are reported
+        with actionable file:line details. Add regression tests in services/torghut/tests/test_check_diff_coverage.py.
+        Preserve existing behavior for covered lines and non-executable changed lines.
+  runtime:
+    type: job
+  ttlSecondsAfterFinished: 86400
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/anypi-eval/strict-repo/torghut-diff-coverage-20260616
+    promptVariant: strict-repo
+    validationCommands: |
+      cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+  secrets:
+    - github-token
+  workload:
+    image: registry.ide-newton.ts.net/lab/anypi:<tag>@<digest>
+    resources:
+      requests:
+        cpu: '2'
+        memory: 4Gi
+        ephemeral-storage: 12Gi
+      limits:
+        memory: 12Gi
+        ephemeral-storage: 24Gi
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: anypi-eval-runner-strict-repo-20260616
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: anypi-prompt-eval
+spec:
+  agentRef:
+    name: anypi-eval-agent
+  implementation:
+    inline:
+      summary: Improve Anypi status evidence tests
+      text: |
+        Improve services/anypi tests so status evidence for prompt variants, validation plans, and CI checks is covered.
+        Keep the change focused on runner behavior and tests.
+  runtime:
+    type: job
+  ttlSecondsAfterFinished: 86400
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/anypi-eval/strict-repo/runner-status-evidence-20260616
+    promptVariant: strict-repo
+    validationCommands: |
+      bun run --filter @proompteng/anypi tsc
+      bun run --filter @proompteng/anypi test
+      bun run --filter @proompteng/anypi lint
+  secrets:
+    - github-token
+  workload:
+    image: registry.ide-newton.ts.net/lab/anypi:<tag>@<digest>
+    resources:
+      requests:
+        cpu: '2'
+        memory: 4Gi
+        ephemeral-storage: 12Gi
+      limits:
+        memory: 12Gi
+        ephemeral-storage: 24Gi
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: anypi-eval-agents-strict-repo-20260616
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: anypi-prompt-eval
+spec:
+  agentRef:
+    name: anypi-eval-agent
+  implementation:
+    inline:
+      summary: Improve Anypi eval documentation and manifests
+      text: |
+        Improve the Anypi eval documentation and agents manifests so prompt evaluation runs are easier to audit.
+        Keep manifests renderable and avoid changing unrelated providers.
+  runtime:
+    type: job
+  ttlSecondsAfterFinished: 86400
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/anypi-eval/strict-repo/agents-docs-manifests-20260616
+    promptVariant: strict-repo
+    validationCommands: |
+      mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
+  secrets:
+    - github-token
+  workload:
+    image: registry.ide-newton.ts.net/lab/anypi:<tag>@<digest>
+    resources:
+      requests:
+        cpu: '2'
+        memory: 4Gi
+        ephemeral-storage: 12Gi
+      limits:
+        memory: 12Gi
+        ephemeral-storage: 24Gi

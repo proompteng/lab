@@ -1,5 +1,9 @@
 export type JsonRecord = Record<string, unknown>
 
+export type PromptVariant = 'minimal' | 'finish-gated' | 'repair-loop' | 'strict-repo'
+
+export type ValidationPolicy = 'append' | 'override'
+
 export type AgentRunIdentity = {
   name?: string
   namespace?: string
@@ -70,10 +74,34 @@ export type ValidationResult = CommandResult & {
   ok: boolean
 }
 
+export type ValidationPlan = {
+  policy: ValidationPolicy
+  sources: string[]
+  commands: string[]
+}
+
 export type PullRequestResult = {
   enabled: boolean
   url?: string
   created?: boolean
+}
+
+export type CiCheck = {
+  name: string
+  workflow?: string
+  state?: string
+  bucket?: string
+  link?: string
+}
+
+export type CiWaitResult = {
+  ok: boolean
+  status: 'passed' | 'failed' | 'timed-out' | 'unavailable'
+  requiredOnly: boolean
+  attempts: number
+  durationMs: number
+  checks: CiCheck[]
+  summary: string
 }
 
 export type AnypiStatus = {
@@ -89,12 +117,17 @@ export type AnypiStatus = {
   worktree?: string
   model: string
   providerModel: string
+  promptVariant: PromptVariant
+  promptHash: string
   tools: string[]
   sessionFile?: string
   sessionFiles?: string[]
   commit?: string
   pullRequest?: PullRequestResult
+  ci?: CiWaitResult
+  ciAttempts: number
   validations: ValidationResult[]
+  validationPlan: ValidationPlan
   agentAttempts: number
   validationAttempts: number
   promptChars: number
