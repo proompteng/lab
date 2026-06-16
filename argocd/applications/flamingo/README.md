@@ -19,6 +19,12 @@ normal Kubernetes GPU workload, not a KubeVirt VM.
 fails Blackwell image compatibility, OOMs at 32K context, or fails tool-call
 smoke tests.
 
+## Scaling
+
+- Current deployment: one model replica on one GPU.
+- Planned large-model scaling: one model replica sharded across two or four GPUs.
+- Runbook: [Large Model Multi-GPU Scaling](docs/large-model-multigpu.md).
+
 ## Rollout Gates
 
 Run the KubeVirt/Talos checks separately. Flamingo does not require Talos
