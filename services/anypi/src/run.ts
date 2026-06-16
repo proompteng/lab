@@ -63,7 +63,7 @@ export const buildPullRequestTitle = (runSpec: AgentRunSpecPayload) => {
   return `feat(anypi): ${normalizeConventionalSummary(title, 'apply autonomous agent changes')}`
 }
 
-const buildPullRequestBody = (input: {
+export const buildPullRequestBody = (input: {
   runSpec: AgentRunSpecPayload
   status: AnypiStatus
   git: GitContext
@@ -142,7 +142,7 @@ const mergeTools = (left: string[], right: string[]) => [...new Set([...left, ..
 
 const failedValidation = (results: ValidationResult[]) => results.find((result) => !result.ok)
 
-const formatValidationError = (result: ValidationResult) =>
+export const formatValidationError = (result: ValidationResult) =>
   `validation failed (${result.exitCode}): ${[result.command, ...result.args].join(' ')}`
 
 const formatCiError = (ci: CiWaitResult) => `ci checks ${ci.status}: ${ci.summary}`

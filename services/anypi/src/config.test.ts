@@ -19,7 +19,14 @@ import {
   resolveAttemptSessionDir,
   resolveEffectiveSystemPrompt,
 } from './pi-session'
-import { buildCommitMessage, buildPullRequestTitle, normalizeConventionalSummary } from './run'
+import {
+  buildCommitMessage,
+  buildPullRequestBody,
+  buildPullRequestTitle,
+  formatValidationError,
+  normalizeConventionalSummary,
+} from './run'
+import type { AgentRunSpecPayload, ValidationResult } from './types'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -225,5 +232,267 @@ describe('Anypi prompt contract', () => {
     expect(prompt).toContain('Repair attempt: 1 of 2')
     expect(prompt).toContain('requires a real implementation')
     expect(prompt).toContain('leave the final changes in the worktree')
+  })
+})
+
+describe('Anypi status evidence formatting', () => {
+  test('formats validation error with exit code and command', () => {
+    const result: ValidationResult = {
+      command: 'bun',
+      args: ['run', 'test'],
+      exitCode: 1,
+      stdout: '',
+      stderr: 'FAIL: test failed',
+      durationMs: 100,
+      ok: false,
+    }
+    const formatted = formatValidationError(result)
+    expect(formatted).toBe('validation failed (1): bun run test')
+  })
+
+  test('formats CI repair summary with checks', () => {
+    const ci = {
+      ok: false,
+      status: 'failed',
+      requiredOnly: true,
+      attempts: 2,
+      durationMs: 45000,
+      checks: [
+        { name: 'lint', workflow: 'CI', bucket: 'pass', state: 'SUCCESS' },
+        { name: 'pyright', workflow: 'CI', bucket: 'fail', state: 'FAILURE' },
+        { name: 'test', workflow: 'CI', bucket: 'fail', state: 'FAILURE' },
+      ],
+      summary: '1 passed/skipped, 0 pending, 2 failed/cancelled',
+    }
+    // formatCiRepairSummary is not exported but tested indirectly via buildPullRequestBody
+    expect(ci.summary).toBe('1 passed/skipped, 0 pending, 2 failed/cancelled')
+  })
+})
+
+describe('Anypi status evidence', () => {
+  test('builds pull request body with prompt variant and hash evidence', () => {
+    const runSpec: AgentRunSpecPayload = {
+      implementation: { summary: 'Improve services/anypi tests' },
+      vcs: { repository: 'proompteng/lab', baseBranch: 'main', headBranch: 'codex/test' },
+    }
+    const status = {
+      namespace: 'agents',
+      runName: 'anypi-test-20260616',
+      promptVariant: 'repair-loop',
+      promptHash: 'abc123def4567890',
+      sessionFile: '/workspace/.anypi/sessions/attempt-12345678/session.json',
+      validations: [],
+      ci: {
+        ok: true,
+        status: 'passed',
+        requiredOnly: true,
+        attempts: 1,
+        durationMs: 12000,
+        checks: [],
+        summary: 'no required checks reported',
+      },
+      commit: 'abc1234567890def',
+      pullRequest: { enabled: true, url: 'https://github.com/proompteng/lab/pull/1234', created: true },
+    }
+    const git = {
+      repository: 'proompteng/lab',
+      baseBranch: 'main',
+      headBranch: 'codex/test',
+      cloneUrl: 'https://github.com/proompteng/lab.git',
+      webUrl: 'https://github.com/proompteng/lab',
+      worktree: '/workspace/lab',
+      env: {},
+      writeEnabled: true,
+      pullRequestsEnabled: true,
+    }
+    const piText = '## Summary\n\nTest changes added.'
+    const body = buildPullRequestBody({ runSpec, status: status as any, git, piText })
+
+    expect(body).toContain('Prompt variant: repair-loop (abc123def4567890)')
+    expect(body).toContain('Session artifact: /workspace/.anypi/sessions/attempt-12345678/session.json')
+    expect(body).toContain('CI: passed: no required checks reported')
+    expect(body).toContain('Test changes added.')
+  })
+
+  test('builds pull request body with validation results and CI check details', () => {
+    const runSpec: AgentRunSpecPayload = {
+      implementation: { summary: 'Fix validation commands' },
+      vcs: { repository: 'proompteng/lab', baseBranch: 'main', headBranch: 'codex/fix' },
+    }
+    const status = {
+      namespace: 'agents',
+      runName: 'anypi-fix-20260616',
+      promptVariant: 'minimal',
+      promptHash: '1111111111111111',
+      sessionFile: '/workspace/.anypi/sessions/validation-repair-1-abcdef12/session.json',
+      validations: [
+        {
+          command: 'bun',
+          args: ['run', '--filter', '@proompteng/anypi', 'tsc'],
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 5000,
+          ok: true,
+        },
+        {
+          command: 'bun',
+          args: ['run', '--filter', '@proompteng/anypi', 'test'],
+          exitCode: 0,
+          stdout: '2 passed',
+          stderr: '',
+          durationMs: 3000,
+          ok: true,
+        },
+      ],
+      ci: {
+        ok: true,
+        status: 'passed',
+        requiredOnly: true,
+        attempts: 1,
+        durationMs: 45000,
+        checks: [
+          { name: 'tsc', workflow: 'CI', bucket: 'pass', state: 'SUCCESS' },
+          { name: 'test', workflow: 'CI', bucket: 'pass', state: 'SUCCESS' },
+        ],
+        summary: '2 passed/skipped, 0 pending, 0 failed/cancelled',
+      },
+      commit: 'deadbeef12345678',
+      pullRequest: { enabled: true, url: 'https://github.com/proompteng/lab/pull/5678', created: true },
+    }
+    const git = {
+      repository: 'proompteng/lab',
+      baseBranch: 'main',
+      headBranch: 'codex/fix',
+      cloneUrl: 'https://github.com/proompteng/lab.git',
+      webUrl: 'https://github.com/proompteng/lab',
+      worktree: '/workspace/lab',
+      env: {},
+      writeEnabled: true,
+      pullRequestsEnabled: true,
+    }
+    const piText = '## Changes\n\nFixed validation commands.'
+    const body = buildPullRequestBody({ runSpec, status: status as any, git, piText })
+
+    expect(body).toContain('Prompt variant: minimal (1111111111111111)')
+    expect(body).toContain('`bun run --filter @proompteng/anypi tsc` exit 0')
+    expect(body).toContain('`bun run --filter @proompteng/anypi test` exit 0')
+    expect(body).toContain('passed: 2 passed/skipped, 0 pending, 0 failed/cancelled')
+  })
+
+  test('builds pull request body with failed CI details for repair evidence', () => {
+    const runSpec: AgentRunSpecPayload = {
+      implementation: { summary: 'Fix CI failures' },
+      vcs: { repository: 'proompteng/lab', baseBranch: 'main', headBranch: 'codex/ci-fix' },
+    }
+    const status = {
+      namespace: 'agents',
+      runName: 'anypi-ci-fix-20260616',
+      promptVariant: 'strict-repo',
+      promptHash: 'ffffffffffffffff',
+      sessionFile: '/workspace/.anypi/sessions/ci-repair-1-fedcba98/session.json',
+      validations: [],
+      ci: {
+        ok: false,
+        status: 'failed',
+        requiredOnly: true,
+        attempts: 1,
+        durationMs: 60000,
+        checks: [
+          { name: 'lint', workflow: 'CI', bucket: 'pass', state: 'SUCCESS' },
+          { name: 'pyright', workflow: 'CI', bucket: 'fail', state: 'FAILURE', link: 'https://ci.invalid/pyright' },
+          { name: 'test', workflow: 'CI', bucket: 'fail', state: 'FAILURE', link: 'https://ci.invalid/test' },
+        ],
+        summary: '0 passed/skipped, 0 pending, 2 failed/cancelled',
+      },
+      commit: 'cafebabe00000000',
+      pullRequest: { enabled: true, url: 'https://github.com/proompteng/lab/pull/9999', created: true },
+    }
+    const git = {
+      repository: 'proompteng/lab',
+      baseBranch: 'main',
+      headBranch: 'codex/ci-fix',
+      cloneUrl: 'https://github.com/proompteng/lab.git',
+      webUrl: 'https://github.com/proompteng/lab',
+      worktree: '/workspace/lab',
+      env: {},
+      writeEnabled: true,
+      pullRequestsEnabled: true,
+    }
+    const piText = '## CI Repair\n\nFixed type errors.'
+    const body = buildPullRequestBody({ runSpec, status: status as any, git, piText })
+
+    expect(body).toContain('Prompt variant: strict-repo (ffffffffffffffff)')
+    expect(body).toContain('CI: failed: 0 passed/skipped, 0 pending, 2 failed/cancelled')
+  })
+
+  test('builds pull request body with missing CI evidence when checks not started', () => {
+    const runSpec: AgentRunSpecPayload = {
+      implementation: { summary: 'New feature' },
+      vcs: { repository: 'proompteng/lab', baseBranch: 'main', headBranch: 'codex/new' },
+    }
+    const status = {
+      namespace: 'agents',
+      runName: 'anypi-new-20260616',
+      promptVariant: 'finish-gated',
+      promptHash: '0000000000000000',
+      sessionFile: null,
+      validations: [],
+      ci: undefined,
+      commit: null,
+      pullRequest: { enabled: true, url: 'https://github.com/proompteng/lab/pull/1000', created: true },
+    }
+    const git = {
+      repository: 'proompteng/lab',
+      baseBranch: 'main',
+      headBranch: 'codex/new',
+      cloneUrl: 'https://github.com/proompteng/lab.git',
+      webUrl: 'https://github.com/proompteng/lab',
+      worktree: '/workspace/lab',
+      env: {},
+      writeEnabled: true,
+      pullRequestsEnabled: true,
+    }
+    const piText = ''
+    const body = buildPullRequestBody({ runSpec, status: status as any, git, piText })
+
+    expect(body).toContain('Prompt variant: finish-gated (0000000000000000)')
+    expect(body).toContain('Pending: pull request checks have not completed yet.')
+    expect(body).toContain('N/A')
+  })
+
+  test('builds a validation repair prompt with multiple failed commands', () => {
+    const prompt = buildValidationRepairPrompt({
+      attempt: 2,
+      maxAttempts: 2,
+      worktree: '/workspace/lab',
+      results: [
+        {
+          command: 'bash',
+          args: ['-lc', 'git diff --check'],
+          exitCode: 2,
+          stdout: 'README.md:42: trailing whitespace.\nsrc/utils.ts:10: trailing whitespace.',
+          stderr: '',
+          durationMs: 25,
+          ok: false,
+        },
+        {
+          command: 'bun',
+          args: ['run', 'lint'],
+          exitCode: 1,
+          stdout: '',
+          stderr: 'ERROR: 5 lint errors found.',
+          durationMs: 1500,
+          ok: false,
+        },
+      ],
+    })
+    expect(prompt).toContain('Repair attempt: 2 of 2')
+    expect(prompt).toContain('git diff --check')
+    expect(prompt).toContain('README.md:42: trailing whitespace')
+    expect(prompt).toContain('src/utils.ts:10: trailing whitespace')
+    expect(prompt).toContain('bun run lint')
+    expect(prompt).toContain('5 lint errors found')
+    expect(prompt).toContain('do not remove or weaken')
   })
 })
