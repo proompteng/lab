@@ -38,6 +38,7 @@ class TestCheckDiffCoverage(TestCase):
             executable_changed_lines=0,
             covered_lines=0,
             missing_lines=(),
+            ignored_lines=(),
         )
 
         self.assertEqual(item.coverage_ratio, 1.0)
@@ -450,9 +451,16 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         summary = summarize_changed_coverage(
             changed_lines={"app/trading/foo.py": {90}},
             coverage_index={"app/trading/foo.py": {11: 1, 12: 0}},
+            executable_lines={"app/trading/foo.py": {11, 12}},
         )
 
-        self.assertEqual(summary, [])
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0].filename, "app/trading/foo.py")
+        self.assertEqual(summary[0].executable_changed_lines, 0)
+        self.assertEqual(summary[0].covered_lines, 0)
+        self.assertEqual(summary[0].missing_lines, ())
+        self.assertEqual(summary[0].ignored_lines, (90,))
+        self.assertFalse(summary[0].missing_from_coverage)
 
     def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
         text = _format_summary(
@@ -628,3 +636,141 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         exit_code = main()
 
         self.assertEqual(exit_code, 0)
+
+    def test_format_summary_separates_uncovered_executable_from_ignored_lines(
+        self,
+    ) -> None:
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/foo.py",
+                    executable_changed_lines=3,
+                    covered_lines=1,
+                    missing_lines=(11, 13),
+                    ignored_lines=(90, 91),
+                ),
+                FileDiffCoverage(
+                    filename="scripts/new_tool.py",
+                    executable_changed_lines=2,
+                    covered_lines=2,
+                    missing_lines=(),
+                    ignored_lines=(4, 5),
+                ),
+            ]
+        )
+
+        self.assertIn("app/trading/foo.py: 1/3 lines covered", text)
+        self.assertIn("uncovered executable lines: 11, 13", text)
+        self.assertIn("ignored non-executable lines: 90, 91", text)
+        self.assertIn("scripts/new_tool.py: 2/2 lines covered", text)
+        self.assertIn("ignored non-executable lines: 4, 5", text)
+
+    def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="scripts/check_diff_coverage.py",
+                    executable_changed_lines=2,
+                    covered_lines=1,
+                    missing_lines=(20,),
+                    ignored_lines=(),
+                    missing_from_coverage=True,
+                )
+            ]
+        )
+
+        self.assertIn("missing-from-coverage", text)
+        self.assertIn("uncovered executable lines: 20", text)
+
+    def test_summarize_changed_coverage_reports_multi_file_diffs_sorted(self) -> None:
+        summary = summarize_changed_coverage(
+            changed_lines={
+                "scripts/z_file.py": {10, 11},
+                "app/a_module.py": {5, 6, 7},
+            },
+            coverage_index={
+                "scripts/z_file.py": {10: 1, 11: 0},
+                "app/a_module.py": {5: 1, 6: 1, 7: 0},
+            },
+            executable_lines={
+                "scripts/z_file.py": {10, 11},
+                "app/a_module.py": {5, 6, 7},
+            },
+        )
+
+        self.assertEqual(len(summary), 2)
+        self.assertEqual(summary[0].filename, "app/a_module.py")
+        self.assertEqual(summary[1].filename, "scripts/z_file.py")
+        self.assertEqual(summary[0].missing_lines, (7,))
+        self.assertEqual(summary[1].missing_lines, (11,))
+
+    def test_summarize_changed_coverage_reports_ignored_non_executable_lines(
+        self,
+    ) -> None:
+        summary = summarize_changed_coverage(
+            changed_lines={"app/trading/foo.py": {11, 12, 99}},
+            coverage_index={"app/trading/foo.py": {11: 1, 12: 0, 30: 1}},
+            executable_lines={"app/trading/foo.py": {11, 12}},
+        )
+
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0].filename, "app/trading/foo.py")
+        self.assertEqual(summary[0].covered_lines, 1)
+        self.assertEqual(summary[0].executable_changed_lines, 2)
+        self.assertEqual(summary[0].missing_lines, (12,))
+        self.assertEqual(summary[0].ignored_lines, (99,))
+
+    def test_summarize_changed_coverage_handles_empty_executable_lines(self) -> None:
+        summary = summarize_changed_coverage(
+            changed_lines={"app/__init__.py": {1}},
+            coverage_index={"app/__init__.py": {}},
+            executable_lines={"app/__init__.py": set()},
+        )
+
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0].filename, "app/__init__.py")
+        self.assertEqual(summary[0].executable_changed_lines, 0)
+        self.assertEqual(summary[0].covered_lines, 0)
+        self.assertEqual(summary[0].missing_lines, ())
+        self.assertEqual(summary[0].ignored_lines, (1,))
+
+    def test_summarize_changed_coverage_preserves_existing_behavior_for_covered_lines(
+        self,
+    ) -> None:
+        summary = summarize_changed_coverage(
+            changed_lines={"app/trading/foo.py": {11, 12}},
+            coverage_index={"app/trading/foo.py": {11: 1, 12: 1}},
+            executable_lines={"app/trading/foo.py": {11, 12}},
+        )
+
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0].filename, "app/trading/foo.py")
+        self.assertEqual(summary[0].executable_changed_lines, 2)
+        self.assertEqual(summary[0].covered_lines, 2)
+        self.assertEqual(summary[0].missing_lines, ())
+        self.assertEqual(summary[0].ignored_lines, ())
+
+    def test_format_summary_shows_stable_ordering_for_multiple_files(self) -> None:
+        summary = summarize_changed_coverage(
+            changed_lines={
+                "scripts/z_last.py": {5},
+                "app/a_first.py": {3},
+                "app/b_middle.py": {10},
+            },
+            coverage_index={
+                "scripts/z_last.py": {5: 0},
+                "app/a_first.py": {3: 0},
+                "app/b_middle.py": {10: 1},
+            },
+            executable_lines={
+                "scripts/z_last.py": {5},
+                "app/a_first.py": {3},
+                "app/b_middle.py": {10},
+            },
+        )
+        text = _format_summary(summary)
+
+        lines = text.split("\n")
+        self.assertIn("app/a_first.py", lines[0])
+        self.assertIn("app/b_middle.py", lines[2])
+        self.assertIn("scripts/z_last.py", lines[3])

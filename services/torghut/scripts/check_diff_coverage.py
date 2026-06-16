@@ -27,6 +27,7 @@ class FileDiffCoverage:
     executable_changed_lines: int
     covered_lines: int
     missing_lines: tuple[int, ...]
+    ignored_lines: tuple[int, ...]
     missing_from_coverage: bool = False
 
     @property
@@ -232,34 +233,52 @@ def summarize_changed_coverage(
     *,
     changed_lines: dict[str, set[int]],
     coverage_index: dict[str, dict[int, int]],
+    executable_lines: dict[str, set[int]] | None = None,
 ) -> list[FileDiffCoverage]:
     summary: list[FileDiffCoverage] = []
     for filename in sorted(changed_lines):
         changed = sorted(changed_lines[filename])
         line_hits = coverage_index.get(filename)
+        exec_lines = (
+            executable_lines.get(filename, set()) if executable_lines else set()
+        )
         if line_hits is None:
+            ignored = tuple(line for line in changed if line not in exec_lines)
             summary.append(
                 FileDiffCoverage(
                     filename=filename,
                     executable_changed_lines=len(changed),
                     covered_lines=0,
                     missing_lines=tuple(changed),
+                    ignored_lines=ignored,
                     missing_from_coverage=True,
                 )
             )
             continue
         executable_changed = sorted(line for line in changed if line in line_hits)
         if not executable_changed:
+            ignored = tuple(line for line in changed if line not in exec_lines)
+            summary.append(
+                FileDiffCoverage(
+                    filename=filename,
+                    executable_changed_lines=0,
+                    covered_lines=0,
+                    missing_lines=(),
+                    ignored_lines=ignored,
+                )
+            )
             continue
         missing = tuple(
             line for line in executable_changed if line_hits.get(line, 0) <= 0
         )
+        ignored = tuple(line for line in changed if line not in exec_lines)
         summary.append(
             FileDiffCoverage(
                 filename=filename,
                 executable_changed_lines=len(executable_changed),
                 covered_lines=len(executable_changed) - len(missing),
                 missing_lines=missing,
+                ignored_lines=ignored,
             )
         )
     return summary
@@ -272,11 +291,15 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
         suffix = " missing-from-coverage" if item.missing_from_coverage else ""
         lines.append(
             f"{item.filename}: {item.covered_lines}/{item.executable_changed_lines} "
-            f"lines covered ({coverage_pct:.2f}%){suffix}"
+            f"lines covered ({coverage_pct:.2f}%)" + suffix
         )
         if item.missing_lines:
             lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
+                f"  uncovered executable lines: {', '.join(str(line) for line in item.missing_lines)}"
+            )
+        if item.ignored_lines:
+            lines.append(
+                f"  ignored non-executable lines: {', '.join(str(line) for line in item.ignored_lines)}"
             )
     return "\n".join(lines)
 
@@ -316,9 +339,15 @@ def main() -> int:
     if not changed_with_untracked:
         print("diff coverage passed: no changed Torghut Python source lines")
         return 0
+    executable_lines = {
+        filename: _executable_source_lines(service_root / filename)
+        for filename in changed_with_untracked
+        if filename in coverage_index
+    }
     summary = summarize_changed_coverage(
         changed_lines=changed_with_untracked,
         coverage_index=coverage_index,
+        executable_lines=executable_lines,
     )
     if not summary:
         print("diff coverage passed: no changed executable Torghut Python source lines")
