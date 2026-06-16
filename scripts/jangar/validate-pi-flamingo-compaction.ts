@@ -249,7 +249,7 @@ async function main(): Promise<void> {
   const reserveTokens = parseInteger('PI_FLAMINGO_COMPACTION_RESERVE', 16384)
   const keepRecentTokens = parseInteger('PI_FLAMINGO_KEEP_RECENT', 20000)
   const threshold = clientContext - reserveTokens
-  const promptChars = parseInteger('PI_FLAMINGO_PROMPT_CHARS', Math.max(12000, (threshold + 4096) * 4))
+  const promptChars = parseInteger('PI_FLAMINGO_PROMPT_CHARS', Math.max(12000, Math.ceil((threshold + 4096) * 4.7)))
   const timeoutMs = parseInteger('PI_FLAMINGO_TIMEOUT_MS', 600000)
 
   if (clientContext + maxTokens > serverContext) {
