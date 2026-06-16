@@ -1,10 +1,11 @@
 """Extracted Torghut API route and support functions."""
 
+# pylint: disable=unused-import,wildcard-import,unused-wildcard-import
+
 # pyright: reportUnusedImport=false
 # ruff: noqa: F401,F403,F405
 from __future__ import annotations
 
-from dataclasses import dataclass
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
@@ -15,71 +16,9 @@ from .common import *
 from .proxy import capture_module_exports
 
 
-def _extract_metrics_and_drawdown(metrics_payload: dict[str, object]) -> float | None:
-    """Extract drawdown value from metrics payload."""
-    drawdown = None
-    max_drawdown_raw = metrics_payload.get("max_drawdown")
-    if max_drawdown_raw is not None:
-        try:
-            drawdown = abs(float(str(max_drawdown_raw)))
-        except (TypeError, ValueError):
-            drawdown = None
-    return drawdown
-
-
-def _extract_drift_info(drift_payload: dict[str, object]) -> tuple[Any, Any, Any]:
-    """Extract drift-related fields from payload."""
-    drift_reasons_raw = drift_payload.get("reasons")
-    drift_reason_codes_raw = drift_payload.get("reason_codes")
-    drift_eligible = drift_payload.get("eligible_for_live_promotion")
-    return drift_reasons_raw, drift_reason_codes_raw, drift_eligible
-
-
-def _extract_strategy_compilation(
-    vnext_payload: dict[str, object],
-) -> tuple[int, int, list[str]]:
-    """Extract strategy compilation info from vnext payload."""
-    strategy_compilation_raw = vnext_payload.get("strategy_compilation")
-    strategy_compilation_items = (
-        [
-            cast(dict[str, object], item)
-            for item in cast(list[object], strategy_compilation_raw)
-            if isinstance(item, dict)
-        ]
-        if isinstance(strategy_compilation_raw, list)
-        else []
-    )
-    spec_compiled = sum(
-        1 for item in strategy_compilation_items if bool(item.get("spec_compiled"))
-    )
-    compiler_sources = sorted(
-        {
-            str(item.get("compiler_source") or "").strip()
-            for item in strategy_compilation_items
-            if str(item.get("compiler_source") or "").strip()
-        }
-    )
-    return len(strategy_compilation_items), spec_compiled, compiler_sources
-
-
-@dataclass
-class _AutonomyBridgeStatusConfig:
-    """Configuration object to reduce local variable count."""
-
-    gate_artifact_path: str
-    gate_payload: dict[str, object]
-    actuation_artifact_path: str
-    actuation_payload: dict[str, object]
-    provenance_payload: dict[str, object]
-    drift_payload: dict[str, object]
-    metrics_payload: dict[str, object]
-    vnext_payload: dict[str, object]
-
-
-def _extract_autonomy_config(
+def _build_autonomy_bridge_status(
     scheduler: TradingScheduler,
-) -> _AutonomyBridgeStatusConfig:
-    """Extract autonomy configuration from scheduler."""
+) -> dict[str, object]:
     gate_artifact_path = str(
         getattr(scheduler.state, "last_autonomy_gates", "") or ""
     ).strip()
@@ -88,128 +27,28 @@ def _extract_autonomy_config(
         getattr(scheduler.state, "last_autonomy_actuation_intent", "") or ""
     ).strip()
     actuation_payload = _load_json_artifact_payload(actuation_artifact_path)
+    actuation_gates = _to_str_map(actuation_payload.get("gates"))
     provenance_payload = _to_str_map(gate_payload.get("provenance"))
     drift_path = str(
         getattr(scheduler.state, "drift_last_outcome_path", "") or ""
     ).strip()
     drift_payload = _load_json_artifact_payload(drift_path)
+    drift_reasons_raw = drift_payload.get("reasons")
+    drift_reason_codes_raw = drift_payload.get("reason_codes")
+    drift_eligible = drift_payload.get("eligible_for_live_promotion")
     metrics_payload = _to_str_map(gate_payload.get("metrics"))
-    vnext_raw = gate_payload.get("vnext")
-    vnext_payload = (
-        cast(dict[str, object], vnext_raw) if isinstance(vnext_raw, dict) else {}
-    )
+    drawdown = None
+    max_drawdown_raw = metrics_payload.get("max_drawdown")
+    if max_drawdown_raw is not None:
+        try:
+            drawdown = abs(float(str(max_drawdown_raw)))
+        except (TypeError, ValueError):
+            drawdown = None
 
-    return _AutonomyBridgeStatusConfig(
-        gate_artifact_path=gate_artifact_path,
-        gate_payload=gate_payload,
-        actuation_artifact_path=actuation_artifact_path,
-        actuation_payload=actuation_payload,
-        provenance_payload=provenance_payload,
-        drift_payload=drift_payload,
-        metrics_payload=metrics_payload,
-        vnext_payload=vnext_payload,
-    )
-
-
-def _extract_actuation_gates(actuation_payload: dict[str, object]) -> dict[str, object]:
-    """Extract actuation gates from payload."""
-    return _to_str_map(actuation_payload.get("gates"))
-
-
-def _build_evidence_authority(
-    provenance_payload: dict[str, object],
-    actuation_gates: dict[str, object],
-    promotion_evidence: dict[str, object],
-    authority_payload: dict[str, object],
-) -> dict[str, object]:
-    """Build evidence authority payload."""
-    authoritative_count = 0
-    missing_authority: list[str] = []
-    for evidence_name in promotion_evidence:
-        authority_value = authority_payload.get(evidence_name)
-        if not isinstance(authority_value, Mapping):
-            missing_authority.append(str(evidence_name))
-            continue
-        if bool(cast(Mapping[object, object], authority_value).get("authoritative")):
-            authoritative_count += 1
-
-    return {
-        "gate_report_trace_id": str(
-            provenance_payload.get("gate_report_trace_id")
-            or actuation_gates.get("gate_report_trace_id")
-            or ""
-        ).strip()
-        or None,
-        "recommendation_trace_id": str(
-            provenance_payload.get("recommendation_trace_id")
-            or actuation_gates.get("recommendation_trace_id")
-            or ""
-        ).strip()
-        or None,
-        "authoritative_count": authoritative_count,
-        "total_count": len(promotion_evidence),
-        "missing": sorted(set(missing_authority)),
-    }
-
-
-def _build_shadow_live_deviation(
-    promotion_evidence: dict[str, object],
-    scheduler: TradingScheduler,
-    drift_reasons_raw: Any,
-    drift_reason_codes_raw: Any,
-    drift_eligible: Any,
-    source: str,
-) -> dict[str, object] | None:
-    """Build shadow live deviation payload."""
-    if source != "gate_report":
-        return None
-
-    shadow_dev = cast(
-        dict[str, object],
-        promotion_evidence.get("shadow_live_deviation") or {},
-    )
-    return {
-        **shadow_dev,
-        "drift_status": getattr(scheduler.state, "drift_status", None),
-        "eligible_for_live_promotion": (
-            bool(drift_eligible) if drift_eligible is not None else None
-        ),
-        "reason_codes": (
-            [
-                str(item)
-                for item in cast(list[object], drift_reason_codes_raw)
-                if str(item).strip()
-            ]
-            if isinstance(drift_reason_codes_raw, list)
-            else []
-        ),
-        "reasons": (
-            [
-                str(item)
-                for item in cast(list[object], drift_reasons_raw)
-                if str(item).strip()
-            ]
-            if isinstance(drift_reasons_raw, list)
-            else []
-        ),
-    }
-
-
-# pylint: disable=too-many-locals
-def _build_autonomy_bridge_status(
-    scheduler: TradingScheduler,
-) -> dict[str, object]:
-    config = _extract_autonomy_config(scheduler)
-    actuation_gates = _extract_actuation_gates(config.actuation_payload)
-    drift_reasons_raw, drift_reason_codes_raw, drift_eligible = _extract_drift_info(
-        config.drift_payload
-    )
-    _ = _extract_metrics_and_drawdown(config.metrics_payload)
-
-    if not config.gate_payload:
+    if not gate_payload:
         return {
             "source": "unavailable",
-            "run_id": str(config.gate_payload.get("run_id") or "").strip() or None,
+            "run_id": str(gate_payload.get("run_id") or "").strip() or None,
             "strategy_compilation": {
                 "total": 0,
                 "spec_compiled": 0,
@@ -229,59 +68,75 @@ def _build_autonomy_bridge_status(
 
     source = "gate_report"
     if (
-        str(config.gate_payload.get("status") or "").strip() == "skipped"
-        and str(config.gate_payload.get("dataset_snapshot_ref") or "").strip()
+        str(gate_payload.get("status") or "").strip() == "skipped"
+        and str(gate_payload.get("dataset_snapshot_ref") or "").strip()
         == "no_signal_window"
     ):
         source = "no_signal"
 
-    promotion_evidence_raw = config.gate_payload.get("promotion_evidence")
+    promotion_evidence_raw = gate_payload.get("promotion_evidence")
     promotion_evidence = (
         cast(dict[str, object], promotion_evidence_raw)
         if isinstance(promotion_evidence_raw, dict)
         else {}
     )
     dependency_quorum_payload = (
-        cast(dict[str, object], config.gate_payload.get("dependency_quorum"))
-        if isinstance(config.gate_payload.get("dependency_quorum"), dict)
+        cast(dict[str, object], gate_payload.get("dependency_quorum"))
+        if isinstance(gate_payload.get("dependency_quorum"), dict)
         else {}
     )
     alpha_readiness_payload = (
-        cast(dict[str, object], config.gate_payload.get("alpha_readiness"))
-        if isinstance(config.gate_payload.get("alpha_readiness"), dict)
+        cast(dict[str, object], gate_payload.get("alpha_readiness"))
+        if isinstance(gate_payload.get("alpha_readiness"), dict)
         else {}
     )
-    authority_raw = config.provenance_payload.get("promotion_evidence_authority")
+    authority_raw = provenance_payload.get("promotion_evidence_authority")
     authority_payload = (
         cast(dict[str, object], authority_raw)
         if isinstance(authority_raw, dict)
         else {}
     )
-    strategy_total, spec_compiled, compiler_sources = _extract_strategy_compilation(
-        config.vnext_payload
+    vnext_raw = gate_payload.get("vnext")
+    vnext_payload = (
+        cast(dict[str, object], vnext_raw) if isinstance(vnext_raw, dict) else {}
     )
-    evidence_authority = _build_evidence_authority(
-        config.provenance_payload,
-        actuation_gates,
-        promotion_evidence,
-        authority_payload,
+    strategy_compilation_raw = vnext_payload.get("strategy_compilation")
+    portfolio_promotion_raw = vnext_payload.get("portfolio_promotion")
+    strategy_compilation_items = (
+        [
+            cast(dict[str, object], item)
+            for item in cast(list[object], strategy_compilation_raw)
+            if isinstance(item, dict)
+        ]
+        if isinstance(strategy_compilation_raw, list)
+        else []
     )
-    portfolio_promotion_raw = config.vnext_payload.get("portfolio_promotion")
+    spec_compiled = sum(
+        1 for item in strategy_compilation_items if bool(item.get("spec_compiled"))
+    )
+    compiler_sources = sorted(
+        {
+            str(item.get("compiler_source") or "").strip()
+            for item in strategy_compilation_items
+            if str(item.get("compiler_source") or "").strip()
+        }
+    )
 
-    shadow_dev = _build_shadow_live_deviation(
-        promotion_evidence,
-        scheduler,
-        drift_reasons_raw,
-        drift_reason_codes_raw,
-        drift_eligible,
-        source,
-    )
+    authoritative_count = 0
+    missing_authority: list[str] = []
+    for evidence_name in promotion_evidence:
+        authority_value = authority_payload.get(evidence_name)
+        if not isinstance(authority_value, Mapping):
+            missing_authority.append(str(evidence_name))
+            continue
+        if bool(cast(Mapping[object, object], authority_value).get("authoritative")):
+            authoritative_count += 1
 
     return {
         "source": source,
-        "run_id": str(config.gate_payload.get("run_id") or "").strip() or None,
+        "run_id": str(gate_payload.get("run_id") or "").strip() or None,
         "strategy_compilation": {
-            "total": strategy_total,
+            "total": len(strategy_compilation_items),
             "spec_compiled": spec_compiled,
             "compiler_sources": compiler_sources,
         },
@@ -301,10 +156,57 @@ def _build_autonomy_bridge_status(
             if isinstance(promotion_evidence.get("simulation_calibration"), dict)
             else None
         ),
-        "shadow_live_deviation": shadow_dev,
-        "evidence_authority": evidence_authority,
+        "shadow_live_deviation": {
+            **(
+                cast(dict[str, object], promotion_evidence.get("shadow_live_deviation"))
+                if isinstance(promotion_evidence.get("shadow_live_deviation"), dict)
+                else {}
+            ),
+            "drift_status": getattr(scheduler.state, "drift_status", None),
+            "eligible_for_live_promotion": (
+                bool(drift_eligible) if drift_eligible is not None else None
+            ),
+            "reason_codes": (
+                [
+                    str(item)
+                    for item in cast(list[object], drift_reason_codes_raw)
+                    if str(item).strip()
+                ]
+                if isinstance(drift_reason_codes_raw, list)
+                else []
+            ),
+            "reasons": (
+                [
+                    str(item)
+                    for item in cast(list[object], drift_reasons_raw)
+                    if str(item).strip()
+                ]
+                if isinstance(drift_reasons_raw, list)
+                else []
+            ),
+            "max_drawdown": drawdown,
+        }
+        if source == "gate_report"
+        else None,
+        "evidence_authority": {
+            "gate_report_trace_id": str(
+                provenance_payload.get("gate_report_trace_id")
+                or actuation_gates.get("gate_report_trace_id")
+                or ""
+            ).strip()
+            or None,
+            "recommendation_trace_id": str(
+                provenance_payload.get("recommendation_trace_id")
+                or actuation_gates.get("recommendation_trace_id")
+                or ""
+            ).strip()
+            or None,
+            "authoritative_count": authoritative_count,
+            "total_count": len(promotion_evidence),
+            "missing": sorted(set(missing_authority)),
+        },
         "persisted_vnext_objects": _build_persisted_vnext_status(
-            str(config.gate_payload.get("run_id") or "").strip() or None
+            str(gate_payload.get("run_id") or "").strip() or None
         ),
     }
 
