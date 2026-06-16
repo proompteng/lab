@@ -27,6 +27,8 @@ const timestampUtc = () => new Date().toISOString()
 
 const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
+const sleep = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms))
+
 const writeStatus = async (path: string, status: AnypiStatus) => {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
@@ -93,6 +95,33 @@ const failedValidation = (results: ValidationResult[]) => results.find((result) 
 const formatValidationError = (result: ValidationResult) =>
   `validation failed (${result.exitCode}): ${[result.command, ...result.args].join(' ')}`
 
+const waitForModelEndpoint = async (config: AnypiConfig, log: (message: string) => Promise<void>) => {
+  const modelsUrl = `${config.baseUrl.replace(/\/+$/, '')}/models`
+  const deadline = Date.now() + config.modelReadyTimeoutSeconds * 1000
+  let lastError = 'not checked'
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(modelsUrl, {
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+      })
+      if (response.ok) {
+        await log(`model endpoint ready: ${modelsUrl}`)
+        return
+      }
+      lastError = `${response.status} ${response.statusText}`.trim()
+    } catch (error) {
+      lastError = toErrorMessage(error)
+    }
+    await log(`model endpoint not ready: ${modelsUrl} (${lastError})`)
+    await sleep(10_000)
+  }
+
+  throw new Error(`model endpoint not ready after ${config.modelReadyTimeoutSeconds}s: ${modelsUrl} (${lastError})`)
+}
+
 export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<AnypiStatus> => {
   let config = resolveConfig(env)
   const runnerSpec = await loadRunnerSpec(config)
@@ -106,6 +135,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     await writeStatus(config.statusPath, status)
     await logger.info(`starting Anypi for ${status.runName ?? 'unknown run'}`)
     await prepareRepository(config, git, logger.info)
+    await waitForModelEndpoint(config, logger.info)
     const prompt = buildAgentPrompt(runSpec, config.worktree)
     status.promptChars = prompt.length
 

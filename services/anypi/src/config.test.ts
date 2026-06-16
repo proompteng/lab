@@ -15,6 +15,7 @@ describe('Anypi config', () => {
     expect(config.provider).toBe('flamingo')
     expect(config.model).toBe('qwen3-coder-flamingo')
     expect(config.baseUrl).toBe('http://flamingo.flamingo.svc.cluster.local/v1')
+    expect(config.modelReadyTimeoutSeconds).toBe(1800)
     expect(config.thinkingLevel).toBe('off')
     expect(config.tools).toEqual([...ALL_PI_TOOL_NAMES])
     expect(config.noChangeRepairAttempts).toBe(2)

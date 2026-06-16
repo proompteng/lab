@@ -21,6 +21,7 @@ export type AnypiConfig = {
   model: string
   baseUrl: string
   apiKey: string
+  modelReadyTimeoutSeconds: number
   thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
   contextWindow: number
   maxTokens: number
@@ -102,6 +103,7 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): AnypiConfig
     model: readEnv(env, 'ANYPI_MODEL', 'qwen3-coder-flamingo'),
     baseUrl: readEnv(env, 'ANYPI_BASE_URL', 'http://flamingo.flamingo.svc.cluster.local/v1'),
     apiKey: readEnv(env, 'ANYPI_API_KEY', 'flamingo-local'),
+    modelReadyTimeoutSeconds: readNumber(env, 'ANYPI_MODEL_READY_TIMEOUT_SECONDS', 1800),
     thinkingLevel: normalizeThinkingLevel(readEnv(env, 'ANYPI_THINKING_LEVEL', 'off')),
     contextWindow: readNumber(env, 'ANYPI_CONTEXT_WINDOW', 32768),
     maxTokens: readNumber(env, 'ANYPI_MAX_TOKENS', 4096),
