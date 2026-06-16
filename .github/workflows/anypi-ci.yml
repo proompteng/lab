@@ -1,0 +1,26 @@
+name: anypi-ci
+
+on:
+  pull_request:
+    paths:
+      - 'services/anypi/**'
+      - '.github/workflows/anypi-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/anypi/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-lint:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.3.14
+      node-version: 24.11.1
+      install-command: bun install --frozen-lockfile --filter @proompteng/anypi
+      lint-command: bun run --filter @proompteng/anypi lint
+      test-command: bun run --filter @proompteng/anypi test
