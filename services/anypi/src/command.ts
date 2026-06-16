@@ -1,3 +1,4 @@
+import { spawn as nodeSpawn } from 'node:child_process'
 import type { CommandResult } from './types'
 
 export type RunCommandOptions = {
@@ -12,6 +13,9 @@ const buildEnv = (env?: Record<string, string | undefined>) =>
   Object.fromEntries(
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
   ) as Record<string, string>
+
+// Detect if we're in a Bun runtime environment
+const isBun = typeof Bun !== 'undefined'
 
 const readStream = async (
   stream: ReadableStream<Uint8Array> | null,
@@ -34,40 +38,87 @@ const readStream = async (
   return output
 }
 
+const spawnProcess = (command: string, args: string[], options: RunCommandOptions) => {
+  const env = buildEnv(options.env)
+  if (isBun) {
+    const subprocess = Bun.spawn([command, ...args], {
+      cwd: options.cwd,
+      env,
+      stdin: options.input ? 'pipe' : 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    return {
+      subprocess,
+      exited: subprocess.exited,
+      stdout: subprocess.stdout,
+      stderr: subprocess.stderr,
+    }
+  } else {
+    const spawn = nodeSpawn(command, args, {
+      cwd: options.cwd,
+      env,
+      stdio: options.input ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
+    })
+    const stdout = new ReadableStream<Uint8Array>({
+      start(controller) {
+        spawn.stdout?.on('data', (chunk: Buffer) => controller.enqueue(chunk))
+        spawn.stdout?.on('end', () => controller.close())
+      },
+    })
+    const stderr = new ReadableStream<Uint8Array>({
+      start(controller) {
+        spawn.stderr?.on('data', (chunk: Buffer) => controller.enqueue(chunk))
+        spawn.stderr?.on('end', () => controller.close())
+      },
+    })
+    const exitedPromise = new Promise<number>((resolve) => {
+      spawn.on('close', (code) => resolve(code ?? 0))
+      spawn.on('error', () => resolve(1))
+    })
+    if (options.input) {
+      spawn.stdin?.write(options.input)
+      spawn.stdin?.end()
+    }
+    return {
+      subprocess: spawn,
+      exited: exitedPromise,
+      stdout,
+      stderr,
+    }
+  }
+}
+
 export const runCommand = async (
   command: string,
   args: string[],
   options: RunCommandOptions = {},
 ): Promise<CommandResult> => {
   const started = Date.now()
-  const subprocess = Bun.spawn([command, ...args], {
-    cwd: options.cwd,
-    env: buildEnv(options.env),
-    stdin: options.input ? 'pipe' : 'ignore',
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-  if (options.input) {
+  const { subprocess, exited, stdout, stderr } = spawnProcess(command, args, options)
+  if (options.input && !isBun) {
+    // Input already written for node spawn
+  } else if (options.input && isBun) {
     subprocess.stdin?.write(options.input)
     subprocess.stdin?.end()
   }
-  const [exitCode, stdout, stderr] = await Promise.all([
-    subprocess.exited,
-    readStream(subprocess.stdout, options.onOutput),
-    readStream(subprocess.stderr, options.onOutput),
+  const [exitCode, stdoutText, stderrText] = await Promise.all([
+    exited,
+    readStream(stdout, options.onOutput),
+    readStream(stderr, options.onOutput),
   ])
   const result = {
     command,
     args,
     cwd: options.cwd,
     exitCode,
-    stdout,
-    stderr,
+    stdout: stdoutText,
+    stderr: stderrText,
     durationMs: Date.now() - started,
   }
   if (exitCode !== 0 && !options.allowFailure) {
     const rendered = [command, ...args].join(' ')
-    throw new Error(`command failed (${exitCode}): ${rendered}\n${stderr || stdout}`.trim())
+    throw new Error(`command failed (${exitCode}): ${rendered}\n${stderrText || stdoutText}`.trim())
   }
   return result
 }
