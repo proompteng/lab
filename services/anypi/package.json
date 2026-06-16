@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "bun src/main.ts",
-    "test": "bunx vitest run --config vitest.config.ts",
+    "test": "bun test",
     "tsc": "bunx tsc --noEmit -p tsconfig.json",
     "lint": "bunx oxfmt --check src"
   },
