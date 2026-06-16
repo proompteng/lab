@@ -16,6 +16,7 @@ from scripts.check_diff_coverage import (
     _format_summary,
     _git,
     _git_optional,
+    _group_lines_into_ranges,
     _include_untracked_python_files,
     _load_coverage_index,
     _list_untracked_python_files,
@@ -49,6 +50,29 @@ class TestCheckDiffCoverage(TestCase):
         self.assertEqual(args.coverage_xml, "coverage.xml")
         self.assertEqual(args.threshold, 90.0)
         self.assertEqual(args.base_ref, "")
+
+    def test_group_lines_into_ranges_groups_consecutive_numbers(self) -> None:
+        """Consecutive line numbers are grouped into ranges for concise output."""
+        # Empty input
+        self.assertEqual(_group_lines_into_ranges(()), [])
+
+        # Single line
+        self.assertEqual(_group_lines_into_ranges((1,)), ["1"])
+
+        # All consecutive
+        self.assertEqual(_group_lines_into_ranges((1, 2, 3, 4)), ["1-4"])
+
+        # Gaps between ranges
+        self.assertEqual(
+            _group_lines_into_ranges((1, 2, 3, 5, 7, 8, 9)),
+            ["1-3", "5", "7-9"],
+        )
+
+        # Only gaps (all single lines)
+        self.assertEqual(
+            _group_lines_into_ranges((1, 3, 5, 7)),
+            ["1", "3", "5", "7"],
+        )
 
     def test_parse_args_accepts_explicit_values(self) -> None:
         with patch.object(
@@ -464,11 +488,93 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
                     missing_lines=(20,),
                     missing_from_coverage=True,
                 )
-            ]
+            ],
+            service_root=Path(__file__).resolve().parents[1],
         )
 
         self.assertIn("missing-from-coverage", text)
         self.assertIn("missing lines: 20", text)
+
+    def test_format_summary_groups_consecutive_lines_into_ranges(self) -> None:
+        """Consecutive missing lines are shown as ranges (e.g., '11-15' instead of '11,12,13,14,15')."""
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/foo.py",
+                    executable_changed_lines=5,
+                    covered_lines=0,
+                    missing_lines=(11, 12, 13, 15, 17, 18, 19),
+                )
+            ],
+            service_root=Path(__file__).resolve().parents[1],
+        )
+
+        self.assertIn("11-13", text)  # Range for 11,12,13
+        self.assertIn("15", text)  # Single line
+        self.assertIn("17-19", text)  # Range for 17,18,19
+
+    def test_format_summary_includes_source_line_content(self) -> None:
+        """Each missing line shows its source code content for context."""
+        # Create a temporary file with known content
+        with TemporaryDirectory() as tmpdir:
+            app_dir = Path(tmpdir) / "app" / "trading"
+            app_dir.mkdir(parents=True)
+            source_file = app_dir / "foo.py"
+            source_file.write_text(
+                """
+def build() -> int:
+    value = 1
+    return value
+""",
+                encoding="utf-8",
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="app/trading/foo.py",
+                        executable_changed_lines=2,
+                        covered_lines=0,
+                        missing_lines=(3, 4),
+                    )
+                ],
+                service_root=Path(tmpdir),
+            )
+
+        self.assertIn("value = 1", text)  # Line 3 content
+        self.assertIn("return value", text)  # Line 4 content
+
+    def test_format_summary_concise_count_for_multiple_files(self) -> None:
+        """Multiple files are reported with counts and ranges for easy scanning."""
+        with TemporaryDirectory() as tmpdir:
+            app_dir = Path(tmpdir) / "app" / "trading"
+            app_dir.mkdir(parents=True)
+            (app_dir / "foo.py").write_text("def foo():\n    pass\n", encoding="utf-8")
+            (app_dir / "bar.py").write_text("def bar():\n    x = 1\n", encoding="utf-8")
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="app/trading/foo.py",
+                        executable_changed_lines=2,
+                        covered_lines=0,
+                        missing_lines=(2,),
+                    ),
+                    FileDiffCoverage(
+                        filename="app/trading/bar.py",
+                        executable_changed_lines=3,
+                        covered_lines=1,
+                        missing_lines=(2,),
+                    ),
+                ],
+                service_root=Path(tmpdir),
+            )
+
+        self.assertIn("app/trading/foo.py", text)
+        self.assertIn("0/2 lines covered", text)
+        self.assertIn("app/trading/bar.py", text)
+        self.assertIn("1/3 lines covered", text)
+        self.assertIn("line 2:", text)
+        self.assertIn("pass", text)
+        self.assertIn("x = 1", text)
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")

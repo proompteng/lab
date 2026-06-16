@@ -265,7 +265,11 @@ def summarize_changed_coverage(
     return summary
 
 
-def _format_summary(summary: list[FileDiffCoverage]) -> str:
+def _format_summary(
+    summary: list[FileDiffCoverage],
+    *,
+    service_root: Path | None = None,
+) -> str:
     lines: list[str] = []
     for item in summary:
         coverage_pct = item.coverage_ratio * 100
@@ -275,10 +279,44 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
             f"lines covered ({coverage_pct:.2f}%){suffix}"
         )
         if item.missing_lines:
-            lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
-            )
+            # Group consecutive lines into ranges for concise output
+            ranges = _group_lines_into_ranges(item.missing_lines)
+            lines.append(f"  missing lines: {', '.join(ranges)}")
+            # Include source code context for each missing line when available
+            if service_root is not None:
+                source_path = service_root / item.filename
+                if source_path.exists():
+                    source_lines = source_path.read_text(encoding="utf-8").splitlines()
+                    # Show a few lines of context around each missing line
+                    for line_num in item.missing_lines:
+                        if 1 <= line_num <= len(source_lines):
+                            context_line = source_lines[line_num - 1].strip()
+                            lines.append(f"    line {line_num}: {context_line}")
     return "\n".join(lines)
+
+
+def _group_lines_into_ranges(lines: tuple[int, ...]) -> list[str]:
+    """Group sorted line numbers into ranges (e.g., (1,2,3,5,7) -> ['1-3', '5', '7'])."""
+    if not lines:
+        return []
+    ranges: list[str] = []
+    start = lines[0]
+    end = lines[0]
+    for line in lines[1:]:
+        if line == end + 1:
+            end = line
+        else:
+            if start == end:
+                ranges.append(str(start))
+            else:
+                ranges.append(f"{start}-{end}")
+            start = line
+            end = line
+    if start == end:
+        ranges.append(str(start))
+    else:
+        ranges.append(f"{start}-{end}")
+    return ranges
 
 
 def main() -> int:
@@ -329,7 +367,7 @@ def main() -> int:
     coverage_pct = (
         (total_covered / total_executable) * 100 if total_executable else 100.0
     )
-    print(_format_summary(summary))
+    print(_format_summary(summary, service_root=service_root))
     print(
         f"total changed-line coverage: {total_covered}/{total_executable} ({coverage_pct:.2f}%)"
     )
