@@ -139,7 +139,7 @@ Flamingo:
 
 - Argo CD app `flamingo` is `Synced` and `Healthy`.
 - Pod `flamingo-bbb64fd75-sdmr6` is `1/1 Running` on `turin`.
-- Final launch flags include:
+- The 32K baseline launch flags included:
 
 ```text
 --max-model-len 32768 --gpu-memory-utilization 0.92 --max-num-seqs 256 --enable-prefix-caching --tool-call-parser qwen3_coder
@@ -179,6 +179,41 @@ Pi host harness:
 - `pi --provider flamingo --model qwen3-coder-flamingo --no-tools --no-session
   -p "Reply with exactly: pi-flamingo-ready"` returned `pi-flamingo-ready`.
 
+## Context Window Rungs
+
+Qwen3-Coder-Next's native context ceiling is 262,144 tokens. Flamingo's GitOps
+target is the native ceiling; the smaller rungs are retained only as rollback or
+startup-triage points if the native rollout cannot start cleanly.
+
+| Phase | vLLM `--max-model-len` | Pi `contextWindow` | Pi `maxTokens` | Status |
+| --- | ---: | ---: | ---: | --- |
+| 1 | `262144` | `245760` | `8192` | Current native GitOps target |
+| 2 | `131072` | `114688` | `8192` | Roll back here only if 256K fails startup |
+| 3 | `65536` | `57344` | `8192` | Last-resort lower-cap rollback |
+
+Pi compaction settings must stay explicit for every Flamingo rung:
+
+```json
+{
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  }
+}
+```
+
+Required host gate:
+
+```bash
+bun run scripts/jangar/validate-pi-flamingo-compaction.ts
+```
+
+The script uses temporary `PI_CODING_AGENT_DIR` and session directories. It must
+fail if stdout, stderr, or the saved session contains a context-window HTTP
+`400`, `input_tokens`, `maximum context length`, or
+`Context overflow recovery failed`.
+
 ## Optimization Rounds
 
 Record each run with the vLLM image digest, model revision, flags, concurrency,
@@ -212,16 +247,23 @@ Initial rollout evidence:
 - `--max-num-seqs 256` keeps the sequence cap below available Mamba cache
   blocks while preserving the observed 32K-context KV-cache budget.
 
-Round 2: increase utilization and context only after Round 1 is stable.
+Round 2: native 256K context with the same utilization and sequence caps.
 
-Patch one flag at a time in Git:
+Deployed target flags:
 
 ```text
---gpu-memory-utilization 0.94
---max-model-len 65536
+--max-model-len 262144 --gpu-memory-utilization 0.92 --max-num-seqs 256 --enable-prefix-caching --tool-call-parser qwen3_coder
 ```
 
-Do not combine utilization and context increases in one rollout.
+Keep `--gpu-memory-utilization 0.92` and `--max-num-seqs 256` for this native
+context increase. Update Pi to `contextWindow: 245760`, keep
+`maxTokens: 8192`, and require the host compaction gate to record a
+`compaction` session entry without overflow recovery. YaRN or 1M-context
+experiments are intentionally out of scope for Flamingo's local default path.
+
+If 256K fails startup, roll back one cap at a time to `131072`, then `65536`,
+while keeping the same Pi budget table above and rerunning the same server and
+host gates.
 
 Round 3: MoE tuning.
 

@@ -82,7 +82,30 @@ curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
 Expected tool-call result:
 
 ```json
-{"name":"add","arguments":"{\"a\": 7, \"b\": 35}"}
+{ "name": "add", "arguments": "{\"a\": 7, \"b\": 35}" }
+```
+
+## Client Context Budget
+
+Keep Pi's `models.json` budget below the vLLM server rung. Do not set the Pi
+client window to the exact native Qwen3-Coder-Next ceiling.
+
+| vLLM `--max-model-len` | Pi `contextWindow` | Pi `maxTokens` |
+| ---------------------- | -----------------: | -------------: |
+| `262144`               |           `245760` |         `8192` |
+| `131072`               |           `114688` |         `8192` |
+| `65536`                |            `57344` |         `8192` |
+
+Compaction must stay explicit in `settings.json` for Flamingo host runs:
+
+```json
+{
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  }
+}
 ```
 
 ## Pi Binary Smoke
@@ -100,7 +123,12 @@ cat > "$PI_TMP_DIR/settings.json" <<'JSON'
   "defaultModel": "qwen3-coder-flamingo",
   "defaultThinkingLevel": "off",
   "quietStartup": true,
-  "enableInstallTelemetry": false
+  "enableInstallTelemetry": false,
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  }
 }
 JSON
 
@@ -121,8 +149,8 @@ cat > "$PI_TMP_DIR/models.json" <<'JSON'
           "name": "Qwen3 Coder Flamingo",
           "reasoning": false,
           "input": ["text"],
-          "contextWindow": 32768,
-          "maxTokens": 4096,
+          "contextWindow": 245760,
+          "maxTokens": 8192,
           "cost": {
             "input": 0,
             "output": 0,
@@ -150,6 +178,30 @@ Expected output:
 
 ```text
 pi-flamingo-ready
+```
+
+## Pi Compaction Gate
+
+Run the repo-local gate from the Mac host before using Flamingo for long Pi
+sessions. It writes temporary `settings.json`, `models.json`, and session files,
+then proves a follow-up turn can use a compaction summary without falling back to
+overflow recovery.
+
+```bash
+bun run scripts/jangar/validate-pi-flamingo-compaction.ts
+```
+
+While the live server is still on the old 32K rung, run the reduced smoke
+against the same code path:
+
+```bash
+PI_FLAMINGO_SERVER_CONTEXT=32768 \
+PI_FLAMINGO_CLIENT_CONTEXT=24576 \
+PI_FLAMINGO_MAX_TOKENS=2048 \
+PI_FLAMINGO_COMPACTION_RESERVE=8192 \
+PI_FLAMINGO_KEEP_RECENT=4000 \
+PI_FLAMINGO_PROMPT_CHARS=90000 \
+bun run scripts/jangar/validate-pi-flamingo-compaction.ts
 ```
 
 ## Rollback
