@@ -249,6 +249,7 @@ def _retryable_tca_recompute_error(exc: BaseException) -> bool:
     return "deadlock detected" in message or "serialization failure" in message
 
 
+retryable_tca_recompute_error = _retryable_tca_recompute_error
 _TRADING_HEALTH_SURFACE_EVALUATIONS: dict[
     str,
     Future[tuple[dict[str, object], int]],
@@ -265,6 +266,19 @@ _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
 _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = Lock()
 _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = "TORGHUT_SIM"
 _paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
+ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
+TRADING_STATUS_READ_BUDGET_SECONDS = _TRADING_STATUS_READ_BUDGET_SECONDS
+PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = (
+    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS
+)
+PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK
+PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = (
+    _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL
+)
+shared_mapping_items = _shared_mapping_items
+shared_paper_route_target_plan_from_payload = (
+    _shared_paper_route_target_plan_from_payload
+)
 _READINESS_PROMOTION_AUTHORITY_KEYS = frozenset(
     {
         "promotion_authority",
@@ -296,6 +310,67 @@ def main_runtime_value(name: str, default: object | None = None) -> Any:
     if main_module is not None and hasattr(main_module, name):
         return getattr(main_module, name)
     return globals().get(name, default)
+
+
+_EXPORTED_SYMBOLS = {
+    "BUILD_COMMIT": BUILD_COMMIT,
+    "BUILD_VERSION": BUILD_VERSION,
+    "HTTPConnection": HTTPConnection,
+    "HTTPSConnection": HTTPSConnection,
+    "SessionLocal": SessionLocal,
+    "TorghutAlpacaClient": TorghutAlpacaClient,
+    "WHITEPAPER_WORKFLOW": WHITEPAPER_WORKFLOW,
+    "_ALPACA_HEALTH_STATE": _ALPACA_HEALTH_STATE,
+    "_OPTIONS_CATALOG_FRESHNESS_CACHE": _OPTIONS_CATALOG_FRESHNESS_CACHE,
+    "_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR": (
+        _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR
+    ),
+    "_TRADING_HEALTH_SURFACE_EVALUATION_LOCK": (
+        _TRADING_HEALTH_SURFACE_EVALUATION_LOCK
+    ),
+    "_TRADING_HEALTH_SURFACE_EVALUATIONS": _TRADING_HEALTH_SURFACE_EVALUATIONS,
+    "_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE": _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
+    "_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS": (
+        _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+    ),
+    "_TRADING_STATUS_READ_BUDGET_SECONDS": _TRADING_STATUS_READ_BUDGET_SECONDS,
+    "_TRADING_DEPENDENCY_HEALTH_CACHE": _TRADING_DEPENDENCY_HEALTH_CACHE,
+    "_paper_route_target_plan_success_cache": (_paper_route_target_plan_success_cache),
+    "_retryable_tca_recompute_error": _retryable_tca_recompute_error,
+    "build_capital_replay_projection": build_capital_replay_projection,
+    "build_empirical_jobs_status": build_empirical_jobs_status,
+    "build_hypothesis_runtime_summary": build_hypothesis_runtime_summary,
+    "build_live_submission_gate_payload": build_live_submission_gate_payload,
+    "build_llm_evaluation_metrics": build_llm_evaluation_metrics,
+    "build_profit_signal_quorum": build_profit_signal_quorum,
+    "build_profitability_proof_floor_receipt": build_profitability_proof_floor_receipt,
+    "build_quality_adjusted_profit_frontier": build_quality_adjusted_profit_frontier,
+    "build_renewal_bond_profit_escrow": build_renewal_bond_profit_escrow,
+    "build_revenue_repair_digest": build_revenue_repair_digest,
+    "build_tca_gate_inputs": build_tca_gate_inputs,
+    "check_schema_current": check_schema_current,
+    "check_tigerbeetle_health": check_tigerbeetle_health,
+    "evaluate_feature_batch_quality": evaluate_feature_batch_quality,
+    "hypothesis_registry_requires_dependency_capability": (
+        hypothesis_registry_requires_dependency_capability
+    ),
+    "latest_tigerbeetle_reconciliation_payload": (
+        latest_tigerbeetle_reconciliation_payload
+    ),
+    "load_jangar_dependency_quorum": load_jangar_dependency_quorum,
+    "load_jangar_route_continuity_packet": load_jangar_route_continuity_packet,
+    "load_hypothesis_registry": load_hypothesis_registry,
+    "load_quant_evidence_status": load_quant_evidence_status,
+    "persist_evidence_epoch": persist_evidence_epoch,
+    "refresh_execution_tca_metrics": refresh_execution_tca_metrics,
+    "resolve_hypothesis_dependency_quorum": resolve_hypothesis_dependency_quorum,
+    "tigerbeetle_ref_counts": tigerbeetle_ref_counts,
+    "time": time,
+    "retryable_tca_recompute_error": retryable_tca_recompute_error,
+    "whitepaper_kafka_enabled": whitepaper_kafka_enabled,
+    "whitepaper_semantic_indexing_enabled": whitepaper_semantic_indexing_enabled,
+    "whitepaper_workflow_enabled": whitepaper_workflow_enabled,
+}
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

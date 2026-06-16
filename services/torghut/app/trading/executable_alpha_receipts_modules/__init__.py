@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
-_impl = import_module(f"{__name__}.part_04_candidate_replays")
+_impl = import_module(f"{__name__}.candidate_replays")
 
 CAPITAL_REPLAY_BOARD_SCHEMA_VERSION = getattr(
     _impl, "CAPITAL_REPLAY_BOARD_SCHEMA_VERSION"

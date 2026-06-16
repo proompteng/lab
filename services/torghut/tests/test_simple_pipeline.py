@@ -2,8 +2,56 @@ from __future__ import annotations
 
 # ruff: noqa: F401,F403,F405
 __test__ = False
-from tests.simple_pipeline.support import *
-from tests.simple_pipeline.test_part_01 import *
-from tests.simple_pipeline.test_part_02 import *
-from tests.simple_pipeline.test_part_03 import *
-from tests.simple_pipeline.test_part_04 import *
+from tests.simple_pipeline.test_live_paper_runtime_ledger_close_loop_still_respects_profitability_gates import (
+    test_bounded_sim_collection_authorizes_non_final_hpairs_target_only,
+    test_bounded_sim_collection_blocks_missing_source_lineage_prerequisites,
+    test_live_paper_runtime_ledger_close_loop_still_respects_profitability_gates,
+    test_paper_route_target_metadata_is_collection_only_without_live_capital_mutation,
+    test_source_collection_target_defaults_current_session_probe_contract,
+    test_target_notional_budget_and_quote_reference_defensive_paths,
+    test_target_probe_symbol_quantities_apply_target_quantity_fallback,
+    test_target_quantity_resolution_records_fallback_blockers,
+    test_target_sizing_price_uses_target_snapshot_and_handles_fetcher_failures,
+    test_target_source_decisions_size_default_quantities_from_target_notional,
+    test_target_source_decisions_skip_target_notional_below_min_step,
+)
+from tests.simple_pipeline.test_target_source_decisions_fail_closed_without_target_notional_price import (
+    test_blocked_target_readiness_maps_collection_gate_to_wait_for_fresh_quote,
+    test_bounded_sim_collection_fails_closed_when_account_audit_missing,
+    test_bounded_sim_collection_fails_closed_when_account_audit_unavailable,
+    test_bounded_source_collection_authorizes_after_runtime_account_audit_readback,
+    test_ensure_decision_price_backfills_target_quote_when_snapshot_missing,
+    test_ensure_decision_price_backfills_target_quote_when_snapshot_price_only,
+    test_paper_route_probe_cap_promotes_single_target_lineage_to_top_level,
+    test_paper_route_quote_helpers_read_target_snapshot_fallbacks,
+    test_paper_route_quote_routeability_blocks_fillability_absent_and_mismatch,
+    test_paper_route_quote_routeability_prefers_executable_snapshot_price,
+    test_paper_route_quote_routeability_uses_target_metadata_quote_snapshot,
+    test_paper_route_quote_routeability_uses_target_quote_when_snapshot_price_only,
+    test_target_plan_source_mismatch_readback_handles_no_metadata_and_symbol_field,
+    test_target_plan_source_mismatch_rejects_pair_leg_side_mismatch,
+    test_target_source_decisions_fail_closed_without_target_notional_price,
+    test_target_symbols_accept_action_and_execution_source_fields,
+    test_target_symbols_accept_clean_window_baseline_symbol_evidence,
+)
+from tests.simple_pipeline.test_local_target_plan_enriches_probe_contract_before_bounded_gate import (
+    test_bounded_paper_route_authorized_without_live_simple_submit_enabled,
+    test_bounded_sim_collection_accepts_declared_paper_account_alias,
+    test_bounded_source_collection_blocks_closed_session_with_explicit_reason,
+    test_contaminated_bounded_window_still_reserves_paper_account,
+    test_hpairs_owner_skips_other_source_collection_targets_for_same_paper_account,
+    test_local_target_plan_enriches_probe_contract_before_bounded_gate,
+    test_simple_submit_disabled_bypass_requires_explicit_bounded_sim_collection,
+    test_source_collection_authorization_emits_bounded_lineage_decisions_without_candidate_hardcode,
+    test_stale_unfilled_hpairs_closeout_does_not_block_retry_with_source_lineage,
+    test_target_account_audit_unavailable_still_reserves_paper_account,
+)
+from tests.simple_pipeline.test_pending_clean_window_baseline_still_reserves_paper_account import (
+    test_bounded_paper_route_execution_metadata_keeps_live_capital_closed,
+    test_empty_target_plan_symbols_do_not_reserve_account,
+    test_pending_clean_window_baseline_still_reserves_paper_account,
+    test_target_account_audit_unavailable_still_scopes_signal_ingest,
+    test_target_plan_fetch_error_reserves_configured_paper_account,
+    test_target_plan_fetch_error_without_config_does_not_reserve_paper_account,
+    test_target_runtime_account_and_window_helpers_cover_identity_edges,
+)

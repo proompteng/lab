@@ -2,7 +2,14 @@ from __future__ import annotations
 
 # ruff: noqa: F401,F403,F405
 
-from tests.submission_council.support import *
+from tests.submission_council.support import (
+    SubmissionCouncilTestCase,
+    _FakeQuantHealthResponse,
+    load_quant_evidence_status,
+    patch,
+    resolve_quant_health_url,
+    settings,
+)
 
 
 class TestSubmissionCouncilQuantHealth(SubmissionCouncilTestCase):

@@ -6,13 +6,13 @@ import logging as __compat_logging__
 import sys as __compat_sys__
 import types as __compat_types__
 
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
+__compat_module_segments__: list[__compat_types__.ModuleType] = []
 
 
 class __CompatModule__(__compat_types__.ModuleType):
     def __setattr__(self, name: str, value: object) -> None:
         super().__setattr__(name, value)
-        for module in __compat_part_modules__:
+        for module in __compat_module_segments__:
             module.__dict__[name] = value
 
 
@@ -23,47 +23,47 @@ def __compat_export__(module: __compat_types__.ModuleType) -> None:
         globals()[name] = value
 
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_50")
-__compat_part_modules__.append(__compat_module__)
+__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_module__ = __compat_import_module__(
-    f"{__name__}.part_02_tradingschedulergovernancemixinmethodspart"
+    f"{__name__}.governance_mixin_lifecycle_methods"
 )
-__compat_part_modules__.append(__compat_module__)
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_module__ = __compat_import_module__(
-    f"{__name__}.part_03_tradingschedulergovernancemixinmethodspart"
+    f"{__name__}.governance_mixin_decision_methods"
 )
-__compat_part_modules__.append(__compat_module__)
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_module__ = __compat_import_module__(
-    f"{__name__}.part_04_tradingschedulergovernancemixinmethodspart"
+    f"{__name__}.governance_mixin_runtime_methods"
 )
-__compat_part_modules__.append(__compat_module__)
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_sys__.modules[__name__].__class__ = __CompatModule__
 logger = __compat_logging__.getLogger(__name__.removesuffix("_modules"))
-for __compat_loaded_module__ in globals().get("__compat_part_modules__", ()):
+for __compat_loaded_module__ in globals().get("__compat_module_segments__", ()):
     __compat_loaded_module__.__dict__["logger"] = logger
 __all__ = [
     name

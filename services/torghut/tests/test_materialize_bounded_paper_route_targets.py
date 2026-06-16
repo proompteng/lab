@@ -2,7 +2,58 @@ from __future__ import annotations
 
 # ruff: noqa: F401,F403,F405
 __test__ = False
-from tests.materialize_bounded_paper_route_targets.support import *
-from tests.materialize_bounded_paper_route_targets.test_part_01 import *
-from tests.materialize_bounded_paper_route_targets.test_part_02 import *
-from tests.materialize_bounded_paper_route_targets.test_part_03 import *
+from tests.materialize_bounded_paper_route_targets.test_dry_run_is_default_and_rolls_back_materialization import (
+    test_cli_preserves_existing_paper_route_target_plan_materialization_semantics,
+    test_commit_rejects_missing_account_and_dsn_confirmation,
+    test_commit_writes_only_for_torghut_sim_with_explicit_confirmations,
+    test_dry_run_is_default_and_rolls_back_materialization,
+    test_materializer_repairs_existing_payloads_missing_executable_strategy_id,
+    test_paper_route_materializer_blocks_notional_target_missing_capacity_contract,
+    test_paper_route_materializer_window_check_reports_missing_target_windows,
+    test_paper_route_materializer_window_datetime_helpers_handle_edge_cases,
+    test_paper_route_target_plan_dynamic_target_index_filter_accepts_confirmation_alias,
+    test_paper_route_target_plan_dynamic_target_index_filter_ignores_string_alias_list,
+    test_paper_route_target_plan_invalid_payload_reports_load_blockers,
+    test_paper_route_target_plan_json_and_scalar_helpers_preserve_report_encoding_edges,
+    test_paper_route_target_plan_sqlalchemy_dsn_uses_installed_psycopg_driver,
+    test_paper_route_target_plan_target_summary_accepts_explicit_quantity_and_symbol_fallbacks,
+    test_rejects_live_account_labels,
+    test_rejects_promotion_capital_and_final_authority_flags,
+    test_rejects_unbounded_or_missing_target_identity,
+    test_source_collection_only_plan_blocks_materialization_before_db_write,
+    test_url_payload_accepts_trading_proofs_materialization_plan,
+    test_url_payload_prefers_bounded_plan_over_larger_source_collection_plan,
+    test_url_payload_prefers_nested_hpairs_materialization_plan,
+)
+from tests.materialize_bounded_paper_route_targets.test_commit_url_nested_plan_with_dynamic_confirmation_writes_targets import (
+    test_commit_dynamic_next_window_plan_at_configured_notional_skips_before_open,
+    test_commit_dynamic_next_window_plan_at_configured_notional_writes_when_open,
+    test_commit_dynamic_next_window_plan_blocks_when_confirmed_target_is_absent,
+    test_commit_dynamic_next_window_plan_filters_to_confirmed_hpairs_target,
+    test_commit_dynamic_plan_confirms_strategy_lookup_alias_before_skip,
+    test_commit_dynamic_plan_prefers_materializable_next_window_over_stale_hpairs_import,
+    test_commit_dynamic_plan_skips_before_active_target_window_without_writes,
+    test_commit_dynamic_source_allowlist_selects_active_next_window_over_closed_latest,
+    test_commit_dynamic_source_collection_plan_skips_without_target_window,
+    test_commit_url_nested_plan_with_dynamic_confirmation_writes_targets,
+    test_dynamic_plan_selection_prefers_latest_closed_plan_before_next_window,
+    test_dynamic_plan_selection_prefers_sanitized_isolated_hpairs_plan,
+)
+from tests.materialize_bounded_paper_route_targets.test_commit_dynamic_plan_filters_to_active_target_window_subset import (
+    test_commit_dynamic_confirmation_rejects_wrong_selected_plan_source,
+    test_commit_dynamic_plan_filters_to_active_target_window_subset,
+    test_commit_dynamic_plan_requires_active_target_window_without_skip,
+    test_paper_route_target_plan_database_open_failure_is_reported,
+    test_paper_route_target_plan_missing_dsn_live_capital_mode_and_empty_plan_are_blockers,
+    test_paper_route_target_plan_rejects_exceeded_notional_and_missing_actions,
+    test_paper_route_target_plan_url_load_failure_is_reported_without_materialization,
+    test_paper_route_target_plan_writes_json_output_file_for_safe_dry_run,
+    test_plan_url_fetch_records_failed_attempt_count,
+    test_plan_url_fetch_rejects_missing_host,
+    test_plan_url_fetch_reports_oversized_response,
+    test_plan_url_fetch_reports_request_failure,
+    test_plan_url_fetch_reports_status_json_and_payload_errors,
+    test_plan_url_fetch_requests_json_path_query_and_closes,
+    test_plan_url_fetch_retries_and_records_attempt_count,
+    test_plan_url_payload_without_materializable_plan_is_reported,
+)

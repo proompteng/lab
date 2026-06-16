@@ -3,11 +3,11 @@ from __future__ import annotations
 from app.strategies.catalog import extract_catalog_metadata
 
 from .strategy_runtime_modules import (
-    part_01_empty_meta as _empty_meta_helpers,
-    part_02_evaluate_microbar_cross_sectional as _microbar_evaluator_helpers,
-    part_03_coerce_plugin_result as _plugin_result_helpers,
+    coerce_plugin_result as _plugin_result_helpers,
+    empty_meta as _empty_meta_helpers,
+    evaluate_microbar_cross_sectional as _microbar_evaluator_helpers,
 )
-from .strategy_runtime_modules.part_02_evaluate_microbar_cross_sectional import (
+from .strategy_runtime_modules.evaluate_microbar_cross_sectional import (
     AggregatedIntent,
     PluginEvaluationResult,
     RuntimeDecision,
@@ -19,14 +19,14 @@ from .strategy_runtime_modules.part_02_evaluate_microbar_cross_sectional import 
     StrategyIntent,
     StrategyPlugin,
 )
-from .strategy_runtime_modules.part_03_coerce_plugin_result import (
+from .strategy_runtime_modules.coerce_plugin_result import (
     IntentAggregator,
     IntradayTsmomPlugin,
     LegacyMacdRsiPlugin,
     MomentumPullbackLongPlugin,
     StrategyRegistry,
 )
-from .strategy_runtime_modules.part_04_breakoutcontinuationlongplugin import (
+from .strategy_runtime_modules.breakout_continuation_long_plugin import (
     BreakoutContinuationLongPlugin,
     MeanReversionExhaustionShortPlugin,
     MeanReversionReboundLongPlugin,
@@ -35,7 +35,7 @@ from .strategy_runtime_modules.part_04_breakoutcontinuationlongplugin import (
     MicrobarCrossSectionalShortPlugin,
     WashoutReboundLongPlugin,
 )
-from .strategy_runtime_modules.part_05_latedaycontinuationlongplugin import (
+from .strategy_runtime_modules.late_day_continuation_long_plugin import (
     EndOfDayReversalLongPlugin,
     LateDayContinuationLongPlugin,
     StrategyRuntime,

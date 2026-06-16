@@ -42,7 +42,7 @@ from tests.tigerbeetle_journal.support import (
 )
 
 
-class TestTigerBeetleLedgerJournalPart1(_TestTigerBeetleLedgerJournalBase):
+class TestLedgerJournalCore(_TestTigerBeetleLedgerJournalBase):
     def test_disabled_journal_is_noop(self) -> None:
         with Session(self.engine) as session:
             event = _create_fill_event(session)

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import part_01_statements_10 as _dependency_surface
-from . import part_02_evaluate_trading_health_payload_bounded as _bounded_health
-from . import part_03_evaluate_trading_health_payload as _trading_health
-from . import part_04_refresh_universe_state_for_readiness as _database_contract
+from . import shared_context as _dependency_surface
+from . import evaluate_trading_health_payload_bounded as _bounded_health
+from . import evaluate_trading_health_payload as _trading_health
+from . import refresh_universe_state_for_readiness as _database_contract
 from ..proxy import capture_module_exports
 
 _IMPLEMENTATION_MODULES: tuple[object, ...] = (

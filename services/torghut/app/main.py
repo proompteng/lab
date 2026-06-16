@@ -7,8 +7,8 @@ from __future__ import annotations
 import sys
 
 from . import bootstrap as app_bootstrap
-from .api.common import *
 from .api.proxy import export_api_symbols, install_main_compat_proxies
+from .api import common as common_api
 from .api import status_helpers as status_helpers_api
 from .api import readiness_helpers as readiness_helpers_api
 from .api import readiness as readiness_api
@@ -41,6 +41,7 @@ sqlalchemy_exception_handler = app_bootstrap.sqlalchemy_exception_handler
 app = create_app()
 
 API_MODULES = (
+    common_api,
     status_helpers_api,
     readiness_helpers_api,
     readiness_api,
@@ -209,6 +210,7 @@ install_main_compat_proxies(
         "_paper_route_target_plan_from_payload",
         "_paper_route_target_plan_probe_notional",
         "_paper_route_target_plan_probe_symbols",
+        "_paper_route_target_plan_success_cache",
         "_paper_route_target_plan_targets",
         "_paper_route_target_plan_truthy",
         "_paper_route_target_plan_url_points_to_self",

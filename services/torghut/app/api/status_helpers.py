@@ -8,16 +8,51 @@ from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
-from .proxy import capture_module_exports
+from .common import (
+    JangarDependencyQuorumStatus,
+    Mapping,
+    SQLAlchemyError,
+    Session,
+    SessionLocal,
+    TRADING_STATUS_READ_BUDGET_SECONDS,
+    TradingScheduler,
+    cast,
+    datetime,
+    load_hypothesis_registry,
+    logger,
+    main_runtime_value,
+    resolve_hypothesis_dependency_quorum,
+    settings,
+    text,
+    time,
+    timezone,
+)
+from .proxy import MainAttrProxy, capture_module_exports
+
+_build_hypothesis_runtime_payload = MainAttrProxy("_build_hypothesis_runtime_payload")
+_build_tigerbeetle_ledger_status = MainAttrProxy("_build_tigerbeetle_ledger_status")
+_daily_runtime_ledger_portfolio_summary = MainAttrProxy(
+    "_daily_runtime_ledger_portfolio_summary"
+)
+_empty_tigerbeetle_ref_counts = MainAttrProxy("_empty_tigerbeetle_ref_counts")
+_load_llm_evaluation = MainAttrProxy("_load_llm_evaluation")
+_load_tca_summary = MainAttrProxy("_load_tca_summary")
+_unavailable_tigerbeetle_reconciliation_payload = MainAttrProxy(
+    "_unavailable_tigerbeetle_reconciliation_payload"
+)
 
 
 class _TradingStatusReadBudget:
     def __init__(self, *, max_seconds: float | None = None):
         configured_seconds = (
-            _TRADING_STATUS_READ_BUDGET_SECONDS if max_seconds is None else max_seconds
+            main_runtime_value(
+                "_TRADING_STATUS_READ_BUDGET_SECONDS",
+                TRADING_STATUS_READ_BUDGET_SECONDS,
+            )
+            if max_seconds is None
+            else max_seconds
         )
         self.max_seconds = max(0.0, float(configured_seconds))
         self._started_at = time.monotonic()

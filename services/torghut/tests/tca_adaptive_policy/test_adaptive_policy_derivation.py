@@ -19,9 +19,7 @@ from tests.tca_adaptive_policy.support import (
 )
 
 
-class TestAdaptiveExecutionPolicyDerivationPart1(
-    _TestAdaptiveExecutionPolicyDerivationBase
-):
+class TestAdaptivePolicyDerivation(_TestAdaptiveExecutionPolicyDerivationBase):
     def test_derivation_builds_defensive_override_for_high_recent_slippage(
         self,
     ) -> None:

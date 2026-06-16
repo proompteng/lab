@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import part_01_statements_10 as _proof_floor
-from . import part_02_build_jangar_reliability_settlement_ref as _proof_refs
+from . import shared_context as _proof_floor
+from . import build_jangar_reliability_settlement_ref as _proof_refs
 from ..proxy import capture_module_exports
 
 _IMPLEMENTATION_MODULES: tuple[object, ...] = (

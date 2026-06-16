@@ -8,10 +8,43 @@ from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
-from .proxy import capture_module_exports
+from .common import (
+    Decimal,
+    Mapping,
+    Path,
+    SQLAlchemyError,
+    Session,
+    SessionLocal,
+    TradingScheduler,
+    VNextDatasetSnapshot,
+    VNextExperimentRun,
+    VNextExperimentSpec,
+    VNextFeatureViewSpec,
+    VNextModelArtifact,
+    VNextPromotionDecision,
+    VNextShadowLiveDeviation,
+    VNextSimulationCalibration,
+    build_llm_evaluation_metrics,
+    cast,
+    func,
+    json,
+    logger,
+    select,
+)
+from .proxy import MainAttrProxy, capture_module_exports
+
+_apply_status_read_statement_timeout = MainAttrProxy(
+    "_apply_status_read_statement_timeout"
+)
+_budget_unavailable_llm_evaluation_payload = MainAttrProxy(
+    "_budget_unavailable_llm_evaluation_payload"
+)
+_rollback_status_read_session = MainAttrProxy("_rollback_status_read_session")
+_sqlalchemy_error_indicates_statement_timeout = MainAttrProxy(
+    "_sqlalchemy_error_indicates_statement_timeout"
+)
 
 
 def _build_autonomy_bridge_status(

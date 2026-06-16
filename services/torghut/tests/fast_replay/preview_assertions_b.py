@@ -3,8 +3,6 @@ from __future__ import annotations
 # ruff: noqa: F401,F403,F405
 from typing import Any
 
-from tests.fast_replay.support import *
-
 
 def assert_fast_replay_preview_lineage_payloads(
     test_case: Any,

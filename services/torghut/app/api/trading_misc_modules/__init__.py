@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import part_01_statements_10 as _consumer_evidence
-from . import part_02_trading_autonomy as _autonomy
-from . import part_03_trading_executions as _executions
+from . import shared_context as _consumer_evidence
+from . import trading_autonomy as _autonomy
+from . import trading_executions as _executions
 from ..proxy import capture_module_exports
 
 _IMPLEMENTATION_MODULES: tuple[object, ...] = (

@@ -8,10 +8,15 @@ from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
-from .proxy import capture_module_exports
+from .common import cast
+from .proxy import MainAttrProxy, capture_module_exports
+
+_extract_gate_result = MainAttrProxy("_extract_gate_result")
+_load_json_artifact_payload = MainAttrProxy("_load_json_artifact_payload")
+_safe_int = MainAttrProxy("_safe_int")
+_to_str_map = MainAttrProxy("_to_str_map")
 
 
 def _load_runtime_profitability_gate_rollback_attribution(

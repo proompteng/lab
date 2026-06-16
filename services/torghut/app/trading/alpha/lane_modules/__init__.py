@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
-_impl = import_module(f"{__name__}.part_03_run_alpha_discovery_lane")
+_impl = import_module(f"{__name__}.run_alpha_discovery_lane")
 
 AlphaLaneResult = getattr(_impl, "AlphaLaneResult")
 _StageManifestRecord = getattr(_impl, "_StageManifestRecord")

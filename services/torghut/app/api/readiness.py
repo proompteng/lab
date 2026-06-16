@@ -8,11 +8,15 @@ from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
-from .proxy import capture_module_exports
+from .common import (
+    JSONResponse,
+    jsonable_encoder,
+)
+from .proxy import MainAttrProxy, capture_module_exports
 
+_evaluate_core_readiness_payload = MainAttrProxy("_evaluate_core_readiness_payload")
 router = APIRouter()
 
 

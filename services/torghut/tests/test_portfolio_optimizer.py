@@ -2,9 +2,18 @@ from __future__ import annotations
 
 # ruff: noqa: F401,F403,F405
 __test__ = False
-from tests.portfolio_optimizer.support import *
-from tests.portfolio_optimizer.test_part_01 import *
-from tests.portfolio_optimizer.test_part_02 import *
-from tests.portfolio_optimizer.test_part_03 import *
-from tests.portfolio_optimizer.test_part_04 import *
-from tests.portfolio_optimizer.test_part_05 import *
+from tests.portfolio_optimizer.test_exact_replay_ledger_helpers_accept_exact_replay_refs_and_counts import (
+    TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts,
+)
+from tests.portfolio_optimizer.test_portfolio_aggregates_market_impact_stress_into_oracle import (
+    TestPortfolioAggregatesMarketImpactStressIntoOracle,
+)
+from tests.portfolio_optimizer.test_portfolio_allows_research_candidates_pending_validation_contract import (
+    TestPortfolioAllowsResearchCandidatesPendingValidationContract,
+)
+from tests.portfolio_optimizer.test_invalid_evidence_bundles_are_not_admitted_to_portfolios import (
+    TestInvalidEvidenceBundlesAreNotAdmittedToPortfolios,
+)
+from tests.portfolio_optimizer.test_optimizer_prefers_lower_concentration_before_raw_pnl_when_blocked import (
+    TestOptimizerPrefersLowerConcentrationBeforeRawPnlWhenBlocked,
+)
