@@ -572,7 +572,6 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
             ),
         ]
         text = _format_summary(summary)
-        lines = text.split("\n")
 
         # Verify alphabetical ordering of files (app/... comes before scripts/...)
         self.assertIn("app/trading/foo.py", text)
