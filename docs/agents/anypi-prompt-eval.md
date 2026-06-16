@@ -66,7 +66,8 @@ failures. If no variant passes, leave `anypi-agent` on `minimal`, record the fai
 
 | Variant | Task | AgentRun | PR | Local validation | Required CI | Repairs | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| pending | pending | pending | pending | pending | pending | pending | pending |
+| mixed | five-run batch | `20260616a` | `#10911`, `#10912`, `#10913` before invalidation | Some local validations passed | Invalid measurement: image had `gh` 2.46.0 without `pr checks --json`, so the runner saw zero checks while GitHub had failures | Not scored | Do not promote from this batch |
+| pending | five-run batch | `20260616b` | pending | pending | pending | pending | Scheduled with `registry.ide-newton.ts.net/lab/anypi:7c86cfdd7@sha256:31b16040a32f6e3e92ef06198cc7e006e4dc8e6d2bcc26ddaab5babc47cfd3d0` |
 
 ## Commands
 
