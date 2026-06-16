@@ -1,9 +1,16 @@
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+
 import { describe, expect, test } from 'vitest'
 
 import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
 import {
   isNoChecksReportedResult,
   isNoRequiredChecksResult,
+  classifyRestrictedChangedFile,
+  validateChangedFilePolicy,
   parseCiChecks,
   parseCiChecksResult,
   parsePullRequestList,
@@ -107,6 +114,7 @@ describe('Anypi prompt contract', () => {
       '/workspace/lab',
     )
     expect(prompt).toContain('Use repository instructions and existing patterns')
+    expect(prompt).toContain('Do not edit generated files or lockfiles')
     expect(prompt).toContain('Refactor code and add tests.')
     expect(prompt).toContain('Leave the final changes in the worktree')
     expect(prompt).not.toMatch(/Anypi|YOLO|Kubernetes|Pi SDK|shell, read, edit, write/)
@@ -116,6 +124,7 @@ describe('Anypi prompt contract', () => {
     const prompt = buildSystemPrompt('minimal')
     expect(prompt).toContain('Act as a coding agent inside an existing repository')
     expect(prompt).toContain('Run the checks required for touched files')
+    expect(prompt).toContain('Do not edit generated files or lockfiles')
     expect(prompt).not.toMatch(/Anypi|YOLO|Kubernetes|Pi SDK|provider|Flamingo/)
     expect(hashSystemPrompt('minimal')).toMatch(/^[a-f0-9]{16}$/)
   })
@@ -294,6 +303,61 @@ describe('Anypi prompt contract', () => {
       passed: [checks[0]],
       summary: '1 passed/skipped, 0 pending, 1 failed/cancelled',
     })
+  })
+
+  test('rejects generated artifact and lockfile drift before commit', async () => {
+    expect(classifyRestrictedChangedFile('bun.lock')).toBe('lockfile')
+    expect(classifyRestrictedChangedFile('services/anypi/dist/index.js')).toBe('generated-artifact')
+    expect(classifyRestrictedChangedFile('services/anypi/src/run.ts')).toBeNull()
+
+    const worktree = await mkdtemp(join(tmpdir(), 'anypi-policy-'))
+    execFileSync('git', ['init', '-b', 'main'], { cwd: worktree })
+    execFileSync('git', ['config', 'user.email', 'anypi@example.invalid'], { cwd: worktree })
+    execFileSync('git', ['config', 'user.name', 'Anypi Test'], { cwd: worktree })
+    await writeFile(join(worktree, 'README.md'), 'ok\n', 'utf8')
+    execFileSync('git', ['add', 'README.md'], { cwd: worktree })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: worktree })
+    await writeFile(join(worktree, 'bun.lock'), 'lock drift\n', 'utf8')
+
+    const failure = await validateChangedFilePolicy(
+      {
+        repository: 'proompteng/lab',
+        baseBranch: 'main',
+        headBranch: 'codex/anypi-policy',
+        cloneUrl: 'https://github.com/proompteng/lab.git',
+        webUrl: 'https://github.com/proompteng/lab',
+        worktree,
+        env: {},
+        writeEnabled: true,
+        pullRequestsEnabled: true,
+      },
+      {},
+    )
+
+    expect(failure).toMatchObject({
+      command: 'anypi-policy',
+      args: ['restricted-files'],
+      exitCode: 1,
+      ok: false,
+    })
+    expect(failure?.stdout).toContain('bun.lock (lockfile)')
+
+    await expect(
+      validateChangedFilePolicy(
+        {
+          repository: 'proompteng/lab',
+          baseBranch: 'main',
+          headBranch: 'codex/anypi-policy',
+          cloneUrl: 'https://github.com/proompteng/lab.git',
+          webUrl: 'https://github.com/proompteng/lab',
+          worktree,
+          env: {},
+          writeEnabled: true,
+          pullRequestsEnabled: true,
+        },
+        { parameters: { allowLockfileChanges: 'true' } },
+      ),
+    ).resolves.toBeNull()
   })
 
   test('rejects unsupported GitHub check command output instead of treating it as no checks', () => {

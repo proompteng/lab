@@ -21,6 +21,7 @@ import {
   pushBranch,
   resolveGitContext,
   runValidationCommands,
+  validateChangedFilePolicy,
   waitForPullRequestChecks,
   type GitContext,
 } from './git'
@@ -194,6 +195,25 @@ const formatCiRepairSummary = (ci: CiWaitResult) => {
   return `${ci.status}: ${ci.summary}${checks ? `\n${checks}` : ''}`
 }
 
+const runValidationPass = async (
+  commands: string[],
+  git: GitContext | null,
+  runSpec: AgentRunSpecPayload,
+  worktree: string,
+  log: (message: string) => Promise<void>,
+) => {
+  const rawResults = await runValidationCommands(commands, git, worktree, log)
+  const results = rawResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+  if (!failedValidation(results) && git) {
+    const policyFailure = await validateChangedFilePolicy(git, runSpec)
+    if (policyFailure) {
+      await log(policyFailure.stdout)
+      results.push(policyFailure)
+    }
+  }
+  return results
+}
+
 const waitForModelEndpoint = async (config: AnypiConfig, log: (message: string) => Promise<void>) => {
   const modelsUrl = `${config.baseUrl.replace(/\/+$/, '')}/models`
   const deadline = Date.now() + config.modelReadyTimeoutSeconds * 1000
@@ -289,8 +309,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     const validationCommands = status.validationPlan.commands
     let validationResults: ValidationResult[] = []
     for (let attempt = 0; attempt <= config.validationRepairAttempts; attempt += 1) {
-      const rawResults = await runValidationCommands(validationCommands, git, config.worktree, logger.info)
-      validationResults = rawResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+      validationResults = await runValidationPass(validationCommands, git, runSpec, config.worktree, logger.info)
       status.validationAttempts = attempt + 1
       status.validations = validationResults
       await writeStatus(config.statusPath, status)
@@ -370,8 +389,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
           await recordPiResult(repairResult, `CI repair ${attempt + 1}`)
           status.agentAttempts += 1
 
-          const rawResults = await runValidationCommands(validationCommands, git, config.worktree, logger.info)
-          validationResults = rawResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+          validationResults = await runValidationPass(validationCommands, git, runSpec, config.worktree, logger.info)
           status.validationAttempts += 1
           status.validations = validationResults
           await writeStatus(config.statusPath, status)
