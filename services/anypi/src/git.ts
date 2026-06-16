@@ -289,10 +289,12 @@ export const parseCiChecksResult = (result: CommandResult): CiCheck[] => {
   return parseCiChecks(result.stdout)
 }
 
-export const isNoRequiredChecksResult = (result: CommandResult) => {
+export const isNoChecksReportedResult = (result: CommandResult) => {
   if (result.exitCode === 0) return false
   return /no checks reported/i.test(`${result.stderr}\n${result.stdout}`)
 }
+
+export const isNoRequiredChecksResult = isNoChecksReportedResult
 
 export const summarizeChecks = (checks: CiCheck[]) => {
   const failed = checks.filter((check) => ['fail', 'cancel'].includes(check.bucket ?? ''))
@@ -344,13 +346,12 @@ export const waitForPullRequestChecks = async (
 
     try {
       let result = await readChecks(effectiveRequiredOnly)
-      lastChecks = effectiveRequiredOnly && isNoRequiredChecksResult(result) ? [] : parseCiChecksResult(result)
-      if (effectiveRequiredOnly && lastChecks.length === 0) {
+      if (effectiveRequiredOnly && isNoChecksReportedResult(result)) {
         await log('ci checks: no required checks reported; falling back to all pull request checks')
         effectiveRequiredOnly = false
         result = await readChecks(false)
-        lastChecks = parseCiChecksResult(result)
       }
+      lastChecks = isNoChecksReportedResult(result) ? [] : parseCiChecksResult(result)
     } catch (error) {
       return {
         ok: false,

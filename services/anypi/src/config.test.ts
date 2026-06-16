@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 
 import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
 import {
+  isNoChecksReportedResult,
   isNoRequiredChecksResult,
   parseCiChecks,
   parseCiChecksResult,
@@ -296,6 +297,16 @@ describe('Anypi prompt contract', () => {
   })
 
   test('rejects unsupported GitHub check command output instead of treating it as no checks', () => {
+    expect(
+      isNoChecksReportedResult({
+        command: 'gh',
+        args: ['pr', 'checks', 'branch', '--json', 'name,workflow,state,bucket,link'],
+        exitCode: 1,
+        stdout: '',
+        stderr: "no checks reported on the 'codex/example' branch",
+        durationMs: 12,
+      }),
+    ).toBe(true)
     expect(
       isNoRequiredChecksResult({
         command: 'gh',
