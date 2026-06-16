@@ -46,7 +46,7 @@ cephClusterSpec:
   dataDirHostPath: /var/lib/rook
 
   mon:
-    count: 2
+    count: 3
     # Run monitors on available control-plane nodes. Turin replaces the old
     # ampone/talos-192-168-1-203 control-plane slot.
     allowMultiplePerNode: false

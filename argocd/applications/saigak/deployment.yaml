@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saigak
+  labels:
+    app.kubernetes.io/name: saigak
+    app.kubernetes.io/component: model-server
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 21600
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: saigak
+      app.kubernetes.io/component: model-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: saigak
+        app.kubernetes.io/component: model-server
+    spec:
+      runtimeClassName: nvidia
+      nodeSelector:
+        kubernetes.io/arch: arm64
+        kubernetes.io/hostname: talos-192-168-1-85
+        lab.proompteng.ai/nvidia-gpu: "true"
+        nvidia.com/gpu.present: "true"
+        nvidia.com/gpu.workload.config: container
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.16.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 11434
+              protocol: TCP
+          env:
+            - name: OLLAMA_HOST
+              value: 0.0.0.0:11434
+            - name: OLLAMA_MODELS
+              value: /var/lib/ollama
+            - name: OLLAMA_CONTEXT_LENGTH
+              value: "32768"
+            - name: OLLAMA_NUM_PARALLEL
+              value: "1"
+            - name: OLLAMA_MAX_QUEUE
+              value: "2048"
+            - name: OLLAMA_KEEP_ALIVE
+              value: 30m
+            - name: OLLAMA_MAX_LOADED_MODELS
+              value: "1"
+            - name: OLLAMA_FLASH_ATTENTION
+              value: "1"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+          startupProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "32"
+              memory: 128Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /var/lib/ollama
+            - name: ready
+              mountPath: /ready
+            - name: shm
+              mountPath: /dev/shm
+        - name: gpu-readiness
+          image: python:3.13-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - /etc/saigak/gpu-readiness.py
+          env:
+            - name: OLLAMA_BASE_URL
+              value: http://127.0.0.1:11434
+            - name: SAIGAK_COMPLETION_MODEL
+              value: qwen3-main-saigak:30b-a3b
+            - name: SAIGAK_COMPLETION_BASE_MODEL
+              value: qwen3:30b-a3b
+            - name: SAIGAK_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:8b
+            - name: SAIGAK_EMBEDDING_BASE_MODEL
+              value: qwen3-embedding:8b
+            - name: SAIGAK_EMBEDDING_DIMENSION
+              value: "4096"
+            - name: SAIGAK_GPU_READY_FILE
+              value: /ready/gpu-embedding-ready
+          readinessProbe:
+            exec:
+              command:
+                - test
+                - -f
+                - /ready/gpu-embedding-ready
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/saigak
+              readOnly: true
+            - name: ready
+              mountPath: /ready
+      volumes:
+        - name: config
+          configMap:
+            name: saigak-native-config
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: saigak-model-cache
+        - name: ready
+          emptyDir: {}
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi

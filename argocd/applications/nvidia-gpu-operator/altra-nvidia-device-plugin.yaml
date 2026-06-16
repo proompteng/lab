@@ -1,0 +1,120 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: altra-nvidia-device-plugin
+  namespace: gpu-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: altra-nvidia-device-plugin
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: altra-nvidia-device-plugin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: altra-nvidia-device-plugin
+subjects:
+  - kind: ServiceAccount
+    name: altra-nvidia-device-plugin
+    namespace: gpu-operator
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: altra-nvidia-device-plugin
+  namespace: gpu-operator
+  labels:
+    app: altra-nvidia-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app: altra-nvidia-device-plugin
+  template:
+    metadata:
+      labels:
+        app: altra-nvidia-device-plugin
+    spec:
+      serviceAccountName: altra-nvidia-device-plugin
+      priorityClassName: system-node-critical
+      runtimeClassName: nvidia
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-85
+        lab.proompteng.ai/nvidia-gpu: "true"
+        nvidia.com/gpu.present: "true"
+        nvidia.com/gpu.workload.config: container
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: nvidia-device-plugin
+          image: nvcr.io/nvidia/k8s-device-plugin:v0.19.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --nvidia-driver-root=/
+            - --nvidia-dev-root=/
+          env:
+            - name: PASS_DEVICE_SPECS
+              value: "true"
+            - name: FAIL_ON_INIT_ERROR
+              value: "true"
+            - name: DEVICE_LIST_STRATEGY
+              value: cdi-annotations,cdi-cri
+            - name: DEVICE_ID_STRATEGY
+              value: uuid
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: all
+            - name: NVIDIA_DEV_ROOT
+              value: /
+            - name: MIG_STRATEGY
+              value: none
+            - name: CDI_ENABLED
+              value: "true"
+            - name: CDI_ANNOTATION_PREFIX
+              value: cdi.k8s.io/
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: driver-install-dir
+              mountPath: /driver-root
+              mountPropagation: HostToContainer
+            - name: host-root
+              mountPath: /host
+              readOnly: true
+              mountPropagation: HostToContainer
+            - name: cdi-root
+              mountPath: /var/run/cdi
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+        - name: driver-install-dir
+          hostPath:
+            path: /
+        - name: host-root
+          hostPath:
+            path: /
+        - name: cdi-root
+          hostPath:
+            path: /var/run/cdi
+            type: DirectoryOrCreate

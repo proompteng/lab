@@ -9,3 +9,18 @@ spec:
   resources:
     requests:
       storage: 200Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: saigak-model-cache
+  labels:
+    app.kubernetes.io/name: saigak
+    app.kubernetes.io/component: model-server
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 250Gi

@@ -1,0 +1,141 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: saigak-native-config
+  labels:
+    app.kubernetes.io/name: saigak
+    app.kubernetes.io/component: model-server
+data:
+  qwen3-main-30b-a3b.modelfile: |
+    FROM qwen3:30b-a3b
+    PARAMETER num_ctx 32768
+    PARAMETER temperature 0.7
+    PARAMETER top_k 20
+    PARAMETER top_p 0.8
+    PARAMETER min_p 0
+    PARAMETER repeat_penalty 1.05
+  qwen3-embedding-8b.modelfile: |
+    FROM qwen3-embedding:8b
+    PARAMETER num_ctx 32768
+  gpu-readiness.py: |
+    import json
+    import os
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+    embedding_model = os.environ.get("SAIGAK_EMBEDDING_MODEL", "qwen3-embedding-saigak:8b")
+    embedding_base_model = os.environ.get("SAIGAK_EMBEDDING_BASE_MODEL", "qwen3-embedding:8b")
+    completion_model = os.environ.get("SAIGAK_COMPLETION_MODEL", "qwen3-main-saigak:30b-a3b")
+    completion_base_model = os.environ.get("SAIGAK_COMPLETION_BASE_MODEL", "qwen3:30b-a3b")
+    expected_dimension = int(os.environ.get("SAIGAK_EMBEDDING_DIMENSION", "4096"))
+    ready_file = os.environ.get("SAIGAK_GPU_READY_FILE", "/ready/gpu-embedding-ready")
+    smoke_input = "saigak gpu embedding readiness smoke"
+
+    def request_json(path, payload=None, timeout=60):
+      data = None
+      headers = {}
+      if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+      request = urllib.request.Request(f"{base_url}{path}", data=data, headers=headers)
+      with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read()
+      if not body:
+        return {}
+      return json.loads(body.decode("utf-8"))
+
+    def wait_for_ollama():
+      deadline = time.monotonic() + 600
+      while time.monotonic() < deadline:
+        try:
+          request_json("/api/version", timeout=5)
+          return
+        except Exception as error:
+          print(f"waiting for ollama: {error}", flush=True)
+          time.sleep(5)
+      raise RuntimeError("ollama did not become reachable")
+
+    def model_exists(model):
+      try:
+        request_json("/api/show", {"model": model}, timeout=30)
+        return True
+      except urllib.error.HTTPError as error:
+        if error.code == 404:
+          return False
+        raise
+      except Exception:
+        return False
+
+    def pull_model(model):
+      print(f"pulling {model}", flush=True)
+      request_json("/api/pull", {"model": model, "stream": False}, timeout=14400)
+
+    def create_model(model, base_model, modelfile_path):
+      if not model_exists(base_model):
+        pull_model(base_model)
+      with open(modelfile_path, "r", encoding="utf-8") as handle:
+        modelfile = handle.read()
+      print(f"creating {model}", flush=True)
+      request_json("/api/create", {"model": model, "modelfile": modelfile, "stream": False}, timeout=3600)
+
+    def ensure_model(model, base_model, modelfile_path):
+      if model_exists(model):
+        print(f"{model} already exists", flush=True)
+        return
+      create_model(model, base_model, modelfile_path)
+
+    def smoke_embedding():
+      response = request_json(
+        "/v1/embeddings",
+        {"model": embedding_model, "input": smoke_input},
+        timeout=600,
+      )
+      data = response.get("data")
+      if not data or not isinstance(data, list):
+        raise RuntimeError("embedding response is missing data")
+      embedding = data[0].get("embedding")
+      if not isinstance(embedding, list):
+        raise RuntimeError("embedding response is missing vector")
+      if len(embedding) != expected_dimension:
+        raise RuntimeError(f"embedding dimension mismatch: got {len(embedding)}, expected {expected_dimension}")
+
+    def require_gpu_residency():
+      deadline = time.monotonic() + 120
+      last_payload = None
+      while time.monotonic() < deadline:
+        payload = request_json("/api/ps", timeout=30)
+        last_payload = payload
+        for model in payload.get("models", []):
+          if model.get("model") != embedding_model and model.get("name") != embedding_model:
+            continue
+          size_vram = int(model.get("size_vram") or 0)
+          processor = str(model.get("processor") or "").lower()
+          if size_vram <= 0:
+            raise RuntimeError(f"{embedding_model} is loaded without VRAM: {json.dumps(model, sort_keys=True)}")
+          if processor and processor == "cpu":
+            raise RuntimeError(f"{embedding_model} is CPU-only: {json.dumps(model, sort_keys=True)}")
+          print(f"{embedding_model} is GPU-backed: {json.dumps(model, sort_keys=True)}", flush=True)
+          return
+        time.sleep(5)
+      raise RuntimeError(f"{embedding_model} was not visible in /api/ps after smoke: {json.dumps(last_payload)}")
+
+    def main():
+      wait_for_ollama()
+      ensure_model(completion_model, completion_base_model, "/etc/saigak/qwen3-main-30b-a3b.modelfile")
+      ensure_model(embedding_model, embedding_base_model, "/etc/saigak/qwen3-embedding-8b.modelfile")
+      smoke_embedding()
+      require_gpu_residency()
+      with open(ready_file, "w", encoding="utf-8") as handle:
+        handle.write("ready\n")
+      while True:
+        time.sleep(3600)
+
+    if __name__ == "__main__":
+      try:
+        main()
+      except Exception as error:
+        print(f"saigak GPU readiness failed: {error}", file=sys.stderr, flush=True)
+        sys.exit(1)
