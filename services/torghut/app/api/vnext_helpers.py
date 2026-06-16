@@ -110,26 +110,6 @@ def _extract_actuation_gates(actuation_payload: dict[str, object]) -> dict[str, 
     return _to_str_map(actuation_payload.get("gates"))
 
 
-def _extract_drift_info(drift_payload: dict[str, object]) -> tuple[Any, Any, Any]:
-    """Extract drift-related fields from payload."""
-    drift_reasons_raw = drift_payload.get("reasons")
-    drift_reason_codes_raw = drift_payload.get("reason_codes")
-    drift_eligible = drift_payload.get("eligible_for_live_promotion")
-    return drift_reasons_raw, drift_reason_codes_raw, drift_eligible
-
-
-def _extract_metrics_and_drawdown(metrics_payload: dict[str, object]) -> float | None:
-    """Extract drawdown value from metrics payload."""
-    drawdown = None
-    max_drawdown_raw = metrics_payload.get("max_drawdown")
-    if max_drawdown_raw is not None:
-        try:
-            drawdown = abs(float(str(max_drawdown_raw)))
-        except (TypeError, ValueError):
-            drawdown = None
-    return drawdown
-
-
 def _build_evidence_authority(
     provenance_payload: dict[str, object],
     actuation_gates: dict[str, object],
