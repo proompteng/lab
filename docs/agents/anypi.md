@@ -38,6 +38,8 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
   `/workspace/.agent/status.json`.
 - `ANYPI_MODEL_READY_TIMEOUT_SECONDS=1800` makes the runner wait for `GET /v1/models` before starting Pi, which avoids
   empty runs while Flamingo is cold-loading the model.
+- `ANYPI_PI_PROMPT_TIMEOUT_SECONDS=1800` bounds each Pi SDK prompt attempt. A stuck model/tool loop fails the run and
+  records the timeout in status instead of burning the whole Kubernetes Job deadline.
 - `ANYPI_VALIDATION_POLICY=append` combines inferred service checks, run-provided checks, and provider checks. The runner
   refuses to continue when the only validation command is `git diff --check`.
 - `ANYPI_VALIDATION_REPAIR_ATTEMPTS=2` gives Pi two bounded repair passes when a runner-side validation command fails.
@@ -58,8 +60,8 @@ Prompt variants are intentionally small and repo-focused. They do not mention An
 the Pi SDK. Runtime details stay in runner config and logs, not in the model's behavioral contract. Root `AGENTS.md` is
 injected as repository context.
 
-Status evidence is written to `/workspace/.agent/status.json`: `promptVariant`, `promptHash`, `validationPlan`,
-`validations`, `ci`, `ciAttempts`, `sessionFiles`, `commit`, and `pullRequest`.
+Status evidence is written to `/workspace/.agent/status.json`: `promptVariant`, `promptHash`, `piPromptTimeoutSeconds`,
+`validationPlan`, `validations`, `ci`, `ciAttempts`, `sessionFiles`, `commit`, and `pullRequest`.
 
 ## AgentRun Example
 

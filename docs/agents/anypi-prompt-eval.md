@@ -35,8 +35,9 @@ Required task classes:
   compliance.
 
 The ready-to-apply batch template is `docs/agents/anypi-prompt-eval-agentruns.yaml`. Apply it as one file so the five runs
-start concurrently. The template pins the multi-arch Anypi image and uses `runtime.config.nodeSelector` to force coverage on
-both `amd64` and `arm64` nodes.
+start concurrently. The template must pin the current multi-arch Anypi image, but it should not force a single
+architecture while cluster capacity is changing. Default controller scheduling now allows any compatible ready node,
+including control-plane-tainted nodes when the workload tolerates them.
 
 ## Scoring
 
@@ -74,6 +75,11 @@ failures. If no variant passes, leave `anypi-agent` on `minimal`, record the fai
 | `finish-gated` | Anypi status evidence tests | `anypi-eval-runner-finish-20260616d` | [#10929](https://github.com/proompteng/lab/pull/10929) | Passed Anypi tsc, test, lint, and agents render | Passed: 11 pass, 12 skipped | 2 agent attempts, 2 validation attempts, 1 CI attempt | Green but not promotable: changed `bun.lock` and dependency version without explicit need |
 | `strict-repo` | Anypi CI watcher regression coverage | `anypi-eval-runner-strict-20260616d` | [#10928](https://github.com/proompteng/lab/pull/10928) | Passed Anypi tsc, test, and lint | Passed: 3 pass, 10 skipped | 1 agent attempt, 1 validation attempt, 1 CI attempt | Good task result |
 | `repair-loop` | Agents docs/manifests validation | `anypi-eval-agents-repair-20260616d` | [#10925](https://github.com/proompteng/lab/pull/10925) | Passed Anypi tsc, test, lint, and agents render | Passed: 13 pass, 12 skipped | 2 agent attempts, 2 validation attempts, 1 CI attempt | Green but not promotable: changed `bun.lock` with unrelated dependency churn |
+| `minimal` | Torghut diff coverage reporting | `anypi-eval-torghut-minimal-20260616e` | None | Did not complete | Not reached | Deadline exceeded | Failed; do not promote |
+| `repair-loop` | Torghut diff coverage reporting | `anypi-eval-torghut-repair-20260616e` | [#10932](https://github.com/proompteng/lab/pull/10932) | AgentRun failed after CI repair | Failed: `Bytecode + lint + migration guard` and `Bytecode + pytest + coverage` | BackoffLimitExceeded | Failed; do not promote |
+| `finish-gated` | Anypi status evidence tests | `anypi-eval-runner-finish-20260616e` | [#10930](https://github.com/proompteng/lab/pull/10930) | Passed Anypi tsc, test, and lint | Passed required checks; unrelated matrix entries skipped | 1 CI attempt | Good task result |
+| `strict-repo` | Anypi CI watcher regression coverage | `anypi-eval-runner-strict-20260616e` | [#10931](https://github.com/proompteng/lab/pull/10931) | Passed Anypi tsc, test, and lint | Passed required checks; unrelated matrix entries skipped | 1 CI attempt | Good task result |
+| `repair-loop` | Agents docs/manifests validation | `anypi-eval-agents-repair-20260616e` | None | Did not produce a PR | Not reached | BackoffLimitExceeded | Failed; do not promote |
 
 Batch `20260616d` used
 `registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66`.
@@ -87,9 +93,25 @@ contains lockfile or generated-artifact changes unless the run explicitly sets `
 `allowGeneratedArtifactChanges=true`, or `allowLockfileChanges=true`. The system and task prompts also now state that
 generated files and lockfiles must not be edited unless the task explicitly requires it.
 
-Follow-up batch `20260616e` uses
+Batch `20260616e` used
 `registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d`
-to prove the restricted-file policy before any default prompt promotion.
+to test the restricted-file policy before any default prompt promotion.
+
+Batch `20260616e` scheduled all five AgentRuns together at `2026-06-16T22:13:12Z`. It is not promotable: only the two
+Anypi runner tasks reached green PRs, while the Torghut and Agents/docs tasks failed or did not open PRs. The default
+`anypi-agent` therefore remains `minimal`.
+
+Guardrail added after `20260616e`: Anypi now records `piPromptTimeoutSeconds`, bounds each Pi SDK prompt attempt with
+`ANYPI_PI_PROMPT_TIMEOUT_SECONDS`, and fails a validation repair immediately when Pi returns without changing worktree
+status or commit progress. This prevents repeated no-op repair/finalization loops from burning the whole Kubernetes Job
+deadline.
+
+Rollout note after `20260616e`: production Agents values no longer pin the control plane or default AgentRun workloads to
+`arm64`; they use empty node selectors and tolerate `node-role.kubernetes.io/control-plane=NoSchedule`. Do not sync those
+values until the Agents and Anypi images are confirmed multi-arch or otherwise available on every ready node that can
+schedule the workload. At the time this note was written, registry manifest reads for `registry.ide-newton.ts.net` were
+hanging inside `GetImageManifest`, so the next image publish and `20260616f` eval batch were pending registry recovery or
+a documented local-image import.
 
 ## Commands
 

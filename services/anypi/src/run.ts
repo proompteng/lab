@@ -164,6 +164,7 @@ const baseStatus = (
   worktree: config.worktree,
   model: config.model,
   providerModel: `${config.provider}/${config.model}`,
+  piPromptTimeoutSeconds: config.piPromptTimeoutSeconds,
   promptVariant: config.promptVariant,
   promptHash: hashSystemPrompt(config.promptVariant),
   tools: [],
@@ -178,6 +179,19 @@ const baseStatus = (
 const mergeTools = (left: string[], right: string[]) => [...new Set([...left, ...right])]
 
 const failedValidation = (results: ValidationResult[]) => results.find((result) => !result.ok)
+
+export type WorktreeProgressSnapshot = {
+  status: string
+  commitsAhead: number
+}
+
+export const hasWorktreeProgress = (before: WorktreeProgressSnapshot, after: WorktreeProgressSnapshot) =>
+  before.status !== after.status || before.commitsAhead !== after.commitsAhead
+
+const getWorktreeProgress = async (git: GitContext | null, worktree: string): Promise<WorktreeProgressSnapshot> => ({
+  status: await gitStatusShort(worktree, git?.env),
+  commitsAhead: git ? await countCommitsAhead(git) : 0,
+})
 
 const formatValidationError = (result: ValidationResult) =>
   `validation failed (${result.exitCode}): ${[result.command, ...result.args].join(' ')}`
@@ -321,6 +335,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       await logger.error(
         `${formatValidationError(failed)}; starting validation repair ${attempt + 1}/${config.validationRepairAttempts}`,
       )
+      const beforeRepair = await getWorktreeProgress(git, config.worktree)
       const repairPrompt = buildValidationRepairPrompt({
         attempt: attempt + 1,
         maxAttempts: config.validationRepairAttempts,
@@ -338,6 +353,12 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
         sessionFiles.push(repairResult.sessionFile)
         status.sessionFile = repairResult.sessionFile
         status.sessionFiles = sessionFiles
+      }
+      const afterRepair = await getWorktreeProgress(git, config.worktree)
+      if (!hasWorktreeProgress(beforeRepair, afterRepair)) {
+        throw new Error(
+          `${formatValidationError(failed)}; validation repair ${attempt + 1} produced no worktree changes`,
+        )
       }
     }
 

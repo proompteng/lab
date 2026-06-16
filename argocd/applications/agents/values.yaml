@@ -6,8 +6,11 @@ image:
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
-nodeSelector:
-  kubernetes.io/arch: arm64
+nodeSelector: {}
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
@@ -100,6 +103,10 @@ readinessProbe:
 controller:
   defaultWorkload:
     nodeSelector: {}
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
     resources:
       requests:
         cpu: "1"

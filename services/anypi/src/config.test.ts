@@ -33,7 +33,13 @@ import {
   resolveAttemptSessionDir,
   resolveEffectiveSystemPrompt,
 } from './pi-session'
-import { buildCommitMessage, buildPullRequestTitle, normalizeConventionalSummary, renderPullRequestBody } from './run'
+import {
+  buildCommitMessage,
+  buildPullRequestTitle,
+  hasWorktreeProgress,
+  normalizeConventionalSummary,
+  renderPullRequestBody,
+} from './run'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -42,6 +48,7 @@ describe('Anypi config', () => {
     expect(config.model).toBe('qwen3-coder-flamingo')
     expect(config.baseUrl).toBe('http://flamingo.flamingo.svc.cluster.local/v1')
     expect(config.modelReadyTimeoutSeconds).toBe(1800)
+    expect(config.piPromptTimeoutSeconds).toBe(1800)
     expect(config.promptVariant).toBe('minimal')
     expect(config.allowSystemPromptOverride).toBe(false)
     expect(config.thinkingLevel).toBe('off')
@@ -78,9 +85,16 @@ describe('Anypi config', () => {
   test('normalizes prompt variants and validation policy from env', () => {
     expect(resolvePromptVariant('strict-repo')).toBe('strict-repo')
     expect(resolvePromptVariant('unknown')).toBe('minimal')
-    expect(resolveConfig({ ANYPI_PROMPT_VARIANT: 'repair-loop', ANYPI_VALIDATION_POLICY: 'override' })).toMatchObject({
+    expect(
+      resolveConfig({
+        ANYPI_PROMPT_VARIANT: 'repair-loop',
+        ANYPI_VALIDATION_POLICY: 'override',
+        ANYPI_PI_PROMPT_TIMEOUT_SECONDS: '900',
+      }),
+    ).toMatchObject({
       promptVariant: 'repair-loop',
       validationPolicy: 'override',
+      piPromptTimeoutSeconds: 900,
     })
   })
 
@@ -168,6 +182,7 @@ describe('Anypi prompt contract', () => {
         namespace: 'agents',
         model: 'qwen3-coder-flamingo',
         providerModel: 'flamingo/qwen3-coder-flamingo',
+        piPromptTimeoutSeconds: 1800,
         promptVariant: 'repair-loop',
         promptHash: '0123456789abcdef',
         tools: ['bash', 'edit'],
@@ -441,5 +456,18 @@ describe('Anypi prompt contract', () => {
     expect(prompt).toContain('Repair attempt: 1 of 2')
     expect(prompt).toContain('requires a real implementation')
     expect(prompt).toContain('leave the final changes in the worktree')
+  })
+
+  test('detects whether a repair attempt changed worktree progress', () => {
+    expect(
+      hasWorktreeProgress(
+        { status: ' M services/anypi/src/run.ts', commitsAhead: 0 },
+        { status: ' M services/anypi/src/run.ts\n M services/anypi/src/config.ts', commitsAhead: 0 },
+      ),
+    ).toBe(true)
+    expect(hasWorktreeProgress({ status: '', commitsAhead: 0 }, { status: '', commitsAhead: 1 })).toBe(true)
+    expect(
+      hasWorktreeProgress({ status: ' M foo.ts', commitsAhead: 1 }, { status: ' M foo.ts', commitsAhead: 1 }),
+    ).toBe(false)
   })
 })

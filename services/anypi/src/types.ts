@@ -117,6 +117,7 @@ export type AnypiStatus = {
   worktree?: string
   model: string
   providerModel: string
+  piPromptTimeoutSeconds: number
   promptVariant: PromptVariant
   promptHash: string
   tools: string[]

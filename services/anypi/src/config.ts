@@ -23,6 +23,7 @@ export type AnypiConfig = {
   baseUrl: string
   apiKey: string
   modelReadyTimeoutSeconds: number
+  piPromptTimeoutSeconds: number
   promptVariant: PromptVariant
   allowSystemPromptOverride: boolean
   thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
@@ -112,6 +113,7 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): AnypiConfig
     baseUrl: readEnv(env, 'ANYPI_BASE_URL', 'http://flamingo.flamingo.svc.cluster.local/v1'),
     apiKey: readEnv(env, 'ANYPI_API_KEY', 'flamingo-local'),
     modelReadyTimeoutSeconds: readNumber(env, 'ANYPI_MODEL_READY_TIMEOUT_SECONDS', 1800),
+    piPromptTimeoutSeconds: readNumber(env, 'ANYPI_PI_PROMPT_TIMEOUT_SECONDS', 1800),
     promptVariant: resolvePromptVariant(env.ANYPI_PROMPT_VARIANT),
     allowSystemPromptOverride: readBoolean(env, 'ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE', false),
     thinkingLevel: normalizeThinkingLevel(readEnv(env, 'ANYPI_THINKING_LEVEL', 'off')),
