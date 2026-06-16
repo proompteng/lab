@@ -49,7 +49,7 @@ spec:
             - --max-model-len
             - "32768"
             - --gpu-memory-utilization
-            - "0.80"
+            - "0.92"
             - --enable-prefix-caching
             - --enable-auto-tool-choice
             - --tool-call-parser

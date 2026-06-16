@@ -126,16 +126,24 @@ Round 1: Qwen3-Coder-Next-FP8 at 32K context.
 Use the deployed flags:
 
 ```text
---max-model-len 32768 --gpu-memory-utilization 0.80 --enable-prefix-caching --tool-call-parser qwen3_coder
+--max-model-len 32768 --gpu-memory-utilization 0.92 --enable-prefix-caching --tool-call-parser qwen3_coder
 ```
+
+Initial rollout evidence:
+
+- `0.80` reached model load but failed before serving with
+  `ValueError: No available memory for the cache blocks`.
+- The Blackwell card reported about `97.9 GiB` total memory and vLLM held about
+  `77.5 GiB` after loading the FP8 checkpoint.
+- `0.92` is the first tuned setting for 32K context so vLLM has room for KV
+  cache while still leaving a small safety margin below full device memory.
 
 Round 2: increase utilization and context only after Round 1 is stable.
 
 Patch one flag at a time in Git:
 
 ```text
---gpu-memory-utilization 0.84
---gpu-memory-utilization 0.88
+--gpu-memory-utilization 0.94
 --max-model-len 65536
 ```
 
