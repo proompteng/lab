@@ -13,6 +13,7 @@ from scripts.check_diff_coverage import (
     FileDiffCoverage,
     _drop_missing_non_executable_files,
     _executable_source_lines,
+    _format_line_ranges,
     _format_summary,
     _git,
     _git_optional,
@@ -453,6 +454,31 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         )
 
         self.assertEqual(summary, [])
+
+    def test_format_line_ranges_converts_single_line(self) -> None:
+        result = _format_line_ranges((20,))
+
+        self.assertEqual(result, "20")
+
+    def test_format_line_ranges_converts_consecutive_lines_to_range(self) -> None:
+        result = _format_line_ranges((20, 21, 22))
+
+        self.assertEqual(result, "20-22")
+
+    def test_format_line_ranges_converts_mixed_lines(self) -> None:
+        result = _format_line_ranges((20, 21, 22, 25, 28, 29, 30))
+
+        self.assertEqual(result, "20-22, 25, 28-30")
+
+    def test_format_line_ranges_handles_empty_tuple(self) -> None:
+        result = _format_line_ranges(())
+
+        self.assertEqual(result, "")
+
+    def test_format_line_ranges_handles_already_sorted_lines(self) -> None:
+        result = _format_line_ranges((5, 10, 15, 20))
+
+        self.assertEqual(result, "5, 10, 15, 20")
 
     def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
         text = _format_summary(

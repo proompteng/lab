@@ -21,6 +21,33 @@ TRACKED_PREFIXES = (
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
+def _format_line_ranges(lines: tuple[int, ...]) -> str:
+    """Format a sorted tuple of line numbers as compact ranges.
+
+    Example: (20, 21, 22, 25, 28, 29, 30) -> "20-22, 25, 28-30"
+    """
+    if not lines:
+        return ""
+    ranges: list[str] = []
+    start = lines[0]
+    end = lines[0]
+    for line in lines[1:]:
+        if line == end + 1:
+            end = line
+        else:
+            if start == end:
+                ranges.append(str(start))
+            else:
+                ranges.append(f"{start}-{end}")
+            start = line
+            end = line
+    if start == end:
+        ranges.append(str(start))
+    else:
+        ranges.append(f"{start}-{end}")
+    return ", ".join(ranges)
+
+
 @dataclass(frozen=True)
 class FileDiffCoverage:
     filename: str
@@ -275,9 +302,7 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
             f"lines covered ({coverage_pct:.2f}%){suffix}"
         )
         if item.missing_lines:
-            lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
-            )
+            lines.append(f"  missing lines: {_format_line_ranges(item.missing_lines)}")
     return "\n".join(lines)
 
 
