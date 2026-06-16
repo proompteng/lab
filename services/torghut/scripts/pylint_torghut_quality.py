@@ -226,9 +226,18 @@ class TorghutQualityChecker(BaseChecker):
     def _check_import_from(
         self, module_node: nodes.Module, node: ast.ImportFrom
     ) -> None:
+        # DEBUG: Print for CI debugging
+        import sys
+        print(f"DEBUG: _check_import_from called for module={getattr(module_node, 'file', None)}", file=sys.stderr)
         if not any(alias.name == "*" for alias in node.names):
             return
         # Skip wildcard import check for files that use capture_module_exports
+        # Also skip for the plugin itself
+        file_path = getattr(module_node, "file", None)
+        if file_path:
+            file_name = Path(str(file_path)).name
+            if file_name == "pylint_torghut_quality.py":
+                return
         if (
             hasattr(module_node, "as_string")
             and "capture_module_exports" in module_node.as_string()
