@@ -160,6 +160,11 @@ describe('Anypi prompt contract', () => {
         implementation: { text: 'Improve services/anypi prompt handling and argocd/applications/agents manifests.' },
       }),
     ).toContain('bun run --filter @proompteng/anypi tsc')
+    expect(
+      inferValidationCommands({
+        implementation: { text: 'Improve argocd/applications/agents AgentProvider manifests.' },
+      }),
+    ).toContain('kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml')
 
     expect(() => resolveValidationPlan({ implementation: { text: 'Change generic docs.' } }, [], 'append')).toThrow(
       /service-aware validation/,

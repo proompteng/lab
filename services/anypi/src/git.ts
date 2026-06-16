@@ -307,24 +307,42 @@ export const waitForPullRequestChecks = async (
   let attempts = 0
   let lastChecks: CiCheck[] = []
   let lastSummary = 'checks not started'
+  let effectiveRequiredOnly = options.requiredOnly
 
   while (Date.now() <= deadline) {
     attempts += 1
-    const args = ['pr', 'checks', git.headBranch, '--repo', git.repository, '--json', 'name,workflow,state,bucket,link']
-    if (options.requiredOnly) args.push('--required')
-    const result = await runCommand('gh', args, {
-      cwd: git.worktree,
-      env: git.env,
-      allowFailure: true,
-    })
+    const readChecks = async (requiredOnly: boolean) => {
+      const args = [
+        'pr',
+        'checks',
+        git.headBranch,
+        '--repo',
+        git.repository,
+        '--json',
+        'name,workflow,state,bucket,link',
+      ]
+      if (requiredOnly) args.push('--required')
+      return await runCommand('gh', args, {
+        cwd: git.worktree,
+        env: git.env,
+        allowFailure: true,
+      })
+    }
 
     try {
+      let result = await readChecks(effectiveRequiredOnly)
       lastChecks = parseCiChecks(result.stdout)
+      if (effectiveRequiredOnly && lastChecks.length === 0) {
+        await log('ci checks: no required checks reported; falling back to all pull request checks')
+        effectiveRequiredOnly = false
+        result = await readChecks(false)
+        lastChecks = parseCiChecks(result.stdout)
+      }
     } catch (error) {
       return {
         ok: false,
         status: 'unavailable',
-        requiredOnly: options.requiredOnly,
+        requiredOnly: effectiveRequiredOnly,
         attempts,
         durationMs: Date.now() - started,
         checks: [],
@@ -336,11 +354,16 @@ export const waitForPullRequestChecks = async (
     lastSummary = summary.summary
     await log(`ci checks: ${lastSummary}`)
 
+    if (lastChecks.length === 0) {
+      lastSummary = 'no pull request checks reported yet'
+      await sleep(options.intervalSeconds * 1000)
+      continue
+    }
     if (summary.failed.length > 0) {
       return {
         ok: false,
         status: 'failed',
-        requiredOnly: options.requiredOnly,
+        requiredOnly: effectiveRequiredOnly,
         attempts,
         durationMs: Date.now() - started,
         checks: lastChecks,
@@ -351,11 +374,11 @@ export const waitForPullRequestChecks = async (
       return {
         ok: true,
         status: 'passed',
-        requiredOnly: options.requiredOnly,
+        requiredOnly: effectiveRequiredOnly,
         attempts,
         durationMs: Date.now() - started,
         checks: lastChecks,
-        summary: lastChecks.length === 0 ? 'no required checks reported' : lastSummary,
+        summary: lastSummary,
       }
     }
 
@@ -365,7 +388,7 @@ export const waitForPullRequestChecks = async (
   return {
     ok: false,
     status: 'timed-out',
-    requiredOnly: options.requiredOnly,
+    requiredOnly: effectiveRequiredOnly,
     attempts,
     durationMs: Date.now() - started,
     checks: lastChecks,

@@ -70,9 +70,7 @@ export const inferValidationCommands = (runSpec: AgentRunSpecPayload) => {
     )
   }
   if (task.includes('argocd/applications/agents') || task.includes('agentprovider') || task.includes('agentrun')) {
-    commands.push(
-      'mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml',
-    )
+    commands.push('kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml')
   }
   return dedupeCommands(commands)
 }

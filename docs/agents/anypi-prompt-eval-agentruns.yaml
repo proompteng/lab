@@ -126,7 +126,7 @@ spec:
     head: codex/anypi-eval/strict-repo/agents-docs-manifests-20260616
     promptVariant: strict-repo
     validationCommands: |
-      mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
+      kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
   secrets:
     - github-token
   workload:
