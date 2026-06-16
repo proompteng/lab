@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import dataclasses
 import os
 import re
 import subprocess
@@ -28,6 +29,11 @@ class FileDiffCoverage:
     covered_lines: int
     missing_lines: tuple[int, ...]
     missing_from_coverage: bool = False
+    all_changed_lines: tuple[
+        int, ...
+    ] = ()  # All changed lines including non-executable
+    # Type comment for pyright to understand the default_factory
+    coverage_index: dict[int, int] = dataclasses.field(default_factory=dict)  # type: ignore[assignment]  # Line hits for this file
 
     @property
     def coverage_ratio(self) -> float:
@@ -232,12 +238,15 @@ def summarize_changed_coverage(
     *,
     changed_lines: dict[str, set[int]],
     coverage_index: dict[str, dict[int, int]],
+    executable_lines_by_file: dict[str, set[int]] | None = None,
 ) -> list[FileDiffCoverage]:
+    if executable_lines_by_file is None:
+        executable_lines_by_file = {}
     summary: list[FileDiffCoverage] = []
     for filename in sorted(changed_lines):
         changed = sorted(changed_lines[filename])
-        line_hits = coverage_index.get(filename)
-        if line_hits is None:
+        file_coverage = coverage_index.get(filename, {})
+        if not file_coverage:
             summary.append(
                 FileDiffCoverage(
                     filename=filename,
@@ -245,14 +254,20 @@ def summarize_changed_coverage(
                     covered_lines=0,
                     missing_lines=tuple(changed),
                     missing_from_coverage=True,
+                    all_changed_lines=tuple(changed),
+                    coverage_index=file_coverage,
                 )
             )
             continue
-        executable_changed = sorted(line for line in changed if line in line_hits)
+
+        # Identify executable vs non-executable changed lines
+        executable_changed = [line for line in changed if line in file_coverage]
+
         if not executable_changed:
             continue
+
         missing = tuple(
-            line for line in executable_changed if line_hits.get(line, 0) <= 0
+            line for line in executable_changed if file_coverage.get(line, 0) <= 0
         )
         summary.append(
             FileDiffCoverage(
@@ -260,6 +275,8 @@ def summarize_changed_coverage(
                 executable_changed_lines=len(executable_changed),
                 covered_lines=len(executable_changed) - len(missing),
                 missing_lines=missing,
+                all_changed_lines=tuple(sorted(changed)),
+                coverage_index=file_coverage,
             )
         )
     return summary
@@ -275,9 +292,26 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
             f"lines covered ({coverage_pct:.2f}%){suffix}"
         )
         if item.missing_lines:
+            missing_str = ", ".join(str(line) for line in item.missing_lines)
             lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
+                f"  uncovered executable changed lines: {item.filename}:{missing_str}"
             )
+        # Show non-executable changed lines for transparency
+        if item.all_changed_lines and not item.missing_from_coverage:
+            executable_lines = set(
+                item.missing_lines
+            )  # executable lines with 0 coverage
+            non_executable = [
+                line
+                for line in item.all_changed_lines
+                if line not in executable_lines
+                and item.coverage_index.get(line, 0) <= 0
+            ]
+            if non_executable:
+                non_exec_str = ", ".join(str(line) for line in non_executable)
+                lines.append(
+                    f"  ignored non-executable changed lines: {item.filename}:{non_exec_str}"
+                )
     return "\n".join(lines)
 
 

@@ -247,6 +247,24 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         self.assertEqual(summary[0].executable_changed_lines, 2)
         self.assertEqual(summary[0].missing_lines, (12,))
 
+    def test_summarize_changed_coverage_separates_executable_and_non_executable_lines(
+        self,
+    ) -> None:
+        """Test that summarize_changed_coverage tracks both executable and non-executable lines."""
+        summary = summarize_changed_coverage(
+            changed_lines={"app/trading/foo.py": {10, 11, 12, 99}},
+            # Line 10 is non-executable (not in coverage), 11, 12, 99 are executable
+            coverage_index={"app/trading/foo.py": {11: 1, 12: 0, 99: 1}},
+        )
+
+        self.assertEqual(len(summary), 1)
+        # Line 10 is non-executable (not in coverage), 11 and 12 are executable
+        # Line 11 is covered, 12 has 0 coverage, 10 is non-executable
+        # Line 99 is executable with coverage
+        self.assertEqual(summary[0].all_changed_lines, (10, 11, 12, 99))
+        self.assertEqual(summary[0].executable_changed_lines, 3)
+        self.assertEqual(summary[0].missing_lines, (12,))
+
     def test_summarize_changed_coverage_flags_files_missing_from_coverage(self) -> None:
         summary = summarize_changed_coverage(
             changed_lines={"app/trading/foo.py": {11, 12}},
@@ -463,12 +481,137 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
                     covered_lines=1,
                     missing_lines=(20,),
                     missing_from_coverage=True,
+                    all_changed_lines=(20,),
+                    coverage_index={},
                 )
             ]
         )
 
         self.assertIn("missing-from-coverage", text)
-        self.assertIn("missing lines: 20", text)
+        self.assertIn(
+            "uncovered executable changed lines: scripts/check_diff_coverage.py:20",
+            text,
+        )
+
+    def test_format_summary_shows_uncovered_executable_lines_with_file_line_details(
+        self,
+    ) -> None:
+        """Test that uncovered executable lines are reported with actionable file:line details."""
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/foo.py",
+                    executable_changed_lines=3,
+                    covered_lines=1,
+                    missing_lines=(11, 13),
+                    all_changed_lines=(11, 12, 13),
+                    coverage_index={11: 1, 12: 1, 13: 0},
+                )
+            ]
+        )
+
+        # Check that file:line format is used for uncovered lines
+        self.assertIn(
+            "uncovered executable changed lines: app/trading/foo.py:11, 13", text
+        )
+        # Check covered line is not in missing output
+        self.assertNotIn(
+            "12",
+            text.split("uncovered executable")[1]
+            if "uncovered executable" in text
+            else "",
+        )
+
+    def test_format_summary_shows_non_executable_lines_separately(self) -> None:
+        """Test that non-executable changed lines are clearly separated from executable lines."""
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/bar.py",
+                    executable_changed_lines=2,
+                    covered_lines=2,
+                    missing_lines=(),
+                    all_changed_lines=(10, 11, 20),
+                    coverage_index={10: 1, 11: 1, 20: 0},
+                )
+            ]
+        )
+
+        # Non-executable lines should be shown separately
+        self.assertIn(
+            "ignored non-executable changed lines: app/trading/bar.py:20", text
+        )
+
+    def test_format_summary_stable_ordering_for_multiple_files(self) -> None:
+        """Test that output has stable ordering for multiple files."""
+        summary = [
+            FileDiffCoverage(
+                filename="scripts/baz.py",
+                executable_changed_lines=1,
+                covered_lines=1,
+                missing_lines=(),
+                all_changed_lines=(5,),
+                coverage_index={5: 1},
+            ),
+            FileDiffCoverage(
+                filename="app/trading/foo.py",
+                executable_changed_lines=2,
+                covered_lines=1,
+                missing_lines=(11,),
+                all_changed_lines=(11, 12),
+                coverage_index={11: 0, 12: 1},
+            ),
+            FileDiffCoverage(
+                filename="app/utils/helpers.py",
+                executable_changed_lines=1,
+                covered_lines=0,
+                missing_lines=(30,),
+                missing_from_coverage=True,
+                all_changed_lines=(30,),
+                coverage_index={},
+            ),
+        ]
+        text = _format_summary(summary)
+        lines = text.split("\n")
+
+        # Verify alphabetical ordering of files (app/... comes before scripts/...)
+        self.assertIn("app/trading/foo.py", text)
+        self.assertIn("app/utils/helpers.py", text)
+        self.assertIn("scripts/baz.py", text)
+
+        # Check that file:line format is used for uncovered lines
+        # Note: scripts/baz.py is 100% covered, so no uncovered lines shown
+        self.assertIn("app/trading/foo.py:11", text)
+        self.assertIn("app/utils/helpers.py:30", text)
+
+    def test_format_summary_multifile_diff_with_mixed_coverage(self) -> None:
+        """Test format_summary with multi-file diff containing mixed coverage scenarios."""
+        summary = [
+            FileDiffCoverage(
+                filename="app/trading/foo.py",
+                executable_changed_lines=2,
+                covered_lines=2,
+                missing_lines=(),
+                all_changed_lines=(10, 11),
+                coverage_index={10: 1, 11: 1},
+            ),
+            FileDiffCoverage(
+                filename="scripts/baz.py",
+                executable_changed_lines=1,
+                covered_lines=0,
+                missing_lines=(15,),
+                missing_from_coverage=True,
+                all_changed_lines=(15,),
+                coverage_index={},
+            ),
+        ]
+        text = _format_summary(summary)
+
+        # Both files should be present
+        self.assertIn("app/trading/foo.py", text)
+        self.assertIn("scripts/baz.py", text)
+        # Missing from coverage should be flagged
+        self.assertIn("missing-from-coverage", text)
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")
@@ -553,7 +696,8 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         resolve_diff_base.return_value = "base"
         git_mock.return_value = ""
         load_coverage.return_value = {}
-        include_untracked.return_value = {"scripts/check_diff_coverage.py": {20, 21}}
+        # Use lines that are actually executable in check_diff_coverage.py
+        include_untracked.return_value = {"scripts/check_diff_coverage.py": {11, 12}}
 
         with patch("sys.stderr.write") as stderr_write:
             exit_code = main()
