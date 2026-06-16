@@ -277,6 +277,3 @@ def _contains_globals_call(node: ast.AST) -> bool:
 
 def register(linter: PyLinter) -> None:
     linter.register_checker(TorghutQualityChecker(linter))
-
-
-# CI cache refresh
