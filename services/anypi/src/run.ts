@@ -4,7 +4,12 @@ import { dirname } from 'node:path'
 import { applyRunnerArtifacts, loadRunnerSpec, loadRunSpec, resolveConfig, type AnypiConfig } from './config'
 import { createLogger } from './logger'
 import { runPiAgent } from './pi-session'
-import { buildAgentPrompt, buildValidationRepairPrompt, resolveValidationCommands } from './prompt'
+import {
+  buildAgentPrompt,
+  buildNoChangeRepairPrompt,
+  buildValidationRepairPrompt,
+  resolveValidationCommands,
+} from './prompt'
 import {
   commitIfNeeded,
   countCommitsAhead,
@@ -76,6 +81,7 @@ const baseStatus = (config: AnypiConfig, runSpec: AgentRunSpecPayload, git: GitC
   providerModel: `${config.provider}/${config.model}`,
   tools: [],
   validations: [],
+  agentAttempts: 0,
   validationAttempts: 0,
   promptChars: 0,
 })
@@ -103,17 +109,43 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     const prompt = buildAgentPrompt(runSpec, config.worktree)
     status.promptChars = prompt.length
 
-    let piResult = await runPiAgent(config, prompt, logger.info)
-    let piText = piResult.text
-    const sessionFiles = piResult.sessionFile ? [piResult.sessionFile] : []
-    status.tools = piResult.tools
-    status.sessionFile = piResult.sessionFile
-    status.sessionFiles = sessionFiles
+    let piText = ''
+    const sessionFiles: string[] = []
+    const recordPiResult = async (result: Awaited<ReturnType<typeof runPiAgent>>, label?: string) => {
+      piText = piText ? `${piText}\n\n${label ? `## ${label}\n` : ''}${result.text}` : result.text
+      status.tools = mergeTools(status.tools, result.tools)
+      if (result.sessionFile) {
+        sessionFiles.push(result.sessionFile)
+        status.sessionFile = result.sessionFile
+        status.sessionFiles = sessionFiles
+      }
+    }
 
-    const changed = await gitStatusShort(config.worktree, git?.env)
-    const commitsAhead = git ? await countCommitsAhead(git) : 0
-    if (!changed && git && commitsAhead === 0) {
-      throw new Error('Anypi completed without leaving code changes in the worktree')
+    for (let attempt = 0; attempt <= config.noChangeRepairAttempts; attempt += 1) {
+      const nextPrompt =
+        attempt === 0
+          ? prompt
+          : buildNoChangeRepairPrompt({
+              attempt,
+              maxAttempts: config.noChangeRepairAttempts,
+              worktree: config.worktree,
+            })
+      await recordPiResult(
+        await runPiAgent(config, nextPrompt, logger.info),
+        attempt === 0 ? undefined : `No-change repair ${attempt}`,
+      )
+      status.agentAttempts = attempt + 1
+      await writeStatus(config.statusPath, status)
+
+      const changed = await gitStatusShort(config.worktree, git?.env)
+      const commitsAhead = git ? await countCommitsAhead(git) : 0
+      if (changed || !git || commitsAhead > 0) break
+      if (attempt >= config.noChangeRepairAttempts) {
+        throw new Error('Anypi completed without leaving code changes in the worktree')
+      }
+      await logger.error(
+        `Anypi completed without leaving code changes; starting no-change repair ${attempt + 1}/${config.noChangeRepairAttempts}`,
+      )
     }
 
     const validationCommands = resolveValidationCommands(runSpec, config.validationCommands)

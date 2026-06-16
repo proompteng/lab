@@ -84,6 +84,16 @@ Failures:
 ${failures.map(formatValidationResult).join('\n\n')}`
 }
 
+export const buildNoChangeRepairPrompt = (input: { attempt: number; maxAttempts: number; worktree: string }) =>
+  `Your previous response completed without leaving any code changes in the git worktree.
+
+Worktree: ${input.worktree}
+Repair attempt: ${input.attempt} of ${input.maxAttempts}
+
+This AgentRun requires a real implementation. Continue from the repository state now: inspect the requested files,
+edit source and tests, run relevant validation, and leave the final changes in the worktree. Do not stop with only
+analysis or a summary.`
+
 export const buildSystemPrompt = () =>
   `You are Anypi, an autonomous production coding runner.
 Be direct, use the repository instructions, inspect before editing, make coherent production changes, and verify with commands.

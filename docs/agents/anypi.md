@@ -29,6 +29,8 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
   `/workspace/.agent/status.json`.
 - `ANYPI_VALIDATION_REPAIR_ATTEMPTS=2` gives Pi two bounded repair passes when a runner-side validation command fails.
   The runner still refuses to commit or push unless all validation commands pass.
+- `ANYPI_NO_CHANGE_REPAIR_ATTEMPTS=2` gives Pi two bounded continuation prompts if a session exits without leaving
+  code changes. The run still fails if the worktree is unchanged after those attempts.
 
 ## AgentRun Example
 

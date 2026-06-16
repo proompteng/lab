@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'vitest'
 
 import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
-import { buildAgentPrompt, buildValidationRepairPrompt, resolveTaskPrompt, resolveValidationCommands } from './prompt'
+import {
+  buildAgentPrompt,
+  buildNoChangeRepairPrompt,
+  buildValidationRepairPrompt,
+  resolveTaskPrompt,
+  resolveValidationCommands,
+} from './prompt'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -11,6 +17,7 @@ describe('Anypi config', () => {
     expect(config.baseUrl).toBe('http://flamingo.flamingo.svc.cluster.local/v1')
     expect(config.thinkingLevel).toBe('off')
     expect(config.tools).toEqual([...ALL_PI_TOOL_NAMES])
+    expect(config.noChangeRepairAttempts).toBe(2)
     expect(config.validationRepairAttempts).toBe(2)
   })
 
@@ -95,5 +102,13 @@ describe('Anypi prompt contract', () => {
     expect(prompt).toContain('git diff --check')
     expect(prompt).toContain('trailing whitespace')
     expect(prompt).toContain('do not remove tests')
+  })
+
+  test('builds a no-change repair prompt that requires implementation', () => {
+    const prompt = buildNoChangeRepairPrompt({ attempt: 1, maxAttempts: 2, worktree: '/workspace/lab' })
+    expect(prompt).toContain('completed without leaving any code changes')
+    expect(prompt).toContain('Repair attempt: 1 of 2')
+    expect(prompt).toContain('requires a real implementation')
+    expect(prompt).toContain('leave the final changes in the worktree')
   })
 })

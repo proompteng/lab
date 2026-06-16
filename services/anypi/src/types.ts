@@ -94,6 +94,7 @@ export type AnypiStatus = {
   commit?: string
   pullRequest?: PullRequestResult
   validations: ValidationResult[]
+  agentAttempts: number
   validationAttempts: number
   promptChars: number
   error?: string
