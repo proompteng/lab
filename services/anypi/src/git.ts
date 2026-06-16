@@ -281,6 +281,21 @@ export const parseCiChecks = (raw: string): CiCheck[] => {
   })
 }
 
+export const parseCiChecksResult = (result: CommandResult): CiCheck[] => {
+  if (result.exitCode !== 0) {
+    const output = (result.stderr || result.stdout || 'no output').trim()
+    throw new Error(`gh pr checks failed (${result.exitCode}): ${output}`)
+  }
+  return parseCiChecks(result.stdout)
+}
+
+export const isNoChecksReportedResult = (result: CommandResult) => {
+  if (result.exitCode === 0) return false
+  return /no checks reported/i.test(`${result.stderr}\n${result.stdout}`)
+}
+
+export const isNoRequiredChecksResult = isNoChecksReportedResult
+
 export const summarizeChecks = (checks: CiCheck[]) => {
   const failed = checks.filter((check) => ['fail', 'cancel'].includes(check.bucket ?? ''))
   const pending = checks.filter((check) => check.bucket === 'pending')
@@ -331,13 +346,12 @@ export const waitForPullRequestChecks = async (
 
     try {
       let result = await readChecks(effectiveRequiredOnly)
-      lastChecks = parseCiChecks(result.stdout)
-      if (effectiveRequiredOnly && lastChecks.length === 0) {
+      if (effectiveRequiredOnly && isNoChecksReportedResult(result)) {
         await log('ci checks: no required checks reported; falling back to all pull request checks')
         effectiveRequiredOnly = false
         result = await readChecks(false)
-        lastChecks = parseCiChecks(result.stdout)
       }
+      lastChecks = isNoChecksReportedResult(result) ? [] : parseCiChecksResult(result)
     } catch (error) {
       return {
         ok: false,

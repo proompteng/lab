@@ -5,6 +5,7 @@ ARG BUN_VERSION=1.3.14
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG NODE_VERSION=24.11.1
 ARG UV_VERSION=0.11.14
+ARG GH_VERSION=2.94.0
 ARG HELM_VERSION=3.18.6
 ARG KUSTOMIZE_VERSION=5.8.1
 ARG LAB_GIT_SHA=dev
@@ -25,6 +26,7 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS runner
 ARG LAB_GIT_SHA
 ARG UV_VERSION
+ARG GH_VERSION
 ARG HELM_VERSION
 ARG KUSTOMIZE_VERSION
 ENV NODE_ENV=production \
@@ -50,7 +52,6 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
     build-essential \
     ca-certificates \
     curl \
-    gh \
     git \
     jq \
     openssh-client \
@@ -70,11 +71,16 @@ RUN set -eux; \
   curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${tool_arch}.tar.gz" -o /tmp/helm.tar.gz; \
   tar -xzf /tmp/helm.tar.gz -C /tmp; \
   mv "/tmp/linux-${tool_arch}/helm" /usr/local/bin/helm; \
+  curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${tool_arch}.tar.gz" -o /tmp/gh.tar.gz; \
+  tar -xzf /tmp/gh.tar.gz -C /tmp; \
+  mv "/tmp/gh_${GH_VERSION}_linux_${tool_arch}/bin/gh" /usr/local/bin/gh; \
   curl -fsSL \
     "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_${tool_arch}.tar.gz" \
     -o /tmp/kustomize.tar.gz; \
   tar -xzf /tmp/kustomize.tar.gz -C /usr/local/bin kustomize; \
-  rm -rf /tmp/helm.tar.gz /tmp/kustomize.tar.gz "/tmp/linux-${tool_arch}"; \
+  rm -rf /tmp/gh.tar.gz /tmp/helm.tar.gz /tmp/kustomize.tar.gz "/tmp/gh_${GH_VERSION}_linux_${tool_arch}" "/tmp/linux-${tool_arch}"; \
+  gh --version; \
+  gh pr checks --help | grep -- '--json'; \
   helm version --short; \
   kustomize version
 

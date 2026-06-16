@@ -9,11 +9,11 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-torghut-minimal-20260616a
+  name: anypi-eval-torghut-minimal-20260616d
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: minimal
     anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
@@ -41,14 +41,14 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/minimal/torghut-diff-coverage-20260616a
+    head: codex/anypi-eval/minimal/torghut-diff-coverage-20260616d
     promptVariant: minimal
     validationCommands: |
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:292c28dc@sha256:391acae8dc4e34dcf46e6d84a38bb40d6f907e9bf4e6d7b7dab53f44f1008ff0
+    image: registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66
     resources:
       requests:
         cpu: "2"
@@ -61,11 +61,11 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-torghut-repair-20260616a
+  name: anypi-eval-torghut-repair-20260616d
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: repair-loop
     anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
@@ -93,14 +93,14 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/repair-loop/torghut-diff-coverage-20260616a
+    head: codex/anypi-eval/repair-loop/torghut-diff-coverage-20260616d
     promptVariant: repair-loop
     validationCommands: |
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:292c28dc@sha256:391acae8dc4e34dcf46e6d84a38bb40d6f907e9bf4e6d7b7dab53f44f1008ff0
+    image: registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66
     resources:
       requests:
         cpu: "2"
@@ -113,11 +113,11 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-runner-finish-20260616a
+  name: anypi-eval-runner-finish-20260616d
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: finish-gated
     anypi.proompteng.ai/task: anypi-status-evidence
 spec:
@@ -144,7 +144,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/finish-gated/runner-status-evidence-20260616a
+    head: codex/anypi-eval/finish-gated/runner-status-evidence-20260616d
     promptVariant: finish-gated
     validationCommands: |
       bun run --filter @proompteng/anypi tsc
@@ -153,7 +153,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:292c28dc@sha256:391acae8dc4e34dcf46e6d84a38bb40d6f907e9bf4e6d7b7dab53f44f1008ff0
+    image: registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66
     resources:
       requests:
         cpu: "2"
@@ -166,11 +166,11 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-runner-strict-20260616a
+  name: anypi-eval-runner-strict-20260616d
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: strict-repo
     anypi.proompteng.ai/task: anypi-ci-watcher
 spec:
@@ -197,7 +197,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/strict-repo/runner-ci-watcher-20260616a
+    head: codex/anypi-eval/strict-repo/runner-ci-watcher-20260616d
     promptVariant: strict-repo
     validationCommands: |
       bun run --filter @proompteng/anypi tsc
@@ -206,7 +206,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:292c28dc@sha256:391acae8dc4e34dcf46e6d84a38bb40d6f907e9bf4e6d7b7dab53f44f1008ff0
+    image: registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66
     resources:
       requests:
         cpu: "2"
@@ -219,11 +219,11 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-agents-repair-20260616a
+  name: anypi-eval-agents-repair-20260616d
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616a"
+    anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: repair-loop
     anypi.proompteng.ai/task: agents-docs-manifests
 spec:
@@ -240,7 +240,7 @@ spec:
     type: job
     config:
       nodeSelector:
-        kubernetes.io/arch: amd64
+        kubernetes.io/arch: arm64
   ttlSecondsAfterFinished: 86400
   vcsRef:
     name: github
@@ -250,14 +250,14 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/repair-loop/agents-docs-manifests-20260616a
+    head: codex/anypi-eval/repair-loop/agents-docs-manifests-20260616d
     promptVariant: repair-loop
     validationCommands: |
       kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:292c28dc@sha256:391acae8dc4e34dcf46e6d84a38bb40d6f907e9bf4e6d7b7dab53f44f1008ff0
+    image: registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66
     resources:
       requests:
         cpu: "2"
