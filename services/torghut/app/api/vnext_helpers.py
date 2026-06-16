@@ -26,6 +26,7 @@ def _extract_metrics_and_drawdown(metrics_payload: dict[str, object]) -> float |
             drawdown = None
     return drawdown
 
+
 def _extract_drift_info(drift_payload: dict[str, object]) -> tuple[Any, Any, Any]:
     """Extract drift-related fields from payload."""
     drift_reasons_raw = drift_payload.get("reasons")
@@ -33,7 +34,10 @@ def _extract_drift_info(drift_payload: dict[str, object]) -> tuple[Any, Any, Any
     drift_eligible = drift_payload.get("eligible_for_live_promotion")
     return drift_reasons_raw, drift_reason_codes_raw, drift_eligible
 
-def _extract_strategy_compilation(vnext_payload: dict[str, object]) -> tuple[int, int, list[str]]:
+
+def _extract_strategy_compilation(
+    vnext_payload: dict[str, object],
+) -> tuple[int, int, list[str]]:
     """Extract strategy compilation info from vnext payload."""
     strategy_compilation_raw = vnext_payload.get("strategy_compilation")
     strategy_compilation_items = (
@@ -72,7 +76,9 @@ class _AutonomyBridgeStatusConfig:
     vnext_payload: dict[str, object]
 
 
-def _extract_autonomy_config(scheduler: TradingScheduler) -> _AutonomyBridgeStatusConfig:
+def _extract_autonomy_config(
+    scheduler: TradingScheduler,
+) -> _AutonomyBridgeStatusConfig:
     """Extract autonomy configuration from scheduler."""
     gate_artifact_path = str(
         getattr(scheduler.state, "last_autonomy_gates", "") or ""
