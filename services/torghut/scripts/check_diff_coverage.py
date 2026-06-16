@@ -28,6 +28,7 @@ class FileDiffCoverage:
     covered_lines: int
     missing_lines: tuple[int, ...]
     missing_from_coverage: bool = False
+    source_context: tuple[str, ...] = ()
 
     @property
     def coverage_ratio(self) -> float:
@@ -197,6 +198,90 @@ def _drop_missing_non_executable_files(
     return filtered
 
 
+def _load_source_context(source_path: Path) -> list[str] | None:
+    """Load source file lines. Returns None if file cannot be read."""
+    try:
+        return source_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _resolve_function_context(
+    source_lines: list[str], line_number: int
+) -> list[str] | None:
+    """Resolve Python function scope context for a given line number."""
+    try:
+        tree = ast.parse("\n".join(source_lines))
+    except SyntaxError:
+        return None
+
+    # Build parent mapping for AST nodes
+    parent_map: dict[ast.AST, ast.AST | None] = {}
+
+    def build_parent_map(node: ast.AST, parent: ast.AST | None = None) -> None:
+        parent_map[node] = parent
+        for child in ast.iter_child_nodes(node):
+            build_parent_map(child, node)
+
+    build_parent_map(tree)
+
+    # Find the deepest AST node containing the line number
+    # Sort by size of range (smallest first), with priority for statement nodes
+    candidates: list[tuple[int, int, int, ast.AST]] = []
+    for node in ast.walk(tree):
+        if not hasattr(node, "lineno"):
+            continue
+        node_lineno = node.lineno
+        if node_lineno > line_number:
+            continue
+
+        end_lineno = getattr(node, "end_lineno", None)
+        if end_lineno is not None:
+            if end_lineno < line_number:
+                continue
+            # Calculate range size for sorting (smaller range = more specific)
+            range_size = end_lineno - node_lineno
+        else:
+            # Nodes without end_lineno - use a default large range
+            range_size = 10000
+
+        # Priority: body_stmt (FunctionDef/ClassDef) > other stmt > other nodes
+        is_body_stmt = isinstance(node, (ast.FunctionDef, ast.ClassDef))
+        is_stmt = isinstance(node, ast.stmt)
+        if is_body_stmt:
+            priority = 0
+        elif is_stmt:
+            priority = 1
+        else:
+            priority = 2
+
+        # Use node id as tertiary sort key to handle ties
+        candidates.append((range_size, priority, id(node), node))
+
+    if not candidates:
+        return None
+
+    # Sort by range size, then priority, then id
+    candidates.sort(key=lambda x: (x[0], x[1], x[2]))
+    target_node = candidates[0][3]
+
+    # Walk up to find function/class definitions using parent map
+    contexts: list[str] = []
+    current: ast.AST | None = target_node
+
+    while current:
+        if isinstance(current, ast.FunctionDef):
+            func_name = current.name
+            contexts.insert(0, f"def {func_name}(...):  # {current.lineno}")
+        elif isinstance(current, ast.ClassDef):
+            class_name = current.name
+            contexts.insert(0, f"class {class_name}:  # {current.lineno}")
+        # Move to parent regardless of node type
+        current = parent_map.get(current)
+
+    return contexts if contexts else None
+
+
 def _load_coverage_index(xml_path: Path) -> dict[str, dict[int, int]]:
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -232,6 +317,7 @@ def summarize_changed_coverage(
     *,
     changed_lines: dict[str, set[int]],
     coverage_index: dict[str, dict[int, int]],
+    service_root: Path,
 ) -> list[FileDiffCoverage]:
     summary: list[FileDiffCoverage] = []
     for filename in sorted(changed_lines):
@@ -254,12 +340,29 @@ def summarize_changed_coverage(
         missing = tuple(
             line for line in executable_changed if line_hits.get(line, 0) <= 0
         )
+
+        # Load source context for missing lines
+        source_context: list[str] = []
+        source_path = service_root / filename
+        if missing and source_path.exists():
+            source_lines = _load_source_context(source_path)
+            if source_lines is not None:
+                for missing_line in missing:
+                    # Show the line of code itself
+                    if 0 < missing_line <= len(source_lines):
+                        source_context.append(f"    {source_lines[missing_line - 1]}")
+                    # Try to show function context
+                    func_context = _resolve_function_context(source_lines, missing_line)
+                    if func_context:
+                        source_context.extend(func_context)
+
         summary.append(
             FileDiffCoverage(
                 filename=filename,
                 executable_changed_lines=len(executable_changed),
                 covered_lines=len(executable_changed) - len(missing),
                 missing_lines=missing,
+                source_context=tuple(source_context),
             )
         )
     return summary
@@ -275,9 +378,14 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
             f"lines covered ({coverage_pct:.2f}%){suffix}"
         )
         if item.missing_lines:
-            lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
-            )
+            # Show file:line entries for each missing line
+            for missing_line in item.missing_lines:
+                lines.append(f"  {item.filename}:{missing_line}")
+            # Show source context for missing lines
+            if item.source_context:
+                lines.append("  # nearby source context:")
+                for ctx_line in item.source_context:
+                    lines.append(ctx_line)
     return "\n".join(lines)
 
 
@@ -319,6 +427,7 @@ def main() -> int:
     summary = summarize_changed_coverage(
         changed_lines=changed_with_untracked,
         coverage_index=coverage_index,
+        service_root=service_root,
     )
     if not summary:
         print("diff coverage passed: no changed executable Torghut Python source lines")

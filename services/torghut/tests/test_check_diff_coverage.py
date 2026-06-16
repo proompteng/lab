@@ -24,6 +24,7 @@ from scripts.check_diff_coverage import (
     _repo_root,
     _resolve_base_spec,
     _resolve_diff_base,
+    _resolve_function_context,
     main,
     summarize_changed_coverage,
 )
@@ -236,10 +237,17 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
     def test_summarize_changed_coverage_uses_only_executable_changed_lines(
         self,
     ) -> None:
-        summary = summarize_changed_coverage(
-            changed_lines={"app/trading/foo.py": {11, 12, 99}},
-            coverage_index={"app/trading/foo.py": {11: 1, 12: 0, 30: 1}},
-        )
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            app_dir = service_root / "app" / "trading"
+            app_dir.mkdir(parents=True, exist_ok=True)
+            (app_dir / "foo.py").write_text("# dummy", encoding="utf-8")
+
+            summary = summarize_changed_coverage(
+                changed_lines={"app/trading/foo.py": {11, 12, 99}},
+                coverage_index={"app/trading/foo.py": {11: 1, 12: 0, 30: 1}},
+                service_root=service_root,
+            )
 
         self.assertEqual(len(summary), 1)
         self.assertEqual(summary[0].filename, "app/trading/foo.py")
@@ -251,6 +259,7 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         summary = summarize_changed_coverage(
             changed_lines={"app/trading/foo.py": {11, 12}},
             coverage_index={},
+            service_root=Path("/tmp"),
         )
 
         self.assertEqual(len(summary), 1)
@@ -450,6 +459,7 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         summary = summarize_changed_coverage(
             changed_lines={"app/trading/foo.py": {90}},
             coverage_index={"app/trading/foo.py": {11: 1, 12: 0}},
+            service_root=Path("/tmp"),
         )
 
         self.assertEqual(summary, [])
@@ -468,7 +478,7 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         )
 
         self.assertIn("missing-from-coverage", text)
-        self.assertIn("missing lines: 20", text)
+        self.assertIn("scripts/check_diff_coverage.py:20", text)
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")
@@ -628,3 +638,107 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         exit_code = main()
 
         self.assertEqual(exit_code, 0)
+
+    def test_summarize_changed_coverage_with_multi_line_uncovered_diff(self) -> None:
+        """Test that multi-line uncovered diffs are reported with file:line format."""
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            app_dir = service_root / "app" / "trading"
+            app_dir.mkdir(parents=True, exist_ok=True)
+            source_path = app_dir / "quantity_rules.py"
+            source_path.write_text(
+                'def calculate_quantity(price: float, budget: float) -> int:\n'
+                '    """Calculate quantity based on price and budget."""\n'
+                '    if price <= 0:\n'
+                '        return 0\n'
+                '    return int(budget / price)\n',
+                encoding="utf-8",
+            )
+
+            summary = summarize_changed_coverage(
+                changed_lines={"app/trading/quantity_rules.py": {2, 3, 4, 5, 6}},
+                coverage_index={
+                    "app/trading/quantity_rules.py": {1: 1, 2: 0, 3: 0, 4: 0, 5: 1, 6: 1}
+                },
+                service_root=service_root,
+            )
+
+        self.assertEqual(len(summary), 1)
+        item = summary[0]
+        self.assertEqual(item.filename, "app/trading/quantity_rules.py")
+        self.assertEqual(item.executable_changed_lines, 5)
+        self.assertEqual(item.covered_lines, 2)
+        self.assertEqual(item.missing_lines, (2, 3, 4))
+        # Verify file:line format in source_context
+        # Note: source lines are included with indentation preserved
+        self.assertIn("            return 0", item.source_context)
+        self.assertIn("        if price <= 0:", item.source_context)
+
+    def test_format_summary_shows_file_line_format_for_missing(self) -> None:
+        """Test that missing lines are shown with file:line format."""
+        with TemporaryDirectory() as tmpdir:
+            service_root = Path(tmpdir)
+            app_dir = service_root / "app" / "trading"
+            app_dir.mkdir(parents=True, exist_ok=True)
+            source_path = app_dir / "foo.py"
+            source_path.write_text(
+                'def build() -> int:\n'
+                '    value = 1\n'
+                '    return value\n',
+                encoding="utf-8",
+            )
+
+            summary = summarize_changed_coverage(
+                changed_lines={"app/trading/foo.py": {2, 3}},
+                coverage_index={"app/trading/foo.py": {1: 1, 2: 0, 3: 0}},
+                service_root=service_root,
+            )
+
+            text = _format_summary(summary)
+
+        # Check for file:line format
+        self.assertIn("app/trading/foo.py:2", text)
+        self.assertIn("app/trading/foo.py:3", text)
+        # Check for source context lines
+        self.assertIn("    value = 1", text)
+        self.assertIn("    return value", text)
+        # Check for function context in source_context
+        context_in_text = "# nearby source context:" in text
+        self.assertTrue(context_in_text, "source context section should be present")
+
+    def test_resolve_function_context_for_nested_function(self) -> None:
+        """Test that _resolve_function_context correctly identifies nested function scopes."""
+        source_lines = [
+            "def outer() -> None:",
+            "    def inner() -> int:",
+            "        x = 1",  # line 3
+            "        return x",
+            "    return inner()",
+            "",
+        ]
+
+        # Test line 3 which is inside inner function
+        context = _resolve_function_context(source_lines, 3)
+
+        self.assertIsNotNone(context)
+        # Check for both function names in the context
+        context_str = " ".join(context)
+        self.assertIn("def inner", context_str)
+        self.assertIn("def outer", context_str)
+
+    def test_resolve_function_context_handles_nonexistent_line(self) -> None:
+        """Test that _resolve_function_context returns None for invalid line numbers."""
+        source_lines = ["def foo() -> int:", "    return 1", ""]
+
+        context = _resolve_function_context(source_lines, 999)
+
+        self.assertIsNone(context)
+
+    def test_resolve_function_context_handles_syntax_error(self) -> None:
+        """Test that _resolve_function_context returns None for invalid Python syntax."""
+        # Use an actual syntax error (missing closing parenthesis)
+        source_lines = ["def foo() -> int:", "    return (1 +", ""]
+
+        context = _resolve_function_context(source_lines, 2)
+
+        self.assertIsNone(context)
