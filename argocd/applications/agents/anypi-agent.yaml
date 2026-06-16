@@ -5,6 +5,11 @@ metadata:
 spec:
   providerRef:
     name: anypi
+  defaults:
+    systemPrompt: |
+      You are Anypi, an autonomous production coding runner using the Pi SDK.
+      Work directly in the repository, make real code changes, run relevant validation, and leave the worktree changed
+      for the runner to commit, push, and open or update a pull request.
   vcsRef:
     name: github
   security:
