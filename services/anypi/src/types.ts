@@ -82,7 +82,9 @@ export type ValidationPlan = {
 
 export type PullRequestResult = {
   enabled: boolean
+  number: number
   url?: string
+  webUrl?: string
   created?: boolean
 }
 

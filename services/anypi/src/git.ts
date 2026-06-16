@@ -208,7 +208,7 @@ export const createOrUpdatePullRequest = async (
     body: string
   },
 ): Promise<PullRequestResult> => {
-  if (!git.pullRequestsEnabled) return { enabled: false }
+  if (!git.pullRequestsEnabled) return { enabled: false, number: 0 }
   const owner = repositoryOwner(git.repository)
   const endpoint = `repos/${git.repository}/pulls`
   const view = await runCommand(
@@ -227,7 +227,13 @@ export const createOrUpdatePullRequest = async (
       body: input.body,
     })
     const parsed = parsePullRequestResponse(updated.stdout)
-    return { enabled: true, url: parsed.url ?? existing.url, created: false }
+    return {
+      enabled: true,
+      number: parsed.number,
+      url: parsed.url ?? existing.url,
+      webUrl: `${git.webUrl}/pull/${parsed.number}`,
+      created: false,
+    }
   }
   const created = await runGitHubPullRequestMutation(git, endpoint, 'POST', {
     title: input.title,
@@ -236,7 +242,13 @@ export const createOrUpdatePullRequest = async (
     head: git.headBranch,
   })
   const parsed = parsePullRequestResponse(created.stdout)
-  return { enabled: true, url: parsed.url, created: true }
+  return {
+    enabled: true,
+    number: parsed.number,
+    url: parsed.url,
+    webUrl: `${git.webUrl}/pull/${parsed.number}`,
+    created: true,
+  }
 }
 
 export const runValidationCommands = async (
