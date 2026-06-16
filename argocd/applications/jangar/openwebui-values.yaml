@@ -29,7 +29,7 @@ serviceAccount:
   create: true
   name: open-webui
 
-openaiBaseApiUrl: http://jangar.jangar.svc.cluster.local/openai/v1
+openaiBaseApiUrl: http://flamingo.flamingo.svc.cluster.local/v1
 
 databaseUrl: ""
 
@@ -48,8 +48,14 @@ extraEnvVars:
   # Disable TLS when calling the HTTP-only Jangar OpenAI gateway
   - name: AIOHTTP_CLIENT_SESSION_SSL
     value: "false"
+  # Keep Flamingo first so new chats default to the Blackwell vLLM endpoint.
+  # Keep the Jangar gateway second as a rollback/hosted-model path.
+  - name: OPENAI_API_BASE_URLS
+    value: "http://flamingo.flamingo.svc.cluster.local/v1;http://jangar.jangar.svc.cluster.local/openai/v1"
+  - name: OPENAI_API_KEYS
+    value: ";"
   - name: DEFAULT_MODELS
-    value: gpt-5.5
+    value: qwen3-coder-flamingo
   - name: WEBUI_AUTH
     value: "false"
   - name: ENABLE_SIGNUP

@@ -39,9 +39,9 @@ OPENAI_EMBEDDING_MODEL=qwen3-embedding-saigak:8b
 Move one consumer at a time, starting with the lowest-risk host-side harness.
 
 1. Host-side pi harness.
-2. Agents service canary.
-3. Bumba completion traffic.
-4. Jangar/OpenWebUI completion traffic.
+2. Jangar/OpenWebUI completion traffic.
+3. Agents service canary.
+4. Bumba completion traffic.
 5. Torghut or other production workflows only after benchmark and tool-call
    evidence is stable.
 
@@ -49,19 +49,25 @@ Do not migrate multiple consumers in the same commit or rollout.
 
 ## Host-Side Pi Harness
 
-Configure the harness to use:
+Configure the harness to use the OpenAI-compatible endpoint:
 
 ```text
 OPENAI_API_BASE_URL=http://flamingo.ide-newton.ts.net/v1
+OPENAI_BASE_URL=http://flamingo.ide-newton.ts.net/v1
 OPENAI_COMPLETION_MODEL=qwen3-coder-flamingo
+OPENAI_MODEL=qwen3-coder-flamingo
 ```
 
-If the harness has a separate API key setting, use a local dummy value unless the
-client refuses empty keys:
+If the harness has a separate API key setting, use a local dummy value. vLLM does
+not require a real key on this endpoint, but many OpenAI-compatible clients
+refuse an empty one:
 
 ```text
 OPENAI_API_KEY=flamingo-local
 ```
+
+Do not point embedding settings at Flamingo. If the host has embedding variables,
+leave them on `saigak` until the embedding migration is designed.
 
 Smoke:
 
@@ -86,6 +92,34 @@ Keep embedding variables pointed at `saigak`.
 For apps that use one base URL for both completions and embeddings, first split
 completion and embedding configuration in that app. Do not point embedding calls
 at Flamingo until the embedding migration exists.
+
+## OpenWebUI
+
+OpenWebUI is the first in-cluster UI consumer migrated to Flamingo. The GitOps
+values keep Flamingo first and the Jangar gateway second:
+
+```text
+OPENAI_API_BASE_URLS=http://flamingo.flamingo.svc.cluster.local/v1;http://jangar.jangar.svc.cluster.local/openai/v1
+OPENAI_API_KEYS=;
+DEFAULT_MODELS=qwen3-coder-flamingo
+ENABLE_OLLAMA_API=true
+OLLAMA_BASE_URLS=http://saigak.saigak.svc.cluster.local:11434
+```
+
+Validation:
+
+```bash
+argocd --core app sync jangar --timeout 900
+kubectl -n jangar rollout status statefulset/open-webui --timeout=10m
+kubectl -n jangar exec open-webui-0 -- printenv OPENAI_API_BASE_URLS DEFAULT_MODELS OLLAMA_BASE_URLS
+```
+
+Rollback by restoring:
+
+```text
+OPENAI_API_BASE_URL=http://jangar.jangar.svc.cluster.local/openai/v1
+DEFAULT_MODELS=gpt-5.5
+```
 
 ## Rollback Values
 

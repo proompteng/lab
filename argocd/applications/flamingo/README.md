@@ -108,6 +108,56 @@ curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
 Expected: `tool_calls` is a non-empty array and the function argument includes
 `"repo": "lab"`.
 
+## Rollout Evidence
+
+Recorded on 2026-06-16 after syncing the merged GitOps revisions.
+
+KubeVirt:
+
+- `virt-handler-cmn8v` is `1/1 Running` on `turin`.
+- `turin` has `kubevirt.io/schedulable=true`.
+- Existing `saigak` and `openclaw` VMIs remained `Running`.
+- A temporary `turin-kubevirt-canary` VMI pinned to `turin` reached `Running`
+  and was deleted after the check.
+
+Storage:
+
+- `rook-ceph.rbd.csi.ceph.com` and `rook-ceph.cephfs.csi.ceph.com` are both
+  registered on `CSINode/turin`.
+- The `flamingo-model-cache` PVC is bound to `rook-ceph-block` and attached on
+  `turin`.
+- The wider Ceph cluster remained in recovery during this rollout; no Ceph OSD,
+  CRUSH, or Talos storage mutation was performed for Flamingo.
+
+Flamingo:
+
+- Argo CD app `flamingo` is `Synced` and `Healthy`.
+- Pod `flamingo-bbb64fd75-sdmr6` is `1/1 Running` on `turin`.
+- Final launch flags include:
+
+```text
+--max-model-len 32768 --gpu-memory-utilization 0.92 --max-num-seqs 256 --enable-prefix-caching --tool-call-parser qwen3_coder
+```
+
+- `/v1/models` works through both
+  `http://flamingo.flamingo.svc.cluster.local/v1` and
+  `http://flamingo.ide-newton.ts.net/v1`.
+- Cluster-local chat smoke returned `cluster-ready`.
+- Tailnet chat smoke returned `flamingo-ready` with HTTP `200`.
+- Tailnet tool-call smoke returned a structured `add` function call with
+  arguments `{"a": 7, "b": 35}`.
+- `nvidia-smi` while idle after load reported
+  `90458 MiB / 97887 MiB`, `49 C`, and `15.30 W`.
+- vLLM reported `406,910` GPU KV-cache tokens and `12.42x` maximum concurrency
+  for 32,768-token requests.
+
+OpenWebUI:
+
+- OpenWebUI is configured with Flamingo first in `OPENAI_API_BASE_URLS` and the
+  Jangar gateway second as a rollback path.
+- `DEFAULT_MODELS` is `qwen3-coder-flamingo`.
+- `ENABLE_OLLAMA_API=true` keeps Saigak's Ollama endpoint available separately.
+
 ## Optimization Rounds
 
 Record each run with the vLLM image digest, model revision, flags, concurrency,
@@ -157,6 +207,15 @@ Round 3: MoE tuning.
 Only run this if vLLM logs indicate default MoE configuration or poor MoE
 throughput. Save generated configs outside Git unless they are proven stable,
 then mount them with `VLLM_TUNED_CONFIG_FOLDER`.
+
+Current logs show vLLM using the default MoE config for this Blackwell SKU:
+
+```text
+Using default MoE config. Performance might be sub-optimal!
+```
+
+Treat a tuned MoE config as the next optimization change after this stable
+serving rollout. Do not combine MoE tuning with another memory/context increase.
 
 Round 4: fallback comparison.
 
