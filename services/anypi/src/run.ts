@@ -81,7 +81,7 @@ const extractPullRequestHeadings = (template: string | undefined) => {
 
 const normalizeHeading = (heading: string) => heading.toLowerCase().replace(/\s+/g, ' ').trim()
 
-const validationSummary = (status: AnypiStatus) => {
+export const validationSummary = (status: AnypiStatus) => {
   const validations = status.validations
     .map((result) => `- \`${[result.command, ...result.args].join(' ')}\` exit ${result.exitCode}`)
     .join('\n')
