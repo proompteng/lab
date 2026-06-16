@@ -68,7 +68,8 @@ failures. If no variant passes, leave `anypi-agent` on `minimal`, record the fai
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | mixed | five-run batch | `20260616a` | `#10911`, `#10912`, `#10913` before invalidation | Some local validations passed | Invalid measurement: image had `gh` 2.46.0 without `pr checks --json`, so the runner saw zero checks while GitHub had failures | Not scored | Do not promote from this batch |
 | mixed | five-run batch | `20260616b` | `#10918`, `#10919`, `#10920`, `#10921` before invalidation | Some local validations passed | Invalid measurement: the required-check probe reported no checks as unavailable before falling back to all PR checks, so CI repair behavior was not scored | Not scored | Do not promote from this batch |
-| pending | five-run batch | `20260616c` | pending | pending | pending | pending | Scheduled with `registry.ide-newton.ts.net/lab/anypi:218106f21@sha256:4500e6de7532ebbcac541c26f8da3306013a7b0034553c53ca00ba1943cf89ba` |
+| mixed | five-run batch | `20260616c` | `#10922` before invalidation | Targeted Torghut validation passed before CI wait | Invalid measurement: all-checks probe before GitHub created checks was still treated as unavailable instead of pending/retryable | Not scored | Do not promote from this batch |
+| pending | five-run batch | `20260616d` | pending | pending | pending | pending | Scheduled with `registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66` |
 
 ## Commands
 
