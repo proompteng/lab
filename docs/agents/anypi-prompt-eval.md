@@ -87,6 +87,10 @@ contains lockfile or generated-artifact changes unless the run explicitly sets `
 `allowGeneratedArtifactChanges=true`, or `allowLockfileChanges=true`. The system and task prompts also now state that
 generated files and lockfiles must not be edited unless the task explicitly requires it.
 
+Follow-up batch `20260616e` uses
+`registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d`
+to prove the restricted-file policy before any default prompt promotion.
+
 ## Commands
 
 ```bash
