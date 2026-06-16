@@ -15,3 +15,4 @@ spec:
   security:
     allowedSecrets:
       - github-token
+      - codex-auth
