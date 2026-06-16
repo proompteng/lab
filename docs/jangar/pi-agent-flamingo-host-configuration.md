@@ -108,6 +108,90 @@ Compaction must stay explicit in `settings.json` for Flamingo host runs:
 }
 ```
 
+## Required Local Pi Customization
+
+Pi needs a local provider entry because Flamingo is a private OpenAI-compatible
+endpoint, not a built-in Pi model. Keep this customization minimal:
+
+- required: one `flamingo` provider in `~/.pi/agent/models.json`
+- required: default Pi model set to `qwen3-coder-flamingo`
+- required: explicit compaction settings in `~/.pi/agent/settings.json`
+- not required: custom Pi code, extra provider plugins, model aliases, or moving
+  embeddings off Saigak
+
+For this host, the permanent local Pi config should look like this:
+
+```json
+{
+  "providers": {
+    "flamingo": {
+      "baseUrl": "http://flamingo.ide-newton.ts.net/v1",
+      "api": "openai-completions",
+      "apiKey": "flamingo-local",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen3-coder-flamingo",
+          "name": "Qwen3 Coder Flamingo",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 245760,
+          "maxTokens": 8192,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+`~/.pi/agent/settings.json` should keep Flamingo as the default and make
+compaction explicit:
+
+```json
+{
+  "defaultProvider": "flamingo",
+  "defaultModel": "qwen3-coder-flamingo",
+  "defaultThinkingLevel": "off",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  }
+}
+```
+
+Verify the actual host config before a long run:
+
+```bash
+jq '{defaultProvider, defaultModel, defaultThinkingLevel, compaction}' ~/.pi/agent/settings.json
+
+jq '.providers | with_entries(.value |= {
+  baseUrl,
+  api,
+  compat,
+  models: [.models[] | {id, contextWindow, maxTokens, reasoning, input}]
+})' ~/.pi/agent/models.json
+
+PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
+pi --no-tools --no-session \
+  -p "Reply with exactly: host-pi-flamingo-262k-ready"
+```
+
+The smoke should return:
+
+```text
+host-pi-flamingo-262k-ready
+```
+
 ## Pi Binary Smoke
 
 The host `pi` binary supports custom OpenAI-compatible providers through
