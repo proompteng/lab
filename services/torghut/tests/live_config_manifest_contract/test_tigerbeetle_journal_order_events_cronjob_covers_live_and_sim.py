@@ -744,6 +744,12 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
             _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
         )
+        self.assertEqual(
+            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_BATCH_LIMIT"), "0"
+        )
+        self.assertEqual(
+            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_SCAN_LIMIT"), "0"
+        )
         self.assertEqual(env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER"), "100")
         self.assertEqual(env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL"), "250")
         self.assertEqual(env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
