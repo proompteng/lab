@@ -36,6 +36,7 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -43,8 +44,9 @@ jobs:
           page=1
           while true; do
             response="$(
-              curl -fsSL \
+              curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
                 -H 'Accept: application/vnd.github+json' \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
                 -H 'X-GitHub-Api-Version: 2022-11-28' \
                 "https://api.github.com/repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"
             )"

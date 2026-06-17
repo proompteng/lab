@@ -15,6 +15,10 @@ const wsWorkflow = readFileSync(
   'utf8',
 )
 const ciWorkflow = readFileSync(new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url), 'utf8')
+const pullRequestWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/pull-request.yml', import.meta.url),
+  'utf8',
+)
 
 const pathPatternIndex = (pattern: string): number =>
   workflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
@@ -103,6 +107,20 @@ describe('torghut build-push workflow', () => {
     expect(authHeader).toBeGreaterThan(tokenEnv)
     expect(prFilesCall).toBeGreaterThan(authHeader)
     expect(compareCall).toBeGreaterThan(authHeader)
+  })
+
+  it('retries generic pull-request changed-file planner GitHub API calls', () => {
+    const changesJob = pullRequestWorkflow.indexOf('check_changed_files:')
+    const tokenEnv = pullRequestWorkflow.indexOf('GH_TOKEN: ${{ github.token }}', changesJob)
+    const retryCurl = pullRequestWorkflow.indexOf('curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors', tokenEnv)
+    const authHeader = pullRequestWorkflow.indexOf('-H "Authorization: Bearer ${GH_TOKEN}"', retryCurl)
+    const prFilesCall = pullRequestWorkflow.indexOf('/pulls/${PR_NUMBER}/files?per_page=100&page=${page}', authHeader)
+
+    expect(changesJob).toBeGreaterThan(-1)
+    expect(tokenEnv).toBeGreaterThan(changesJob)
+    expect(retryCurl).toBeGreaterThan(tokenEnv)
+    expect(authHeader).toBeGreaterThan(retryCurl)
+    expect(prFilesCall).toBeGreaterThan(authHeader)
   })
 
   it('does not cancel main source CI that release promotion must verify', () => {
