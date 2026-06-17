@@ -43,6 +43,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--coverage-xml", default="coverage.xml")
     parser.add_argument("--threshold", type=float, default=90.0)
     parser.add_argument("--base-ref", default="")
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text)",
+    )
     return parser.parse_args()
 
 
@@ -265,6 +271,40 @@ def summarize_changed_coverage(
     return summary
 
 
+def _format_summary_json(
+    summary: list[FileDiffCoverage],
+    threshold: float,
+    coverage_pct: float,
+    passed: bool,
+) -> str:
+    import json
+
+    files: list[dict[str, object]] = []
+    for item in summary:
+        file_entry: dict[str, object] = {
+            "filename": item.filename,
+            "executable_changed_lines": item.executable_changed_lines,
+            "covered_lines": item.covered_lines,
+            "uncovered_line_numbers": sorted(item.missing_lines),
+            "missing_from_coverage": item.missing_from_coverage,
+        }
+        files.append(file_entry)
+
+    files.sort(key=lambda f: f["filename"])
+
+    result: dict[str, object] = {
+        "threshold": threshold,
+        "coverage_ratio": coverage_pct / 100.0,
+        "passed": passed,
+        "total_executable_changed_lines": sum(
+            item.executable_changed_lines for item in summary
+        ),
+        "total_covered_lines": sum(item.covered_lines for item in summary),
+        "files": files,
+    }
+    return json.dumps(result, indent=2, sort_keys=False)
+
+
 def _format_summary(summary: list[FileDiffCoverage]) -> str:
     lines: list[str] = []
     for item in summary:
@@ -329,10 +369,24 @@ def main() -> int:
     coverage_pct = (
         (total_covered / total_executable) * 100 if total_executable else 100.0
     )
-    print(_format_summary(summary))
-    print(
-        f"total changed-line coverage: {total_covered}/{total_executable} ({coverage_pct:.2f}%)"
-    )
+
+    passed = True
+    if summary:
+        missing_files = [
+            item.filename for item in summary if item.missing_from_coverage
+        ]
+        if missing_files:
+            passed = False
+        elif coverage_pct < args.threshold:
+            passed = False
+
+    if args.format == "json":
+        print(_format_summary_json(summary, args.threshold, coverage_pct, passed))
+    else:
+        print(_format_summary(summary))
+        print(
+            f"total changed-line coverage: {total_covered}/{total_executable} ({coverage_pct:.2f}%)"
+        )
 
     missing_files = [item.filename for item in summary if item.missing_from_coverage]
     if missing_files:
