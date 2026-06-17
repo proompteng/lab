@@ -81,6 +81,20 @@ def test_target_runtime_account_and_window_helpers_cover_identity_edges() -> Non
     )
 
 
+def test_scheduler_fetches_canonical_proofs_url_even_on_current_service(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("K_SERVICE", "torghut")
+    monkeypatch.setenv("POD_NAMESPACE", "torghut")
+
+    assert SimpleTradingPipeline._paper_route_target_plan_url_points_to_current_service(
+        "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+    )
+    assert not SimpleTradingPipeline._paper_route_target_plan_url_points_to_current_service(
+        "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
+    )
+
+
 def test_target_plan_fetch_error_reserves_configured_paper_account(
     monkeypatch,
 ) -> None:

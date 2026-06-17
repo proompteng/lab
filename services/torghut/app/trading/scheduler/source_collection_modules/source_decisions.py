@@ -16,6 +16,7 @@ from ....models import (
     Strategy,
     TradeDecision,
 )
+from ...live_submit_activation import live_submit_activation_status
 from ...models import StrategyDecision
 from ...runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -23,6 +24,7 @@ from ...runtime_decision_authority import (
 )
 from ..target_plan_helpers_modules import (
     PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK as _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK,
+    target_bounded_collection_authorized as _target_bounded_collection_authorized,
     bounded_sim_collection_blockers as _bounded_sim_collection_blockers,
     bounded_sim_collection_reserves_account as _bounded_sim_collection_reserves_account,
     bounded_sim_collection_target_with_runtime_account_audit as _bounded_sim_collection_target_with_runtime_account_audit,
@@ -41,6 +43,8 @@ from ..target_plan_helpers_modules import (
     target_probe_window as _target_probe_window,
     target_requires_bounded_sim_collection_gate as _target_requires_bounded_sim_collection_gate,
     target_runtime_account_matches as _target_runtime_account_matches,
+    target_symbols as _target_symbols,
+    target_truthy as _target_truthy,
 )
 from .collection_types import (
     SourceCollectionAction,
@@ -144,11 +148,17 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         allowed_symbols: set[str],
         session: Session | None,
     ) -> SourceCollectionState | None:
-        if settings.trading_mode != "paper":
+        trading_mode = settings.trading_mode
+        if trading_mode not in {"paper", "live"}:
             return None
         if not settings.trading_simple_paper_route_probe_enabled:
             return None
         now = self._trading_now().astimezone(timezone.utc)
+        if trading_mode == "live" and (
+            blocker := self._live_bounded_paper_route_source_collection_blocker(now)
+        ):
+            self._record_bounded_target_plan_blocker(reason=blocker)
+            return None
         if not self._is_market_session_open(now):
             self._record_bounded_target_plan_blocker(
                 reason="paper_route_session_window_not_open"
@@ -200,15 +210,20 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         positions: Sequence[Mapping[str, Any]] | None,
         state: SourceCollectionState,
     ) -> SourceCollectionTargetContext | None:
-        target = _bounded_sim_collection_target_with_runtime_account_audit(
-            raw_target,
-            positions=(
-                positions
-                if _target_requires_bounded_sim_collection_gate(raw_target)
-                else None
-            ),
-            account_label=self.account_label,
-        )
+        if settings.trading_mode == "live":
+            target = self._live_bounded_paper_route_target(raw_target)
+            if target is None:
+                return None
+        else:
+            target = _bounded_sim_collection_target_with_runtime_account_audit(
+                raw_target,
+                positions=(
+                    positions
+                    if _target_requires_bounded_sim_collection_gate(raw_target)
+                    else None
+                ),
+                account_label=self.account_label,
+            )
         window = _target_probe_window(target)
         target_cap = _target_probe_cap(target)
         strategy = self._paper_route_target_strategy(target, strategies)
@@ -248,6 +263,84 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
             return None
         return context
 
+    def _live_bounded_paper_route_source_collection_blocker(
+        self,
+        now: datetime,
+    ) -> str | None:
+        if not settings.trading_simple_submit_enabled:
+            return "simple_submit_disabled"
+        activation = live_submit_activation_status(now=now)
+        if activation.get("configured") is not True:
+            return "live_submit_activation_missing"
+        if activation.get("valid") is not True:
+            return str(activation.get("reason") or "live_submit_activation_invalid")
+        if activation.get("expired") is True:
+            return str(activation.get("reason") or "live_submit_activation_expired")
+        max_notional = _optional_decimal(
+            settings.trading_simple_paper_route_probe_max_notional
+        )
+        if max_notional is None or max_notional <= 0:
+            return "paper_route_probe_notional_not_configured"
+        return None
+
+    def _live_bounded_paper_route_target(
+        self,
+        raw_target: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        target = dict(raw_target)
+        target_cap = _target_probe_cap(target)
+        configured_cap = _optional_decimal(
+            settings.trading_simple_paper_route_probe_max_notional
+        )
+        if target_cap is None or configured_cap is None:
+            capped_notional: Decimal | None = None
+        else:
+            capped_notional = min(target_cap, configured_cap)
+        promotion_requested = any(
+            _target_truthy(target.get(key))
+            for key in (
+                "promotion_allowed",
+                "capital_promotion_allowed",
+                "final_promotion_authorized",
+                "final_promotion_allowed",
+            )
+        )
+        if (
+            capped_notional is None
+            or capped_notional <= 0
+            or not _target_bounded_collection_authorized(target)
+            or _safe_text(target.get("source_kind")) is None
+            or promotion_requested
+        ):
+            return None
+
+        symbols = sorted(_target_symbols(target))
+        if not symbols:
+            return None
+        target["paper_route_probe_total_max_notional"] = str(capped_notional)
+        target["paper_route_probe_next_session_max_notional"] = str(capped_notional)
+        target["paper_route_probe_effective_max_notional"] = str(capped_notional)
+        target["bounded_evidence_collection_max_notional"] = str(capped_notional)
+        target["max_notional"] = str(capped_notional)
+        target.setdefault("paper_route_probe_symbols", symbols)
+        target.setdefault("observed_stage", "paper")
+        target["bounded_evidence_collection_authorized"] = True
+        target["bounded_live_paper_collection_authorized"] = True
+        target["source_collection_authorized"] = True
+        target.setdefault(
+            "source_collection_authorization_scope",
+            "source_window_evidence_collection_only",
+        )
+        target.setdefault("evidence_collection_ok", True)
+        target.setdefault(
+            "source_manifest_ref",
+            f"trading_proofs:{_safe_text(target.get('candidate_id')) or _safe_text(target.get('hypothesis_id')) or 'unknown'}",
+        )
+        target["execution_account_label"] = self.account_label
+        target["paper_route_runtime_account_label"] = self.account_label
+        target["paper_account_label"] = self.account_label
+        return target
+
     def _paper_route_target_owner_skip(
         self,
         target: Mapping[str, Any],
@@ -278,6 +371,10 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         self,
         target: Mapping[str, Any],
     ) -> bool:
+        if settings.trading_mode == "live" and _target_truthy(
+            target.get("bounded_live_paper_collection_authorized")
+        ):
+            return False
         if not _target_requires_bounded_sim_collection_gate(target):
             return False
         collection_blockers = _bounded_sim_collection_blockers(

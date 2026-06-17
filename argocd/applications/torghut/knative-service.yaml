@@ -144,6 +144,10 @@ spec:
               value: "0.25"
             - name: TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY
               value: "0.05"
+            - name: TRADING_PAPER_ROUTE_TARGET_PLAN_URL
+              value: http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20
+            - name: TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS
+              value: "10"
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
