@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Order execution and idempotency helpers."""
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ from .shared_context import (
     RUNTIME_COST_PAYLOAD_KEYS as _RUNTIME_COST_PAYLOAD_KEYS,
 )
 from .order_executor_submission_methods import (
-    OrderExecutor,
+    OrderExecutor as OrderExecutor,
     coerce_json as _coerce_json,
     copy_mapping as _copy_mapping,
     first_mapping_text as _first_mapping_text,

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Strategy runtime scaffolding for deterministic plugin execution."""
 
 from __future__ import annotations
@@ -693,27 +692,6 @@ def _decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (ArithmeticError, TypeError, ValueError):
         return None
-
-
-def _target_notional(params: dict[str, Any]) -> Decimal:
-    notional = _decimal(params.get("max_notional_per_trade"))
-    if notional is None or notional <= 0:
-        return Decimal("100")
-    return notional
-
-
-def _resolved_target_notional(
-    params: dict[str, Any],
-    *,
-    multiplier: Decimal | None = None,
-) -> Decimal:
-    base_notional = _target_notional(params)
-    if multiplier is None or multiplier <= 0:
-        return base_notional
-    resolved = base_notional * multiplier
-    if resolved <= 0:
-        return base_notional
-    return resolved.quantize(Decimal("0.0001"))
 
 
 __all__ = (

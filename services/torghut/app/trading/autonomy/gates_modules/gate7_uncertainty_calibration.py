@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Gate policy matrix evaluator for Torghut v3 autonomous lanes."""
 
 from __future__ import annotations
@@ -450,11 +449,31 @@ def _fragility_state_rank(state: str) -> int:
     return ranks.get(normalized, 1)
 
 
+# Public aliases used by split-module consumers.
+decimal_or_default = _decimal_or_default
+gate2_base_reasons = _gate2_base_reasons
+gate2_tca_reasons = _gate2_tca_reasons
+gate6_early_result = _gate6_early_result
+gate6_janus_q_reasons = _gate6_janus_q_reasons
+gate6_reproducibility_reasons = _gate6_reproducibility_reasons
+gate6_schema_reasons = _gate6_schema_reasons
+gate6_threshold_reasons = _gate6_threshold_reasons
+gate7_uncertainty_calibration = _gate7_uncertainty_calibration
+
 __all__ = [
     "GateEvaluationReport",
     "GateInputs",
     "GatePolicyMatrix",
     "GateResult",
     "PromotionTarget",
+    "decimal_or_default",
     "evaluate_gate_matrix",
+    "gate2_base_reasons",
+    "gate2_tca_reasons",
+    "gate6_early_result",
+    "gate6_janus_q_reasons",
+    "gate6_reproducibility_reasons",
+    "gate6_schema_reasons",
+    "gate6_threshold_reasons",
+    "gate7_uncertainty_calibration",
 ]

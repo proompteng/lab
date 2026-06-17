@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading decision engine based on TA signals."""
 
 from __future__ import annotations
@@ -9,17 +8,17 @@ from typing import Any, Optional, cast
 
 from ...config import settings
 from ..features import (
-    SignalFeatures,
-    extract_signal_features,
+    SignalFeatures as SignalFeatures,
+    extract_signal_features as extract_signal_features,
 )
 from ..models import SignalEnvelope
 
 
 from .shared_context import (
-    DecisionRuntimeTelemetry,
+    DecisionRuntimeTelemetry as DecisionRuntimeTelemetry,
 )
 from .decision_engine_runtime_methods import (
-    DecisionEngine,
+    DecisionEngine as DecisionEngine,
 )
 from .positions_for_strategy_action import (
     position_qty_from_payload as _position_qty_from_payload,
@@ -54,26 +53,6 @@ def _count_open_short_positions(positions: Optional[list[dict[str, Any]]]) -> in
         if side == "short" and market_value != 0:
             open_symbols.add(symbol)
     return len(open_symbols)
-
-
-def _int_param(value: Any) -> int:
-    if value is None:
-        return 0
-    try:
-        return int(str(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _bool_param(value: Any) -> bool | None:
-    if value is None:
-        return None
-    normalized = str(value).strip().lower()
-    if normalized in {"1", "true", "t", "yes", "y", "on"}:
-        return True
-    if normalized in {"0", "false", "f", "no", "n", "off"}:
-        return False
-    return None
 
 
 def _resolve_signal_timeframe(signal: SignalEnvelope) -> Optional[str]:

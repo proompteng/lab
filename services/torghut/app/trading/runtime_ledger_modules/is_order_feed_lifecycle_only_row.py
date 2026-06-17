@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Runtime execution ledger primitives for honest post-cost PnL proof."""
 
 from __future__ import annotations
@@ -245,10 +244,33 @@ def _dedupe(items: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
 
+allocate = _allocate
+bucket_field = _bucket_field
+coerce_datetime = _coerce_datetime
+coerce_side = _coerce_side
+group_key = _group_key
+has_tca_pnl_shortcut = _has_tca_pnl_shortcut
+is_order_feed_lifecycle_only_row = _is_order_feed_lifecycle_only_row
+non_negative_decimal = _non_negative_decimal
+positive_decimal = _positive_decimal
+same_direction = _same_direction
+tigerbeetle_journal_blockers = _tigerbeetle_journal_blockers
+
 __all__ = [
     "EXACT_REPLAY_LEDGER_SCHEMA_VERSION",
     "POST_COST_PNL_BASIS",
     "RuntimeLedgerBucket",
     "RuntimeLedgerFill",
+    "allocate",
     "build_runtime_ledger_buckets",
+    "bucket_field",
+    "coerce_datetime",
+    "coerce_side",
+    "group_key",
+    "has_tca_pnl_shortcut",
+    "is_order_feed_lifecycle_only_row",
+    "non_negative_decimal",
+    "positive_decimal",
+    "same_direction",
+    "tigerbeetle_journal_blockers",
 ]

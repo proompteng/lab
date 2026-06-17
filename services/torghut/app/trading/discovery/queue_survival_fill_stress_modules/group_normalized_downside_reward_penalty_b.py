@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only queue-survival fill stress for replay candidate ranking.
 
 This module actualizes recent queue-position, fill-probability, and execution-delay
@@ -11,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from math import isfinite, log1p
+from math import isfinite, log1p as _math_log1p
 from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
@@ -167,7 +166,7 @@ def _quantile(values: Sequence[float], quantile: float) -> float:
 
 
 def _log1p(value: float) -> float:
-    return 0.0 if value <= -1.0 else log1p(value)
+    return 0.0 if value <= -1.0 else _math_log1p(value)
 
 
 def _stable_float(value: float) -> str:
@@ -192,6 +191,7 @@ group_normalized_downside_reward_penalty_bps = (
     _group_normalized_downside_reward_penalty_bps
 )
 label_has_token = _label_has_token
+log1p = _log1p
 median = _median
 nonnegative_float = _nonnegative_float
 positive_float = _positive_float
@@ -205,6 +205,7 @@ __all__ = (
     "float_or_none",
     "group_normalized_downside_reward_penalty_bps",
     "label_has_token",
+    "log1p",
     "median",
     "nonnegative_float",
     "positive_float",

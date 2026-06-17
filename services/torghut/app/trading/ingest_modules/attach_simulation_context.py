@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
@@ -14,10 +13,10 @@ from ..simulation import (
 
 
 from .shared_context import (
-    SignalBatch,
+    SignalBatch as SignalBatch,
 )
 from .clickhouse_signal_ingestor_persistence_methods import (
-    ClickHouseSignalIngestor,
+    ClickHouseSignalIngestor as ClickHouseSignalIngestor,
     coerce_seq as _coerce_seq,
 )
 

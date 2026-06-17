@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """DSPy compile/eval/promotion workflow helpers with Jangar-compatible contracts."""
 
 from __future__ import annotations
@@ -366,6 +365,9 @@ def _http_json_request(
         connection.close()
 
 
+execute_local_dspy_lane = _execute_local_dspy_lane
+http_json_request = _http_json_request
+
 __all__ = [
     "DSPyWorkflowLane",
     "build_compile_result",
@@ -374,7 +376,9 @@ __all__ = [
     "orchestrate_dspy_agentrun_workflow",
     "build_promotion_record",
     "bundle_artifacts",
+    "execute_local_dspy_lane",
     "get_agents_agentrun",
+    "http_json_request",
     "wait_for_agents_agentrun_terminal_status",
     "submit_agents_agentrun",
     "upsert_workflow_artifact_record",

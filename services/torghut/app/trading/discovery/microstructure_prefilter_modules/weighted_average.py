@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Bounded H-PAIRS ClusterLOB/OFI candidate prefiltering.
 
 The scores in this module are discovery metadata only. They intentionally rank
@@ -19,16 +18,16 @@ from numpy.typing import NDArray
 
 
 from .shared_context import (
-    HPAIRS_AUTHORITY_BLOCKERS,
-    HPAIRS_FAMILY_TEMPLATE_ID,
-    HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
-    HPAIRS_PREFILTER_PROOF_SOURCE,
-    HPAIRS_PREFILTER_ROW_SCHEMA_VERSION,
-    HPAIRS_PREFILTER_SCHEMA_VERSION,
-    HPAIRS_RUNTIME_STRATEGY_NAME,
-    MicrostructureCandidatePrefilterRow,
-    MicrostructurePrefilterResult,
-    build_hpairs_microstructure_prefilter,
+    HPAIRS_AUTHORITY_BLOCKERS as HPAIRS_AUTHORITY_BLOCKERS,
+    HPAIRS_FAMILY_TEMPLATE_ID as HPAIRS_FAMILY_TEMPLATE_ID,
+    HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL as HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
+    HPAIRS_PREFILTER_PROOF_SOURCE as HPAIRS_PREFILTER_PROOF_SOURCE,
+    HPAIRS_PREFILTER_ROW_SCHEMA_VERSION as HPAIRS_PREFILTER_ROW_SCHEMA_VERSION,
+    HPAIRS_PREFILTER_SCHEMA_VERSION as HPAIRS_PREFILTER_SCHEMA_VERSION,
+    HPAIRS_RUNTIME_STRATEGY_NAME as HPAIRS_RUNTIME_STRATEGY_NAME,
+    MicrostructureCandidatePrefilterRow as MicrostructureCandidatePrefilterRow,
+    MicrostructurePrefilterResult as MicrostructurePrefilterResult,
+    build_hpairs_microstructure_prefilter as build_hpairs_microstructure_prefilter,
 )
 
 
