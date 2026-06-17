@@ -1,3 +1,5 @@
+"""On-demand operator CLI for bounded H-PAIRS paper-route targets in TORGHUT_SIM."""
+
 from __future__ import annotations
 
 import argparse

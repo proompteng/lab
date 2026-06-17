@@ -102,7 +102,6 @@ describe('Torghut manifest scheduling', () => {
 
   it('prevents Torghut scheduled failures from lingering in Argo app health', () => {
     const cronJobPaths = [
-      'argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml',
       'argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml',
       'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml',
       'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml',
@@ -123,7 +122,7 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(9)
+    expect(checkedCronJobs).toBe(8)
 
     const replayCronWorkflow = parseManifest(
       'argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml',

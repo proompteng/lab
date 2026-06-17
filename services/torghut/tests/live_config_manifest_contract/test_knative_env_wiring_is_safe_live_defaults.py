@@ -640,9 +640,8 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertIn("tigerbeetle-cluster.yaml", resources)
         self.assertIn("tigerbeetle-smoke-job.yaml", resources)
         self.assertIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
-        self.assertIn(
-            "bounded-paper-route-target-materialization-cronjob.yaml",
-            resources,
+        self.assertNotIn(
+            "bounded-paper-route-target-materialization-cronjob.yaml", resources
         )
         self.assertIn(
             "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml",

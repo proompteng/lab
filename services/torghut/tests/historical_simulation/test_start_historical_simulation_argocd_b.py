@@ -48,6 +48,14 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
             "TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS",
             sim_rule["jqPathExpressions"][0],
         )
+        self.assertFalse(
+            any(
+                rule.get("kind") == "ConfigMap"
+                and rule.get("name") == "torghut-ta-sim-config"
+                and rule.get("jsonPointers") == ["/data"]
+                for rule in torghut_entry["ignoreDifferences"]
+            )
+        )
 
     def test_argocd_application_mode_from_sync_policy_treats_missing_automation_as_manual(
         self,
