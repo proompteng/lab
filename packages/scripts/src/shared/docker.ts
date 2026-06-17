@@ -454,14 +454,14 @@ const getDockerBuildxDriver = (): string | undefined => {
 
 export const inspectImageDigest = (image: string): string => {
   ensureCli('docker')
-  const repoDigest = inspectLocalImageDigest(image)
-  if (repoDigest) {
-    return repoDigest
-  }
-
   const remoteDigest = inspectRemoteImageDigest(image)
   if (remoteDigest) {
     return remoteDigest
+  }
+
+  const repoDigest = inspectLocalImageDigest(image)
+  if (repoDigest) {
+    return repoDigest
   }
 
   throw new Error(`Unable to determine digest for image ${image}`)
