@@ -5,13 +5,13 @@ from importlib import import_module as __compat_import_module__
 import sys as __compat_sys__
 import types as __compat_types__
 
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
+__compat_module_segments__: list[__compat_types__.ModuleType] = []
 
 
 class __CompatModule__(__compat_types__.ModuleType):
     def __setattr__(self, name: str, value: object) -> None:
         super().__setattr__(name, value)
-        for module in __compat_part_modules__:
+        for module in __compat_module_segments__:
             module.__dict__[name] = value
 
 
@@ -22,60 +22,58 @@ def __compat_export__(module: __compat_types__.ModuleType) -> None:
         globals()[name] = value
 
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_37")
-__compat_part_modules__.append(__compat_module__)
+__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_module__ = __compat_import_module__(
-    f"{__name__}.part_02_parse_runtime_window_target_spec"
+    f"{__name__}.parse_runtime_window_target_spec"
 )
-__compat_part_modules__.append(__compat_module__)
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_module__ = __compat_import_module__(
-    f"{__name__}.part_03_raise_if_runtime_window_target_plan_import"
+    f"{__name__}.raise_if_runtime_window_target_plan_import"
 )
-__compat_part_modules__.append(__compat_module__)
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
+    __compat_loaded_module__.__dict__.update(
+        {name: value for name, value in globals().items() if not name.startswith("__")}
+    )
+
+__compat_module__ = __compat_import_module__(f"{__name__}.runtime_window_targets")
+__compat_module_segments__.append(__compat_module__)
+__compat_export__(__compat_module__)
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_module__ = __compat_import_module__(
-    f"{__name__}.part_04_runtime_window_targets"
+    f"{__name__}.offline_replay_triage_candidates_from_rank"
 )
-__compat_part_modules__.append(__compat_module__)
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_module__ = __compat_import_module__(
-    f"{__name__}.part_05_offline_replay_triage_candidates_from_rank"
+    f"{__name__}.run_runtime_window_import_target"
 )
-__compat_part_modules__.append(__compat_module__)
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_06_run_runtime_window_import_target"
-)
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )

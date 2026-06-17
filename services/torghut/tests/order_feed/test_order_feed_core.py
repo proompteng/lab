@@ -335,7 +335,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             )
             with patch(
                 (
-                    "app.trading.order_feed_modules.part_01_statements_32"
+                    "app.trading.order_feed_modules.shared_context"
                     ".reconcile_tigerbeetle_transfers"
                 ),
                 side_effect=RuntimeError("reconcile failed"),
@@ -639,7 +639,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
 
             with patch(
                 (
-                    "app.trading.order_feed_modules.part_01_statements_32"
+                    "app.trading.order_feed_modules.shared_context"
                     ".upsert_execution_tca_metric"
                 )
             ) as upsert:

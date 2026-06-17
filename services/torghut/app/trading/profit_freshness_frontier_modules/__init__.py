@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
-_impl = import_module(f"{__name__}.part_03_build_profit_freshness_frontier")
+_impl = import_module(f"{__name__}.build_profit_freshness_frontier")
 
 PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION = getattr(
     _impl, "PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION"

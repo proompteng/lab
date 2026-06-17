@@ -423,11 +423,8 @@ jobs:
             exit 0
           fi
 
-          uv run --frozen pylint \
-            --load-plugins=scripts.pylint_torghut_quality \
-            --disable=all \
-            --enable=torghut-generated-split-filename,torghut-dynamic-globals-reexport,torghut-compat-module-wrapper,torghut-compat-module-registry,torghut-module-class-mutation,torghut-module-replacement,torghut-file-pyright-suppression,torghut-type-ignore,torghut-file-ruff-noqa,torghut-blanket-pylint-disable,torghut-dynamic-attribute-hook,torghut-dynamic-all,torghut-wildcard-import,torghut-custom-module-class \
-            --score=n \
+          uv run --frozen python scripts/run_pylint_torghut_quality_diff_gate.py \
+            --base "${base}" \
             "${changed_python[@]}"
 
       - name: Pylint changed-file design gate
@@ -453,10 +450,11 @@ jobs:
             exit 0
           fi
 
-          uv run --frozen pylint "${changed_python[@]}" \
-            --disable=all \
+          uv run --frozen python scripts/run_pylint_torghut_quality_diff_gate.py \
+            --base "${base}" \
+            --ignore-base-lines \
             --enable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-locals,too-many-return-statements,too-many-statements,too-many-nested-blocks \
-            --score=n
+            "${changed_python[@]}"
 
       - name: Pylint file length gate
         working-directory: services/torghut

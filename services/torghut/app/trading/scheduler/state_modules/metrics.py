@@ -20,7 +20,7 @@ from .metric_types import (
 from .metric_types import normalize_reason_metric, optional_decimal, split_reason_codes
 
 
-class _TradingMetricsMethodsPart1(TradingMetricsFields):
+class _TradingMetricsMethods(TradingMetricsFields):
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
         if adapter_name is None:
@@ -602,7 +602,7 @@ class _TradingMetricsMethodsPart1(TradingMetricsFields):
 
 
 @dataclass
-class TradingMetrics(_TradingMetricsMethodsPart1):
+class TradingMetrics(_TradingMetricsMethods):
     pass
 
 

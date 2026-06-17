@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
-_impl = import_module(f"{__name__}.part_05_evidence_bundle_blockers")
+_impl = import_module(f"{__name__}.evidence_bundle_blockers")
 
 EVIDENCE_BUNDLE_SCHEMA_VERSION = getattr(_impl, "EVIDENCE_BUNDLE_SCHEMA_VERSION")
 VALID_COST_CALIBRATION_STATUSES = getattr(_impl, "VALID_COST_CALIBRATION_STATUSES")

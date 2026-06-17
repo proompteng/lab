@@ -757,10 +757,7 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
 
         with Session(self.engine) as session:
             with patch(
-                (
-                    "app.trading.order_feed_modules.part_01_statements_32"
-                    ".persist_order_event"
-                ),
+                ("app.trading.order_feed_modules.shared_context.persist_order_event"),
                 side_effect=RuntimeError("store failed"),
             ):
                 counters = ingestor.ingest_once(session)
@@ -795,7 +792,7 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
             self._seed_execution(session)
             with patch(
                 (
-                    "app.trading.order_feed_modules.part_01_statements_32"
+                    "app.trading.order_feed_modules.shared_context"
                     ".apply_order_event_to_execution"
                 ),
                 side_effect=RuntimeError("apply failed"),

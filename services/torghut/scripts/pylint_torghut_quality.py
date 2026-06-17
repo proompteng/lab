@@ -36,9 +36,9 @@ FORBIDDEN_TEXT_RULES: tuple[TextRule, ...] = (
         "custom compatibility module wrapper",
     ),
     TextRule(
-        re.compile(r"\b__compat_part_modules__\b"),
+        re.compile(r"\b__compat_" + "par" + r"t_modules__\b"),
         "torghut-compat-module-registry",
-        "generated part-module compatibility registry",
+        "generated compatibility registry",
     ),
     TextRule(
         re.compile(r"sys\.modules\[[^\]]+\]\.__class__\s*="),

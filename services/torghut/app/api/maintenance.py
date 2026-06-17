@@ -8,12 +8,47 @@ from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
+from .common import (
+    BUILD_VERSION,
+    Body,
+    Depends,
+    FeatureQualityThresholds,
+    HTTPException,
+    Mapping,
+    OperationalError,
+    Query,
+    SQLAlchemyError,
+    Sequence,
+    Session,
+    SessionLocal,
+    SignalEnvelope,
+    TradingScheduler,
+    ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
+    build_revenue_repair_digest,
+    cast,
+    datetime,
+    evaluate_feature_batch_quality,
+    get_session,
+    jsonable_encoder,
+    load_jangar_dependency_quorum,
+    logger,
+    refresh_execution_tca_metrics,
+    retryable_tca_recompute_error,
+    run_zero_notional_repair,
+    settings,
+    time,
+    timedelta,
+    timezone,
+)
 from .common import main_runtime_value
-from .proxy import capture_module_exports
+from .proxy import MainAttrProxy, capture_module_exports
 
+_evaluate_database_contract = MainAttrProxy("_evaluate_database_contract")
+_evaluate_trading_health_payload = MainAttrProxy("_evaluate_trading_health_payload")
+app = MainAttrProxy("app")
+trading_status = MainAttrProxy("trading_status")
 router = APIRouter()
 
 
@@ -111,7 +146,7 @@ def trading_profit_freshness_zero_notional_repair(
     def run_tca_recompute(_repair: Mapping[str, Any]) -> Mapping[str, object]:
         retry_reasons: list[str] = []
         result: Mapping[str, object] = {}
-        for attempt in range(1, _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS + 1):
+        for attempt in range(1, ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS + 1):
             try:
                 with SessionLocal() as session:
                     result = refresh_execution_tca_metrics(
@@ -123,20 +158,20 @@ def trading_profit_freshness_zero_notional_repair(
                     session.commit()
             except OperationalError as exc:
                 if (
-                    attempt < _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
-                    and _retryable_tca_recompute_error(exc)
+                    attempt < ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
+                    and retryable_tca_recompute_error(exc)
                 ):
                     retry_reason = f"route_tca_recompute_retryable:{type(exc).__name__}"
                     retry_reasons.append(retry_reason)
                     logger.warning(
                         "Zero-notional route/TCA repair retrying after retryable database error attempt=%s max_attempts=%s",
                         attempt,
-                        _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
+                        ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
                         exc_info=True,
                         extra={
                             "zero_notional_tca_recompute_attempt": attempt,
                             "zero_notional_tca_recompute_max_attempts": (
-                                _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
+                                ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
                             ),
                             "zero_notional_tca_recompute_retry_reason": retry_reason,
                         },

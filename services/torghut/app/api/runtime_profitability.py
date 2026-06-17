@@ -8,11 +8,48 @@ from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
-from .proxy import capture_module_exports
+from .common import (
+    Decimal,
+    Depends,
+    Execution,
+    ExecutionTCAMetric,
+    JSONResponse,
+    RUNTIME_PROFITABILITY_LOOKBACK_HOURS,
+    RUNTIME_PROFITABILITY_SCHEMA_VERSION,
+    Sequence,
+    Session,
+    Strategy,
+    TradeDecision,
+    TradingScheduler,
+    cast,
+    datetime,
+    get_session,
+    jsonable_encoder,
+    load_quant_evidence_status,
+    select,
+    settings,
+    timedelta,
+    timezone,
+)
+from .proxy import MainAttrProxy, capture_module_exports
 
+_build_hypothesis_runtime_payload = MainAttrProxy("_build_hypothesis_runtime_payload")
+_build_live_submission_gate_payload = MainAttrProxy(
+    "_build_live_submission_gate_payload"
+)
+_decimal_average = MainAttrProxy("_decimal_average")
+_decimal_percentile = MainAttrProxy("_decimal_percentile")
+_decimal_to_string = MainAttrProxy("_decimal_to_string")
+_empirical_jobs_status = MainAttrProxy("_empirical_jobs_status")
+_load_runtime_profitability_gate_rollback_attribution = MainAttrProxy(
+    "_load_runtime_profitability_gate_rollback_attribution"
+)
+_load_tca_summary = MainAttrProxy("_load_tca_summary")
+_normalized_adapter_name = MainAttrProxy("_normalized_adapter_name")
+_safe_int = MainAttrProxy("_safe_int")
+app = MainAttrProxy("app")
 router = APIRouter()
 
 

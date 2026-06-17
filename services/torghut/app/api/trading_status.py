@@ -8,12 +8,133 @@ from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
+from .common import (
+    BUILD_IMAGE_DIGEST,
+    BUILD_VERSION,
+    SessionLocal,
+    TradingScheduler,
+    active_simulation_runtime_context,
+    cast,
+    datetime,
+    load_quant_evidence_status,
+    settings,
+    timezone,
+    trading_time_status,
+)
 from .common import main_runtime_value
-from .proxy import capture_module_exports
+from .proxy import MainAttrProxy, capture_module_exports
 
+_TradingStatusReadBudget = MainAttrProxy("_TradingStatusReadBudget")
+_budget_exhausted_live_submission_gate_payload = MainAttrProxy(
+    "_budget_exhausted_live_submission_gate_payload"
+)
+_budget_exhausted_options_catalog_freshness_payload = MainAttrProxy(
+    "_budget_exhausted_options_catalog_freshness_payload"
+)
+_build_autonomy_bridge_status = MainAttrProxy("_build_autonomy_bridge_status")
+_build_capital_reentry_cohort_ledger_payload = MainAttrProxy(
+    "_build_capital_reentry_cohort_ledger_payload"
+)
+_build_capital_replay_projection_payload = MainAttrProxy(
+    "_build_capital_replay_projection_payload"
+)
+_build_clock_settlement_payload = MainAttrProxy("_build_clock_settlement_payload")
+_build_consumer_evidence_receipt_projection = MainAttrProxy(
+    "_build_consumer_evidence_receipt_projection"
+)
+_build_control_plane_contract = MainAttrProxy("_build_control_plane_contract")
+_build_evidence_clock_payloads = MainAttrProxy("_build_evidence_clock_payloads")
+_build_freshness_carry_ledger_payload = MainAttrProxy(
+    "_build_freshness_carry_ledger_payload"
+)
+_build_live_submission_gate_payload = MainAttrProxy(
+    "_build_live_submission_gate_payload"
+)
+_build_profit_freshness_frontier_payload = MainAttrProxy(
+    "_build_profit_freshness_frontier_payload"
+)
+_build_profit_repair_settlement_ledger_payload = MainAttrProxy(
+    "_build_profit_repair_settlement_ledger_payload"
+)
+_build_profit_signal_quorum_payload = MainAttrProxy(
+    "_build_profit_signal_quorum_payload"
+)
+_build_profitability_proof_floor_payload = MainAttrProxy(
+    "_build_profitability_proof_floor_payload"
+)
+_build_quality_adjusted_profit_frontier_payload = MainAttrProxy(
+    "_build_quality_adjusted_profit_frontier_payload"
+)
+_build_rejected_signal_outcome_learning_payload = MainAttrProxy(
+    "_build_rejected_signal_outcome_learning_payload"
+)
+_build_renewal_bond_profit_escrow_payload = MainAttrProxy(
+    "_build_renewal_bond_profit_escrow_payload"
+)
+_build_repair_bid_settlement_payload = MainAttrProxy(
+    "_build_repair_bid_settlement_payload"
+)
+_build_repair_outcome_dividend_ledger_payload = MainAttrProxy(
+    "_build_repair_outcome_dividend_ledger_payload"
+)
+_build_repair_receipt_frontier_payload = MainAttrProxy(
+    "_build_repair_receipt_frontier_payload"
+)
+_build_route_evidence_clearinghouse_payload = MainAttrProxy(
+    "_build_route_evidence_clearinghouse_payload"
+)
+_build_route_image_proof_summary = MainAttrProxy("_build_route_image_proof_summary")
+_build_route_reacquisition_board_payload = MainAttrProxy(
+    "_build_route_reacquisition_board_payload"
+)
+_build_route_warrant_exchange_payload = MainAttrProxy(
+    "_build_route_warrant_exchange_payload"
+)
+_build_routeability_repair_acceptance_ledger_payload = MainAttrProxy(
+    "_build_routeability_repair_acceptance_ledger_payload"
+)
+_build_shadow_first_runtime_payload = MainAttrProxy(
+    "_build_shadow_first_runtime_payload"
+)
+_build_simple_lane_status_payload = MainAttrProxy("_build_simple_lane_status_payload")
+_build_source_serving_repair_receipt_payload = MainAttrProxy(
+    "_build_source_serving_repair_receipt_payload"
+)
+_deferred_hypothesis_payload_for_live_submission_gate = MainAttrProxy(
+    "_deferred_hypothesis_payload_for_live_submission_gate"
+)
+_empirical_jobs_status = MainAttrProxy("_empirical_jobs_status")
+_forecast_service_status = MainAttrProxy("_forecast_service_status")
+_hypothesis_payload_read_model_unavailable = MainAttrProxy(
+    "_hypothesis_payload_read_model_unavailable"
+)
+_lean_authority_status = MainAttrProxy("_lean_authority_status")
+_load_clickhouse_ta_status = MainAttrProxy("_load_clickhouse_ta_status")
+_load_last_decision_at = MainAttrProxy("_load_last_decision_at")
+_load_options_catalog_freshness_summary = MainAttrProxy(
+    "_load_options_catalog_freshness_summary"
+)
+_load_rejected_signal_outcome_learning_summary = MainAttrProxy(
+    "_load_rejected_signal_outcome_learning_summary"
+)
+_load_trading_status_hypothesis_runtime = MainAttrProxy(
+    "_load_trading_status_hypothesis_runtime"
+)
+_load_trading_status_llm_evaluation = MainAttrProxy(
+    "_load_trading_status_llm_evaluation"
+)
+_load_trading_status_runtime_ledger_portfolio_summary = MainAttrProxy(
+    "_load_trading_status_runtime_ledger_portfolio_summary"
+)
+_load_trading_status_tca_summary = MainAttrProxy("_load_trading_status_tca_summary")
+_load_trading_status_tigerbeetle_ledger = MainAttrProxy(
+    "_load_trading_status_tigerbeetle_ledger"
+)
+_route_claim_symbols = MainAttrProxy("_route_claim_symbols")
+_simple_lane_reject_reason_totals = MainAttrProxy("_simple_lane_reject_reason_totals")
+app = MainAttrProxy("app")
 router = APIRouter()
 
 

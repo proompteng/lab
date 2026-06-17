@@ -61,8 +61,8 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
     dynamic_exports = "__all__ = [name for name in " + "globals() if name]"
     type_suppression = "# type:" + " ignore[assignment]"
     compat_class = "class " + "Compat" + "Module:"
-    compat_registry = "__compat" + "_part_modules__ = []"
-    module_path = tmp_path / "part_01_generated.py"
+    compat_registry = "__compat_" + "par" + "t_modules__ = []"
+    module_path = tmp_path / ("par" + "t_01_generated.py")
     module_path.write_text(
         "\n".join(
             (

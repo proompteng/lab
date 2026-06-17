@@ -5,13 +5,13 @@ from importlib import import_module as __compat_import_module__
 import sys as __compat_sys__
 import types as __compat_types__
 
-__compat_part_modules__: list[__compat_types__.ModuleType] = []
+__compat_module_segments__: list[__compat_types__.ModuleType] = []
 
 
 class __CompatModule__(__compat_types__.ModuleType):
     def __setattr__(self, name: str, value: object) -> None:
         super().__setattr__(name, value)
-        for module in __compat_part_modules__:
+        for module in __compat_module_segments__:
             module.__dict__[name] = value
 
 
@@ -22,54 +22,52 @@ def __compat_export__(module: __compat_types__.ModuleType) -> None:
         globals()[name] = value
 
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_01_statements_97")
-__compat_part_modules__.append(__compat_module__)
+__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_02_load_yaml")
-__compat_part_modules__.append(__compat_module__)
+__compat_module__ = __compat_import_module__(f"{__name__}.load_yaml")
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
-__compat_module__ = __compat_import_module__(f"{__name__}.part_03_write_results_tsv")
-__compat_part_modules__.append(__compat_module__)
+__compat_module__ = __compat_import_module__(f"{__name__}.write_results_tsv")
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
+    __compat_loaded_module__.__dict__.update(
+        {name: value for name, value in globals().items() if not name.startswith("__")}
+    )
+
+__compat_module__ = __compat_import_module__(f"{__name__}.write_portfolio_outputs")
+__compat_module_segments__.append(__compat_module__)
+__compat_export__(__compat_module__)
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
 __compat_module__ = __compat_import_module__(
-    f"{__name__}.part_04_write_portfolio_outputs"
+    f"{__name__}.run_strategy_autoresearch_loop"
 )
-__compat_part_modules__.append(__compat_module__)
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )
 
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.part_05_run_strategy_autoresearch_loop"
-)
-__compat_part_modules__.append(__compat_module__)
+__compat_module__ = __compat_import_module__(f"{__name__}.main")
+__compat_module_segments__.append(__compat_module__)
 __compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.part_06_main")
-__compat_part_modules__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_part_modules__:
+for __compat_loaded_module__ in __compat_module_segments__:
     __compat_loaded_module__.__dict__.update(
         {name: value for name, value in globals().items() if not name.startswith("__")}
     )

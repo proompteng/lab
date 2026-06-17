@@ -4,16 +4,91 @@
 # ruff: noqa: F401,F403,F405
 from __future__ import annotations
 
+import sys
+
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
-from .proxy import capture_module_exports
+from .common import (
+    BUILD_VERSION,
+    DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+    DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    Decimal,
+    Depends,
+    ExecutionTCAMetric,
+    HTTPConnection,
+    HTTPException,
+    HTTPSConnection,
+    JSONResponse,
+    MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+    MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    Mapping,
+    PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+    ProofKind,
+    ProofWindowSelector,
+    Query,
+    Sequence,
+    Session,
+    SessionLocal,
+    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
+    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
+    Strategy,
+    TradingScheduler,
+    build_proofs_payload,
+    cast,
+    datetime,
+    deepcopy,
+    get_session,
+    json,
+    jsonable_encoder,
+    load_quant_evidence_status,
+    logger,
+    main_runtime_value,
+    os,
+    select,
+    settings,
+    shared_mapping_items,
+    shared_paper_route_target_plan_from_payload,
+    time,
+    urlsplit,
+)
+from .proxy import MainAttrProxy, capture_module_exports
 
+_aggregate_tca_rows = MainAttrProxy("_aggregate_tca_rows")
+_build_hypothesis_runtime_payload = MainAttrProxy("_build_hypothesis_runtime_payload")
+_build_live_submission_gate_payload = MainAttrProxy(
+    "_build_live_submission_gate_payload"
+)
+_build_profitability_proof_floor_payload = MainAttrProxy(
+    "_build_profitability_proof_floor_payload"
+)
+_build_simple_lane_status_payload = MainAttrProxy("_build_simple_lane_status_payload")
+_decimal_or_none = MainAttrProxy("_decimal_or_none")
+_decimal_to_string = MainAttrProxy("_decimal_to_string")
+_deferred_hypothesis_payload_for_live_submission_gate = MainAttrProxy(
+    "_deferred_hypothesis_payload_for_live_submission_gate"
+)
+_empirical_jobs_status = MainAttrProxy("_empirical_jobs_status")
+_load_tca_summary = MainAttrProxy("_load_tca_summary")
+_to_str_map = MainAttrProxy("_to_str_map")
+app = MainAttrProxy("app")
 router = APIRouter()
+_paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
+
+
+def _set_paper_route_target_plan_success_cache(
+    cache: tuple[dict[str, Any], float] | None,
+) -> None:
+    global _paper_route_target_plan_success_cache
+
+    _paper_route_target_plan_success_cache = cache
+    main_module = sys.modules.get("app.main")
+    if main_module is not None:
+        setattr(main_module, "_paper_route_target_plan_success_cache", cache)
 
 
 def _paper_route_target_plan_audit_mode_value(mode: str) -> bool | None:
@@ -221,7 +296,7 @@ def trading_paper_route_target_plan(
 
 
 def _mapping_items(value: object) -> list[dict[str, Any]]:
-    return _shared_mapping_items(value)
+    return shared_mapping_items(value)
 
 
 def _normalized_paper_route_text(value: object) -> str:
@@ -252,7 +327,7 @@ def _paper_route_target_account_audit_available(
         return True
     return any(
         _paper_route_mapping_targets_sim_account(target)
-        for target in _shared_mapping_items(normalized_plan.get("targets"))
+        for target in shared_mapping_items(normalized_plan.get("targets"))
     )
 
 
@@ -405,7 +480,7 @@ def _paper_route_target_plan_cache_safe_for_live(
         target_account = str(
             target.get("account_label") or target.get("source_account_label") or ""
         ).strip()
-        if target_account != _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL:
+        if target_account != PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL:
             return False
         if not _paper_route_source_collection_target_cache_safe(target):
             return False
@@ -560,7 +635,7 @@ def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, 
 
 
 def _paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return _shared_paper_route_target_plan_from_payload(payload)
+    return shared_paper_route_target_plan_from_payload(payload)
 
 
 def _fetch_paper_route_target_plan_url(
@@ -718,20 +793,23 @@ def _remember_external_paper_route_target_plan_success(
 
     if not _paper_route_target_plan_targets(plan):
         return
-    with _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK:
-        _paper_route_target_plan_success_cache = (deepcopy(dict(plan)), time.time())
+    with PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK:
+        _set_paper_route_target_plan_success_cache((deepcopy(dict(plan)), time.time()))
 
 
 def _cached_external_paper_route_target_plan_success(
     load_error: str,
 ) -> dict[str, Any]:
-    with _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK:
-        cached = _paper_route_target_plan_success_cache
+    with PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK:
+        cached = main_runtime_value(
+            "_paper_route_target_plan_success_cache",
+            _paper_route_target_plan_success_cache,
+        )
     if cached is None:
         return {}
     plan, cached_at = cached
     age_seconds = max(time.time() - cached_at, 0.0)
-    if age_seconds > _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS:
+    if age_seconds > PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS:
         return {}
     cached_plan = deepcopy(plan)
     cached_plan["paper_route_target_plan_cache_status"] = "stale_success"

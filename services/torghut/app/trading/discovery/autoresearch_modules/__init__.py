@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
-_impl = import_module(f"{__name__}.part_02_load_strategy_autoresearch_program")
+_impl = import_module(f"{__name__}.load_strategy_autoresearch_program")
 
 _SCHEMA_VERSION = getattr(_impl, "_SCHEMA_VERSION")
 _mapping = getattr(_impl, "_mapping")

@@ -8,11 +8,39 @@ from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .compat_typing import *
+    pass
 
-from .common import *
-from .proxy import capture_module_exports
+from .common import (
+    Body,
+    Depends,
+    HTTPException,
+    JSONResponse,
+    Query,
+    Request,
+    Sequence,
+    Session,
+    WHITEPAPER_WORKFLOW,
+    WhitepaperAnalysisRun,
+    WhitepaperCodexAgentRun,
+    WhitepaperDesignPullRequest,
+    WhitepaperEngineeringTrigger,
+    WhitepaperKafkaWorker,
+    WhitepaperRolloutTransition,
+    cast,
+    get_session,
+    jsonable_encoder,
+    logger,
+    os,
+    select,
+    whitepaper_inngest_enabled,
+    whitepaper_kafka_enabled,
+    whitepaper_semantic_indexing_enabled,
+    whitepaper_workflow_enabled,
+)
+from .proxy import MainAttrProxy, capture_module_exports
 
+_require_whitepaper_control_token = MainAttrProxy("_require_whitepaper_control_token")
+app = MainAttrProxy("app")
 router = APIRouter()
 
 

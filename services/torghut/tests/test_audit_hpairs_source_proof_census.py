@@ -2,6 +2,35 @@ from __future__ import annotations
 
 # ruff: noqa: F401,F403,F405
 __test__ = False
-from tests.audit_hpairs_source_proof_census.support import *
-from tests.audit_hpairs_source_proof_census.test_part_01 import *
-from tests.audit_hpairs_source_proof_census.test_part_02 import *
+from tests.audit_hpairs_source_proof_census.test_load_session_rows_keeps_target_only_when_no_canonical_refs import (
+    test_alias_only_source_account_scope_is_not_promotion_grade_proof,
+    test_full_source_backed_census_is_authority_candidate_ready,
+    test_load_session_rows_adds_linked_source_account_windows,
+    test_load_session_rows_keeps_target_only_when_no_canonical_refs,
+    test_missing_decisions_reports_exact_trade_decision_ref_gap,
+    test_missing_executions_reports_fill_and_execution_ref_gap,
+    test_missing_order_event_refs_and_source_offsets_are_exact_source_ref_gaps,
+    test_missing_submitted_orders_and_fills_are_machine_readable_blockers,
+    test_order_events_missing_execution_and_decision_refs_are_exact_source_ref_gaps,
+    test_source_account_matching_helpers_cover_alias_and_mismatch_paths,
+    test_source_account_mismatched_refs_with_alias_remain_source_ref_blockers,
+    test_source_account_rows_linked_by_order_ids_count_as_source_proof,
+    test_source_account_rows_linked_to_logical_account_count_as_source_proof,
+    test_source_account_scope_requires_matching_refs_before_alias_fallback,
+    test_unrelated_source_account_rows_remain_mismatches_not_proof,
+)
+from tests.audit_hpairs_source_proof_census.test_missing_tca_costs_are_economics_missing import (
+    test_candidate_config_mismatch_is_first_ladder_blocker,
+    test_dsn_loader_opens_session_and_delegates,
+    test_dsn_loader_sqlalchemy_dsn_uses_installed_psycopg_driver,
+    test_empty_fixture_has_no_source_activity_verdict,
+    test_json_output_is_stable_and_cli_reads_fixture,
+    test_main_reports_read_errors_as_json,
+    test_missing_tca_costs_are_economics_missing,
+    test_normalizers_fail_closed_on_invalid_shapes,
+    test_open_positions_are_called_out_after_source_and_economics_are_present,
+    test_partial_evidence_ladder_points_at_order_feed_lifecycle,
+    test_runtime_bucket_aggregate_only_is_source_refs_missing,
+    test_session_loader_normalizes_bounded_sqlalchemy_rows,
+    test_too_few_source_backed_days_are_distribution_missing,
+)
