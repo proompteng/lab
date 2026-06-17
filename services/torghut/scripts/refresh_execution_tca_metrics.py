@@ -17,6 +17,13 @@ from app.db import SessionLocal
 from app.trading.tca import refresh_execution_tca_metrics
 
 
+def _env_int_or_none(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return int(raw)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Refresh stale execution_tca_metrics rows from persisted executions.",
@@ -32,6 +39,16 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=86400,
         help="Only refresh rows with computed_at older than this age. Use 0 to refresh all current rows once.",
+    )
+    parser.add_argument(
+        "--execution-activity-lookback-seconds",
+        type=int,
+        default=_env_int_or_none("TORGHUT_EXECUTION_TCA_ACTIVITY_LOOKBACK_SECONDS"),
+        help=(
+            "Only refresh executions with created, broker-update, or order-feed activity inside this lookback. "
+            "Defaults to TORGHUT_EXECUTION_TCA_ACTIVITY_LOOKBACK_SECONDS when set. "
+            "Omit for unrestricted manual backfills."
+        ),
     )
     parser.add_argument("--batch-size", type=int, default=1000)
     parser.add_argument("--max-batches", type=int, default=20)
@@ -88,6 +105,9 @@ def _payload(
         "dsn_env": args.dsn_env,
         "account_label": args.account_label,
         "older_than_seconds": max(0, int(args.older_than_seconds)),
+        "execution_activity_lookback_seconds": None
+        if args.execution_activity_lookback_seconds is None
+        else max(0, int(args.execution_activity_lookback_seconds)),
         "batch_size": max(1, min(int(args.batch_size), 5000)),
         "max_batches": max(1, int(args.max_batches)),
         "selected": selected,
@@ -102,6 +122,12 @@ def main() -> int:
     args = _parse_args()
     started_at = datetime.now(timezone.utc)
     stale_before = started_at - timedelta(seconds=max(0, int(args.older_than_seconds)))
+    execution_activity_after = (
+        None
+        if args.execution_activity_lookback_seconds is None
+        else started_at
+        - timedelta(seconds=max(0, int(args.execution_activity_lookback_seconds)))
+    )
     batch_size = max(1, min(int(args.batch_size), 5000))
     max_batches = max(1, int(args.max_batches))
     batches: list[dict[str, Any]] = []
@@ -114,6 +140,7 @@ def main() -> int:
                     session,
                     account_label=args.account_label,
                     stale_before=stale_before,
+                    execution_activity_after=execution_activity_after,
                     limit=batch_size,
                     dry_run=not bool(args.apply),
                 )

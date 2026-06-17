@@ -284,6 +284,7 @@ def refresh_execution_tca_metrics(
     *,
     account_label: str | None = None,
     stale_before: datetime | None = None,
+    execution_activity_after: datetime | None = None,
     limit: int = 500,
     dry_run: bool = False,
 ) -> dict[str, object]:
@@ -318,6 +319,14 @@ def refresh_execution_tca_metrics(
                 ExecutionTCAMetric.computed_at < stale_before,
             )
         )
+    if execution_activity_after is not None:
+        stmt = stmt.where(
+            or_(
+                Execution.last_update_at >= execution_activity_after,
+                Execution.order_feed_last_event_ts >= execution_activity_after,
+                Execution.created_at >= execution_activity_after,
+            )
+        )
 
     executions = session.execute(stmt).scalars().all()
     if dry_run:
@@ -328,6 +337,9 @@ def refresh_execution_tca_metrics(
             "limit": bounded_limit,
             "account_label": normalized_account_label or None,
             "stale_before": stale_before.isoformat() if stale_before else None,
+            "execution_activity_after": execution_activity_after.isoformat()
+            if execution_activity_after
+            else None,
             "runtime_ledger_lineage": _execution_lineage_summary(executions),
         }
 
@@ -346,6 +358,9 @@ def refresh_execution_tca_metrics(
         "limit": bounded_limit,
         "account_label": normalized_account_label or None,
         "stale_before": stale_before.isoformat() if stale_before else None,
+        "execution_activity_after": execution_activity_after.isoformat()
+        if execution_activity_after
+        else None,
         "runtime_ledger_lineage": lineage_summary,
     }
 

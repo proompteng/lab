@@ -51,6 +51,17 @@ class TestRefreshExecutionTcaMetricsScript(TestCase):
             "sqlite:///tmp/torghut.db",
         )
 
+    def test_env_int_or_none_uses_blank_as_unset(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TORGHUT_EXECUTION_TCA_ACTIVITY_LOOKBACK_SECONDS": " "},
+        ):
+            self.assertIsNone(
+                script._env_int_or_none(
+                    "TORGHUT_EXECUTION_TCA_ACTIVITY_LOOKBACK_SECONDS"
+                )
+            )
+
     def test_main_defaults_to_dry_run_and_rolls_back(self) -> None:
         fake_session = _FakeSession()
         stdout = io.StringIO()
@@ -106,6 +117,10 @@ class TestRefreshExecutionTcaMetricsScript(TestCase):
                     "3",
                 ],
             ),
+            patch.dict(
+                os.environ,
+                {"TORGHUT_EXECUTION_TCA_ACTIVITY_LOOKBACK_SECONDS": "86400"},
+            ),
             patch.object(script, "SessionLocal", return_value=fake_session),
             patch.object(
                 script,
@@ -138,6 +153,7 @@ class TestRefreshExecutionTcaMetricsScript(TestCase):
         self.assertEqual(payload["apply"], True)
         self.assertEqual(payload["account_label"], "paper")
         self.assertEqual(payload["older_than_seconds"], 0)
+        self.assertEqual(payload["execution_activity_lookback_seconds"], 86400)
         self.assertEqual(payload["selected"], 3)
         self.assertEqual(payload["refreshed"], 3)
         self.assertEqual(fake_session.commits, 2)
@@ -146,6 +162,7 @@ class TestRefreshExecutionTcaMetricsScript(TestCase):
         self.assertEqual(refresh.call_args.kwargs["account_label"], "paper")
         self.assertEqual(refresh.call_args.kwargs["limit"], 2)
         self.assertEqual(refresh.call_args.kwargs["dry_run"], False)
+        self.assertIsNotNone(refresh.call_args.kwargs["execution_activity_after"])
 
     def test_main_can_refresh_non_default_dsn_env(self) -> None:
         fake_engine = _FakeEngine()
