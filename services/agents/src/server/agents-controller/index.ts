@@ -66,6 +66,7 @@ import {
   resolveAgentsControllerBehaviorConfig,
   resolveRuntimeDebrisCleanupConfig,
 } from './runtime-config'
+import { resolveWorkloadImage } from './workload-image'
 import { reconcileRuntimeDebris } from './runtime-debris'
 import { resolveParam, resolveParameters } from './run-utils'
 import { createTemporalRuntimeTools } from './temporal-runtime'
@@ -591,8 +592,12 @@ const setStatus = async (
   await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status: nextStatus })
 }
 
-const resolveJobImage = (workload: Record<string, unknown>) =>
-  asString(workload.image) ?? resolveAgentRunnerDefaultsConfig(process.env).defaultRunnerImage
+const resolveJobImage = (workload: Record<string, unknown>, provider?: Record<string, unknown> | null) =>
+  resolveWorkloadImage({
+    workload,
+    provider,
+    defaultRunnerImage: resolveAgentRunnerDefaultsConfig(process.env).defaultRunnerImage,
+  }).image
 
 const getTemporalClient = async () => {
   if (!runtimeMutableState.temporalClientPromise) {

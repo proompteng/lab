@@ -4,6 +4,8 @@ metadata:
   name: anypi
 spec:
   binary: /usr/local/bin/anypi-runner
+  workload:
+    image: registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990
   adapter:
     type: exec
   envTemplate:

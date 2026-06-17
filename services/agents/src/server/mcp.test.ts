@@ -454,6 +454,47 @@ describe('Agents MCP handler', () => {
     ])
   })
 
+  it('forwards create_agent_run dryRun to the AgentRun API client layer', async () => {
+    const { service } = makeService()
+    const { service: agentRunsService, calls } = makeAgentRunsService()
+
+    const create = await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_agent_run',
+          arguments: {
+            deliveryId: 'delivery-dry-run',
+            dryRun: true,
+            payload: {
+              agentRef: { name: 'anypi-agent' },
+              implementation: { text: 'Implement the requested change.' },
+              runtime: { type: 'job' },
+            },
+          },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+
+    expect(create.response.status).toBe(200)
+    expect(calls.create).toEqual([
+      {
+        deliveryId: 'delivery-dry-run',
+        dryRun: 'true',
+        payload: {
+          agentRef: { name: 'anypi-agent' },
+          implementation: { text: 'Implement the requested change.' },
+          runtime: { type: 'job' },
+        },
+      },
+    ])
+  })
+
   it('rejects create_agent_run submissions that request secrets without a SecretBinding', async () => {
     const { service } = makeService()
     const { service: agentRunsService, calls } = makeAgentRunsService()

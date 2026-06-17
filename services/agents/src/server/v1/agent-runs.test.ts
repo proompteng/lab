@@ -69,8 +69,8 @@ const createKubeMock = (): KubernetesClient => ({
   listEvents: vi.fn(async () => ({ items: [] })),
 })
 
-const buildRequest = (payload: Record<string, unknown>) =>
-  new Request('http://agents.local/v1/agent-runs', {
+const buildRequest = (payload: Record<string, unknown>, url = 'http://agents.local/v1/agent-runs') =>
+  new Request(url, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -165,6 +165,133 @@ describe('AgentRun v1 API', () => {
     expect(store.reserveAgentRunIdempotencyKey).not.toHaveBeenCalled()
     expect(store.assignAgentRunIdempotencyKey).not.toHaveBeenCalled()
     expect(kube.apply).toHaveBeenCalled()
+  })
+
+  it('previews AgentRun dry-runs without creating resources or projection records', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    const validatePolicies = vi.fn(async () => {})
+    const idGenerator = vi.fn(() => 'policy-audit-id-1')
+
+    const response = await postAgentRunsHandler(
+      buildRequest(
+        {
+          agentRef: { name: 'demo-agent' },
+          namespace: 'agents',
+          implementation: { text: 'Implement the requested change.' },
+          runtime: { type: 'job', config: {} },
+          parameters: { repository: 'proompteng/lab' },
+        },
+        'http://agents.local/v1/agent-runs?dryRun=true',
+      ),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies,
+        idGenerator,
+        runtimeConfig: { env: { AGENTS_AGENT_RUNNER_IMAGE: 'registry.example.test/lab/default-runner:test' } },
+      },
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as Record<string, unknown>
+    expect(body).toMatchObject({
+      ok: true,
+      dryRun: true,
+      idempotent: false,
+      namespace: 'agents',
+      agentName: 'demo-agent',
+      resolvedWorkloadImage: 'registry.example.test/lab/default-runner:test',
+      resolvedWorkloadImageSource: 'controller-default',
+    })
+    expect(validatePolicies).toHaveBeenCalledTimes(1)
+    expect(kube.apply).not.toHaveBeenCalled()
+    expect(store.reserveAgentRunIdempotencyKey).not.toHaveBeenCalled()
+    expect(store.assignAgentRunIdempotencyKey).not.toHaveBeenCalled()
+    expect(store.createAgentRun).not.toHaveBeenCalled()
+    expect(store.createAuditEvent).not.toHaveBeenCalled()
+    expect(idGenerator).not.toHaveBeenCalled()
+  })
+
+  it('resolves provider workload image in AgentRun dry-run previews', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(kube.get as unknown as MockResolvedValueOnce)
+      .mockResolvedValueOnce({
+        metadata: { name: 'anypi-agent' },
+        spec: { providerRef: { name: 'anypi' } },
+      })
+      .mockResolvedValueOnce({
+        metadata: { name: 'anypi' },
+        spec: {
+          binary: '/usr/local/bin/anypi-runner',
+          workload: {
+            image:
+              'registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990',
+          },
+        },
+      })
+
+    const response = await postAgentRunsHandler(
+      buildRequest(
+        {
+          agentRef: { name: 'anypi-agent' },
+          namespace: 'agents',
+          implementation: { text: 'Implement the requested change.' },
+          runtime: { type: 'job', config: {} },
+          parameters: { repository: 'proompteng/lab' },
+        },
+        'http://agents.local/v1/agent-runs?dryRun=All',
+      ),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+        runtimeConfig: { env: { AGENTS_AGENT_RUNNER_IMAGE: 'registry.example.test/lab/default-runner:test' } },
+      },
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as Record<string, unknown>
+    expect(body).toMatchObject({
+      ok: true,
+      dryRun: true,
+      providerName: 'anypi',
+      resolvedWorkloadImage:
+        'registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990',
+      resolvedWorkloadImageSource: 'provider',
+    })
+    expect(kube.apply).not.toHaveBeenCalled()
+    expect(store.createAgentRun).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid AgentRun dry-run values before mutating state', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+
+    const response = await postAgentRunsHandler(
+      buildRequest(
+        {
+          agentRef: { name: 'demo-agent' },
+          namespace: 'agents',
+          implementation: { text: 'Implement the requested change.' },
+          runtime: { type: 'job', config: {} },
+        },
+        'http://agents.local/v1/agent-runs?dryRun=maybe',
+      ),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('dryRun must be true, false, or All')
+    expect(kube.apply).not.toHaveBeenCalled()
+    expect(store.createAgentRun).not.toHaveBeenCalled()
+    expect(store.createAuditEvent).not.toHaveBeenCalled()
   })
 
   it('injects runtime config into admission queue limits instead of reading global process env', async () => {

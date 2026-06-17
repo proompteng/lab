@@ -38,7 +38,7 @@ type WorkflowContractCheck =
 
 type WorkflowReconcilerDependencies = {
   resolveRunnerServiceAccount: (runtimeConfig: Record<string, unknown>) => string | null | undefined
-  resolveJobImage: (workload: Record<string, unknown>) => string | null
+  resolveJobImage: (workload: Record<string, unknown>, provider?: Record<string, unknown> | null) => string | null
   validateImplementationContract: (
     implementation: Record<string, unknown>,
     parameters: Record<string, string>,
@@ -452,10 +452,28 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       return
     }
 
+    const dependencies = await loadWorkflowDependencies(kube, agentRun, namespace, memories, runtimeConfig)
+    if (!dependencies.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: dependencies.reason,
+        message: dependencies.message,
+      })
+      logInvalidSpec(dependencies.reason, dependencies.message)
+      await deps.setStatus(kube, agentRun, {
+        observedGeneration,
+        phase: 'Failed',
+        finishedAt: deps.nowIso(),
+        conditions: updated,
+      })
+      return
+    }
+
     const imageCandidates = workflowSteps
       .map((step): ImagePolicyCandidate | null => {
         const workload = step.workload ?? baseWorkload
-        const image = workload ? deps.resolveJobImage(workload) : null
+        const image = workload ? deps.resolveJobImage(workload, dependencies.provider) : null
         if (!image) return null
         return { image, context: `workflow step ${step.name}` }
       })
@@ -469,24 +487,6 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         message: imagePolicy.message,
       })
       logInvalidSpec(imagePolicy.reason, imagePolicy.message)
-      await deps.setStatus(kube, agentRun, {
-        observedGeneration,
-        phase: 'Failed',
-        finishedAt: deps.nowIso(),
-        conditions: updated,
-      })
-      return
-    }
-
-    const dependencies = await loadWorkflowDependencies(kube, agentRun, namespace, memories, runtimeConfig)
-    if (!dependencies.ok) {
-      const updated = upsertCondition(conditions, {
-        type: 'InvalidSpec',
-        status: 'True',
-        reason: dependencies.reason,
-        message: dependencies.message,
-      })
-      logInvalidSpec(dependencies.reason, dependencies.message)
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Failed',
@@ -617,13 +617,14 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         }
 
         const stepWorkload = stepSpec.workload ?? baseWorkload
-        const workloadImage = deps.resolveJobImage(stepWorkload)
+        const workloadImage = deps.resolveJobImage(stepWorkload, dependencies.provider)
         if (!workloadImage) {
           setWorkflowStepPhase(stepStatus, 'Failed', 'Missing workload image')
           stepStatus.finishedAt = deps.nowIso()
           workflowFailure = {
             reason: 'MissingWorkloadImage',
-            message: 'spec.workload.image or AGENTS_AGENT_RUNNER_IMAGE is required for workflow runtime',
+            message:
+              'spec.workload.image, AgentProvider.spec.workload.image, or AGENTS_AGENT_RUNNER_IMAGE is required for workflow runtime',
           }
           break
         }

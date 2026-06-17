@@ -9,7 +9,7 @@ Flamingo model.
 - Agent: `anypi-agent`
 - Binary: `/usr/local/bin/anypi-runner`
 - Runtime type: `job`
-- Required workload image: `registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d`
+- Default provider workload image: `registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990`
 - Default model endpoint: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Default model: `qwen3-coder-flamingo`
 - Supported workload image platforms: `linux/amd64`, `linux/arm64`
@@ -20,6 +20,9 @@ The provider is an Agents `exec` provider. The controller mounts `/workspace/run
 branch, invokes Pi through the TypeScript SDK, validates the result, commits, pushes, and opens or updates a PR.
 PR bodies are rendered from the target repository's `.github/PULL_REQUEST_TEMPLATE.md` when present, with every template
 section filled and validation commands copied from runner status.
+
+Normal Anypi AgentRuns should omit `spec.workload.image`. The controller resolves the Anypi image from
+`AgentProvider/anypi.spec.workload.image`, so MCP callers do not need to carry image digests in every request.
 
 ## Pi SDK Configuration
 
@@ -105,7 +108,6 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
     resources:
       requests:
         cpu: '2'

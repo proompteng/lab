@@ -272,15 +272,17 @@ kubectl -n agents describe pod <agent-run-pod> | rg -n 'CreateContainerConfigErr
 Image resolution order (highest first):
 
 1. `AgentRun.spec.workload.image`
-2. `AGENTS_AGENT_RUNNER_IMAGE`
-3. chart `runner.image.*`
+2. `AgentProvider.spec.workload.image`
+3. `AGENTS_AGENT_RUNNER_IMAGE`
+4. chart `runner.image.*`
 
 Runner image entry points by interface:
 
 - HTTP `/v1/agent-runs`: `spec.workload.image` (and workflow step `spec.workflow.steps[].workload.image`)
 - gRPC `SubmitAgentRun`: `workload.image` (mapped into `AgentRun.spec.workload.image`)
 - Native `OrchestrationRun` AgentRun steps: `step.workload.image` (mapped into submitted `AgentRun.spec.workload.image`)
-- Controller fallback defaults: `AGENTS_AGENT_RUNNER_IMAGE`, then the chart-managed runner image.
+- Controller fallback defaults: `AgentProvider.spec.workload.image`, `AGENTS_AGENT_RUNNER_IMAGE`, then the chart-managed
+  runner image.
 
 Chart default wiring for `AGENTS_AGENT_RUNNER_IMAGE` (highest first):
 
@@ -290,7 +292,7 @@ Chart default wiring for `AGENTS_AGENT_RUNNER_IMAGE` (highest first):
 
 Safe default for normal runs:
 
-- Do not set `spec.workload.image`; let the controller-provided default image drive execution.
+- Do not set `spec.workload.image`; let the AgentProvider or controller-provided default image drive execution.
 
 Use per-run image pinning only when:
 

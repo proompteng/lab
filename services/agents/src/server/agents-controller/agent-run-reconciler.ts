@@ -78,7 +78,7 @@ type AgentRunReconcilerDependencies = {
   setStatus: (kube: KubeClient, resource: Record<string, unknown>, status: Record<string, unknown>) => Promise<void>
   nowIso: () => string
   isKubeNotFoundError: (error: unknown) => boolean
-  resolveJobImage: (workload: Record<string, unknown>) => string | null
+  resolveJobImage: (workload: Record<string, unknown>, provider?: Record<string, unknown> | null) => string | null
   resolveAgentRunRetentionSeconds: (spec: Record<string, unknown>) => number
   getPrimitivesStore: () => Promise<AgentsPrimitivesStoreRef | null>
   getTemporalClient: () => Promise<unknown>
@@ -675,10 +675,58 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
       const parameters = resolveParameters(agentRun)
 
+      let agentProvider: {
+        agent: Record<string, unknown>
+        providerName: string | null
+        provider: Record<string, unknown>
+      } | null = null
+      const loadAgentProvider = async () => {
+        if (agentProvider) return agentProvider
+        const loadedAgent = agentName ? await kube.get(RESOURCE_MAP.Agent, agentName, namespace) : null
+        if (!loadedAgent) {
+          const message = `agent ${agentName} not found`
+          const updated = upsertCondition(conditions, {
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'MissingAgent',
+            message,
+          })
+          logInvalidSpec('MissingAgent', message)
+          await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+          return null
+        }
+
+        const loadedProviderName = asString(readNested(loadedAgent, ['spec', 'providerRef', 'name'])) ?? null
+        const loadedProvider = loadedProviderName
+          ? await kube.get(RESOURCE_MAP.AgentProvider, loadedProviderName, namespace)
+          : null
+        if (!loadedProvider) {
+          const message = `agent provider ${loadedProviderName ?? 'unknown'} not found`
+          const updated = upsertCondition(conditions, {
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'MissingProvider',
+            message,
+          })
+          logInvalidSpec('MissingProvider', message)
+          await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+          return null
+        }
+        agentProvider = {
+          agent: loadedAgent,
+          providerName: loadedProviderName,
+          provider: loadedProvider,
+        }
+        return agentProvider
+      }
+
       if (runtimeType === 'job') {
-        workloadImage = resolveJobImage(workload)
+        const loaded = await loadAgentProvider()
+        if (!loaded) return
+        workloadImage = resolveJobImage(workload, loaded.provider)
         if (!workloadImage) {
-          const message = 'spec.workload.image or AGENTS_AGENT_RUNNER_IMAGE is required for job runtime'
+          const message =
+            'spec.workload.image, AgentProvider.spec.workload.image, or AGENTS_AGENT_RUNNER_IMAGE is required for job runtime'
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
@@ -742,35 +790,12 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
 
-      const agent = agentName ? await kube.get(RESOURCE_MAP.Agent, agentName, namespace) : null
-      if (!agent) {
-        const message = `agent ${agentName} not found`
-        const updated = upsertCondition(conditions, {
-          type: 'InvalidSpec',
-          status: 'True',
-          reason: 'MissingAgent',
-          message,
-        })
-        logInvalidSpec('MissingAgent', message)
-        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
-        return
-      }
-
-      const providerName = asString(readNested(agent, ['spec', 'providerRef', 'name']))
-      const provider = providerName ? await kube.get(RESOURCE_MAP.AgentProvider, providerName, namespace) : null
-      if (!provider) {
-        const message = `agent provider ${providerName ?? 'unknown'} not found`
-        const updated = upsertCondition(conditions, {
-          type: 'InvalidSpec',
-          status: 'True',
-          reason: 'MissingProvider',
-          message,
-        })
-        logInvalidSpec('MissingProvider', message)
-        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
-        return
-      }
-      const providerBlock = resolveProviderReadinessBlock(provider)
+      const loaded = agentProvider ?? (await loadAgentProvider())
+      if (!loaded) return
+      const resolvedAgent = loaded.agent
+      const providerName = loaded.providerName
+      const resolvedProvider = loaded.provider
+      const providerBlock = resolveProviderReadinessBlock(resolvedProvider)
       if (providerBlock) {
         const updated = upsertCondition(
           upsertCondition(
@@ -811,7 +836,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
 
-      const security = asRecord(readNested(agent, ['spec', 'security'])) ?? {}
+      const security = asRecord(readNested(resolvedAgent, ['spec', 'security'])) ?? {}
       const allowedSecrets = parseStringList(security.allowedSecrets)
       const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
       const runSecrets = parseStringList(spec.secrets)
@@ -892,9 +917,9 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         return
       }
 
-      const memory = resolveMemory(agentRun, agent, memories)
+      const memory = resolveMemory(agentRun, resolvedAgent, memories)
       const runMemoryRef = asString(readNested(spec, ['memoryRef', 'name']))
-      const agentMemoryRef = asString(readNested(agent, ['spec', 'memoryRef', 'name']))
+      const agentMemoryRef = asString(readNested(resolvedAgent, ['spec', 'memoryRef', 'name']))
       if ((runMemoryRef || agentMemoryRef) && !memory) {
         const missingName = runMemoryRef || agentMemoryRef || 'unknown'
         const message = `memory ${missingName} not found`
@@ -995,7 +1020,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         kube,
         namespace,
         agentRun,
-        agent,
+        agent: resolvedAgent,
         runSecrets,
         allowedSecrets,
       })
@@ -1020,7 +1045,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         kube,
         namespace,
         agentRun,
-        agent,
+        agent: resolvedAgent,
         implementation: implResource,
         parameters,
         allowedSecrets,
@@ -1068,8 +1093,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const vcsStatus = vcsResolution.status ?? undefined
       const resolvedParameters = applyVcsMetadataToParameters(parameters, vcsContext)
       const declaredArtifacts = renderProviderOutputArtifacts(
-        asRecord(provider.spec) ?? {},
-        buildRunSpecContext(agentRun, agent, implResource, resolvedParameters, memory, vcsContext),
+        asRecord(resolvedProvider.spec) ?? {},
+        buildRunSpecContext(agentRun, resolvedAgent, implResource, resolvedParameters, memory, vcsContext),
       )
 
       let newRuntimeRef: RuntimeRef | null = null
@@ -1078,8 +1103,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           newRuntimeRef = await submitJobRun(
             kube,
             agentRun,
-            agent,
-            provider,
+            resolvedAgent,
+            resolvedProvider,
             implResource,
             memory,
             namespace,
@@ -1103,8 +1128,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         } else if (runtimeType === 'temporal') {
           newRuntimeRef = await submitTemporalRun(
             agentRun,
-            agent,
-            provider,
+            resolvedAgent,
+            resolvedProvider,
             implResource,
             memory,
             vcsContext,

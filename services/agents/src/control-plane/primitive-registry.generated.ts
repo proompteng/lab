@@ -346,6 +346,16 @@ export const controlPlanePrimitiveRegistry = [
               },
               type: 'array',
             },
+            workload: {
+              description: 'Workload contains provider-owned defaults for AgentRuns that use this provider.',
+              properties: {
+                image: {
+                  description: 'Image is the default runner image for AgentRuns that omit spec.workload.image.',
+                  type: 'string',
+                },
+              },
+              type: 'object',
+            },
           },
           required: ['binary'],
           type: 'object',

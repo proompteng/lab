@@ -140,6 +140,90 @@ describe('agents controller agent-run reconciler', () => {
     )
   })
 
+  it('uses AgentProvider workload image when a job AgentRun omits its workload image', async () => {
+    const submitJobRun = vi.fn(async () => ({
+      type: 'job',
+      name: 'run-1-job',
+      namespace: 'agents',
+    }))
+    const resolveJobImage = vi.fn((_workload: Record<string, unknown>, provider?: Record<string, unknown> | null) => {
+      const workload = provider?.spec as Record<string, unknown> | undefined
+      return ((workload?.workload as Record<string, unknown> | undefined)?.image as string | undefined) ?? null
+    })
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string) => {
+        if (kind === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'anypi-agent' },
+            spec: {
+              providerRef: { name: 'anypi' },
+              defaults: { systemPrompt: 'You are a production coding agent.' },
+            },
+          }
+        }
+        if (kind === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'anypi' },
+            spec: {
+              binary: '/usr/local/bin/anypi-runner',
+              workload: {
+                image:
+                  'registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990',
+              },
+            },
+          }
+        }
+        return null
+      }),
+    }
+    const reconciler = createAgentRunReconciler(
+      createBaseDependencies({
+        resolveJobImage,
+        submitJobRun,
+      }),
+    )
+
+    await reconciler.reconcileAgentRun(
+      kube as never,
+      {
+        metadata: { name: 'run-1', namespace: 'agents', generation: 1 },
+        spec: {
+          agentRef: { name: 'anypi-agent' },
+          runtime: { type: 'job' },
+          implementation: { inline: { text: 'Implement the requested change.' } },
+          parameters: {},
+          workload: {},
+        },
+      },
+      'agents',
+      [],
+      [],
+      {
+        perNamespace: 10,
+        perAgent: 10,
+        cluster: 10,
+        repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+      },
+      { total: 0, perAgent: new Map(), perRepository: new Map() },
+      0,
+    )
+
+    expect(resolveJobImage).toHaveBeenCalledWith({}, expect.objectContaining({ metadata: { name: 'anypi' } }))
+    expect(submitJobRun).toHaveBeenCalledWith(
+      kube,
+      expect.any(Object),
+      expect.objectContaining({ metadata: { name: 'anypi-agent' } }),
+      expect.objectContaining({ metadata: { name: 'anypi' } }),
+      expect.any(Object),
+      null,
+      'agents',
+      'registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990',
+      'job',
+      expect.any(Object),
+    )
+  })
+
   it('finalizes a running job AgentRun from stored terminal runner status when the Job was already pruned', async () => {
     const setStatus = vi.fn(async () => undefined)
     const kube = {

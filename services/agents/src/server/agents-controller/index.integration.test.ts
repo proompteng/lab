@@ -1502,7 +1502,29 @@ describe('agents controller reconcileAgentRun', () => {
   it('marks AgentRun failed when job runtime lacks an image', async () => {
     const previousImage = process.env.AGENTS_AGENT_RUNNER_IMAGE
     delete process.env.AGENTS_AGENT_RUNNER_IMAGE
-    const kube = buildKube()
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return {
+            metadata: { name: 'impl-1' },
+            spec: { text: 'demo' },
+          }
+        }
+        return null
+      }),
+    })
     const agentRun = buildAgentRun({
       spec: {
         agentRef: { name: 'agent-1' },

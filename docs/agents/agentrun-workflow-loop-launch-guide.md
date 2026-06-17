@@ -120,7 +120,8 @@ Runner image safety:
 - Workflow steps may also set `spec.workflow.steps[].workload.image`; if omitted, step jobs inherit top-level `spec.workload`.
 - The controller resolves runner image in this order:
   1. `AgentRun.spec.workload.image`
-  2. `AGENTS_AGENT_RUNNER_IMAGE`
+  2. `AgentProvider.spec.workload.image`
+  3. `AGENTS_AGENT_RUNNER_IMAGE`
 - Set `spec.workload.image` only when intentionally pinning a known-good image for a controlled rollout.
 
 ## Conditional Loop
