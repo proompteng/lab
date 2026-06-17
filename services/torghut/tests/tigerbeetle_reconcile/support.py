@@ -210,4 +210,7 @@ class _TestTigerBeetleReconcileBase(TestCase):
         Base.metadata.create_all(self.engine)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "FailingLookupClient",
+    "CloseTrackingClient",
+)

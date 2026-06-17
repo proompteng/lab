@@ -743,7 +743,7 @@ def _runtime_ledger_target_blockers(
 
 weighted_decimal_average = _weighted_decimal_average
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("weighted_decimal_average",)
 
 # Public aliases used by split modules.
 DelayAdjustedDepthStressInputs = _DelayAdjustedDepthStressInputs

@@ -340,4 +340,4 @@ class _TestBuildRevenueRepairDigestBase(TestCase):
     pass
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("NOW",)

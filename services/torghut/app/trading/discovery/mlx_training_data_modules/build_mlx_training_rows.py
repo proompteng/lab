@@ -688,4 +688,11 @@ def mlx_ranker_model_from_payload(payload: Mapping[str, Any]) -> MlxRankerModel:
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "build_mlx_training_rows",
+    "train_mlx_ranker",
+    "rank_training_rows",
+    "compute_rank_bucket_lift",
+    "rank_training_rows_with_lift_policy",
+    "mlx_ranker_model_from_payload",
+)

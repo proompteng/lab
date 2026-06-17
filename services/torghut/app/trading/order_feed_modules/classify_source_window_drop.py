@@ -665,4 +665,26 @@ source_window_source_identity_payload_for_values = (
     _source_window_source_identity_payload_for_values
 )
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "classify_source_window_drop",
+    "classify_source_window_event",
+    "classify_source_window_unhandled_failure",
+    "dedupe",
+    "execution_correlation_identity_from_payload",
+    "increment_drop_counter",
+    "lifecycle_payload",
+    "mark_order_event_account_alias",
+    "missing_linkage_blockers",
+    "order_event_account_label_alias",
+    "order_event_client_identity",
+    "order_event_evidence_payload",
+    "order_event_execution_correlation_identity",
+    "order_event_linkage_blockers",
+    "order_identity_payload",
+    "raw_event_with_linkage_blockers",
+    "raw_record_source_evidence_payload",
+    "source_window_event_status_reason",
+    "source_window_failure_reason",
+    "source_window_source_identity_payload",
+    "source_window_source_identity_payload_for_values",
+)

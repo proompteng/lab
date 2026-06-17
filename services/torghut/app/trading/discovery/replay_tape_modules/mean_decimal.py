@@ -123,6 +123,3 @@ __all__ = [
     "slice_tape_by_window",
     "validate_tape_freshness",
 ]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

@@ -850,7 +850,7 @@ def _record_unique_rejection(
     rejected.append(dict(rejection))
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 empty_selection_key = _empty_selection_key

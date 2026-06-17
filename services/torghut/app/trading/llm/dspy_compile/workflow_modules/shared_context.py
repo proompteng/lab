@@ -734,7 +734,22 @@ def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
 
 sanitize_idempotency_key = _sanitize_idempotency_key
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "DSPyWorkflowLane",
+    "DSPyWorkflowExecutionMode",
+    "resolve_default_dspy_universe_ref",
+    "build_compile_result",
+    "build_eval_report",
+    "build_promotion_record",
+    "bundle_artifacts",
+    "write_artifact_bundle",
+    "upsert_workflow_artifact_record",
+    "build_dspy_agentrun_payload",
+    "submit_agents_agentrun",
+    "get_agents_agentrun",
+    "wait_for_agents_agentrun_terminal_status",
+    "sanitize_idempotency_key",
+)
 
 # Public aliases used by split-module consumers.
 http_json_request = _http_json_request

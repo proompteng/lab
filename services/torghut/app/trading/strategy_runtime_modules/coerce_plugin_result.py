@@ -613,4 +613,13 @@ CircuitState = _CircuitState
 coerce_plugin_result = _coerce_plugin_result
 trace_suppression_reason = _trace_suppression_reason
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "StrategyRegistry",
+    "IntentAggregator",
+    "LegacyMacdRsiPlugin",
+    "IntradayTsmomPlugin",
+    "MomentumPullbackLongPlugin",
+    "CircuitState",
+    "coerce_plugin_result",
+    "trace_suppression_reason",
+)

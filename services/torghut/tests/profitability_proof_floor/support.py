@@ -99,4 +99,4 @@ def _simple_lane_status() -> dict[str, object]:
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("NOW",)

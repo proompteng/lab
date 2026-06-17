@@ -643,7 +643,10 @@ def _routeability_only_tca_reason(reason: str) -> bool:
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION",
+    "text",
+)
 
 # Public aliases used by split modules.
 ALPHA_FEATURE_REPLAY_PRIORITY_BONUS = _ALPHA_FEATURE_REPLAY_PRIORITY_BONUS

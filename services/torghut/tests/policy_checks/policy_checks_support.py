@@ -472,4 +472,4 @@ def _write_advisor_fallback_slo_payload(
     return artifact_path
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("PolicyChecksTestCaseBase",)

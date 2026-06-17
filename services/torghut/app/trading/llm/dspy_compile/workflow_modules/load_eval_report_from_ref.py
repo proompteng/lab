@@ -452,6 +452,3 @@ __all__ = [
     "upsert_workflow_artifact_record",
     "write_artifact_bundle",
 ]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

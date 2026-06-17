@@ -703,7 +703,7 @@ def _evaluate_expert_router_registry_evidence(
     return evaluation.result()
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 evaluate_contamination_registry_evidence = _evaluate_contamination_registry_evidence

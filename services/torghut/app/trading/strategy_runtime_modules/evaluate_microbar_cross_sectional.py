@@ -749,4 +749,16 @@ class PluginEvaluationResult:
 # Public aliases used by split-module consumers.
 evaluate_microbar_cross_sectional = _evaluate_microbar_cross_sectional
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "StrategyDefinition",
+    "StrategyContext",
+    "StrategyIntent",
+    "AggregatedIntent",
+    "RuntimeDecision",
+    "RuntimeErrorRecord",
+    "RuntimeObservation",
+    "RuntimeEvaluation",
+    "StrategyPlugin",
+    "PluginEvaluationResult",
+    "evaluate_microbar_cross_sectional",
+)

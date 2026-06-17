@@ -474,6 +474,3 @@ __all__ = [
     "PromotionTarget",
     "evaluate_gate_matrix",
 ]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

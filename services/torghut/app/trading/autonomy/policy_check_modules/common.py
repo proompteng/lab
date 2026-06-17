@@ -147,7 +147,10 @@ class _DeeplobBdlobThresholds:
     min_fallback_reliability: float
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "PromotionPrerequisiteResult",
+    "RollbackReadinessResult",
+)
 
 # Public aliases used by split modules.
 BenchmarkParityThresholds = _BenchmarkParityThresholds

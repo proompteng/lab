@@ -632,7 +632,29 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "logger",
+    "EngineeringGradeDecision",
+    "ManualApprovalPayload",
+    "GithubIssueEvent",
+    "whitepaper_workflow_enabled",
+    "whitepaper_inngest_enabled",
+    "whitepaper_kafka_enabled",
+    "whitepaper_semantic_indexing_enabled",
+    "whitepaper_semantic_required",
+    "whitepaper_requeue_comment_keyword",
+    "marker_start",
+    "marker_end",
+    "parse_marker_block",
+    "normalize_analysis_mode",
+    "parse_marker_tags",
+    "normalize_attachment_url",
+    "github_issue_number_from_url",
+    "build_whitepaper_run_id",
+    "comment_requests_requeue",
+    "extract_pdf_urls",
+    "normalize_github_issue_event",
+)
 
 # Public aliases used by split modules.
 bool_env = _bool_env

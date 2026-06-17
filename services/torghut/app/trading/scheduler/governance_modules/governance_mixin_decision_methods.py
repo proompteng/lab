@@ -759,7 +759,7 @@ class _TradingSchedulerGovernanceDecisionMethods:
         self.state.last_autonomy_throughput = None
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 TradingSchedulerGovernanceDecisionMethods = _TradingSchedulerGovernanceDecisionMethods

@@ -860,4 +860,4 @@ class _ClickHouseSignalIngestorCoreMethods:
 # Public aliases used by split-module consumers.
 ClickHouseSignalIngestorCoreMethods = _ClickHouseSignalIngestorCoreMethods
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("ClickHouseSignalIngestorCoreMethods",)

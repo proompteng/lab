@@ -827,4 +827,7 @@ def _score_candidate_spec(
 score_candidate_spec = _score_candidate_spec
 
 score_candidate_spec_split_export = _score_candidate_spec
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "score_candidate_spec",
+    "score_candidate_spec_split_export",
+)

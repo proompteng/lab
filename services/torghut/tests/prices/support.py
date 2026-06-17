@@ -142,4 +142,11 @@ class _TestClickHousePriceFetcherBase(TestCase):
         CapturingHTTPConnection.response = FakeHTTPResponse(200, '{"c": "123.45"}\n')
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "FakeClickHousePriceFetcher",
+    "CapturingPriceFetcher",
+    "RoutingClickHousePriceFetcher",
+    "SeqAwarePriceFetcher",
+    "FakeHTTPResponse",
+    "CapturingHTTPConnection",
+)

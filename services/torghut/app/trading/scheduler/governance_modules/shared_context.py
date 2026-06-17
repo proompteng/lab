@@ -152,7 +152,10 @@ class _TradingSchedulerGovernanceMixinFields:
 
 resolve_autonomy_artifact_root = _resolve_autonomy_artifact_root
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "logger",
+    "resolve_autonomy_artifact_root",
+)
 
 # Public aliases used by split modules.
 incident_payload_complete = _incident_payload_complete

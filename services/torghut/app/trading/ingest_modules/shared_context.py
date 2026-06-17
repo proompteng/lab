@@ -129,4 +129,16 @@ ClickHouseSignalIngestorFields = _ClickHouseSignalIngestorFields
 coerce_count = _coerce_count
 simulation_fetch_window = _simulation_fetch_window
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "logger",
+    "FLAT_CURSOR_OVERLAP",
+    "LATEST_SIGNAL_TS_CACHE_TTL",
+    "LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN",
+    "SIMULATION_CURSOR_BASELINE",
+    "FLAT_SIGNAL_COLUMNS",
+    "ENVELOPE_SIGNAL_COLUMNS",
+    "SignalBatch",
+    "ClickHouseSignalIngestorFields",
+    "coerce_count",
+    "simulation_fetch_window",
+)

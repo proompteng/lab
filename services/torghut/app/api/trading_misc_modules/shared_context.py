@@ -959,7 +959,15 @@ def get_lean_shadow_parity(
     return summary
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "router",
+    "trading_consumer_evidence",
+    "trading_metrics",
+    "trading_simulation_progress",
+    "submit_lean_backtest",
+    "get_lean_backtest",
+    "get_lean_shadow_parity",
+)
 
 # Public aliases used by split modules.
 ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS

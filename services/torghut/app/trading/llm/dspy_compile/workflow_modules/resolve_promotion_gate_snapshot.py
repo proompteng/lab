@@ -899,7 +899,10 @@ def _execute_local_dspy_lane(**kwargs: Any) -> dict[str, Any]:
     return execute_local_dspy_lane(**kwargs)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "orchestrate_dspy_agentrun_workflow",
+    "artifact_root_normalized",
+)
 
 # Public aliases used by split modules.
 build_dspy_lane_context = _build_dspy_lane_context

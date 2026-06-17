@@ -54,6 +54,76 @@ def test_file_length_filter_carries_transitional_extracted_source_baseline() -> 
     ]
 
 
+def test_file_length_filter_ignores_static_explicit_all_declarations(tmp_path) -> None:
+    module_path = tmp_path / "app" / "trading" / "exports.py"
+    module_path.parent.mkdir(parents=True)
+    module_path.write_text(
+        "\n".join(
+            (
+                "value = 1",
+                "",
+                "__all__ = (",
+                '    "value",',
+                ")",
+            )
+        ),
+        encoding="utf-8",
+    )
+    output = (
+        "app/trading/exports.py:1:0: "
+        "C0302: Too many lines in module (5/2) (too-many-lines)"
+    )
+
+    ignored_paths: set[str] = set()
+    messages = _filter_legacy_extracted_messages(
+        output,
+        extracted_paths=set(),
+        module_root=tmp_path,
+        ignored_explicit_all_paths=ignored_paths,
+    )
+
+    assert messages == []
+    assert ignored_paths == {"app/trading/exports.py"}
+
+
+def test_file_length_filter_keeps_dynamic_all_declarations(tmp_path) -> None:
+    module_path = tmp_path / "app" / "trading" / "dynamic_exports.py"
+    module_path.parent.mkdir(parents=True)
+    module_path.write_text(
+        "\n".join(
+            (
+                "value = 1",
+                "",
+                "__all__ = [name for name in globals()]",
+            )
+        ),
+        encoding="utf-8",
+    )
+    output = (
+        "app/trading/dynamic_exports.py:1:0: "
+        "C0302: Too many lines in module (3/2) (too-many-lines)"
+    )
+
+    messages = _filter_legacy_extracted_messages(
+        output,
+        extracted_paths=set(),
+        module_root=tmp_path,
+    )
+
+    assert messages == [output]
+
+
+def test_file_length_filter_ignores_non_length_pylint_messages() -> None:
+    output = "app/trading/noisy.py:1:0: F0001: No module named app/trading/noisy.py"
+
+    messages = _filter_legacy_extracted_messages(
+        output,
+        extracted_paths=set(),
+    )
+
+    assert messages == []
+
+
 def test_file_length_main_combines_transitional_extracted_source_baseline(
     monkeypatch,
     capsys,

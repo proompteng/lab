@@ -799,4 +799,4 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("evaluate_trading_readiness",)

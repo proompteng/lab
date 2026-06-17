@@ -879,4 +879,16 @@ execution_order_event_exists_for_execution_clause = (
 )
 order_event_identity_clauses = _order_event_identity_clauses
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "repair_order_feed_execution_links",
+    "repair_order_feed_execution_states",
+    "repair_order_feed_fill_deltas",
+    "backfill_order_feed_source_windows",
+    "backfill_order_feed_events_from_executions",
+    "ensure_source_window_for_event",
+    "event_precedes_order_event",
+    "execution_activity_at",
+    "execution_activity_timestamp",
+    "execution_order_event_exists_for_execution_clause",
+    "order_event_identity_clauses",
+)

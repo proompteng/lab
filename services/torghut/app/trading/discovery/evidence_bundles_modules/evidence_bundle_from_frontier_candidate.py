@@ -775,7 +775,10 @@ def _implementation_risk_backtest_stability_required(
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "evidence_bundle_from_frontier_candidate",
+    "evidence_bundle_from_payload",
+)
 
 # Public aliases used by split modules.
 delay_depth_survival_blockers = _delay_depth_survival_blockers

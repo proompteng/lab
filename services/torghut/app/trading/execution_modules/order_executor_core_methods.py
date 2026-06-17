@@ -884,4 +884,4 @@ class _OrderExecutorCoreMethods:
 # Public aliases used by split-module consumers.
 OrderExecutorCoreMethods = _OrderExecutorCoreMethods
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("OrderExecutorCoreMethods",)

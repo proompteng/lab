@@ -834,7 +834,7 @@ LIMIT 1
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 alpaca_cached_last_good = _alpaca_cached_last_good

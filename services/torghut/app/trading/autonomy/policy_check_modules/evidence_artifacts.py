@@ -879,7 +879,7 @@ def _evaluate_rationale_evidence(
     return reasons, details
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 append_detail = _append_detail

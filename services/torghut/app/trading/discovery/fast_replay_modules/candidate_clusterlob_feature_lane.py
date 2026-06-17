@@ -390,4 +390,11 @@ clusterlob_feature_lane_score = _clusterlob_feature_lane_score
 candidate_clusterlob_feature_lane_split_export = _candidate_clusterlob_feature_lane
 clusterlob_feature_lane_manifest_split_export = _clusterlob_feature_lane_manifest
 clusterlob_feature_lane_score_split_export = _clusterlob_feature_lane_score
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "candidate_clusterlob_feature_lane",
+    "clusterlob_feature_lane_manifest",
+    "clusterlob_feature_lane_score",
+    "candidate_clusterlob_feature_lane_split_export",
+    "clusterlob_feature_lane_manifest_split_export",
+    "clusterlob_feature_lane_score_split_export",
+)

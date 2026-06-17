@@ -302,4 +302,20 @@ class _TestOrderIdempotencyBase(TestCase):
         settings.trading_mode = self._orig_trading_mode
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "FakeAlpacaClient",
+    "ConflictingOrderClient",
+    "HeldInventoryClient",
+    "PositionLookupUnavailableClient",
+    "PositionLookupNoneClient",
+    "PositionLookupUnavailableHeldInventoryClient",
+    "PartiallyHeldInventoryClient",
+    "AccountShortingDisabledClient",
+    "SymbolNotShortableClient",
+    "SymbolNotEasyToBorrowClient",
+    "AccountMetadataUnavailableClient",
+    "AccountShortingUnknownClient",
+    "AssetMetadataUnavailableClient",
+    "AssetShortabilityUnknownClient",
+    "AccountMetadataUnavailableClientWithLongPosition",
+)

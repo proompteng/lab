@@ -972,4 +972,4 @@ capture_module_exports(globals(), __all__)
 
 refresh_universe_state_for_readiness = _refresh_universe_state_for_readiness
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("refresh_universe_state_for_readiness",)

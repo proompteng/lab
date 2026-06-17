@@ -868,4 +868,24 @@ runtime_window_import_is_paper_route = _runtime_window_import_is_paper_route
 runtime_window_target_plan_bounds = _runtime_window_target_plan_bounds
 source_strategy_name_candidates = _source_strategy_name_candidates
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "build_renewal_manifest",
+    "latest_authoritative_rows",
+    "load_latest_empirical_job_rows",
+    "runtime_window_targets",
+    "explicit_runtime_window_bounds",
+    "latest_completed_regular_session",
+    "latest_source_activity_window",
+    "offline_replay_artifact_refs",
+    "offline_replay_exact_artifact_refs",
+    "offline_replay_triage_candidate_from_import",
+    "offline_replay_triage_candidate_from_ranking",
+    "offline_replay_triage_from_artifact_payload",
+    "offline_replay_triage_source_kind",
+    "regular_session_for_timestamp",
+    "run_runtime_window_import",
+    "runtime_window_bounds",
+    "runtime_window_import_is_paper_route",
+    "runtime_window_target_plan_bounds",
+    "source_strategy_name_candidates",
+)

@@ -951,7 +951,18 @@ def trading_decisions(
     return jsonable_encoder(payload)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "trading_autonomy",
+    "trading_evidence_epoch_latest",
+    "trading_evidence_epoch_detail",
+    "trading_empirical_jobs",
+    "trading_completion_doc29",
+    "trading_completion_doc29_gate",
+    "trading_autonomy_evidence_continuity",
+    "trading_llm_evaluation",
+    "prometheus_metrics",
+    "trading_decisions",
+)
 
 # Public aliases used by split modules.
 build_current_evidence_epoch = _build_current_evidence_epoch

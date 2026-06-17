@@ -772,7 +772,11 @@ def _before_refs(
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "build_executable_alpha_repair_receipts",
+    "build_executable_alpha_settlement_slots",
+    "compact_executable_alpha_settlement_slots",
+)
 
 # Public aliases used by split modules.
 alpha_target_reason_codes = _alpha_target_reason_codes

@@ -769,4 +769,32 @@ select_frontier_buckets_split_export = _select_frontier_buckets
 source_field_diagnostics_split_export = _source_field_diagnostics
 source_input_blockers_split_export = _source_input_blockers
 with_rank_and_bucket_split_export = _with_rank_and_bucket
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "HPAIRS_PREFILTER_SCHEMA_VERSION",
+    "HPAIRS_PREFILTER_ROW_SCHEMA_VERSION",
+    "HPAIRS_PREFILTER_PROOF_SOURCE",
+    "HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL",
+    "HPAIRS_FAMILY_TEMPLATE_ID",
+    "HPAIRS_RUNTIME_STRATEGY_NAME",
+    "HPAIRS_AUTHORITY_BLOCKERS",
+    "HPAIRS_HORIZONS",
+    "MicrostructureCandidatePrefilterRow",
+    "MicrostructurePrefilterResult",
+    "build_hpairs_microstructure_prefilter",
+    "SymbolMicrostructureStats",
+    "build_symbol_microstructure_stats",
+    "rank_key",
+    "score_spec",
+    "select_frontier_buckets",
+    "source_field_diagnostics",
+    "source_input_blockers",
+    "with_rank_and_bucket",
+    "SymbolMicrostructureStats_split_export",
+    "build_symbol_microstructure_stats_split_export",
+    "rank_key_split_export",
+    "score_spec_split_export",
+    "select_frontier_buckets_split_export",
+    "source_field_diagnostics_split_export",
+    "source_input_blockers_split_export",
+    "with_rank_and_bucket_split_export",
+)

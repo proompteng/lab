@@ -561,7 +561,7 @@ def build_submission_gate_market_context_status(state: object) -> dict[str, obje
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("build_submission_gate_market_context_status",)
 
 # Public aliases used by split modules.
 certificate_evidence_authority_score = _certificate_evidence_authority_score
