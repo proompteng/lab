@@ -39,8 +39,34 @@ jobs:
       - name: Install ShellCheck
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --version
+            exit 0
+          fi
+
+          version=0.10.0
+          arch="$(uname -m)"
+          case "${arch}" in
+            x86_64)
+              release_arch=x86_64
+              ;;
+            aarch64 | arm64)
+              release_arch=aarch64
+              ;;
+            *)
+              echo "Unsupported ShellCheck architecture: ${arch}" >&2
+              exit 1
+              ;;
+          esac
+
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "${temp_dir}"' EXIT
+          curl -sSfL \
+            "https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.linux.${release_arch}.tar.xz" \
+            -o "${temp_dir}/shellcheck.tar.xz"
+          tar -xJf "${temp_dir}/shellcheck.tar.xz" -C "${temp_dir}"
+          sudo install -m 0755 "${temp_dir}/shellcheck-v${version}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
 
       - name: Install actionlint
         run: |

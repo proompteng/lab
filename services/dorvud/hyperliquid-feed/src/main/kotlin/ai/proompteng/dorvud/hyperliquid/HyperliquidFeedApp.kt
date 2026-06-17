@@ -1,0 +1,317 @@
+package ai.proompteng.dorvud.hyperliquid
+
+import ai.proompteng.dorvud.platform.DedupCache
+import ai.proompteng.dorvud.platform.Metrics
+import ai.proompteng.dorvud.platform.SeqTracker
+import ai.proompteng.dorvud.platform.buildProducer
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import mu.KotlinLogging
+import org.apache.kafka.clients.producer.KafkaProducer
+import org.apache.kafka.clients.producer.ProducerRecord
+import java.time.Duration
+import java.time.Instant
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.system.exitProcess
+
+private val appLogger = KotlinLogging.logger {}
+
+class HyperliquidFeedApp(
+  private val config: HyperliquidConfig,
+  private val producerFactory: (HyperliquidConfig) -> KafkaProducer<String, String> = { cfg -> buildProducer(cfg.kafka) },
+  private val json: Json =
+    Json {
+      encodeDefaults = true
+      ignoreUnknownKeys = true
+      explicitNulls = false
+    },
+  private val nowMs: () -> Long = { System.currentTimeMillis() },
+) {
+  private val scope = CoroutineScope(Dispatchers.Default)
+  private val ready = AtomicBoolean(false)
+  private val wsReady = AtomicBoolean(false)
+  private val kafkaReady = AtomicBoolean(false)
+  private val clickHouseReady = AtomicBoolean(!config.clickHouse.enabled)
+  private val catalogReady = AtomicBoolean(false)
+  private val marketCount = AtomicInteger(0)
+  private val subscriptionCount = AtomicInteger(0)
+  private val notReadySinceMs = AtomicLong(nowMs())
+  private val httpClient =
+    HttpClient(CIO) {
+      install(WebSockets)
+      install(ContentNegotiation) { json(this@HyperliquidFeedApp.json) }
+    }
+  private val metrics = HyperliquidMetrics(Metrics.registry)
+  private val restBudget = MinuteWeightBudget(config.restWeightBudgetPerMinute, nowMs)
+  private val backoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
+  private val dedup = DedupCache<String>(Duration.ofSeconds(config.dedupTtlSeconds), config.dedupMaxEntries)
+
+  fun start(): Job =
+    scope.launch {
+      appLogger.info {
+        "hyperliquid feed starting network=${config.network} coverage=${config.marketCoverage} " +
+          "infoUrl=${config.infoUrl} wsUrl=${config.wsUrl}"
+      }
+      val producer = producerFactory(config)
+      val clickHouseSink =
+        ClickHouseSink(config.clickHouse, httpClient, metrics, json) {
+          clickHouseReady.set(it)
+          updateReady()
+        }
+      val clickHouseJob = clickHouseSink.start(this)
+      val infoClient = HyperliquidInfoClient(config, httpClient, restBudget, json)
+
+      try {
+        val markets = infoClient.loadMarkets()
+        if (markets.isEmpty()) error("Hyperliquid market catalog is empty")
+        val shards = SubscriptionPlanner.plan(markets, config)
+        val mapper = HyperliquidMapper(config, markets, SeqTracker(), json)
+        marketCount.set(markets.size)
+        subscriptionCount.set(shards.sumOf { it.subscriptions.size })
+        catalogReady.set(true)
+        metrics.setCatalogMarketCount(markets.size)
+        metrics.setSubscriptionCount(subscriptionCount.get())
+        metrics.setCatalogLastRefreshEpochMs(nowMs())
+
+        publishRecords(producer, clickHouseSink, mapper.marketRecords(markets))
+        publishRecords(producer, clickHouseSink, infoClient.loadFundingAndContextRecords(markets))
+
+        val jobs =
+          shards.map { shard ->
+            launch { streamShardLoop(shard, producer, clickHouseSink, mapper) }
+          } + launch { refreshContextLoop(infoClient, producer, clickHouseSink, markets) }
+
+        jobs.joinAll()
+        clickHouseJob.join()
+      } finally {
+        markReady(false)
+        wsReady.set(false)
+        kafkaReady.set(false)
+        runCatching { producer.flush() }
+        runCatching { producer.close() }
+        runCatching { httpClient.close() }
+      }
+    }
+
+  fun stop() {
+    markReady(false)
+    scope.cancel()
+  }
+
+  fun isAlive(): Boolean {
+    if (!scope.coroutineContext.isActive) return false
+    if (ready.get()) return true
+    return nowMs() - notReadySinceMs.get() < config.healthNotReadyKillAfterMs
+  }
+
+  fun readinessInfo(): HyperliquidReadinessInfo =
+    HyperliquidReadinessInfo(
+      status = if (ready.get()) "ready" else "not_ready",
+      ready = ready.get(),
+      websocket = wsReady.get(),
+      kafka = kafkaReady.get(),
+      clickhouse = clickHouseReady.get(),
+      catalog = catalogReady.get(),
+      subscriptions = subscriptionCount.get(),
+      markets = marketCount.get(),
+    )
+
+  private suspend fun streamShardLoop(
+    shard: SubscriptionShard,
+    producer: KafkaProducer<String, String>,
+    clickHouseSink: ClickHouseSink,
+    mapper: HyperliquidMapper,
+  ) {
+    var attempt = 0
+    while (scope.isActive) {
+      try {
+        metrics.reconnects.increment()
+        httpClient.webSocket(config.wsUrl) {
+          attempt = 0
+          metrics.wsConnectSuccess.increment()
+          wsReady.set(true)
+          metrics.setWsConnected(true)
+          subscribeAll(shard)
+          updateReady()
+          val heartbeat = launch { heartbeatLoop() }
+          try {
+            for (frame in incoming) {
+              if (frame !is Frame.Text) continue
+              val raw = frame.readText()
+              val rawRecord = mapper.rawRecord(raw)
+              publishRecords(producer, clickHouseSink, listOf(rawRecord))
+              val normalized = mapper.websocketRecords(raw)
+              publishRecords(producer, clickHouseSink, normalized)
+            }
+          } finally {
+            heartbeat.cancel()
+          }
+        }
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (error: Throwable) {
+        wsReady.set(false)
+        metrics.setWsConnected(false)
+        updateReady()
+        attempt += 1
+        val delayMs = backoff.nextDelay(attempt)
+        appLogger.warn(error) { "hyperliquid websocket shard=${shard.index} failed; reconnecting in ${delayMs}ms" }
+        delay(delayMs)
+      }
+    }
+  }
+
+  private suspend fun DefaultClientWebSocketSession.subscribeAll(shard: SubscriptionShard) {
+    shard.subscriptions.forEach { subscription ->
+      outgoing.send(
+        Frame.Text(
+          json.encodeToString(
+            buildJsonObject {
+              put("method", "subscribe")
+              put("subscription", subscription.toJson())
+            },
+          ),
+        ),
+      )
+    }
+  }
+
+  private suspend fun DefaultClientWebSocketSession.heartbeatLoop() {
+    while (scope.isActive) {
+      delay(config.heartbeatIntervalMs)
+      outgoing.send(Frame.Text("""{"method":"ping"}"""))
+    }
+  }
+
+  private suspend fun refreshContextLoop(
+    infoClient: HyperliquidInfoClient,
+    producer: KafkaProducer<String, String>,
+    clickHouseSink: ClickHouseSink,
+    markets: List<HyperliquidMarket>,
+  ) {
+    while (scope.isActive) {
+      delay(config.restMetadataRefreshMs)
+      runCatching {
+        publishRecords(producer, clickHouseSink, infoClient.loadFundingAndContextRecords(markets))
+        metrics.setCatalogLastRefreshEpochMs(nowMs())
+        metrics.setRestWeightUsed(restBudget.usedWeightInCurrentWindow())
+      }.onFailure { error ->
+        appLogger.warn(error) { "Hyperliquid metadata refresh failed" }
+      }
+    }
+  }
+
+  private suspend fun publishRecords(
+    producer: KafkaProducer<String, String>,
+    clickHouseSink: ClickHouseSink,
+    records: List<RoutedEnvelope>,
+  ) {
+    records.forEach { record ->
+      if (record.topic != config.topics.raw && dedup.isDuplicate(record.dedupKey())) {
+        metrics.recordDedupDrop(record.envelope.channel)
+        return@forEach
+      }
+      val payload = json.encodeToString(record.envelope)
+      runCatching {
+        producer.send(ProducerRecord(record.topic, record.key, payload)).get()
+      }.onSuccess {
+        kafkaReady.set(true)
+        metrics.kafkaProduceSuccess.increment()
+        metrics.recordEvent(record.envelope.channel)
+        clickHouseSink.enqueue(record)
+      }.onFailure { error ->
+        kafkaReady.set(false)
+        metrics.recordKafkaError(record.topic)
+        appLogger.warn(error) { "Kafka produce failed topic=${record.topic}" }
+      }
+      updateReady()
+    }
+  }
+
+  private fun RoutedEnvelope.dedupKey(): String {
+    val payload = envelope.payload as? JsonObject ?: return listOf(topic, key, envelope.channel, envelope.eventTs).joinToString(":")
+    return when (envelope.channel) {
+      "trades" ->
+        listOf(
+          topic,
+          envelope.channel,
+          envelope.coin,
+          payload["time"]?.jsonPrimitive?.contentOrNull,
+          payload["tid"]?.jsonPrimitive?.contentOrNull,
+        ).joinToString(":")
+      "l2Book", "bbo", "activeAssetCtx" ->
+        listOf(topic, envelope.channel, envelope.marketId, payload["time"]?.jsonPrimitive?.contentOrNull).joinToString(":")
+      "candle" ->
+        listOf(
+          topic,
+          envelope.channel,
+          envelope.marketId,
+          payload["i"]?.jsonPrimitive?.contentOrNull,
+          payload["t"]?.jsonPrimitive?.contentOrNull,
+          payload["T"]?.jsonPrimitive?.contentOrNull,
+        ).joinToString(":")
+      else -> listOf(topic, key, envelope.channel, envelope.eventTs).joinToString(":")
+    }
+  }
+
+  private fun updateReady() {
+    val isReady = wsReady.get() && kafkaReady.get() && clickHouseReady.get() && catalogReady.get()
+    markReady(isReady)
+  }
+
+  private fun markReady(value: Boolean) {
+    val changed = ready.getAndSet(value) != value
+    metrics.setReady(value)
+    metrics.setWsConnected(wsReady.get())
+    metrics.setKafkaReady(kafkaReady.get())
+    metrics.setClickHouseReady(clickHouseReady.get())
+    if (!value && changed) notReadySinceMs.set(nowMs())
+  }
+}
+
+fun main() =
+  runBlocking {
+    val config =
+      runCatching { HyperliquidConfig.fromEnv() }
+        .getOrElse { error ->
+          appLogger.error(error) { "invalid Hyperliquid feed configuration" }
+          exitProcess(2)
+        }
+    val app = HyperliquidFeedApp(config)
+    val health = HealthServer(app, config)
+    health.start()
+    val job = app.start()
+    Runtime.getRuntime().addShutdownHook(
+      Thread {
+        app.stop()
+        health.stop()
+      },
+    )
+    job.join()
+  }
