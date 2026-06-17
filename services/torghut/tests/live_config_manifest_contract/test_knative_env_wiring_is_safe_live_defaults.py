@@ -406,6 +406,9 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertTrue(
             _manifest_bool(sim_env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED")
         )
+        self.assertFalse(
+            _manifest_bool(sim_env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE")
+        )
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
             _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,

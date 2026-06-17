@@ -662,6 +662,7 @@ def test_paper_route_probe_config_flows_into_proof_floor_route_book() -> None:
         simple_lane_status={
             **_simple_lane_status(),
             "paper_route_probe_enabled": True,
+            "paper_route_probe_allow_live_mode": True,
             "paper_route_probe_max_notional": "25",
         },
         now=NOW,
@@ -676,6 +677,7 @@ def test_paper_route_probe_config_flows_into_proof_floor_route_book() -> None:
     assert receipt["capital_state"] == "zero_notional"
     assert probe == route_probe
     assert probe["configured_enabled"] is True
+    assert probe["live_mode_collection_allowed"] is True
     assert probe["active"] is False
     assert probe["next_session_max_notional"] == "25"
     assert probe["eligible_symbols"] == ["AMZN", "AAPL"]

@@ -614,6 +614,9 @@ def _build_simple_lane_status_payload() -> dict[str, object]:
         "paper_route_probe_enabled": (
             settings.trading_simple_paper_route_probe_enabled
         ),
+        "paper_route_probe_allow_live_mode": (
+            settings.trading_simple_paper_route_probe_allow_live_mode
+        ),
         "paper_route_probe_max_notional": (
             settings.trading_simple_paper_route_probe_max_notional
         ),

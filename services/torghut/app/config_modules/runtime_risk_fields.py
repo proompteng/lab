@@ -237,6 +237,15 @@ class RuntimeRiskSettingsFields(BaseSettings):
         ),
     )
 
+    trading_simple_paper_route_probe_allow_live_mode: bool = Field(
+        default=False,
+        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE",
+        description=(
+            "Permit bounded paper-route evidence collection while TRADING_MODE=live. "
+            "This does not grant live capital or promotion authority."
+        ),
+    )
+
     trading_simple_paper_route_probe_max_notional: float = Field(
         default=25.0,
         alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL",

@@ -23,6 +23,7 @@ def test_live_bounded_paper_route_target_generates_capped_source_decisions(
 ) -> None:
     trading_mode_before = settings.trading_mode
     probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
     submit_enabled_before = settings.trading_simple_submit_enabled
     activation_expires_at_before = settings.trading_live_submit_activation_expires_at
     probe_max_notional_before = settings.trading_simple_paper_route_probe_max_notional
@@ -30,6 +31,7 @@ def test_live_bounded_paper_route_target_generates_capped_source_decisions(
     try:
         settings.trading_mode = "live"
         settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
         settings.trading_simple_submit_enabled = True
         settings.trading_live_submit_activation_expires_at = "2026-06-17T20:05:00Z"
         settings.trading_simple_paper_route_probe_max_notional = 100
@@ -113,6 +115,9 @@ def test_live_bounded_paper_route_target_generates_capped_source_decisions(
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
+        )
         settings.trading_simple_submit_enabled = submit_enabled_before
         settings.trading_live_submit_activation_expires_at = (
             activation_expires_at_before
@@ -128,12 +133,14 @@ def test_live_bounded_paper_route_target_blocks_without_activation(
 ) -> None:
     trading_mode_before = settings.trading_mode
     probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
     submit_enabled_before = settings.trading_simple_submit_enabled
     activation_expires_at_before = settings.trading_live_submit_activation_expires_at
     probe_max_notional_before = settings.trading_simple_paper_route_probe_max_notional
     try:
         settings.trading_mode = "live"
         settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
         settings.trading_simple_submit_enabled = True
         settings.trading_live_submit_activation_expires_at = "2026-06-17T13:40:00Z"
         settings.trading_simple_paper_route_probe_max_notional = 100
@@ -166,6 +173,9 @@ def test_live_bounded_paper_route_target_blocks_without_activation(
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
+        )
         settings.trading_simple_submit_enabled = submit_enabled_before
         settings.trading_live_submit_activation_expires_at = (
             activation_expires_at_before
@@ -176,6 +186,7 @@ def test_live_bounded_paper_route_target_blocks_without_activation(
 
 
 def test_live_bounded_paper_route_source_collection_contract_blockers() -> None:
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
     submit_enabled_before = settings.trading_simple_submit_enabled
     activation_expires_at_before = settings.trading_live_submit_activation_expires_at
     probe_max_notional_before = settings.trading_simple_paper_route_probe_max_notional
@@ -183,6 +194,13 @@ def test_live_bounded_paper_route_source_collection_contract_blockers() -> None:
         now = datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc)
         pipeline = object.__new__(SimpleTradingPipeline)
 
+        settings.trading_simple_paper_route_probe_allow_live_mode = False
+        assert (
+            pipeline._live_bounded_paper_route_source_collection_blocker(now)
+            == "live_paper_route_probe_collection_disabled"
+        )
+
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
         settings.trading_simple_submit_enabled = False
         assert (
             pipeline._live_bounded_paper_route_source_collection_blocker(now)
@@ -203,6 +221,9 @@ def test_live_bounded_paper_route_source_collection_contract_blockers() -> None:
             == "paper_route_probe_notional_not_configured"
         )
     finally:
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
+        )
         settings.trading_simple_submit_enabled = submit_enabled_before
         settings.trading_live_submit_activation_expires_at = (
             activation_expires_at_before
@@ -217,12 +238,14 @@ def test_live_bounded_paper_route_target_rejects_missing_cap_and_symbols(
 ) -> None:
     trading_mode_before = settings.trading_mode
     probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
     submit_enabled_before = settings.trading_simple_submit_enabled
     activation_expires_at_before = settings.trading_live_submit_activation_expires_at
     probe_max_notional_before = settings.trading_simple_paper_route_probe_max_notional
     try:
         settings.trading_mode = "live"
         settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
         settings.trading_simple_submit_enabled = True
         settings.trading_live_submit_activation_expires_at = "2026-06-17T20:05:00Z"
         settings.trading_simple_paper_route_probe_max_notional = 100
@@ -289,6 +312,9 @@ def test_live_bounded_paper_route_target_rejects_missing_cap_and_symbols(
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
+        )
         settings.trading_simple_submit_enabled = submit_enabled_before
         settings.trading_live_submit_activation_expires_at = (
             activation_expires_at_before
@@ -301,10 +327,12 @@ def test_live_bounded_paper_route_target_rejects_missing_cap_and_symbols(
 def test_live_bounded_paper_route_symbol_floor_allows_bounded_probe() -> None:
     trading_mode_before = settings.trading_mode
     probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
     submit_enabled_before = settings.trading_simple_submit_enabled
     try:
         settings.trading_mode = "live"
         settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
         settings.trading_simple_submit_enabled = True
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "PA3SX7FYNUTF"
@@ -338,4 +366,7 @@ def test_live_bounded_paper_route_symbol_floor_allows_bounded_probe() -> None:
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
+        )
         settings.trading_simple_submit_enabled = submit_enabled_before

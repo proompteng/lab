@@ -484,11 +484,15 @@ def _paper_route_probe_blockers(
     trading_mode: str,
     market_session_open: bool | None,
     enabled: bool,
+    allow_live_mode: bool,
     configured_limit: str | None,
     eligible_symbol_count: int,
 ) -> list[str]:
     blockers: list[str] = []
-    if trading_mode != "paper":
+    if trading_mode == "live":
+        if not allow_live_mode:
+            blockers.append("live_paper_route_probe_collection_disabled")
+    elif trading_mode != "paper":
         blockers.append("not_paper_mode")
     if not enabled:
         blockers.append("paper_route_probe_disabled")
@@ -511,6 +515,7 @@ def build_route_reacquisition_book(
     trading_mode: str,
     market_session_open: bool | None,
     paper_route_probe_enabled: bool = False,
+    paper_route_probe_allow_live_mode: bool = False,
     paper_route_probe_max_notional: object | None = None,
 ) -> dict[str, object]:
     """Build a symbol-level route repair book from proof-floor source refs.
@@ -612,6 +617,7 @@ def build_route_reacquisition_book(
         trading_mode=trading_mode,
         market_session_open=market_session_open,
         enabled=paper_route_probe_enabled,
+        allow_live_mode=paper_route_probe_allow_live_mode,
         configured_limit=configured_probe_limit,
         eligible_symbol_count=len(eligible_probe_symbols),
     )
@@ -632,6 +638,7 @@ def build_route_reacquisition_book(
             "next_session_notional_limit": next_session_probe_limit
             if eligible
             else "0",
+            "live_mode_collection_allowed": paper_route_probe_allow_live_mode,
             "blocking_reasons": probe_blockers if eligible else [],
             "capital_authority": "none",
             "promotion_authority": False,
@@ -704,6 +711,7 @@ def build_route_reacquisition_book(
         },
         "paper_route_probe": {
             "configured_enabled": paper_route_probe_enabled,
+            "live_mode_collection_allowed": paper_route_probe_allow_live_mode,
             "configured_max_notional": configured_probe_limit or "0",
             "active": probe_active,
             "effective_max_notional": effective_probe_limit,

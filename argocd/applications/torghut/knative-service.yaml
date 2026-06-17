@@ -134,6 +134,8 @@ spec:
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
+            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE
+              value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
               value: "100"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_BATCH_LIMIT

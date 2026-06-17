@@ -47,6 +47,7 @@ const baseTradingStatus = {
   },
   simple_lane_status: {
     submit_enabled: true,
+    paper_route_probe_allow_live_mode: true,
     paper_route_probe_max_notional: 100,
     max_notional_per_order: 100,
     max_notional_per_symbol: 250,

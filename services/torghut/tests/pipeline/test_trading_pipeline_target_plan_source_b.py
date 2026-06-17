@@ -42,10 +42,14 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             "trading_simple_paper_route_probe_enabled": (
                 config.settings.trading_simple_paper_route_probe_enabled
             ),
+            "trading_simple_paper_route_probe_allow_live_mode": (
+                config.settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
         }
         config.settings.trading_mode = "live"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_allow_live_mode = True
         try:
             pipeline = SimpleTradingPipeline(
                 alpaca_client=FakeAlpacaClient(),
@@ -88,6 +92,15 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
                 ],
             }
 
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = False
+            self.assertFalse(
+                pipeline._bounded_live_paper_route_probe_submission_allowed(
+                    decision,
+                    gate,
+                )
+            )
+
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = True
             self.assertTrue(
                 pipeline._bounded_live_paper_route_probe_submission_allowed(
                     decision,
@@ -119,6 +132,9 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_simple_paper_route_probe_enabled = original[
                 "trading_simple_paper_route_probe_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = original[
+                "trading_simple_paper_route_probe_allow_live_mode"
             ]
 
     def test_live_gate_records_expired_activation_on_simple_lane(self) -> None:
@@ -203,11 +219,15 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             "trading_simple_paper_route_probe_enabled": (
                 config.settings.trading_simple_paper_route_probe_enabled
             ),
+            "trading_simple_paper_route_probe_allow_live_mode": (
+                config.settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_allow_live_mode = True
         try:
             pipeline = SimpleTradingPipeline(
                 alpaca_client=FakeAlpacaClient(),
@@ -334,6 +354,9 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_simple_paper_route_probe_enabled = original[
                 "trading_simple_paper_route_probe_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = original[
+                "trading_simple_paper_route_probe_allow_live_mode"
             ]
 
     def test_process_paper_route_target_source_decisions_records_submit_failure(

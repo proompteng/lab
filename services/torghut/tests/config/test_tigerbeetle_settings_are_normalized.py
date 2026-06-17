@@ -791,6 +791,7 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT="2026-06-17T20:05:00Z",
             TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED=True,
             TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED=True,
+            TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE=True,
             TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL=15.0,
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
@@ -808,6 +809,7 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         )
         self.assertTrue(settings.trading_simple_order_feed_telemetry_enabled)
         self.assertTrue(settings.trading_simple_paper_route_probe_enabled)
+        self.assertTrue(settings.trading_simple_paper_route_probe_allow_live_mode)
         self.assertEqual(settings.trading_simple_paper_route_probe_max_notional, 15.0)
 
         defaults = Settings(
@@ -817,3 +819,4 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         )
         self.assertEqual(defaults.trading_simple_max_order_pct_equity, 0.25)
         self.assertEqual(defaults.trading_simple_max_gross_exposure_pct_equity, 1.0)
+        self.assertFalse(defaults.trading_simple_paper_route_probe_allow_live_mode)
