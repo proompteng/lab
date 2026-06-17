@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: external-secrets
+
+resources:
+  - onepassword-sdk-token-sealedsecret.yaml
+  - onepassword-infra-clustersecretstore.yaml
+  - external-secrets-canary.yaml
+
+helmCharts:
+  - name: external-secrets
+    repo: https://charts.external-secrets.io
+    version: 2.6.0
+    releaseName: external-secrets
+    namespace: external-secrets
+    includeCRDs: true
+    valuesFile: values.yaml

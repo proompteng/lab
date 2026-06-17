@@ -34,6 +34,16 @@ spec:
                     argocd.argoproj.io/sync-wave: "-2"
                   automation: auto
                   enabled: "true"
+                - name: external-secrets
+                  path: argocd/applications/external-secrets
+                  namespace: external-secrets
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-1"
+                  managedNamespaceMetadata:
+                    labels:
+                      external-secrets.proompteng.ai/enabled: "true"
+                  automation: auto
+                  enabled: "true"
                 - name: cert-manager
                   path: argocd/applications/cert-manager
                   namespace: cert-manager
