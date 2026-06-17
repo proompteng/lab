@@ -174,25 +174,64 @@ describe('validatePostDeployEvidence', () => {
     expect(result.summaryLines.join('\n')).toContain('Live submit contract: `bounded_june17_activation`')
   })
 
-  it('rejects healthy readyz when live submit is not bounded by the June 17 activation contract', () => {
+  it('accepts healthy readyz after the June 17 activation expires when the live gate is safe-closed', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '200',
+      readyz: { status: 'ok' },
+      revenueRepairDigest: {
+        ...baseDigest,
+        repair_queue: [],
+        blockers: [{ reason: 'live_submit_activation_expired' }],
+      },
+      tradingStatus: {
+        ...baseTradingStatus,
+        live_submission_gate: {
+          ...baseTradingStatus.live_submission_gate,
+          allowed: false,
+          reason: 'live_submit_activation_expired',
+          blocked_reasons: ['live_submit_activation_expired'],
+          live_submit_activation: {
+            ...baseLiveSubmitActivation,
+            expired: true,
+            observed_at: '2026-06-17T20:10:00+00:00',
+            reason: 'live_submit_activation_expired',
+          },
+        },
+      },
+    })
+
+    expect(result.readyzAcceptedReason).toBe('healthy_2xx')
+    expect(result.summaryLines.join('\n')).toContain(
+      'Live submit contract: `bounded_june17_activation_expired_safe_closed`',
+    )
+  })
+
+  it('rejects healthy readyz after the June 17 activation expires when the live gate remains open', () => {
     expect(() =>
       validatePostDeployEvidence({
         readyzHttpStatus: '200',
         readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        revenueRepairDigest: {
+          ...baseDigest,
+          repair_queue: [],
+          blockers: [{ reason: 'live_submit_activation_expired' }],
+        },
         tradingStatus: {
           ...baseTradingStatus,
           live_submission_gate: {
             ...baseTradingStatus.live_submission_gate,
+            reason: 'live_submit_activation_expired',
+            blocked_reasons: ['live_submit_activation_expired'],
             live_submit_activation: {
               ...baseLiveSubmitActivation,
               expired: true,
+              observed_at: '2026-06-17T20:10:00+00:00',
               reason: 'live_submit_activation_expired',
             },
           },
         },
       }),
-    ).toThrow('live_submit_activation.expired must be false')
+    ).toThrow('live_submission_gate.allowed must be false after activation expiry')
   })
 
   it('rejects healthy readyz when live submit caps drift above the GitOps contract', () => {
