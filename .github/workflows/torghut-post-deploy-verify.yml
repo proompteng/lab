@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -108,7 +109,7 @@ jobs:
             git fetch --no-tags --depth=200 origin main
           fi
 
-          for app in torghut; do
+          for app in torghut torghut-options; do
             kubectl annotate application "${app}" -n argocd argocd.argoproj.io/refresh=hard --overwrite
           done
 
@@ -124,7 +125,7 @@ jobs:
             git cat-file -e "${revision}^{commit}" >/dev/null 2>&1
           }
 
-          for app in torghut; do
+          for app in torghut torghut-options; do
             for attempt in $(seq 1 90); do
               STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
               SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
@@ -220,6 +221,33 @@ jobs:
             fi
           elif [ "${SIM_KNSVC_READY}" != 'True' ]; then
             echo "Knative Service torghut-sim is not Ready"
+            exit 1
+          fi
+
+          for deployment in \
+            torghut-options-catalog \
+            torghut-options-enricher \
+            torghut-options-ta \
+            torghut-ta \
+            torghut-ta-sim \
+            torghut-ws \
+            torghut-ws-options; do
+            kubectl rollout status "deployment/${deployment}" -n torghut --timeout=10m
+          done
+
+          pull_failures="$(
+            kubectl get pods -n torghut -o json |
+              jq -r '
+                .items[] as $pod
+                | (($pod.status.initContainerStatuses // []) + ($pod.status.containerStatuses // []))[]?
+                | select(((.state.waiting.reason // "") == "ImagePullBackOff") or ((.state.waiting.reason // "") == "ErrImagePull"))
+                | select(.image | startswith("registry.ide-newton.ts.net/lab/torghut"))
+                | [$pod.metadata.name, .name, .image, .state.waiting.reason] | @tsv
+              '
+          )"
+          if [ -n "${pull_failures}" ]; then
+            echo "Torghut-managed image pull failures remain after deploy:"
+            printf '%s\n' "${pull_failures}"
             exit 1
           fi
 

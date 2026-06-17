@@ -28,10 +28,17 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('[ "${OPERATION_PHASE}" = \'Succeeded\' ]')
   })
 
-  it('keeps options and websocket deployments out of core Torghut post-deploy verification', () => {
-    expect(workflow).not.toContain('torghut-options')
-    expect(workflow).not.toContain('kubectl rollout status deployment/torghut-ws')
-    expect(workflow).not.toContain('http://torghut-ws.torghut.svc.cluster.local/readyz')
+  it('verifies options, TA, and websocket deployments after Torghut GitOps changes', () => {
+    expect(workflow).toContain("- 'argocd/applications/torghut-options/**'")
+    expect(workflow).toContain('for app in torghut torghut-options; do')
+    expect(workflow).toContain('kubectl rollout status "deployment/${deployment}"')
+    expect(workflow).toContain('torghut-options-catalog')
+    expect(workflow).toContain('torghut-options-enricher')
+    expect(workflow).toContain('torghut-options-ta')
+    expect(workflow).toContain('torghut-ta')
+    expect(workflow).toContain('torghut-ta-sim')
+    expect(workflow).toContain('torghut-ws')
+    expect(workflow).toContain('torghut-ws-options')
   })
 
   it('delegates readyz acceptance to the revenue repair evidence validator', () => {
@@ -86,8 +93,14 @@ describe('torghut post-deploy verifier workflow', () => {
 
   it('requests Argo refresh before polling deployed revisions', () => {
     expect(workflow).toContain('argocd.argoproj.io/refresh=hard --overwrite')
-    expect(workflow).toContain('for app in torghut; do')
-    expect(workflow).not.toContain('for app in torghut torghut-options; do')
+    expect(workflow).toContain('for app in torghut torghut-options; do')
+  })
+
+  it('fails when Torghut-managed images still have pull errors', () => {
+    expect(workflow).toContain('ImagePullBackOff')
+    expect(workflow).toContain('ErrImagePull')
+    expect(workflow).toContain('startswith("registry.ide-newton.ts.net/lab/torghut")')
+    expect(workflow).toContain('Torghut-managed image pull failures remain after deploy')
   })
 
   it('grants the ARC runner read access to Torghut Knative Service readiness', () => {

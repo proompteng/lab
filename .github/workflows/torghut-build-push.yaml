@@ -39,6 +39,11 @@ jobs:
         id: meta
         run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Set up Docker QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64,arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -83,26 +88,41 @@ jobs:
       - name: Build and push torghut image
         env:
           TORGHUT_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-          TORGHUT_IMAGE_PLATFORMS: linux/arm64
+          TORGHUT_IMAGE_PLATFORMS: linux/amd64,linux/arm64
           # Remote cache export has intermittently canceled after the image push,
           # before the release contract can be written. Keep the image contract
           # path authoritative and skip the cache until the exporter is stable.
           TORGHUT_IMAGE_CACHE_REF: none
         run: bun run packages/scripts/src/torghut/build-image.ts
 
-      - name: Resolve pushed image digest
+      - name: Verify multi-arch image manifest
         id: digest
         shell: bash
         run: |
           set -euo pipefail
           IMAGE='registry.ide-newton.ts.net/lab/torghut'
           TAG='${{ steps.meta.outputs.tag }}'
-          DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" | awk '/^Digest:/ { print $2; exit }')"
-          if [ -z "${DIGEST}" ]; then
+          MANIFEST_JSON="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE}:${TAG}")"
+          DIGEST="$(jq -r '.manifest.digest // empty' <<< "${MANIFEST_JSON}")"
+          if ! printf '%s' "${DIGEST}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
             echo "Failed to resolve digest for ${IMAGE}:${TAG}"
             exit 1
           fi
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+          for platform in linux/amd64 linux/arm64; do
+            platform_digest="$(
+              jq -r --arg platform "${platform}" \
+                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
+                <<< "${MANIFEST_JSON}" | head -n 1
+            )"
+            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Image ${IMAGE}:${TAG} is missing required platform ${platform}"
+              docker buildx imagetools inspect "${IMAGE}:${TAG}"
+              exit 1
+            fi
+            echo "platform_digest_${platform#linux/}=${platform_digest}" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Write release contract artifact
         shell: bash
@@ -113,7 +133,10 @@ jobs:
             --source-sha "${GITHUB_SHA}" \
             --tag "${{ steps.meta.outputs.tag }}" \
             --digest "${{ steps.digest.outputs.digest }}" \
-            --image 'registry.ide-newton.ts.net/lab/torghut'
+            --image 'registry.ide-newton.ts.net/lab/torghut' \
+            --platforms 'linux/amd64,linux/arm64' \
+            --platform-digest 'linux/amd64=${{ steps.digest.outputs.platform_digest_amd64 }}' \
+            --platform-digest 'linux/arm64=${{ steps.digest.outputs.platform_digest_arm64 }}'
 
       - name: Upload release contract artifact
         uses: actions/upload-artifact@v4

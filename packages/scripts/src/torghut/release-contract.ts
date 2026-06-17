@@ -11,12 +11,15 @@ const defaultContractPath = 'torghut-release-contract.json'
 const sourceShaPattern = /^[0-9a-f]{40}$/i
 const tagPattern = /^[A-Za-z0-9._-]{1,128}$/
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
+const requiredPlatforms = ['linux/amd64', 'linux/arm64'] as const
 
 export type TorghutReleaseContract = {
   sourceSha: string
   tag: string
   digest: string
   image: string
+  platforms: string[]
+  platformDigests: Record<string, string>
   createdAt: string
 }
 
@@ -29,6 +32,8 @@ type CliOptions = {
   tag?: string
   digest?: string
   image?: string
+  platforms?: string[]
+  platformDigests?: Record<string, string>
   field?: ContractField
 }
 
@@ -38,6 +43,34 @@ const normalizeDigest = (value: string): string => {
     return trimmed
   }
   return trimmed.includes('@') ? trimmed.slice(trimmed.lastIndexOf('@') + 1) : trimmed
+}
+
+const parsePlatformList = (value: string): string[] =>
+  value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+
+const normalizePlatformDigests = (value: Record<string, unknown>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(value)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+      .map(([platform, digest]) => [platform.trim(), normalizeDigest(digest)])
+      .filter(([platform]) => platform),
+  )
+
+const parsePlatformDigest = (value: string): [string, string] => {
+  const separatorIndex = value.indexOf('=')
+  if (separatorIndex < 0) {
+    throw new Error(`Invalid platform digest '${value}'; expected <platform>=<sha256:...>`)
+  }
+
+  const platform = value.slice(0, separatorIndex).trim()
+  const digest = normalizeDigest(value.slice(separatorIndex + 1))
+  if (!platform || !digest) {
+    throw new Error(`Invalid platform digest '${value}'; expected <platform>=<sha256:...>`)
+  }
+  return [platform, digest]
 }
 
 const resolveContractPath = (path: string) => resolve(repoRoot, path)
@@ -58,9 +91,11 @@ Commands:
     --tag <tag>
     --digest <sha256:...>
     --image <registry/repo>
+    --platforms <linux/amd64,linux/arm64>
+    --platform-digest <platform>=<sha256:...>  May be repeated
   get
     --path <path>
-    --field <sourceSha|tag|digest|image|createdAt>
+    --field <sourceSha|tag|digest|image|platforms|platformDigests|createdAt>
   emit-github-output
     --path <path>`)
       process.exit(0)
@@ -100,8 +135,18 @@ Commands:
       case '--image':
         options.image = value
         break
+      case '--platforms':
+        options.platforms = parsePlatformList(value)
+        break
+      case '--platform-digest':
+        options.platformDigests ??= {}
+        {
+          const [platform, digest] = parsePlatformDigest(value)
+          options.platformDigests[platform] = digest
+        }
+        break
       case '--field':
-        if (!['sourceSha', 'tag', 'digest', 'image', 'createdAt'].includes(value)) {
+        if (!['sourceSha', 'tag', 'digest', 'image', 'platforms', 'platformDigests', 'createdAt'].includes(value)) {
           throw new Error(`Unknown field: ${value}`)
         }
         options.field = value as ContractField
@@ -127,6 +172,26 @@ const assertValidContract = (contract: TorghutReleaseContract) => {
   if (!contract.image.trim()) {
     throw new Error('image cannot be empty')
   }
+  if (!Array.isArray(contract.platforms) || contract.platforms.length === 0) {
+    throw new Error('platforms cannot be empty')
+  }
+  const uniquePlatforms = new Set(contract.platforms)
+  if (uniquePlatforms.size !== contract.platforms.length) {
+    throw new Error(`platforms contains duplicates: ${contract.platforms.join(', ')}`)
+  }
+  const missingRequiredPlatforms = requiredPlatforms.filter((platform) => !uniquePlatforms.has(platform))
+  if (missingRequiredPlatforms.length > 0) {
+    throw new Error(`platforms missing required values: ${missingRequiredPlatforms.join(', ')}`)
+  }
+  for (const platform of contract.platforms) {
+    if (!platform.trim() || !/^[a-z0-9]+\/[a-z0-9]+(?:\/[A-Za-z0-9._-]+)?$/.test(platform)) {
+      throw new Error(`Invalid platform '${platform}'`)
+    }
+    const platformDigest = contract.platformDigests[platform]
+    if (!digestPattern.test(platformDigest ?? '')) {
+      throw new Error(`Invalid digest for platform '${platform}': '${platformDigest ?? ''}'`)
+    }
+  }
   if (!contract.createdAt.trim()) {
     throw new Error('createdAt cannot be empty')
   }
@@ -139,6 +204,8 @@ export const writeReleaseContract = (path: string, contract: TorghutReleaseContr
   const normalized: TorghutReleaseContract = {
     ...contract,
     digest: normalizeDigest(contract.digest),
+    platforms: [...contract.platforms],
+    platformDigests: normalizePlatformDigests(contract.platformDigests),
   }
   assertValidContract(normalized)
   writeFileSync(resolveContractPath(path), `${JSON.stringify(normalized, null, 2)}\n`, 'utf8')
@@ -152,6 +219,13 @@ export const readReleaseContract = (path: string): TorghutReleaseContract => {
     tag: parsed.tag ?? '',
     digest: normalizeDigest(parsed.digest ?? ''),
     image: parsed.image ?? '',
+    platforms: Array.isArray(parsed.platforms)
+      ? parsed.platforms.filter((value): value is string => typeof value === 'string')
+      : [],
+    platformDigests:
+      parsed.platformDigests && typeof parsed.platformDigests === 'object' && !Array.isArray(parsed.platformDigests)
+        ? normalizePlatformDigests(parsed.platformDigests as Record<string, string>)
+        : {},
     createdAt: parsed.createdAt ?? '',
   }
   assertValidContract(contract)
@@ -172,6 +246,8 @@ const main = (cliOptions?: CliOptions) => {
     const tag = parsed.tag?.trim() ?? ''
     const digest = normalizeDigest(parsed.digest ?? '')
     const image = parsed.image?.trim() ?? ''
+    const platforms = parsed.platforms ?? []
+    const platformDigests = parsed.platformDigests ?? {}
     const createdAt = new Date().toISOString()
 
     writeReleaseContract(path, {
@@ -179,6 +255,8 @@ const main = (cliOptions?: CliOptions) => {
       tag,
       digest,
       image,
+      platforms,
+      platformDigests,
       createdAt,
     })
     return
@@ -190,7 +268,8 @@ const main = (cliOptions?: CliOptions) => {
     if (!parsed.field) {
       throw new Error('get requires --field')
     }
-    console.log(contract[parsed.field])
+    const value = contract[parsed.field]
+    console.log(typeof value === 'string' ? value : JSON.stringify(value))
     return
   }
 
@@ -198,6 +277,8 @@ const main = (cliOptions?: CliOptions) => {
   console.log(`tag=${contract.tag}`)
   console.log(`digest=${contract.digest}`)
   console.log(`image=${contract.image}`)
+  console.log(`platforms=${contract.platforms.join(',')}`)
+  console.log(`platform_digests=${JSON.stringify(contract.platformDigests)}`)
   console.log(`created_at=${contract.createdAt}`)
 }
 

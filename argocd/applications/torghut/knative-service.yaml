@@ -404,6 +404,10 @@ spec:
               value: d816842843a0ecc8d81506727a53ac5729858b3e
             - name: TORGHUT_IMAGE_DIGEST
               value: sha256:8e7174da484164e1e4d1f2c3e9d59f454162a9f63875e0bda625611d421620ad
+            - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
+              value: linux/amd64,linux/arm64
+            - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
+              value: linux/amd64,linux/arm64
           livenessProbe:
             httpGet:
               path: /healthz

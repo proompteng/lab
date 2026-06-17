@@ -41,6 +41,11 @@ export type DockerBakeResult = {
   targets: Array<DockerBuildResult & { name: string }>
 }
 
+export type DockerImagePlatform = {
+  platform: string
+  digest: string
+}
+
 type SpawnSync = typeof Bun.spawnSync
 
 let spawnSyncImpl: SpawnSync = Bun.spawnSync
@@ -513,6 +518,64 @@ export const inspectImageDigestForPlatform = (image: string, platform: string): 
   }
 }
 
+export const inspectImagePlatforms = (image: string): DockerImagePlatform[] => {
+  ensureCli('docker')
+  const inspect = spawnSyncImpl(['docker', 'buildx', 'imagetools', 'inspect', '--format', '{{json .}}', image], {
+    cwd: repoRoot,
+  })
+
+  if (inspect.exitCode !== 0) {
+    const output = `${inspect.stdout.toString()}\n${inspect.stderr.toString()}`.trim()
+    throw new Error(`Unable to inspect image platforms for ${image}${output ? `: ${output}` : ''}`)
+  }
+
+  try {
+    const parsed = JSON.parse(inspect.stdout.toString()) as {
+      manifest?: {
+        manifests?: Array<{
+          digest?: string
+          platform?: { os?: string; architecture?: string; variant?: string }
+        }>
+      }
+    }
+    return (
+      parsed.manifest?.manifests
+        ?.map((entry) => {
+          const platform = formatPlatform(entry.platform)
+          const digest = entry.digest?.trim()
+          if (!platform || !digest) return undefined
+          return { platform, digest }
+        })
+        .filter((entry): entry is DockerImagePlatform => Boolean(entry)) ?? []
+    )
+  } catch (error) {
+    throw new Error(
+      `Failed to parse docker imagetools inspect output for ${image}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  }
+}
+
+export const assertImageSupportsPlatforms = (image: string, requiredPlatforms: string[]): DockerImagePlatform[] => {
+  const observedPlatforms = inspectImagePlatforms(image)
+  const observed = new Set(observedPlatforms.map((entry) => entry.platform))
+  const missing = requiredPlatforms
+    .map((platform) => platform.trim())
+    .filter(Boolean)
+    .filter((platform) => !observed.has(platform))
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Image ${image} is missing required platform(s): ${missing.join(', ')}; observed: ${
+        [...observed].sort().join(', ') || 'none'
+      }`,
+    )
+  }
+
+  return observedPlatforms
+}
+
 const inspectLocalImageDigest = (image: string): string | undefined => {
   const inspect = spawnSyncImpl(['docker', 'image', 'inspect', '--format', '{{json .RepoDigests}}', image], {
     cwd: repoRoot,
@@ -593,6 +656,18 @@ const parsePlatform = (platform: string): { os: string; architecture: string; va
   return { os, architecture, variant }
 }
 
+const formatPlatform = (
+  platform: { os?: string; architecture?: string; variant?: string } | undefined,
+): string | undefined => {
+  const os = platform?.os?.trim()
+  const architecture = platform?.architecture?.trim()
+  const variant = platform?.variant?.trim()
+  if (!os || !architecture || os === 'unknown' || architecture === 'unknown') {
+    return undefined
+  }
+  return variant ? `${os}/${architecture}/${variant}` : `${os}/${architecture}`
+}
+
 const setSpawnSync = (fn?: SpawnSync) => {
   spawnSyncImpl = fn ?? Bun.spawnSync
 }
@@ -600,6 +675,7 @@ const setSpawnSync = (fn?: SpawnSync) => {
 export const __private = {
   inspectLocalImageDigest,
   inspectRemoteImageDigest,
+  formatPlatform,
   getRepositoryFromReference,
   isRetryableDockerCommandError,
   setSpawnSync,

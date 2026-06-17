@@ -5,6 +5,14 @@ permissions:
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/dorvud/**'
+      - 'packages/scripts/src/torghut/release-contract.ts'
+      - 'packages/scripts/src/shared/docker.ts'
+      - '.github/workflows/torghut-ws-build-push.yaml'
   workflow_run:
     workflows:
       - dorvud-ci
@@ -13,7 +21,12 @@ on:
 
 jobs:
   build-and-push:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      }}
     runs-on: arc-arm64
     steps:
       - name: Checkout
@@ -28,6 +41,11 @@ jobs:
         id: meta
         run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Set up Docker QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64,arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -36,7 +54,7 @@ jobs:
         with:
           context: services/dorvud
           file: services/dorvud/websockets/Dockerfile
-          platforms: linux/arm64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             registry.ide-newton.ts.net/lab/torghut-ws:${{ steps.meta.outputs.tag }}
@@ -44,19 +62,34 @@ jobs:
           cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/torghut-ws:latest
           cache-to: type=inline
 
-      - name: Resolve pushed image digest
+      - name: Verify multi-arch image manifest
         id: digest
         shell: bash
         run: |
           set -euo pipefail
           IMAGE='registry.ide-newton.ts.net/lab/torghut-ws'
           TAG='${{ steps.meta.outputs.tag }}'
-          DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" | awk '/^Digest:/ { print $2; exit }')"
-          if [ -z "${DIGEST}" ]; then
+          MANIFEST_JSON="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE}:${TAG}")"
+          DIGEST="$(jq -r '.manifest.digest // empty' <<< "${MANIFEST_JSON}")"
+          if ! printf '%s' "${DIGEST}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
             echo "Failed to resolve digest for ${IMAGE}:${TAG}"
             exit 1
           fi
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+          for platform in linux/amd64 linux/arm64; do
+            platform_digest="$(
+              jq -r --arg platform "${platform}" \
+                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
+                <<< "${MANIFEST_JSON}" | head -n 1
+            )"
+            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Image ${IMAGE}:${TAG} is missing required platform ${platform}"
+              docker buildx imagetools inspect "${IMAGE}:${TAG}"
+              exit 1
+            fi
+            echo "platform_digest_${platform#linux/}=${platform_digest}" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Write release contract artifact
         shell: bash
@@ -67,7 +100,10 @@ jobs:
             --source-sha "${GITHUB_SHA}" \
             --tag "${{ steps.meta.outputs.tag }}" \
             --digest "${{ steps.digest.outputs.digest }}" \
-            --image 'registry.ide-newton.ts.net/lab/torghut-ws'
+            --image 'registry.ide-newton.ts.net/lab/torghut-ws' \
+            --platforms 'linux/amd64,linux/arm64' \
+            --platform-digest 'linux/amd64=${{ steps.digest.outputs.platform_digest_amd64 }}' \
+            --platform-digest 'linux/arm64=${{ steps.digest.outputs.platform_digest_arm64 }}'
 
       - name: Upload release contract artifact
         uses: actions/upload-artifact@v4

@@ -354,12 +354,14 @@ describe('update-manifests', () => {
     expect(serviceManifest).toContain('value: v0.600.0')
     expect(serviceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(serviceManifest).toContain('value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e')
+    expect(serviceManifest).toContain('value: linux/amd64,linux/arm64')
     expect(simulationServiceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
     expect(simulationServiceManifest).toContain('value: v0.600.0')
     expect(simulationServiceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(simulationServiceManifest).toContain(
       'value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
+    expect(simulationServiceManifest).toContain('value: linux/amd64,linux/arm64')
     expect(migrationManifest).toContain(
       'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
@@ -401,25 +403,25 @@ describe('update-manifests', () => {
     ).toBe(2)
     for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
-        'image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111',
+        'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
       )
-      expect(manifest).toContain('value: old-version')
-      expect(manifest).toContain('value: old-commit')
+      expect(manifest).toContain('value: v0.600.0')
+      expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     }
     expect(result.changed).toBe(true)
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(20)
+    expect(result.changedPaths.length).toBe(22)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
 
-  it('updates options manifests only when explicitly included', () => {
+  it('can skip options manifests when explicitly disabled', () => {
     const fixture = createFixture()
     const result = __private.updateTorghutManifests(
       updateOptionsForFixture(fixture, {
-        includeOptionsManifests: true,
+        includeOptionsManifests: false,
       }),
     )
     const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
@@ -427,12 +429,12 @@ describe('update-manifests', () => {
 
     for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
-        'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+        'image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111',
       )
-      expect(manifest).toContain('value: v0.600.0')
-      expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+      expect(manifest).toContain('value: old-version')
+      expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(22)
+    expect(result.changedPaths.length).toBe(20)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

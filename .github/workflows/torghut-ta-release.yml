@@ -175,6 +175,29 @@ jobs:
 
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify promoted image platform contract
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.meta.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${IMAGE_NAME}@${IMAGE_DIGEST}"
+          MANIFEST_JSON="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE_REF}")"
+          for platform in linux/amd64 linux/arm64; do
+            platform_digest="$(
+              jq -r --arg platform "${platform}" \
+                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
+                <<< "${MANIFEST_JSON}" | head -n 1
+            )"
+            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Promoted image ${IMAGE_REF} is missing required platform ${platform}"
+              docker buildx imagetools inspect "${IMAGE_REF}"
+              exit 1
+            fi
+          done
+
       - name: Update torghut ta manifests
         if: steps.meta.outputs.promote == 'true'
         shell: bash

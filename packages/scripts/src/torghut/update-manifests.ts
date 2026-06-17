@@ -40,6 +40,7 @@ const defaultTigerBeetleJournalOrderEventsManifestPath =
   'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
 const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
+const defaultRequiredImagePlatforms = 'linux/amd64,linux/arm64'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
 
@@ -188,6 +189,8 @@ const updateTorghutManifest = (options: UpdateManifestsOptions) => {
   updated = replaceIfPresent(updated, /(- name:\s*TORGHUT_VERSION\s*\n\s*value:\s*)([^\n]+)/, `$1${options.version}`)
   updated = replaceIfPresent(updated, /(- name:\s*TORGHUT_COMMIT\s*\n\s*value:\s*)([^\n]+)/, `$1${options.commit}`)
   updated = upsertKnativeEnvValue(updated, 'TORGHUT_IMAGE_DIGEST', options.digest)
+  updated = upsertKnativeEnvValue(updated, 'TORGHUT_REQUIRED_IMAGE_PLATFORMS', defaultRequiredImagePlatforms)
+  updated = upsertKnativeEnvValue(updated, 'TORGHUT_OBSERVED_IMAGE_PLATFORMS', defaultRequiredImagePlatforms)
   updated = updated.replace(/^\s*serving\.knative\.dev\/lastModifier:\s*[^\n]+\n/gm, '')
 
   if (updated !== source) {
@@ -387,7 +390,8 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.tigerBeetleJournalOrderEventsManifestPath ?? defaultTigerBeetleJournalOrderEventsManifestPath,
     'torghut-tigerbeetle-journal-order-events image reference',
   )
-  const optionalResults = options.includeOptionsManifests
+  const includeOptionsManifests = options.includeOptionsManifests ?? true
+  const optionalResults = includeOptionsManifests
     ? [
         updateVersionedDeploymentManifest(
           options,
@@ -598,7 +602,10 @@ Options:
   return options
 }
 
-const parseBooleanEnv = (value: string | undefined): boolean => value === '1' || value?.toLowerCase() === 'true'
+const parseOptionalBooleanEnv = (value: string | undefined): boolean | undefined => {
+  if (value === undefined) return undefined
+  return value === '1' || value.toLowerCase() === 'true'
+}
 
 const main = (cliOptions?: CliOptions) => {
   const parsed = cliOptions ?? parseArgs(process.argv.slice(2))
@@ -662,7 +669,7 @@ const main = (cliOptions?: CliOptions) => {
       parsed.tigerBeetleJournalOrderEventsManifestPath ??
       process.env.TORGHUT_TIGERBEETLE_JOURNAL_ORDER_EVENTS_MANIFEST_PATH,
     includeOptionsManifests:
-      parsed.includeOptionsManifests ?? parseBooleanEnv(process.env.TORGHUT_INCLUDE_OPTIONS_MANIFESTS),
+      parsed.includeOptionsManifests ?? parseOptionalBooleanEnv(process.env.TORGHUT_INCLUDE_OPTIONS_MANIFESTS),
     optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
     optionsEnricherManifestPath:
       parsed.optionsEnricherManifestPath ?? process.env.TORGHUT_OPTIONS_ENRICHER_MANIFEST_PATH,
