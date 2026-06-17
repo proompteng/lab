@@ -135,7 +135,7 @@ const loadPullRequestTemplate = async (worktree: string) => {
   }
 }
 
-const buildPullRequestBody = async (input: {
+export const buildPullRequestBody = async (input: {
   runSpec: AgentRunSpecPayload
   status: AnypiStatus
   git: GitContext
@@ -146,7 +146,7 @@ const buildPullRequestBody = async (input: {
     template: await loadPullRequestTemplate(input.git.worktree),
   })
 
-const baseStatus = (
+export const baseStatus = (
   config: AnypiConfig,
   runSpec: AgentRunSpecPayload,
   git: GitContext | null,
@@ -414,3 +414,6 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     throw error
   }
 }
+
+// Re-export types for convenience
+export type { AnypiStatus, ValidationPlan }
