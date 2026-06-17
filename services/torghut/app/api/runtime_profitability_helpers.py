@@ -11,12 +11,13 @@ if TYPE_CHECKING:
     pass
 
 from .common import cast
-from .proxy import MainAttrProxy, capture_module_exports
-
-_extract_gate_result = MainAttrProxy("_extract_gate_result")
-_load_json_artifact_payload = MainAttrProxy("_load_json_artifact_payload")
-_safe_int = MainAttrProxy("_safe_int")
-_to_str_map = MainAttrProxy("_to_str_map")
+from .proxy import capture_module_exports
+from .vnext_helpers import (
+    extract_gate_result as _extract_gate_result,
+    load_json_artifact_payload as _load_json_artifact_payload,
+    safe_int as _safe_int,
+    to_str_map as _to_str_map,
+)
 
 
 def _load_runtime_profitability_gate_rollback_attribution(
@@ -166,5 +167,12 @@ def _load_runtime_profitability_gate_rollback_attribution(
     }
 
 
-__all__ = ["_load_runtime_profitability_gate_rollback_attribution"]
+load_runtime_profitability_gate_rollback_attribution = (
+    _load_runtime_profitability_gate_rollback_attribution
+)
+
+__all__ = [
+    "_load_runtime_profitability_gate_rollback_attribution",
+    "load_runtime_profitability_gate_rollback_attribution",
+]
 capture_module_exports(globals(), __all__)

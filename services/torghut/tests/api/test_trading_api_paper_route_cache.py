@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from app.api import proofs as proofs_api
+
 from tests.api.trading_api_support import (
     SimpleNamespace,
     Strategy,
     TradingApiTestCaseBase,
     _build_live_submission_gate_payload,
     datetime,
-    main_module,
     patch,
     timezone,
 )
@@ -14,9 +15,9 @@ from tests.api.trading_api_support import (
 
 class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
     def test_paper_route_target_plan_cache_safety(self) -> None:
-        self.assertFalse(main_module._paper_route_target_plan_truthy(0))
-        self.assertTrue(main_module._paper_route_target_plan_truthy(1))
-        self.assertFalse(main_module._paper_route_target_plan_cache_safe_for_live({}))
+        self.assertFalse(proofs_api._paper_route_target_plan_truthy(0))
+        self.assertTrue(proofs_api._paper_route_target_plan_truthy(1))
+        self.assertFalse(proofs_api._paper_route_target_plan_cache_safe_for_live({}))
         unsafe_gate = {
             "runtime_ledger_paper_probation_import_plan": {
                 "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
@@ -36,7 +37,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             }
         }
         self.assertFalse(
-            main_module._paper_route_target_plan_cache_safe_for_live(
+            proofs_api._paper_route_target_plan_cache_safe_for_live(
                 unsafe_gate["runtime_ledger_paper_probation_import_plan"]
             )
         )
@@ -60,12 +61,12 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             }
         }
         self.assertFalse(
-            main_module._paper_route_target_plan_cache_safe_for_live(
+            proofs_api._paper_route_target_plan_cache_safe_for_live(
                 unsafe_target_gate["runtime_ledger_paper_probation_import_plan"]
             )
         )
         self.assertFalse(
-            main_module._paper_route_source_collection_target_cache_safe(
+            proofs_api._paper_route_source_collection_target_cache_safe(
                 {
                     "source_kind": "runtime_ledger_source_collection_candidate",
                     "window_start": "2026-05-13T17:00:00+00:00",
@@ -73,7 +74,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             )
         )
         self.assertTrue(
-            main_module._paper_route_source_collection_target_cache_safe(
+            proofs_api._paper_route_source_collection_target_cache_safe(
                 {
                     "source_kind": "runtime_ledger_source_collection_candidate",
                     "window_start": "2026-05-13T17:00:00+00:00",
@@ -103,7 +104,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             }
         }
         self.assertFalse(
-            main_module._paper_route_target_plan_cache_safe_for_live(
+            proofs_api._paper_route_target_plan_cache_safe_for_live(
                 unsafe_source_collection_gate[
                     "runtime_ledger_paper_probation_import_plan"
                 ]
@@ -136,7 +137,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             }
         }
         self.assertTrue(
-            main_module._paper_route_target_plan_cache_safe_for_live(
+            proofs_api._paper_route_target_plan_cache_safe_for_live(
                 source_collection_gate["runtime_ledger_paper_probation_import_plan"]
             )
         )
@@ -144,7 +145,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
     def test_paper_route_target_strategy_lookup_names_skip_missing_values(
         self,
     ) -> None:
-        names = main_module._paper_route_target_strategy_lookup_names(
+        names = proofs_api._paper_route_target_strategy_lookup_names(
             {
                 "strategy_lookup_names": [
                     " source-strategy ",
@@ -161,7 +162,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             ["source-strategy", "12", "runtime-strategy"],
         )
         self.assertEqual(
-            main_module._paper_route_target_strategy_lookup_names({}),
+            proofs_api._paper_route_target_strategy_lookup_names({}),
             [],
         )
 
@@ -192,27 +193,25 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             session.commit()
 
             self.assertEqual(
-                main_module._paper_route_probe_symbols_from_target_plan_strategies(
+                proofs_api._paper_route_probe_symbols_from_target_plan_strategies(
                     session,
                     [{}],
                 ),
                 [],
             )
-            symbols = (
-                main_module._paper_route_probe_symbols_from_target_plan_strategies(
-                    session,
-                    [
-                        {
-                            "strategy_lookup_names": [
-                                "route-target-source",
-                                "route-target-string-universe",
-                                "route-target-source",
-                            ],
-                            "runtime_strategy_name": "route-target-source",
-                            "strategy_name": "route-target-string-universe",
-                        }
-                    ],
-                )
+            symbols = proofs_api._paper_route_probe_symbols_from_target_plan_strategies(
+                session,
+                [
+                    {
+                        "strategy_lookup_names": [
+                            "route-target-source",
+                            "route-target-string-universe",
+                            "route-target-source",
+                        ],
+                        "runtime_strategy_name": "route-target-source",
+                        "strategy_name": "route-target-string-universe",
+                    }
+                ],
             )
 
         self.assertEqual(symbols, ["MSFT", "AAPL"])
@@ -233,7 +232,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             )
             session.commit()
 
-            book = main_module._paper_route_probe_book_from_target_plan(
+            book = proofs_api._paper_route_probe_book_from_target_plan(
                 {
                     "paper_route_target_plan_source": "cached_live_submission_gate",
                     "runtime_ledger_paper_probation_import_plan": {
@@ -280,7 +279,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.main._budget_unavailable_hypothesis_runtime_payload",
+            "app.api.status_helpers._budget_unavailable_hypothesis_runtime_payload",
             return_value=(
                 {
                     "registry_loaded": True,
@@ -297,9 +296,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
                 SimpleNamespace(as_payload=lambda: dependency_quorum),
             ),
         ):
-            payload = (
-                main_module._deferred_hypothesis_payload_for_live_submission_gate()
-            )
+            payload = proofs_api._deferred_hypothesis_payload_for_live_submission_gate()
 
         summary = payload["summary"]
         self.assertIsInstance(summary, dict)
@@ -333,7 +330,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
         self,
     ) -> None:
         with patch(
-            "app.main._budget_unavailable_hypothesis_runtime_payload",
+            "app.api.status_helpers._budget_unavailable_hypothesis_runtime_payload",
             return_value=(
                 {
                     "registry_loaded": True,
@@ -349,9 +346,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
                 SimpleNamespace(as_payload=lambda: {}),
             ),
         ):
-            payload = (
-                main_module._deferred_hypothesis_payload_for_live_submission_gate()
-            )
+            payload = proofs_api._deferred_hypothesis_payload_for_live_submission_gate()
 
         summary = payload["summary"]
         self.assertIsInstance(summary, dict)
@@ -361,7 +356,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
         self,
     ) -> None:
         with patch(
-            "app.main._budget_unavailable_hypothesis_runtime_payload",
+            "app.api.status_helpers._budget_unavailable_hypothesis_runtime_payload",
             return_value=(
                 {
                     "registry_loaded": True,
@@ -378,9 +373,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
                 SimpleNamespace(as_payload=lambda: {}),
             ),
         ):
-            payload = (
-                main_module._deferred_hypothesis_payload_for_live_submission_gate()
-            )
+            payload = proofs_api._deferred_hypothesis_payload_for_live_submission_gate()
 
         summary = payload["summary"]
         self.assertIsInstance(summary, dict)

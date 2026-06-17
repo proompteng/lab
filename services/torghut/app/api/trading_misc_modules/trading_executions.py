@@ -9,6 +9,7 @@ from typing import Any, TYPE_CHECKING
 
 # ruff: noqa: F401,F403,F405,F821,F821,F821
 
+from ..health_checks import tca_row_payload as _tca_row_payload
 from .shared_context import (
     BLOCKER_RECONCILIATION_STALE,
     BUILD_ARGO_HEALTH,

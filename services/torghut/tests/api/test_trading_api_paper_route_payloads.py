@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from app.api import proofs as proofs_api
+
 from tests.api.trading_api_support import (
     Any,
     TradingApiTestCaseBase,
     _fetch_paper_route_target_plan_url,
     _paper_route_target_plan_from_payload,
     json,
-    main_module,
     paper_route_target_plan_probe_symbols,
     patch,
     settings,
@@ -19,17 +20,13 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
         original_mode = settings.trading_mode
         try:
             settings.trading_mode = "disabled"
-            self.assertFalse(
-                main_module._paper_route_target_account_audit_available({})
-            )
+            self.assertFalse(proofs_api._paper_route_target_account_audit_available({}))
 
             settings.trading_mode = "live"
-            self.assertFalse(
-                main_module._paper_route_target_account_audit_available({})
-            )
+            self.assertFalse(proofs_api._paper_route_target_account_audit_available({}))
 
             self.assertFalse(
-                main_module._paper_route_target_account_audit_available(
+                proofs_api._paper_route_target_account_audit_available(
                     {
                         "runtime_ledger_paper_probation_import_plan": {
                             "targets": [
@@ -46,7 +43,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
             )
 
             self.assertFalse(
-                main_module._paper_route_target_account_audit_available(
+                proofs_api._paper_route_target_account_audit_available(
                     {
                         "runtime_ledger_paper_probation_import_plan": {
                             "targets": [
@@ -63,7 +60,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
             )
 
             self.assertTrue(
-                main_module._paper_route_target_account_audit_available(
+                proofs_api._paper_route_target_account_audit_available(
                     {
                         "runtime_ledger_paper_probation_import_plan": {
                             "account_label": "TORGHUT_SIM",
@@ -327,7 +324,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
         }
 
         self.assertEqual(
-            main_module._paper_route_target_plan_probe_symbols(plan),
+            proofs_api._paper_route_target_plan_probe_symbols(plan),
             ["AAPL", "AMZN"],
         )
 
@@ -395,7 +392,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
             return FakeConnection
 
         http_error_connection = connection_class(503, b"{}")
-        with patch("app.main.HTTPConnection", http_error_connection):
+        with patch("app.api.proofs.HTTPConnection", http_error_connection):
             self.assertEqual(
                 _fetch_paper_route_target_plan_url(
                     "http://torghut.example/plan?mode=paper",
@@ -419,8 +416,8 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
 
         retried_error_connection = connection_class(503, b"{}")
         with (
-            patch("app.main.HTTPConnection", retried_error_connection),
-            patch("app.main.time.sleep") as sleep,
+            patch("app.api.proofs.HTTPConnection", retried_error_connection),
+            patch("app.api.proofs.time.sleep") as sleep,
         ):
             failed_retry = _fetch_paper_route_target_plan_url(
                 "http://torghut.example",
@@ -490,7 +487,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
                 self.closed = True
 
         FlakyConnection.instances = []
-        with patch("app.main.HTTPConnection", FlakyConnection):
+        with patch("app.api.proofs.HTTPConnection", FlakyConnection):
             app_retried_plan = _fetch_paper_route_target_plan_url(
                 "http://torghut.example",
                 timeout_seconds=1,
@@ -534,7 +531,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
             (b"x" * 5_000_001, "paper_route_target_plan_response_too_large"),
         ):
             fake_connection = connection_class(200, raw)
-            with patch("app.main.HTTPConnection", fake_connection):
+            with patch("app.api.proofs.HTTPConnection", fake_connection):
                 result = _fetch_paper_route_target_plan_url(
                     "http://torghut.example",
                     timeout_seconds=1,
@@ -555,7 +552,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
                 }
             ).encode("utf-8"),
         )
-        with patch("app.main.HTTPConnection", success_connection):
+        with patch("app.api.proofs.HTTPConnection", success_connection):
             plan = _fetch_paper_route_target_plan_url(
                 "http://torghut.example",
                 timeout_seconds=3,

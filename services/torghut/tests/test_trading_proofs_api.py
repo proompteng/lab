@@ -40,7 +40,7 @@ def _payload() -> dict[str, object]:
 def test_trading_proofs_endpoint_uses_canonical_contract() -> None:
     client = TestClient(app)
     with patch(
-        "app.main._build_trading_proofs_payload", return_value=_payload()
+        "app.api.proofs._build_trading_proofs_payload", return_value=_payload()
     ) as build:
         response = client.get(
             "/trading/proofs?kind=runtime_window&limit=2&window=next&full_audit=true"
@@ -58,7 +58,7 @@ def test_trading_proofs_endpoint_uses_canonical_contract() -> None:
 
 def test_deprecated_paper_route_endpoints_return_proof_payload() -> None:
     client = TestClient(app)
-    with patch("app.main._build_trading_proofs_payload", return_value=_payload()):
+    with patch("app.api.proofs._build_trading_proofs_payload", return_value=_payload()):
         evidence = client.get("/trading/paper-route-evidence?target_limit=1")
         target_plan = client.get("/trading/paper-route-target-plan")
 

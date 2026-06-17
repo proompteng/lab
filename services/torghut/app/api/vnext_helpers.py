@@ -33,18 +33,38 @@ from .common import (
     logger,
     select,
 )
-from .proxy import MainAttrProxy, capture_module_exports
+from .health_checks import sqlalchemy_error_indicates_statement_timeout
+from .proxy import capture_module_exports
 
-_apply_status_read_statement_timeout = MainAttrProxy(
-    "_apply_status_read_statement_timeout"
+_sqlalchemy_error_indicates_statement_timeout = (
+    sqlalchemy_error_indicates_statement_timeout
 )
-_budget_unavailable_llm_evaluation_payload = MainAttrProxy(
-    "_budget_unavailable_llm_evaluation_payload"
-)
-_rollback_status_read_session = MainAttrProxy("_rollback_status_read_session")
-_sqlalchemy_error_indicates_statement_timeout = MainAttrProxy(
-    "_sqlalchemy_error_indicates_statement_timeout"
-)
+
+
+def _rollback_status_read_session(session: Session, *, context: str) -> None:
+    from .status_helpers import rollback_status_read_session as rollback
+
+    rollback(session, context=context)
+
+
+def _apply_status_read_statement_timeout(
+    session: Session,
+    *,
+    milliseconds: int,
+) -> None:
+    from .status_helpers import (
+        apply_status_read_statement_timeout as apply_statement_timeout,
+    )
+
+    apply_statement_timeout(session, milliseconds=milliseconds)
+
+
+def _budget_unavailable_llm_evaluation_payload(reason: str) -> dict[str, object]:
+    from .status_helpers import (
+        budget_unavailable_llm_evaluation_payload as budget_unavailable_payload,
+    )
+
+    return budget_unavailable_payload(reason)
 
 
 def _build_autonomy_bridge_status(
@@ -431,6 +451,16 @@ def _load_llm_evaluation(session: Session) -> dict[str, object]:
         return _budget_unavailable_llm_evaluation_payload(reason)
 
 
+build_autonomy_bridge_status = _build_autonomy_bridge_status
+load_json_artifact_payload = _load_json_artifact_payload
+extract_gate_result = _extract_gate_result
+to_str_map = _to_str_map
+normalized_adapter_name = _normalized_adapter_name
+decimal_average = _decimal_average
+decimal_percentile = _decimal_percentile
+decimal_to_string = _decimal_to_string
+safe_int = _safe_int
+safe_float = _safe_float
 load_llm_evaluation = _load_llm_evaluation
 
 
@@ -447,6 +477,16 @@ __all__ = [
     "_safe_int",
     "_safe_float",
     "_load_llm_evaluation",
+    "build_autonomy_bridge_status",
+    "load_json_artifact_payload",
+    "extract_gate_result",
+    "to_str_map",
+    "normalized_adapter_name",
+    "decimal_average",
+    "decimal_percentile",
+    "decimal_to_string",
+    "safe_int",
+    "safe_float",
     "load_llm_evaluation",
 ]
 capture_module_exports(globals(), __all__)

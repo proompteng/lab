@@ -97,7 +97,9 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
             session.commit()
 
         with (
-            patch("app.main.load_hypothesis_registry", return_value=registry),
+            patch(
+                "app.api.status_helpers.load_hypothesis_registry", return_value=registry
+            ),
             patch(
                 "app.trading.submission_council.load_hypothesis_registry",
                 return_value=registry,
@@ -254,7 +256,10 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
             self.assertEqual(advisor["usage_total"]["advisory_only"], 2)
             self.assertEqual(advisor["fallback_total"]["advisor_timeout"], 2)
 
-            with patch("app.main._load_route_provenance_summary", return_value={}):
+            with patch(
+                "app.api.proof_floor_payloads.load_route_provenance_summary",
+                return_value={},
+            ):
                 metrics_response = self.client.get("/metrics")
             self.assertEqual(metrics_response.status_code, 200)
             metrics_payload = metrics_response.text
@@ -514,7 +519,7 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
                 scheduler.state.drift_status = "stable"
                 app.state.trading_scheduler = scheduler
 
-                with patch("app.main.SessionLocal", self.session_local):
+                with patch("app.api.trading_status.SessionLocal", self.session_local):
                     response = self.client.get("/trading/autonomy")
                 self.assertEqual(response.status_code, 200)
                 payload = response.json()
@@ -581,7 +586,7 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
             )
             session.commit()
 
-        with patch("app.main.SessionLocal", self.session_local):
+        with patch("app.api.trading_status.SessionLocal", self.session_local):
             response = self.client.get("/trading/empirical-jobs")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -640,8 +645,8 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
             session.commit()
 
         with (
-            patch("app.main.SessionLocal", self.session_local),
-            patch("app.main.BUILD_COMMIT", "abc123"),
+            patch("app.api.trading_status.SessionLocal", self.session_local),
+            patch("app.api.common.BUILD_COMMIT", "abc123"),
         ):
             response = self.client.get("/trading/completion/doc29")
         self.assertEqual(response.status_code, 200)
@@ -656,8 +661,8 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
         self.assertEqual(gate["latest_run"], "sim-2026-03-06-full-day")
 
         with (
-            patch("app.main.SessionLocal", self.session_local),
-            patch("app.main.BUILD_COMMIT", "abc123"),
+            patch("app.api.trading_status.SessionLocal", self.session_local),
+            patch("app.api.common.BUILD_COMMIT", "abc123"),
         ):
             gate_response = self.client.get(
                 f"/trading/completion/doc29/{DOC29_SIMULATION_FULL_DAY_GATE}"

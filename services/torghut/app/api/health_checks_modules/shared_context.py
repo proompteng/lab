@@ -227,6 +227,27 @@ from ..common import (
 from ..proxy import capture_module_exports
 
 
+def _apply_status_read_statement_timeout(
+    session: Session,
+    *,
+    milliseconds: int,
+) -> None:
+    from ..status_helpers import (
+        apply_status_read_statement_timeout as apply_statement_timeout,
+    )
+
+    apply_statement_timeout(session, milliseconds=milliseconds)
+
+
+def _sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
+    message = str(exc).lower()
+    return (
+        "statement timeout" in message
+        or "querycanceled" in message
+        or "query canceled" in message
+    )
+
+
 def _check_postgres(session: Session) -> dict[str, object]:
     try:
         ping(session)

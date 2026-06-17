@@ -4,6 +4,7 @@
 # ruff: noqa: F401,F403,F405,F811,F821
 from __future__ import annotations
 
+from ...bootstrap import evaluate_scheduler_status as _evaluate_scheduler_status
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
@@ -244,6 +245,11 @@ from .shared_context import (
 from .evaluate_trading_health_payload_bounded import (
     evaluate_trading_health_payload_bounded as _evaluate_trading_health_payload_bounded,
 )
+from . import status_dependencies as _status_dependencies
+from .universe_dependency import (
+    evaluate_universe_dependency as _evaluate_universe_dependency,
+)
+from ..trading_scheduler_state import get_trading_scheduler
 
 
 def _evaluate_trading_health_payload(
@@ -253,10 +259,7 @@ def _evaluate_trading_health_payload(
 ) -> tuple[dict[str, object], int]:
     """Build shared trading health payload and status code."""
 
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
     scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
 
     now = datetime.now(timezone.utc)
@@ -294,9 +297,12 @@ def _evaluate_trading_health_payload(
     )
     try:
         with SessionLocal() as session:
-            tca_summary = _load_tca_summary(session, scheduler=scheduler)
+            tca_summary = _status_dependencies.load_tca_summary(
+                session,
+                scheduler=scheduler,
+            )
         _hypothesis_payload, hypothesis_summary, _dependency_quorum = (
-            _build_hypothesis_runtime_payload(
+            _status_dependencies.build_hypothesis_runtime_payload(
                 scheduler,
                 tca_summary=tca_summary,
                 market_context_status=market_context_status,
@@ -338,20 +344,22 @@ def _evaluate_trading_health_payload(
         if isinstance(llm_status.get("dspy_runtime"), dict)
         else {}
     )
-    empirical_jobs = _empirical_jobs_status()
+    empirical_jobs = _status_dependencies.empirical_jobs_status()
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
     )
     with SessionLocal() as session:
-        live_submission_gate = _build_live_submission_gate_payload(
-            scheduler.state,
-            session=session,
-            hypothesis_summary=_hypothesis_payload,
-            empirical_jobs_status=empirical_jobs,
-            dspy_runtime_status=dspy_runtime,
-            quant_health_status=quant_evidence,
+        live_submission_gate = (
+            _status_dependencies.build_api_live_submission_gate_payload(
+                scheduler.state,
+                session=session,
+                hypothesis_summary=_hypothesis_payload,
+                empirical_jobs_status=empirical_jobs,
+                dspy_runtime_status=dspy_runtime,
+                quant_health_status=quant_evidence,
+            )
         )
-    proof_floor = _build_profitability_proof_floor_payload(
+    proof_floor = _status_dependencies.build_profitability_proof_floor_payload(
         state=scheduler.state,
         torghut_revision=main_runtime_value("BUILD_COMMIT"),
         live_submission_gate=live_submission_gate,
@@ -361,23 +369,27 @@ def _evaluate_trading_health_payload(
         market_context_status=market_context_status,
         tca_summary=tca_summary,
     )
-    renewal_bond_profit_escrow = _build_renewal_bond_profit_escrow_payload(
-        state=scheduler.state,
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        dependency_quorum=_dependency_quorum.as_payload(),
-        live_submission_gate=live_submission_gate,
-        proof_floor=proof_floor,
-        hypothesis_payload=_hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
-        tca_summary=tca_summary,
+    renewal_bond_profit_escrow = (
+        _status_dependencies.build_renewal_bond_profit_escrow_payload(
+            state=scheduler.state,
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            dependency_quorum=_dependency_quorum.as_payload(),
+            live_submission_gate=live_submission_gate,
+            proof_floor=proof_floor,
+            hypothesis_payload=_hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+        )
     )
-    route_reacquisition_board = _build_route_reacquisition_board_payload(
-        proof_floor=proof_floor,
-        active_revision=main_runtime_value("BUILD_COMMIT"),
+    route_reacquisition_board = (
+        _status_dependencies.build_route_reacquisition_board_payload(
+            proof_floor=proof_floor,
+            active_revision=main_runtime_value("BUILD_COMMIT"),
+        )
     )
-    profit_signal_quorum = _build_profit_signal_quorum_payload(
+    profit_signal_quorum = _status_dependencies.build_profit_signal_quorum_payload(
         torghut_revision=main_runtime_value("BUILD_COMMIT"),
         dependency_quorum=_dependency_quorum.as_payload(),
         hypothesis_payload=_hypothesis_payload,
@@ -388,60 +400,74 @@ def _evaluate_trading_health_payload(
         live_submission_gate=live_submission_gate,
     )
     with SessionLocal() as session:
-        options_catalog_freshness = _load_options_catalog_freshness_summary(
-            session,
-            route_symbols=_route_claim_symbols(profit_signal_quorum),
+        options_catalog_freshness = (
+            _status_dependencies.load_options_catalog_freshness_summary(
+                session,
+                route_symbols=_status_dependencies.route_claim_symbols(
+                    profit_signal_quorum
+                ),
+            )
         )
-    capital_replay_projection = _build_capital_replay_projection_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        dependency_quorum=_dependency_quorum.as_payload(),
-        live_submission_gate=live_submission_gate,
-        proof_floor=proof_floor,
-        route_reacquisition_board=route_reacquisition_board,
-        empirical_jobs_status=empirical_jobs,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
+    capital_replay_projection = (
+        _status_dependencies.build_capital_replay_projection_payload(
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            dependency_quorum=_dependency_quorum.as_payload(),
+            live_submission_gate=live_submission_gate,
+            proof_floor=proof_floor,
+            route_reacquisition_board=route_reacquisition_board,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+        )
     )
-    quality_adjusted_profit_frontier = _build_quality_adjusted_profit_frontier_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        live_submission_gate=live_submission_gate,
-        proof_floor=proof_floor,
-        route_reacquisition_board=route_reacquisition_board,
-        hypothesis_payload=_hypothesis_payload,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
-        active_simulation_context=active_simulation_runtime_context(),
+    quality_adjusted_profit_frontier = (
+        _status_dependencies.build_quality_adjusted_profit_frontier_payload(
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            live_submission_gate=live_submission_gate,
+            proof_floor=proof_floor,
+            route_reacquisition_board=route_reacquisition_board,
+            hypothesis_payload=_hypothesis_payload,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            active_simulation_context=active_simulation_runtime_context(),
+        )
     )
     consumer_evidence_receipt, route_proven_profit_receipt = (
-        _build_consumer_evidence_receipt_projection(
-            forecast_service_status=_forecast_service_status(empirical_jobs),
+        _status_dependencies.build_consumer_evidence_receipt_projection(
+            forecast_service_status=_status_dependencies.forecast_service_status(
+                empirical_jobs
+            ),
             empirical_jobs_status=empirical_jobs,
             proof_floor=proof_floor,
             live_submission_gate=live_submission_gate,
-            serving_revision=_active_runtime_revision()
+            serving_revision=_status_dependencies.active_runtime_revision()
             or main_runtime_value("BUILD_COMMIT"),
         )
     )
-    capital_reentry_cohort_ledger = _build_capital_reentry_cohort_ledger_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        dependency_quorum=_dependency_quorum.as_payload(),
-        consumer_evidence_receipt=consumer_evidence_receipt,
-        proof_floor=proof_floor,
-        route_reacquisition_board=route_reacquisition_board,
+    capital_reentry_cohort_ledger = (
+        _status_dependencies.build_capital_reentry_cohort_ledger_payload(
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            dependency_quorum=_dependency_quorum.as_payload(),
+            consumer_evidence_receipt=consumer_evidence_receipt,
+            proof_floor=proof_floor,
+            route_reacquisition_board=route_reacquisition_board,
+        )
     )
-    profit_repair_settlement_ledger = _build_profit_repair_settlement_ledger_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        dependency_quorum=_dependency_quorum.as_payload(),
-        consumer_evidence_receipt=consumer_evidence_receipt,
-        proof_floor=proof_floor,
-        capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
-        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
-        route_reacquisition_board=route_reacquisition_board,
-        live_submission_gate=live_submission_gate,
-        quant_evidence=quant_evidence,
+    profit_repair_settlement_ledger = (
+        _status_dependencies.build_profit_repair_settlement_ledger_payload(
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            dependency_quorum=_dependency_quorum.as_payload(),
+            consumer_evidence_receipt=consumer_evidence_receipt,
+            proof_floor=proof_floor,
+            capital_reentry_cohort_ledger=capital_reentry_cohort_ledger,
+            quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+            route_reacquisition_board=route_reacquisition_board,
+            live_submission_gate=live_submission_gate,
+            quant_evidence=quant_evidence,
+        )
     )
     routeability_repair_acceptance_ledger = (
-        _build_routeability_repair_acceptance_ledger_payload(
+        _status_dependencies.build_routeability_repair_acceptance_ledger_payload(
             torghut_revision=main_runtime_value("BUILD_COMMIT"),
             dependency_quorum=_dependency_quorum.as_payload(),
             consumer_evidence_receipt=consumer_evidence_receipt,
@@ -455,29 +481,31 @@ def _evaluate_trading_health_payload(
             market_context_status=market_context_status,
         )
     )
-    profit_freshness_frontier = _build_profit_freshness_frontier_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        dependency_quorum=_dependency_quorum.as_payload(),
-        proof_floor=proof_floor,
-        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
-        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
-        route_reacquisition_board=route_reacquisition_board,
-        live_submission_gate=live_submission_gate,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
-        empirical_jobs_status=empirical_jobs,
-        hypothesis_payload=_hypothesis_payload,
+    profit_freshness_frontier = (
+        _status_dependencies.build_profit_freshness_frontier_payload(
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            dependency_quorum=_dependency_quorum.as_payload(),
+            proof_floor=proof_floor,
+            routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+            quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+            route_reacquisition_board=route_reacquisition_board,
+            live_submission_gate=live_submission_gate,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            empirical_jobs_status=empirical_jobs,
+            hypothesis_payload=_hypothesis_payload,
+        )
     )
     build_payload = {
         "version": BUILD_VERSION,
         "commit": main_runtime_value("BUILD_COMMIT"),
         "image_digest": BUILD_IMAGE_DIGEST,
-        "active_revision": _active_runtime_revision()
+        "active_revision": _status_dependencies.active_runtime_revision()
         or main_runtime_value("BUILD_COMMIT"),
     }
-    clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
+    clickhouse_ta_status = _status_dependencies.load_clickhouse_ta_status(scheduler)
     evidence_clock_arbiter, routeable_profit_candidate_exchange = (
-        _build_evidence_clock_payloads(
+        _status_dependencies.build_evidence_clock_payloads(
             torghut_revision=main_runtime_value("BUILD_COMMIT"),
             dependency_quorum=_dependency_quorum.as_payload(),
             hypothesis_payload=_hypothesis_payload,
@@ -493,7 +521,7 @@ def _evaluate_trading_health_payload(
             clickhouse_ta_status=clickhouse_ta_status,
         )
     )
-    clock_settlement_receipt = _build_clock_settlement_payload(
+    clock_settlement_receipt = _status_dependencies.build_clock_settlement_payload(
         torghut_revision=main_runtime_value("BUILD_COMMIT"),
         source_commit=main_runtime_value("BUILD_COMMIT"),
         build=build_payload,
@@ -504,36 +532,40 @@ def _evaluate_trading_health_payload(
         tca_summary=tca_summary,
         empirical_jobs_status=empirical_jobs,
         profit_signal_quorum=profit_signal_quorum,
-        rollout_status=_build_route_image_proof_summary(
+        rollout_status=_status_dependencies.build_route_image_proof_summary(
             build=build_payload,
             dependency_quorum=_dependency_quorum.as_payload(),
         ),
     )
-    route_evidence_clearinghouse_packet = _build_route_evidence_clearinghouse_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
-        dependency_quorum=_dependency_quorum.as_payload(),
-        build=build_payload,
-        proof_floor=proof_floor,
-        profit_signal_quorum=profit_signal_quorum,
-        profit_repair_settlement_ledger=profit_repair_settlement_ledger,
-        route_reacquisition_board=route_reacquisition_board,
-        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
-        live_submission_gate=live_submission_gate,
-        tca_summary=tca_summary,
-        options_catalog_freshness=options_catalog_freshness,
+    route_evidence_clearinghouse_packet = (
+        _status_dependencies.build_route_evidence_clearinghouse_payload(
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            source_commit=main_runtime_value("BUILD_COMMIT"),
+            dependency_quorum=_dependency_quorum.as_payload(),
+            build=build_payload,
+            proof_floor=proof_floor,
+            profit_signal_quorum=profit_signal_quorum,
+            profit_repair_settlement_ledger=profit_repair_settlement_ledger,
+            route_reacquisition_board=route_reacquisition_board,
+            routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+            live_submission_gate=live_submission_gate,
+            tca_summary=tca_summary,
+            options_catalog_freshness=options_catalog_freshness,
+        )
     )
-    repair_bid_settlement_ledger = _build_repair_bid_settlement_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
-        dependency_quorum=_dependency_quorum.as_payload(),
-        build=build_payload,
-        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
-        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
-        quant_evidence=quant_evidence,
-        profit_freshness_frontier=profit_freshness_frontier,
+    repair_bid_settlement_ledger = (
+        _status_dependencies.build_repair_bid_settlement_payload(
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            source_commit=main_runtime_value("BUILD_COMMIT"),
+            dependency_quorum=_dependency_quorum.as_payload(),
+            build=build_payload,
+            route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+            routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+            quant_evidence=quant_evidence,
+            profit_freshness_frontier=profit_freshness_frontier,
+        )
     )
-    route_warrant_exchange = _build_route_warrant_exchange_payload(
+    route_warrant_exchange = _status_dependencies.build_route_warrant_exchange_payload(
         torghut_revision=main_runtime_value("BUILD_COMMIT"),
         source_commit=main_runtime_value("BUILD_COMMIT"),
         build=build_payload,
@@ -548,15 +580,17 @@ def _evaluate_trading_health_payload(
         empirical_jobs_status=empirical_jobs,
         market_context_status=market_context_status,
     )
-    source_serving_repair_receipt_ledger = _build_source_serving_repair_receipt_payload(
-        source_commit=main_runtime_value("BUILD_COMMIT"),
-        build=build_payload,
-        consumer_evidence_receipt=consumer_evidence_receipt,
-        route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
-        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
-        route_warrant_exchange=route_warrant_exchange,
+    source_serving_repair_receipt_ledger = (
+        _status_dependencies.build_source_serving_repair_receipt_payload(
+            source_commit=main_runtime_value("BUILD_COMMIT"),
+            build=build_payload,
+            consumer_evidence_receipt=consumer_evidence_receipt,
+            route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
+            repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+            route_warrant_exchange=route_warrant_exchange,
+        )
     )
-    freshness_carry_ledger = _build_freshness_carry_ledger_payload(
+    freshness_carry_ledger = _status_dependencies.build_freshness_carry_ledger_payload(
         source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
         route_warrant_exchange=route_warrant_exchange,
         clickhouse_ta_status=clickhouse_ta_status,
@@ -566,23 +600,27 @@ def _evaluate_trading_health_payload(
         quant_evidence=quant_evidence,
         live_submission_gate=live_submission_gate,
     )
-    repair_receipt_frontier = _build_repair_receipt_frontier_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
-        source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
-        freshness_carry_ledger=freshness_carry_ledger,
-        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
-        profit_freshness_frontier=profit_freshness_frontier,
-        route_warrant_exchange=route_warrant_exchange,
-        live_submission_gate=live_submission_gate,
-        proof_floor=proof_floor,
+    repair_receipt_frontier = (
+        _status_dependencies.build_repair_receipt_frontier_payload(
+            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            source_commit=main_runtime_value("BUILD_COMMIT"),
+            source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
+            freshness_carry_ledger=freshness_carry_ledger,
+            repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+            profit_freshness_frontier=profit_freshness_frontier,
+            route_warrant_exchange=route_warrant_exchange,
+            live_submission_gate=live_submission_gate,
+            proof_floor=proof_floor,
+        )
     )
-    repair_outcome_dividend_ledger = _build_repair_outcome_dividend_ledger_payload(
-        repair_bid_settlement_ledger=repair_bid_settlement_ledger,
-        repair_receipt_frontier=repair_receipt_frontier,
-        freshness_carry_ledger=freshness_carry_ledger,
-        route_warrant_exchange=route_warrant_exchange,
-        live_submission_gate=live_submission_gate,
+    repair_outcome_dividend_ledger = (
+        _status_dependencies.build_repair_outcome_dividend_ledger_payload(
+            repair_bid_settlement_ledger=repair_bid_settlement_ledger,
+            repair_receipt_frontier=repair_receipt_frontier,
+            freshness_carry_ledger=freshness_carry_ledger,
+            route_warrant_exchange=route_warrant_exchange,
+            live_submission_gate=live_submission_gate,
+        )
     )
     live_mode = settings.trading_mode == "live"
     empirical_jobs_required = (
@@ -752,7 +790,7 @@ def _evaluate_trading_health_payload(
         "clock_settlement_receipt": clock_settlement_receipt,
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
-        **_revenue_repair_topline_fields(revenue_repair_digest),
+        **_status_dependencies.revenue_repair_topline_fields(revenue_repair_digest),
         "route_warrant_exchange": route_warrant_exchange,
         "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
         "freshness_carry_ledger": freshness_carry_ledger,
@@ -825,151 +863,6 @@ def _evaluate_trading_health_payload(
         )
 
     return response_payload, status_code
-
-
-def _evaluate_universe_dependency(
-    scheduler: TradingScheduler | None,
-) -> dict[str, object]:
-    require_non_empty = (
-        settings.trading_universe_source == "static"
-        or settings.trading_universe_require_non_empty_jangar
-    )
-    if scheduler is None:
-        return {
-            "ok": not require_non_empty,
-            "detail": "universe state unavailable",
-            "source": settings.trading_universe_source,
-            "status": None,
-            "reason": None,
-            "symbols_count": None,
-            "cache_age_seconds": None,
-            "require_non_empty": require_non_empty,
-        }
-
-    state = getattr(scheduler, "state", None)
-    if state is None:
-        return {
-            "ok": True,
-            "detail": "universe state unavailable",
-            "source": settings.trading_universe_source,
-            "status": None,
-            "reason": None,
-            "symbols_count": None,
-            "cache_age_seconds": None,
-            "require_non_empty": require_non_empty,
-        }
-
-    universe_status = getattr(state, "universe_source_status", None)
-    universe_symbols_count = getattr(state, "universe_symbols_count", None)
-    if universe_status in {"unknown", "not_evaluated", None} or (
-        require_non_empty and not universe_symbols_count
-    ):
-        _refresh_universe_state_for_readiness(scheduler=scheduler, state=state)
-
-    universe_status = getattr(state, "universe_source_status", None)
-    universe_reason = getattr(state, "universe_source_reason", None)
-    universe_symbols_count = getattr(state, "universe_symbols_count", None)
-    universe_cache_age_seconds = getattr(state, "universe_cache_age_seconds", None)
-    universe_fail_safe_blocked = bool(
-        getattr(state, "universe_fail_safe_blocked", False)
-    )
-    max_stale_seconds = max(1, settings.trading_universe_max_stale_seconds)
-
-    if universe_status == "error":
-        return {
-            "ok": False,
-            "detail": f"{settings.trading_universe_source} universe unavailable",
-            "source": settings.trading_universe_source,
-            "status": universe_status,
-            "reason": universe_reason,
-            "symbols_count": universe_symbols_count,
-            "cache_age_seconds": universe_cache_age_seconds,
-            "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": require_non_empty,
-        }
-
-    if universe_status == "empty" and (universe_fail_safe_blocked or require_non_empty):
-        return {
-            "ok": False,
-            "detail": f"{settings.trading_universe_source} universe empty",
-            "source": settings.trading_universe_source,
-            "status": universe_status,
-            "reason": universe_reason,
-            "symbols_count": universe_symbols_count,
-            "cache_age_seconds": universe_cache_age_seconds,
-            "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": require_non_empty,
-        }
-
-    if universe_status == "degraded":
-        degraded_detail = "jangar stale cache in use"
-        if isinstance(universe_reason, str) and "static_fallback" in universe_reason:
-            degraded_detail = "jangar static fallback in use"
-        return {
-            "ok": not universe_fail_safe_blocked,
-            "detail": degraded_detail,
-            "source": settings.trading_universe_source,
-            "status": universe_status,
-            "reason": universe_reason,
-            "symbols_count": universe_symbols_count,
-            "cache_age_seconds": universe_cache_age_seconds,
-            "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": require_non_empty,
-        }
-
-    if universe_status == "ok":
-        detail = f"{settings.trading_universe_source} universe fresh"
-        if settings.trading_universe_source == "static":
-            detail = "static universe loaded"
-        return {
-            "ok": True,
-            "detail": detail,
-            "source": settings.trading_universe_source,
-            "status": universe_status,
-            "reason": universe_reason,
-            "symbols_count": universe_symbols_count,
-            "cache_age_seconds": universe_cache_age_seconds,
-            "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": require_non_empty,
-        }
-
-    if universe_status in {"unknown", "not_evaluated", None}:
-        return {
-            "ok": not require_non_empty,
-            "detail": "universe not yet evaluated",
-            "source": settings.trading_universe_source,
-            "status": universe_status,
-            "reason": universe_reason,
-            "symbols_count": universe_symbols_count,
-            "cache_age_seconds": universe_cache_age_seconds,
-            "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": require_non_empty,
-        }
-
-    if universe_fail_safe_blocked:
-        return {
-            "ok": False,
-            "detail": f"jangar universe blocked: {universe_reason}",
-            "source": settings.trading_universe_source,
-            "status": universe_status,
-            "reason": universe_reason,
-            "symbols_count": universe_symbols_count,
-            "cache_age_seconds": universe_cache_age_seconds,
-            "max_stale_seconds": max_stale_seconds,
-            "require_non_empty": require_non_empty,
-        }
-
-    return {
-        "ok": True,
-        "detail": f"{settings.trading_universe_source} universe ok",
-        "source": settings.trading_universe_source,
-        "status": universe_status,
-        "reason": universe_reason,
-        "symbols_count": universe_symbols_count,
-        "cache_age_seconds": universe_cache_age_seconds,
-        "max_stale_seconds": max_stale_seconds,
-        "require_non_empty": require_non_empty,
-    }
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

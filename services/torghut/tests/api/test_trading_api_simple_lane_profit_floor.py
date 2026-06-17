@@ -280,7 +280,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         settings.trading_emergency_stop_enabled = False
         try:
             with patch(
-                "app.main.build_live_submission_gate_payload",
+                "app.api.health_checks_modules.load_options_catalog_freshness_summary.build_live_submission_gate_payload",
                 return_value={
                     "allowed": True,
                     "reason": "ready",
@@ -354,7 +354,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
         try:
             with patch(
-                "app.main.build_live_submission_gate_payload",
+                "app.api.health_checks_modules.load_options_catalog_freshness_summary.build_live_submission_gate_payload",
                 return_value=shared_gate,
             ) as shared_gate_builder:
                 gate = _build_live_submission_gate_payload(
@@ -414,7 +414,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.main.build_profitability_proof_floor_receipt",
+            "app.api.proof_floor_payloads_modules.shared_context.build_profitability_proof_floor_receipt",
             return_value=proof_floor,
         ):
             status_response = self.client.get("/trading/status")
@@ -725,7 +725,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.main.build_renewal_bond_profit_escrow",
+            "app.api.proof_floor_payloads_modules.shared_context.build_renewal_bond_profit_escrow",
             return_value=escrow,
         ):
             status_response = self.client.get("/trading/status")
@@ -755,11 +755,11 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.main.build_capital_replay_projection",
+                "app.api.proof_floor_payloads_modules.shared_context.build_capital_replay_projection",
                 return_value=projection,
             ),
             patch(
-                "app.main._build_autonomy_capital_replay_projection",
+                "app.api.proof_floor_payloads.build_autonomy_capital_replay_projection",
                 return_value=projection,
             ),
         ):
@@ -793,7 +793,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.main.build_quality_adjusted_profit_frontier",
+            "app.api.proof_floor_payloads_modules.build_jangar_reliability_settlement_ref.build_quality_adjusted_profit_frontier",
             return_value=frontier,
         ):
             status_response = self.client.get("/trading/status")
@@ -827,7 +827,10 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             "max_notional": "0",
         }
 
-        with patch("app.main.build_profit_signal_quorum", return_value=quorum):
+        with patch(
+            "app.api.proof_floor_payloads_modules.build_jangar_reliability_settlement_ref.build_profit_signal_quorum",
+            return_value=quorum,
+        ):
             status_response = self.client.get("/trading/status")
             health_response = self.client.get("/trading/health")
 
@@ -865,14 +868,14 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                     return_value={"ok": True},
                 ),
                 patch(
-                    "app.main._check_account_scope_invariants_bounded",
+                    "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
                     return_value={
                         "account_scope_ready": True,
                         "account_scope_errors": [],
                     },
                 ),
                 patch(
-                    "app.main.check_schema_current",
+                    "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
                     return_value={
                         "schema_current": True,
                         "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -894,7 +897,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                     return_value={"ready": False, "status": "degraded"},
                 ),
                 patch(
-                    "app.main.load_quant_evidence_status",
+                    "app.api.trading_status.load_quant_evidence_status",
                     return_value={
                         "required": False,
                         "ok": True,
@@ -903,7 +906,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                     },
                 ),
                 patch(
-                    "app.main._build_profitability_proof_floor_payload",
+                    "app.api.trading_status._build_profitability_proof_floor_payload",
                     return_value={
                         "route_state": "repair_only",
                         "capital_state": "zero_notional",

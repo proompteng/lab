@@ -24,6 +24,7 @@ from .common import (
     trading_time_status,
 )
 from .common import main_runtime_value
+from .application import get_app
 from .health_checks import (
     budget_exhausted_live_submission_gate_payload,
     budget_exhausted_options_catalog_freshness_payload,
@@ -39,8 +40,32 @@ from .health_checks import (
     load_options_catalog_freshness_summary,
     route_claim_symbols,
 )
-from .proof_floor_payloads import load_rejected_signal_outcome_learning_summary
-from .proxy import MainAttrProxy, capture_module_exports
+from .proof_floor_payloads import (
+    build_capital_reentry_cohort_ledger_payload as _build_capital_reentry_cohort_ledger_payload,
+    build_capital_replay_projection_payload as _build_capital_replay_projection_payload,
+    build_clock_settlement_payload as _build_clock_settlement_payload,
+    build_evidence_clock_payloads as _build_evidence_clock_payloads,
+    build_freshness_carry_ledger_payload as _build_freshness_carry_ledger_payload,
+    build_profit_freshness_frontier_payload as _build_profit_freshness_frontier_payload,
+    build_profit_repair_settlement_ledger_payload as _build_profit_repair_settlement_ledger_payload,
+    build_profit_signal_quorum_payload as _build_profit_signal_quorum_payload,
+    build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
+    build_quality_adjusted_profit_frontier_payload as _build_quality_adjusted_profit_frontier_payload,
+    build_rejected_signal_outcome_learning_payload as _build_rejected_signal_outcome_learning_payload,
+    build_renewal_bond_profit_escrow_payload as _build_renewal_bond_profit_escrow_payload,
+    build_repair_bid_settlement_payload as _build_repair_bid_settlement_payload,
+    build_repair_outcome_dividend_ledger_payload as _build_repair_outcome_dividend_ledger_payload,
+    build_repair_receipt_frontier_payload as _build_repair_receipt_frontier_payload,
+    build_route_evidence_clearinghouse_payload as _build_route_evidence_clearinghouse_payload,
+    build_route_image_proof_summary as _build_route_image_proof_summary,
+    build_route_reacquisition_board_payload as _build_route_reacquisition_board_payload,
+    build_route_warrant_exchange_payload as _build_route_warrant_exchange_payload,
+    build_routeability_repair_acceptance_ledger_payload as _build_routeability_repair_acceptance_ledger_payload,
+    build_source_serving_repair_receipt_payload as _build_source_serving_repair_receipt_payload,
+    load_rejected_signal_outcome_learning_summary,
+    simple_lane_reject_reason_totals as _simple_lane_reject_reason_totals,
+)
+from .proxy import capture_module_exports
 from .status_helpers import (
     TradingStatusReadBudget,
     deferred_hypothesis_payload_for_live_submission_gate,
@@ -51,6 +76,10 @@ from .status_helpers import (
     load_trading_status_tca_summary,
     load_trading_status_tigerbeetle_ledger,
 )
+from .trading_misc import (
+    build_consumer_evidence_receipt_projection as _build_consumer_evidence_receipt_projection,
+)
+from .vnext_helpers import build_autonomy_bridge_status as _build_autonomy_bridge_status
 
 _TradingStatusReadBudget = TradingStatusReadBudget
 _budget_exhausted_live_submission_gate_payload = (
@@ -84,69 +113,6 @@ _load_trading_status_tigerbeetle_ledger = load_trading_status_tigerbeetle_ledger
 _load_rejected_signal_outcome_learning_summary = (
     load_rejected_signal_outcome_learning_summary
 )
-_build_autonomy_bridge_status = MainAttrProxy("_build_autonomy_bridge_status")
-_build_capital_reentry_cohort_ledger_payload = MainAttrProxy(
-    "_build_capital_reentry_cohort_ledger_payload"
-)
-_build_capital_replay_projection_payload = MainAttrProxy(
-    "_build_capital_replay_projection_payload"
-)
-_build_clock_settlement_payload = MainAttrProxy("_build_clock_settlement_payload")
-_build_consumer_evidence_receipt_projection = MainAttrProxy(
-    "_build_consumer_evidence_receipt_projection"
-)
-_build_evidence_clock_payloads = MainAttrProxy("_build_evidence_clock_payloads")
-_build_freshness_carry_ledger_payload = MainAttrProxy(
-    "_build_freshness_carry_ledger_payload"
-)
-_build_profit_freshness_frontier_payload = MainAttrProxy(
-    "_build_profit_freshness_frontier_payload"
-)
-_build_profit_repair_settlement_ledger_payload = MainAttrProxy(
-    "_build_profit_repair_settlement_ledger_payload"
-)
-_build_profit_signal_quorum_payload = MainAttrProxy(
-    "_build_profit_signal_quorum_payload"
-)
-_build_profitability_proof_floor_payload = MainAttrProxy(
-    "_build_profitability_proof_floor_payload"
-)
-_build_quality_adjusted_profit_frontier_payload = MainAttrProxy(
-    "_build_quality_adjusted_profit_frontier_payload"
-)
-_build_rejected_signal_outcome_learning_payload = MainAttrProxy(
-    "_build_rejected_signal_outcome_learning_payload"
-)
-_build_renewal_bond_profit_escrow_payload = MainAttrProxy(
-    "_build_renewal_bond_profit_escrow_payload"
-)
-_build_repair_bid_settlement_payload = MainAttrProxy(
-    "_build_repair_bid_settlement_payload"
-)
-_build_repair_outcome_dividend_ledger_payload = MainAttrProxy(
-    "_build_repair_outcome_dividend_ledger_payload"
-)
-_build_repair_receipt_frontier_payload = MainAttrProxy(
-    "_build_repair_receipt_frontier_payload"
-)
-_build_route_evidence_clearinghouse_payload = MainAttrProxy(
-    "_build_route_evidence_clearinghouse_payload"
-)
-_build_route_image_proof_summary = MainAttrProxy("_build_route_image_proof_summary")
-_build_route_reacquisition_board_payload = MainAttrProxy(
-    "_build_route_reacquisition_board_payload"
-)
-_build_route_warrant_exchange_payload = MainAttrProxy(
-    "_build_route_warrant_exchange_payload"
-)
-_build_routeability_repair_acceptance_ledger_payload = MainAttrProxy(
-    "_build_routeability_repair_acceptance_ledger_payload"
-)
-_build_source_serving_repair_receipt_payload = MainAttrProxy(
-    "_build_source_serving_repair_receipt_payload"
-)
-_simple_lane_reject_reason_totals = MainAttrProxy("_simple_lane_reject_reason_totals")
-app = MainAttrProxy("app")
 router = APIRouter()
 
 
@@ -155,10 +121,13 @@ def trading_status() -> dict[str, object]:
     """Return trading loop status and metrics."""
 
     status_read_budget = _TradingStatusReadBudget()
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    current_app = get_app()
+    scheduler: TradingScheduler | None = getattr(
+        current_app.state, "trading_scheduler", None
+    )
     if scheduler is None:
         scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+        current_app.state.trading_scheduler = scheduler
     state = scheduler.state
     active_simulation_context = active_simulation_runtime_context()
     empirical_jobs = _empirical_jobs_status()

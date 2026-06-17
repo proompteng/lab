@@ -4,8 +4,6 @@
 # ruff: noqa: F401,F403,F405
 from __future__ import annotations
 
-import sys
-
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
@@ -56,26 +54,32 @@ from .common import (
     time,
     urlsplit,
 )
-from .proxy import MainAttrProxy, capture_module_exports
+from .health_checks import (
+    build_api_live_submission_gate_payload,
+    build_hypothesis_runtime_payload,
+    build_simple_lane_status_payload,
+    decimal_or_none as _decimal_or_none,
+    empirical_jobs_status,
+    load_tca_summary,
+)
+from .proof_floor_payloads import (
+    build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
+)
+from .proxy import capture_module_exports
+from .runtime_profitability import aggregate_tca_rows as _aggregate_tca_rows
+from .status_helpers import deferred_hypothesis_payload_for_live_submission_gate
+from .trading_scheduler_state import get_trading_scheduler
+from .vnext_helpers import decimal_to_string as _decimal_to_string
+from .vnext_helpers import to_str_map as _to_str_map
 
-_aggregate_tca_rows = MainAttrProxy("_aggregate_tca_rows")
-_build_hypothesis_runtime_payload = MainAttrProxy("_build_hypothesis_runtime_payload")
-_build_live_submission_gate_payload = MainAttrProxy(
-    "_build_live_submission_gate_payload"
+_build_hypothesis_runtime_payload = build_hypothesis_runtime_payload
+_build_live_submission_gate_payload = build_api_live_submission_gate_payload
+_build_simple_lane_status_payload = build_simple_lane_status_payload
+_deferred_hypothesis_payload_for_live_submission_gate = (
+    deferred_hypothesis_payload_for_live_submission_gate
 )
-_build_profitability_proof_floor_payload = MainAttrProxy(
-    "_build_profitability_proof_floor_payload"
-)
-_build_simple_lane_status_payload = MainAttrProxy("_build_simple_lane_status_payload")
-_decimal_or_none = MainAttrProxy("_decimal_or_none")
-_decimal_to_string = MainAttrProxy("_decimal_to_string")
-_deferred_hypothesis_payload_for_live_submission_gate = MainAttrProxy(
-    "_deferred_hypothesis_payload_for_live_submission_gate"
-)
-_empirical_jobs_status = MainAttrProxy("_empirical_jobs_status")
-_load_tca_summary = MainAttrProxy("_load_tca_summary")
-_to_str_map = MainAttrProxy("_to_str_map")
-app = MainAttrProxy("app")
+_empirical_jobs_status = empirical_jobs_status
+_load_tca_summary = load_tca_summary
 router = APIRouter()
 _paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
 
@@ -86,9 +90,6 @@ def _set_paper_route_target_plan_success_cache(
     global _paper_route_target_plan_success_cache
 
     _paper_route_target_plan_success_cache = cache
-    main_module = sys.modules.get("app.main")
-    if main_module is not None:
-        setattr(main_module, "_paper_route_target_plan_success_cache", cache)
 
 
 def _paper_route_target_plan_audit_mode_value(mode: str) -> bool | None:
@@ -116,11 +117,7 @@ def _proof_window_value(window: str) -> ProofWindowSelector:
 
 
 def _trading_scheduler_for_proofs() -> TradingScheduler:
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
-    return scheduler
+    return get_trading_scheduler()
 
 
 def _build_trading_proofs_payload(
@@ -801,10 +798,7 @@ def _cached_external_paper_route_target_plan_success(
     load_error: str,
 ) -> dict[str, Any]:
     with PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK:
-        cached = main_runtime_value(
-            "_paper_route_target_plan_success_cache",
-            _paper_route_target_plan_success_cache,
-        )
+        cached = _paper_route_target_plan_success_cache
     if cached is None:
         return {}
     plan, cached_at = cached
@@ -926,10 +920,7 @@ def trading_tca(
     if since:
         stmt = stmt.where(ExecutionTCAMetric.computed_at >= since)
     rows = session.execute(stmt.limit(limit)).scalars().all()
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = _trading_scheduler_for_proofs()
 
     grouped = _aggregate_tca_rows(rows)
     payload_rows = [

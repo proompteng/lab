@@ -247,6 +247,8 @@ from .evaluate_trading_health_payload_bounded import (
 )
 from .evaluate_trading_health_payload import (
     evaluate_trading_health_payload as _evaluate_trading_health_payload,
+)
+from .universe_dependency import (
     evaluate_universe_dependency as _evaluate_universe_dependency,
 )
 
@@ -968,5 +970,6 @@ __all__ = [
 
 capture_module_exports(globals(), __all__)
 
+refresh_universe_state_for_readiness = _refresh_universe_state_for_readiness
 
 __all__ = [name for name in globals() if not name.startswith("__")]

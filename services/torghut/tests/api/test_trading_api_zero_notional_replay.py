@@ -76,7 +76,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
         )
         app.state.trading_scheduler = scheduler
 
-        with patch("app.main.trading_status", return_value=status_payload):
+        with patch("app.api.maintenance.trading_status", return_value=status_payload):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair"
                 "?action=rerun_drift_checks_for_blocked_hypotheses"
@@ -167,7 +167,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
         )
         app.state.trading_scheduler = scheduler
 
-        with patch("app.main.trading_status", return_value=status_payload):
+        with patch("app.api.maintenance.trading_status", return_value=status_payload):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair"
                 "?action=rerun_drift_checks_for_blocked_hypotheses"
@@ -269,9 +269,10 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
         )
 
         with (
-            patch("app.main.trading_status", return_value=status_payload),
+            patch("app.api.maintenance.trading_status", return_value=status_payload),
             patch(
-                "app.main.evaluate_feature_batch_quality", return_value=quality_report
+                "app.api.maintenance.evaluate_feature_batch_quality",
+                return_value=quality_report,
             ),
         ):
             response = self.client.post(
@@ -330,7 +331,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             _pipeline=SimpleNamespace(ingestor=SimpleNamespace()),
         )
 
-        with patch("app.main.trading_status", return_value=status_payload):
+        with patch("app.api.maintenance.trading_status", return_value=status_payload):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair"
                 "?action=rebuild_required_feature_rows&execute=true"
@@ -401,7 +402,9 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
                     state=SimpleNamespace(metrics=SimpleNamespace()),
                 )
 
-                with patch("app.main.trading_status", return_value=status_payload):
+                with patch(
+                    "app.api.maintenance.trading_status", return_value=status_payload
+                ):
                     response = self.client.post(
                         "/trading/profit-freshness/zero-notional-repair"
                         "?action=rebuild_required_feature_rows&execute=true"
@@ -505,9 +508,10 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
         )
 
         with (
-            patch("app.main.trading_status", return_value=status_payload),
+            patch("app.api.maintenance.trading_status", return_value=status_payload),
             patch(
-                "app.main.evaluate_feature_batch_quality", return_value=quality_report
+                "app.api.maintenance.evaluate_feature_batch_quality",
+                return_value=quality_report,
             ),
         ):
             response = self.client.post(
@@ -584,7 +588,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
         )
         app.state.trading_scheduler = scheduler
 
-        with patch("app.main.trading_status", return_value=status_payload):
+        with patch("app.api.maintenance.trading_status", return_value=status_payload):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair"
                 "?action=rerun_drift_checks_for_blocked_hypotheses&execute=true"
@@ -603,7 +607,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
         self.assertFalse(payload["order_submission_enabled"])
 
         scheduler._pipeline.ingestor.latest_signal_status = lambda: None
-        with patch("app.main.trading_status", return_value=status_payload):
+        with patch("app.api.maintenance.trading_status", return_value=status_payload):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair"
                 "?action=rerun_drift_checks_for_blocked_hypotheses&execute=true"
@@ -677,7 +681,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
 
             with (
                 patch(
-                    "app.main._build_hypothesis_runtime_payload",
+                    "app.api.status_helpers._build_hypothesis_runtime_payload",
                     return_value=(
                         {
                             "summary": {
@@ -727,7 +731,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.main.load_quant_evidence_status",
+                    "app.api.trading_status.load_quant_evidence_status",
                     return_value={
                         "required": True,
                         "ok": True,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.api import readiness_helpers as readiness_helpers_api
+
 from tests.api.trading_api_support import (
     Any,
     TradingApiTestCaseBase,
@@ -11,7 +13,6 @@ from tests.api.trading_api_support import (
     _readiness_dependency_cache_key,
     app,
     datetime,
-    main_module,
     patch,
     settings,
     timedelta,
@@ -121,7 +122,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_simple_submit_enabled = False
             settings.trading_live_submit_activation_expires_at = "2000-01-01T00:00:00Z"
 
-            gate = main_module._core_readiness_live_submission_gate()
+            gate = readiness_helpers_api._core_readiness_live_submission_gate()
         finally:
             settings.trading_mode = original["trading_mode"]
             settings.trading_enabled = original["trading_enabled"]
@@ -196,9 +197,11 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
                     return_value={"ok": True, "detail": "ok"},
                 ),
             ):
-                payload, status_code = main_module._evaluate_core_readiness_payload(
-                    include_database_contract=True,
-                    allow_stale_dependency_cache=True,
+                payload, status_code = (
+                    readiness_helpers_api._evaluate_core_readiness_payload(
+                        include_database_contract=True,
+                        allow_stale_dependency_cache=True,
+                    )
                 )
         finally:
             settings.trading_mode = original["trading_mode"]
@@ -505,11 +508,11 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             app.state.trading_scheduler = scheduler
             with (
                 patch(
-                    "app.api.readiness_helpers_modules.evaluate_trading_health_payload._build_live_submission_gate_payload",
+                    "app.api.readiness_helpers_modules.status_dependencies.build_api_live_submission_gate_payload",
                     return_value=authoritative_gate,
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.evaluate_trading_health_payload._empirical_jobs_status",
+                    "app.api.readiness_helpers_modules.status_dependencies.empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(

@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-import sys
-import types
-
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.routing import APIRoute
 
 from app import main as main_module
 from app.api import common as api_common
-from app.api.proxy import (
-    MainAttrProxy,
-    export_api_symbols,
-    install_main_compat_proxies,
-)
+from app.api import proofs as proofs_api
+from app.api.application import get_app
 from app.trading import TradingScheduler
 
 
@@ -25,7 +19,7 @@ def _route_methods() -> dict[str, set[str]]:
     return route_methods
 
 
-def test_main_exports_fastapi_app_with_compatibility_routes() -> None:
+def test_main_exports_fastapi_app_with_routes() -> None:
     assert isinstance(main_module.app, FastAPI)
     assert main_module.app.title == "torghut"
 
@@ -53,28 +47,23 @@ def test_main_exports_fastapi_app_with_compatibility_routes() -> None:
     assert missing_routes == {}
 
 
-def test_main_keeps_legacy_patch_targets_exported() -> None:
-    expected_attrs = [
+def test_main_public_contract_is_entrypoint_only() -> None:
+    assert main_module.__all__ == ("app", "create_app")
+    assert get_app() is main_module.app
+
+    removed_private_attrs = (
         "SessionLocal",
-        "WHITEPAPER_WORKFLOW",
-        "_TRADING_STATUS_READ_BUDGET_SECONDS",
         "_TradingStatusReadBudget",
         "_build_live_submission_gate_payload",
         "_build_trading_proofs_payload",
-        "_check_account_scope_invariants_bounded",
         "_evaluate_database_contract",
-        "_load_tca_summary",
-        "build_revenue_repair_digest",
-        "readyz",
-        "trading_health",
+        "_paper_route_target_plan_success_cache",
         "trading_status",
-        "whitepaper_kafka_enabled",
-        "whitepaper_semantic_indexing_enabled",
-        "whitepaper_workflow_enabled",
+    )
+    leaked_attrs = [
+        name for name in removed_private_attrs if hasattr(main_module, name)
     ]
-
-    missing_attrs = [name for name in expected_attrs if not hasattr(main_module, name)]
-    assert missing_attrs == []
+    assert leaked_attrs == []
 
 
 def test_main_runtime_value_falls_back_to_common_default() -> None:
@@ -84,69 +73,17 @@ def test_main_runtime_value_falls_back_to_common_default() -> None:
     )
 
 
-def test_main_attr_proxy_forwards_runtime_values(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        main_module, "_refactor_proxy_target", {"AAPL": 1}, raising=False
-    )
-    proxy = MainAttrProxy("_refactor_proxy_target")
-
-    assert bool(proxy)
-    assert str(proxy) == "{'AAPL': 1}"
-    assert repr(proxy) == "{'AAPL': 1}"
-    assert list(proxy) == ["AAPL"]
-    assert len(proxy) == 1
-    assert proxy["AAPL"] == 1
-    assert proxy == {"AAPL": 1}
-
-    monkeypatch.setattr(
-        main_module, "_refactor_proxy_target", lambda value: value + 1, raising=False
-    )
-    assert proxy(2) == 3
-
-    monkeypatch.setattr(main_module, "_refactor_proxy_target", 3, raising=False)
-    assert int(proxy) == 3
-    assert float(proxy) == 3.0
-
-
-def test_main_attr_proxy_fails_closed_without_main_module() -> None:
-    original_main = sys.modules.pop("app.main", None)
-    try:
-        with pytest.raises(RuntimeError, match="app.main is not loaded"):
-            MainAttrProxy("_missing")._target()
-    finally:
-        if original_main is not None:
-            sys.modules["app.main"] = original_main
-
-
-def test_api_symbol_export_and_proxy_installation() -> None:
-    main_holder = types.ModuleType("main_holder")
-    source_module = types.ModuleType("source_module")
-    skipped_module = types.ModuleType("skipped_module")
-    target_module = types.ModuleType("target_module")
-    source_module._EXPORTED_SYMBOLS = {"exported": 7}
-    skipped_module._EXPORTED_SYMBOLS = []
-
-    export_api_symbols(main_holder, [source_module, skipped_module])
-    assert main_holder.exported == 7
-
-    install_main_compat_proxies([target_module], ["router", "exported"])
-    assert "router" not in vars(target_module)
-    assert isinstance(target_module.exported, MainAttrProxy)
-
-
-def test_proof_request_value_helpers() -> None:
-    assert main_module._paper_route_target_plan_audit_mode_value("deferred") is False
-    assert main_module._paper_route_target_plan_audit_mode_value("full") is True
-    assert main_module._paper_route_target_plan_audit_mode_value("off") is None
-    assert main_module._proof_kind_value("runtime_window") == "runtime_window"
-    assert main_module._proof_window_value("next") == "next"
-    assert main_module._proof_window_value("latest_closed") == "latest_closed"
-    assert main_module._proof_window_value("unexpected") == "auto"
+def test_proof_request_value_helpers_live_with_proofs_api() -> None:
+    assert proofs_api._paper_route_target_plan_audit_mode_value("deferred") is False
+    assert proofs_api._paper_route_target_plan_audit_mode_value("full") is True
+    assert proofs_api._paper_route_target_plan_audit_mode_value("off") is None
+    assert proofs_api._proof_kind_value("runtime_window") == "runtime_window"
+    assert proofs_api._proof_window_value("next") == "next"
+    assert proofs_api._proof_window_value("latest_closed") == "latest_closed"
+    assert proofs_api._proof_window_value("unexpected") == "auto"
 
     with pytest.raises(HTTPException) as exc_info:
-        main_module._proof_kind_value("paper_route")
+        proofs_api._proof_kind_value("paper_route")
     assert exc_info.value.status_code == 400
 
 
@@ -154,14 +91,14 @@ def test_trading_scheduler_for_proofs_creates_missing_scheduler() -> None:
     if hasattr(main_module.app.state, "trading_scheduler"):
         delattr(main_module.app.state, "trading_scheduler")
 
-    scheduler = main_module._trading_scheduler_for_proofs()
+    scheduler = proofs_api._trading_scheduler_for_proofs()
 
     assert isinstance(scheduler, TradingScheduler)
-    assert main_module._trading_scheduler_for_proofs() is scheduler
+    assert proofs_api._trading_scheduler_for_proofs() is scheduler
 
 
 def test_paper_route_probe_symbol_values_from_mapping() -> None:
-    assert main_module._paper_route_probe_symbol_values_from_mapping(
+    assert proofs_api._paper_route_probe_symbol_values_from_mapping(
         {
             "paper_route_probe_symbols": " aapl, AMZN ",
             "symbols": ["MSFT", "", "aapl"],

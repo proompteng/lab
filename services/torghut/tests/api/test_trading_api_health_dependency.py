@@ -507,7 +507,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_universe_source = original_source
 
     @patch(
-        "app.api.readiness_helpers_modules.evaluate_trading_health_payload._build_live_submission_gate_payload",
+        "app.api.readiness_helpers_modules.status_dependencies.build_api_live_submission_gate_payload",
         return_value={
             "allowed": True,
             "reason": "ready",
@@ -516,7 +516,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers_modules.evaluate_trading_health_payload._empirical_jobs_status"
+        "app.api.readiness_helpers_modules.status_dependencies.empirical_jobs_status"
     )
     @patch(
         "app.api.readiness_helpers_modules.evaluate_trading_health_payload.load_quant_evidence_status"
@@ -591,7 +591,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             app.state.trading_scheduler = scheduler
 
             with patch(
-                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._build_profitability_proof_floor_payload",
+                "app.api.readiness_helpers_modules.status_dependencies.build_profitability_proof_floor_payload",
                 return_value={
                     "route_state": "live_micro_candidate",
                     "capital_state": "live_allowed",

@@ -25,6 +25,8 @@ _consumer_evidence_summary_view: Any = getattr(
 _revenue_repair_topline_fields: Any = getattr(
     _trading_misc_modules, "_revenue_repair_topline_fields"
 )
+build_consumer_evidence_receipt_projection = _build_consumer_evidence_receipt_projection
+revenue_repair_topline_fields = _revenue_repair_topline_fields
 _build_trading_consumer_evidence_payload: Any = getattr(
     _trading_misc_modules, "_build_trading_consumer_evidence_payload"
 )
@@ -76,6 +78,8 @@ __all__ = (
     "_build_consumer_evidence_receipt_projection",
     "_consumer_evidence_summary_view",
     "_revenue_repair_topline_fields",
+    "build_consumer_evidence_receipt_projection",
+    "revenue_repair_topline_fields",
     "_build_trading_consumer_evidence_payload",
     "trading_consumer_evidence",
     "trading_metrics",

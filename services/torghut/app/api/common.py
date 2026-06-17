@@ -306,9 +306,6 @@ _SIMPLE_LANE_ALLOWED_REJECT_REASONS = {
 
 
 def main_runtime_value(name: str, default: object | None = None) -> Any:
-    main_module = sys.modules.get("app.main")
-    if main_module is not None and hasattr(main_module, name):
-        return getattr(main_module, name)
     return globals().get(name, default)
 
 

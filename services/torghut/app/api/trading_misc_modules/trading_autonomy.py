@@ -4,6 +4,27 @@
 # ruff: noqa: F401,F403,F405,F811,F821
 from __future__ import annotations
 
+from ...bootstrap import (
+    env_csv as _env_csv,
+    env_json_string_list as _env_json_string_list,
+    evaluate_scheduler_status as _evaluate_scheduler_status,
+)
+from ..health_checks import (
+    build_hypothesis_runtime_payload as _build_hypothesis_runtime_payload,
+    empirical_jobs_status as _empirical_jobs_status,
+    forecast_service_status as _forecast_service_status,
+    lean_authority_status as _lean_authority_status,
+    load_tca_summary as _load_tca_summary,
+)
+from ..readiness_helpers import (
+    evaluate_database_contract as _evaluate_database_contract,
+)
+from ..trading_scheduler_state import get_trading_scheduler
+from ..vnext_helpers import (
+    build_autonomy_bridge_status as _build_autonomy_bridge_status,
+    safe_float as _safe_float,
+    safe_int as _safe_int,
+)
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
@@ -232,16 +253,21 @@ from .shared_context import (
     whitepaper_semantic_indexing_enabled,
     whitepaper_workflow_enabled,
 )
+from .autonomy_dependencies import (
+    apply_status_read_statement_timeout as _apply_status_read_statement_timeout,
+    build_autonomy_capital_replay_projection as _build_autonomy_capital_replay_projection,
+    load_route_provenance_summary as _load_route_provenance_summary,
+    rollback_status_read_session as _rollback_status_read_session,
+    sqlalchemy_error_indicates_statement_timeout as _sqlalchemy_error_indicates_statement_timeout,
+    unavailable_runtime_ledger_portfolio_summary as _unavailable_runtime_ledger_portfolio_summary,
+)
 
 
 @router.get("/trading/autonomy")
 def trading_autonomy() -> dict[str, object]:
     """Return autonomous control-plane status and last lane artifacts."""
 
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
     state = scheduler.state
     active_simulation_context = active_simulation_runtime_context()
     capital_replay_projection = _build_autonomy_capital_replay_projection(scheduler)
@@ -532,10 +558,7 @@ def _build_current_evidence_epoch(
 ) -> EvidenceEpoch:
     observed_at = datetime.now(timezone.utc)
     receipts: list[EvidenceReceipt] = []
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
     trading_status_ok, _scheduler_payload = _evaluate_scheduler_status(scheduler)
 
     try:
@@ -798,10 +821,7 @@ def trading_autonomy_evidence_continuity(
 ) -> dict[str, object]:
     """Return latest evidence continuity check and optionally force a refresh."""
 
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
 
     if refresh:
         report = evaluate_evidence_continuity(
@@ -840,10 +860,7 @@ def trading_llm_evaluation(session: Session = Depends(get_session)) -> JSONRespo
 def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
     """Expose Prometheus-formatted trading metrics counters."""
 
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
     metrics = scheduler.state.metrics
     market_context_status = scheduler.market_context_status()
     shorting_metadata_status = scheduler.shorting_metadata_status()

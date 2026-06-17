@@ -33,23 +33,29 @@ from .common import (
     timedelta,
     timezone,
 )
-from .proxy import MainAttrProxy, capture_module_exports
+from .application import get_app
+from .health_checks import (
+    build_api_live_submission_gate_payload,
+    build_hypothesis_runtime_payload,
+    empirical_jobs_status,
+    load_tca_summary,
+)
+from .proxy import capture_module_exports
+from .runtime_profitability_helpers import (
+    load_runtime_profitability_gate_rollback_attribution as _load_runtime_profitability_gate_rollback_attribution,
+)
+from .vnext_helpers import (
+    decimal_average as _decimal_average,
+    decimal_percentile as _decimal_percentile,
+    decimal_to_string as _decimal_to_string,
+    normalized_adapter_name as _normalized_adapter_name,
+    safe_int as _safe_int,
+)
 
-_build_hypothesis_runtime_payload = MainAttrProxy("_build_hypothesis_runtime_payload")
-_build_live_submission_gate_payload = MainAttrProxy(
-    "_build_live_submission_gate_payload"
-)
-_decimal_average = MainAttrProxy("_decimal_average")
-_decimal_percentile = MainAttrProxy("_decimal_percentile")
-_decimal_to_string = MainAttrProxy("_decimal_to_string")
-_empirical_jobs_status = MainAttrProxy("_empirical_jobs_status")
-_load_runtime_profitability_gate_rollback_attribution = MainAttrProxy(
-    "_load_runtime_profitability_gate_rollback_attribution"
-)
-_load_tca_summary = MainAttrProxy("_load_tca_summary")
-_normalized_adapter_name = MainAttrProxy("_normalized_adapter_name")
-_safe_int = MainAttrProxy("_safe_int")
-app = MainAttrProxy("app")
+_build_hypothesis_runtime_payload = build_hypothesis_runtime_payload
+_build_live_submission_gate_payload = build_api_live_submission_gate_payload
+_empirical_jobs_status = empirical_jobs_status
+_load_tca_summary = load_tca_summary
 router = APIRouter()
 
 
@@ -59,10 +65,13 @@ def trading_runtime_profitability(
 ) -> JSONResponse:
     """Return bounded runtime profitability evidence for operator dashboards."""
 
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    current_app = get_app()
+    scheduler: TradingScheduler | None = getattr(
+        current_app.state, "trading_scheduler", None
+    )
     if scheduler is None:
         scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+        current_app.state.trading_scheduler = scheduler
 
     empirical_jobs = _empirical_jobs_status()
     quant_evidence = load_quant_evidence_status(
@@ -458,9 +467,13 @@ def _load_runtime_profitability_realized_pnl_summary(
     }
 
 
+aggregate_tca_rows = _aggregate_tca_rows
+
+
 __all__ = [
     "trading_runtime_profitability",
     "_aggregate_tca_rows",
+    "aggregate_tca_rows",
     "_new_tca_aggregate",
     "_update_tca_aggregate",
     "_finalize_tca_aggregates",

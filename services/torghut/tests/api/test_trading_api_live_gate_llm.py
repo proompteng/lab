@@ -16,7 +16,7 @@ from tests.api.trading_api_support import (
 
 class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
     def test_trading_status_includes_llm_evaluation(self) -> None:
-        with patch("app.main.SessionLocal", self.session_local):
+        with patch("app.api.trading_status.SessionLocal", self.session_local):
             response = self.client.get("/trading/status")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -149,7 +149,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
 
             with (
                 patch(
-                    "app.main._build_hypothesis_runtime_payload",
+                    "app.api.status_helpers._build_hypothesis_runtime_payload",
                     return_value=(
                         {
                             "registry_loaded": True,
@@ -240,7 +240,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
 
             with (
                 patch(
-                    "app.main._build_hypothesis_runtime_payload",
+                    "app.api.status_helpers._build_hypothesis_runtime_payload",
                     return_value=(
                         {
                             "registry_loaded": True,
@@ -261,7 +261,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.main.load_quant_evidence_status",
+                    "app.api.trading_status.load_quant_evidence_status",
                     return_value={
                         "required": True,
                         "ok": False,
@@ -384,7 +384,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
 
             with (
                 patch(
-                    "app.main._build_hypothesis_runtime_payload",
+                    "app.api.status_helpers._build_hypothesis_runtime_payload",
                     return_value=(
                         {
                             "registry_loaded": True,
@@ -430,7 +430,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.main.load_quant_evidence_status",
+                    "app.api.trading_status.load_quant_evidence_status",
                     return_value={
                         "required": True,
                         "ok": True,
@@ -448,7 +448,11 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     return_value=shared_gate,
                 ),
                 patch(
-                    "app.main._build_live_submission_gate_payload",
+                    "app.api.readiness_helpers_modules.status_dependencies.build_api_live_submission_gate_payload",
+                    return_value=shared_gate,
+                ),
+                patch(
+                    "app.api.runtime_profitability._build_live_submission_gate_payload",
                     return_value=shared_gate,
                 ),
             ):

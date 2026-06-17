@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from app.api import proofs as proofs_api
+
 from tests.api.trading_api_support import (
     Any,
     TradingApiTestCaseBase,
     _load_external_paper_route_target_plan,
     _merge_external_paper_route_target_plan,
     json,
-    main_module,
     os,
     paper_route_target_plan_probe_symbols,
     patch,
@@ -195,7 +196,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             settings.trading_paper_route_target_plan_url = "http://torghut.example/plan"
             settings.trading_paper_route_target_plan_timeout_seconds = 7
             with patch(
-                "app.main._fetch_paper_route_target_plan_url",
+                "app.api.proofs._fetch_paper_route_target_plan_url",
                 return_value={"targets": [{"candidate_id": "candidate"}]},
             ) as fetch:
                 plan = _load_external_paper_route_target_plan()
@@ -212,8 +213,8 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
 
     def test_load_external_paper_route_target_plan_rejects_self_reference(self) -> None:
         original_target_plan_url = settings.trading_paper_route_target_plan_url
-        original_cache = main_module._paper_route_target_plan_success_cache
-        main_module._paper_route_target_plan_success_cache = None
+        original_cache = proofs_api._paper_route_target_plan_success_cache
+        proofs_api._paper_route_target_plan_success_cache = None
         try:
             settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
             with (
@@ -225,22 +226,20 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                         "NAMESPACE": "",
                     },
                 ),
-                patch("app.main.HTTPConnection") as connection,
+                patch("app.api.proofs.HTTPConnection") as connection,
             ):
                 plan = _load_external_paper_route_target_plan()
             connection.assert_not_called()
         finally:
             settings.trading_paper_route_target_plan_url = original_target_plan_url
-            main_module._paper_route_target_plan_success_cache = original_cache
+            proofs_api._paper_route_target_plan_success_cache = original_cache
 
         self.assertEqual(plan["load_error"], "paper_route_target_plan_self_reference")
 
     def test_paper_route_target_plan_self_reference_requires_host(self) -> None:
         parsed = urlsplit("/trading/paper-route-target-plan")
 
-        self.assertFalse(
-            main_module._paper_route_target_plan_url_points_to_self(parsed)
-        )
+        self.assertFalse(proofs_api._paper_route_target_plan_url_points_to_self(parsed))
 
     def test_paper_route_target_plan_self_reference_matches_current_service(
         self,
@@ -257,7 +256,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             },
         ):
             self.assertTrue(
-                main_module._paper_route_target_plan_url_points_to_self(parsed)
+                proofs_api._paper_route_target_plan_url_points_to_self(parsed)
             )
 
     def test_paper_route_target_plan_self_reference_allows_live_from_sim(
@@ -276,7 +275,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             },
         ):
             self.assertFalse(
-                main_module._paper_route_target_plan_url_points_to_self(parsed)
+                proofs_api._paper_route_target_plan_url_points_to_self(parsed)
             )
 
     def test_paper_route_target_plan_self_reference_defaults_torghut_namespace(
@@ -295,7 +294,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             },
         ):
             self.assertTrue(
-                main_module._paper_route_target_plan_url_points_to_self(parsed)
+                proofs_api._paper_route_target_plan_url_points_to_self(parsed)
             )
 
     def test_load_external_paper_route_target_plan_uses_recent_success_after_timeout(
@@ -303,10 +302,10 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
     ) -> None:
         original_target_plan_url = settings.trading_paper_route_target_plan_url
         original_timeout = settings.trading_paper_route_target_plan_timeout_seconds
-        original_cache = main_module._paper_route_target_plan_success_cache
+        original_cache = proofs_api._paper_route_target_plan_success_cache
         settings.trading_paper_route_target_plan_url = "http://torghut.example/plan"
         settings.trading_paper_route_target_plan_timeout_seconds = 7
-        main_module._paper_route_target_plan_success_cache = None
+        proofs_api._paper_route_target_plan_success_cache = None
         success_plan = {
             "source": "external_paper_route_target_plan",
             "targets": [
@@ -319,7 +318,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         try:
             with (
                 patch(
-                    "app.main._fetch_paper_route_target_plan_url",
+                    "app.api.proofs._fetch_paper_route_target_plan_url",
                     side_effect=[
                         success_plan,
                         {
@@ -330,7 +329,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                     ],
                 ),
                 patch(
-                    "app.main.time.time",
+                    "app.api.proofs.time.time",
                     side_effect=[1000.0, 1005.0, 1005.0, 1005.0],
                 ),
             ):
@@ -339,7 +338,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         finally:
             settings.trading_paper_route_target_plan_url = original_target_plan_url
             settings.trading_paper_route_target_plan_timeout_seconds = original_timeout
-            main_module._paper_route_target_plan_success_cache = original_cache
+            proofs_api._paper_route_target_plan_success_cache = original_cache
 
         self.assertEqual(
             first_plan["targets"][0]["candidate_id"],
@@ -361,12 +360,12 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         self,
     ) -> None:
         original_target_plan_url = settings.trading_paper_route_target_plan_url
-        original_cache = main_module._paper_route_target_plan_success_cache
+        original_cache = proofs_api._paper_route_target_plan_success_cache
         settings.trading_paper_route_target_plan_url = "http://torghut.example/plan"
-        main_module._paper_route_target_plan_success_cache = None
+        proofs_api._paper_route_target_plan_success_cache = None
         try:
             with patch(
-                "app.main._fetch_paper_route_target_plan_url",
+                "app.api.proofs._fetch_paper_route_target_plan_url",
                 return_value={
                     "load_error": "paper_route_target_plan_fetch_failed:timed out"
                 },
@@ -377,37 +376,37 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                 "paper_route_target_plan_fetch_failed:timed out",
             )
 
-            main_module._paper_route_target_plan_success_cache = ("sentinel", 1000.0)
-            main_module._remember_external_paper_route_target_plan_success(
+            proofs_api._paper_route_target_plan_success_cache = ("sentinel", 1000.0)
+            proofs_api._remember_external_paper_route_target_plan_success(
                 {"targets": []}
             )
             self.assertEqual(
-                main_module._paper_route_target_plan_success_cache,
+                proofs_api._paper_route_target_plan_success_cache,
                 ("sentinel", 1000.0),
             )
 
-            main_module._paper_route_target_plan_success_cache = None
+            proofs_api._paper_route_target_plan_success_cache = None
             self.assertEqual(
-                main_module._cached_external_paper_route_target_plan_success(
+                proofs_api._cached_external_paper_route_target_plan_success(
                     "paper_route_target_plan_fetch_failed:missing"
                 ),
                 {},
             )
 
-            main_module._paper_route_target_plan_success_cache = (
+            proofs_api._paper_route_target_plan_success_cache = (
                 {"targets": [{"candidate_id": "expired"}]},
                 1000.0,
             )
-            with patch("app.main.time.time", return_value=2000.0):
+            with patch("app.api.proofs.time.time", return_value=2000.0):
                 self.assertEqual(
-                    main_module._cached_external_paper_route_target_plan_success(
+                    proofs_api._cached_external_paper_route_target_plan_success(
                         "paper_route_target_plan_fetch_failed:expired"
                     ),
                     {},
                 )
         finally:
             settings.trading_paper_route_target_plan_url = original_target_plan_url
-            main_module._paper_route_target_plan_success_cache = original_cache
+            proofs_api._paper_route_target_plan_success_cache = original_cache
 
     def test_merge_external_paper_route_target_plan_fails_closed(self) -> None:
         local_gate = {
@@ -416,14 +415,16 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             }
         }
         with patch(
-            "app.main._load_external_paper_route_target_plan"
+            "app.api.proofs._load_external_paper_route_target_plan"
         ) as external_loader:
             self.assertEqual(
                 _merge_external_paper_route_target_plan(local_gate), local_gate
             )
         external_loader.assert_not_called()
 
-        with patch("app.main._load_external_paper_route_target_plan", return_value={}):
+        with patch(
+            "app.api.proofs._load_external_paper_route_target_plan", return_value={}
+        ):
             self.assertEqual(_merge_external_paper_route_target_plan({}), {})
 
         original_target_plan_url = settings.trading_paper_route_target_plan_url
@@ -432,7 +433,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                 "http://torghut.example/paper-route-plan"
             )
             with patch(
-                "app.main._load_external_paper_route_target_plan",
+                "app.api.proofs._load_external_paper_route_target_plan",
                 return_value={},
             ):
                 self.assertEqual(
@@ -448,7 +449,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                 "http://torghut.example/paper-route-plan"
             )
             with patch(
-                "app.main._load_external_paper_route_target_plan",
+                "app.api.proofs._load_external_paper_route_target_plan",
                 return_value={"targets": []},
             ):
                 self.assertEqual(
@@ -459,7 +460,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             settings.trading_paper_route_target_plan_url = original_target_plan_url
 
         with patch(
-            "app.main._load_external_paper_route_target_plan",
+            "app.api.proofs._load_external_paper_route_target_plan",
             return_value={"load_error": "paper_route_target_plan_missing"},
         ):
             gate = _merge_external_paper_route_target_plan({})
@@ -474,7 +475,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                 "http://torghut.example/paper-route-plan"
             )
             with patch(
-                "app.main._load_external_paper_route_target_plan",
+                "app.api.proofs._load_external_paper_route_target_plan",
                 return_value={"load_error": "paper_route_target_plan_missing"},
             ):
                 gate = _merge_external_paper_route_target_plan(local_gate)
@@ -517,7 +518,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                 "http://torghut.example/paper-route-plan"
             )
             with patch(
-                "app.main._load_external_paper_route_target_plan",
+                "app.api.proofs._load_external_paper_route_target_plan",
                 return_value={"load_error": "paper_route_target_plan_timeout"},
             ):
                 gate = _merge_external_paper_route_target_plan(safe_local_gate)
@@ -545,7 +546,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                 "http://torghut.example/paper-route-plan"
             )
             with patch(
-                "app.main._load_external_paper_route_target_plan",
+                "app.api.proofs._load_external_paper_route_target_plan",
                 return_value={
                     "promotion_allowed": True,
                     "final_promotion_allowed": True,
@@ -569,7 +570,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             settings.trading_paper_route_target_plan_url = original_target_plan_url
 
         with patch(
-            "app.main._load_external_paper_route_target_plan",
+            "app.api.proofs._load_external_paper_route_target_plan",
             return_value={
                 "paper_route_target_plan_cache_status": "stale_success",
                 "paper_route_target_plan_last_load_error": "paper_route_timeout",

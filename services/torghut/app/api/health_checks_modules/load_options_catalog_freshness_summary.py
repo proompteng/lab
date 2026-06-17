@@ -4,6 +4,7 @@
 # ruff: noqa: F401,F403,F405,F811,F821
 from __future__ import annotations
 
+from ..application import get_app
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
@@ -255,6 +256,37 @@ from .remember_alpaca_success import (
     store_options_catalog_freshness_summary as _store_options_catalog_freshness_summary,
     tca_row_payload as _tca_row_payload,
 )
+
+
+def _apply_status_read_statement_timeout(
+    session: Session,
+    *,
+    milliseconds: int,
+) -> None:
+    from ..status_helpers import (
+        apply_status_read_statement_timeout as apply_statement_timeout,
+    )
+
+    apply_statement_timeout(session, milliseconds=milliseconds)
+
+
+def _budget_unavailable_hypothesis_runtime_payload(
+    *,
+    reason: str,
+) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
+    from ..status_helpers import (
+        budget_unavailable_hypothesis_runtime_payload as unavailable_payload,
+    )
+
+    return unavailable_payload(reason=reason)
+
+
+def _resolve_universe_resolver_for_readiness(scheduler: TradingScheduler) -> Any | None:
+    from ..readiness_helpers import (
+        resolve_universe_resolver_for_readiness as resolve_universe_resolver,
+    )
+
+    return resolve_universe_resolver(scheduler)
 
 
 def _load_options_catalog_freshness_summary(
@@ -621,7 +653,10 @@ def _build_live_submission_gate_payload(
     resolved_clickhouse_ta_status = clickhouse_ta_status
     if resolved_clickhouse_ta_status is None:
         resolved_clickhouse_ta_status = _load_clickhouse_ta_status(
-            cast(TradingScheduler | None, getattr(app.state, "trading_scheduler", None))
+            cast(
+                TradingScheduler | None,
+                getattr(get_app().state, "trading_scheduler", None),
+            )
         )
     if settings.trading_pipeline_mode == "simple":
         gate = build_live_submission_gate_payload(

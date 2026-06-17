@@ -100,7 +100,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 side_effect=_load_llm_evaluation,
             ),
             patch("app.api.status_helpers._load_tca_summary", side_effect=_load_tca),
-            patch("app.main.SessionLocal", self.session_local),
+            patch("app.api.trading_status.SessionLocal", self.session_local),
         ):
             response = self.client.get("/trading/status")
 
@@ -142,11 +142,11 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.maintenance._evaluate_trading_health_payload",
                 return_value=({"status": "degraded"}, 503),
             ),
             patch(
-                "app.main.trading_status",
+                "app.api.maintenance.trading_status",
                 return_value={
                     "mode": "live",
                     "pipeline_mode": "simple",
@@ -154,10 +154,13 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 },
             ),
             patch(
-                "app.main._load_jangar_verify_trust_foreclosure_board",
+                "app.api.maintenance._load_jangar_verify_trust_foreclosure_board",
                 return_value=board,
             ),
-            patch("app.main.build_revenue_repair_digest", side_effect=_build_digest),
+            patch(
+                "app.api.maintenance.build_revenue_repair_digest",
+                side_effect=_build_digest,
+            ),
         ):
             response = self.client.get("/trading/revenue-repair")
 
@@ -220,11 +223,11 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.maintenance._evaluate_trading_health_payload",
                 return_value=({"status": "degraded"}, 503),
             ),
             patch(
-                "app.main.trading_status",
+                "app.api.maintenance.trading_status",
                 return_value={
                     "mode": "live",
                     "pipeline_mode": "simple",
@@ -232,10 +235,13 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 },
             ),
             patch(
-                "app.main._load_jangar_dependency_quorum_payload",
+                "app.api.maintenance._load_jangar_dependency_quorum_payload",
                 return_value=dependency_quorum,
             ),
-            patch("app.main.build_revenue_repair_digest", side_effect=_build_digest),
+            patch(
+                "app.api.maintenance.build_revenue_repair_digest",
+                side_effect=_build_digest,
+            ),
         ):
             response = self.client.get("/trading/revenue-repair")
 
@@ -266,10 +272,14 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
         }
 
         with (
-            patch("app.main.resolve_hypothesis_dependency_quorum") as dependency_fetch,
-            patch("app.main.load_jangar_route_continuity_packet") as continuity_fetch,
             patch(
-                "app.main._forecast_service_status",
+                "app.api.trading_misc_modules.shared_context.resolve_hypothesis_dependency_quorum"
+            ) as dependency_fetch,
+            patch(
+                "app.api.trading_misc_modules.shared_context.load_jangar_route_continuity_packet"
+            ) as continuity_fetch,
+            patch(
+                "app.api.trading_status._forecast_service_status",
                 return_value={
                     "status": "healthy",
                     "authority": "empirical",
@@ -277,11 +287,11 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 },
             ),
             patch(
-                "app.main._lean_authority_status",
+                "app.api.trading_status._lean_authority_status",
                 return_value={"status": "healthy", "authority": "empirical"},
             ),
             patch(
-                "app.main._empirical_jobs_status",
+                "app.api.trading_status._empirical_jobs_status",
                 return_value={
                     "status": "healthy",
                     "ready": True,
@@ -290,20 +300,20 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 },
             ),
             patch(
-                "app.main.load_quant_evidence_status",
+                "app.api.trading_status.load_quant_evidence_status",
                 return_value={"ok": True, "required": False},
             ),
-            patch("app.main._load_tca_summary", return_value={}),
+            patch("app.api.health_checks._load_tca_summary", return_value={}),
             patch(
-                "app.main._build_live_submission_gate_payload",
+                "app.api.trading_status._build_live_submission_gate_payload",
                 return_value=live_submission_gate,
             ),
             patch(
-                "app.main.build_profitability_proof_floor_receipt",
+                "app.api.proof_floor_payloads_modules.shared_context.build_profitability_proof_floor_receipt",
                 return_value=proof_floor,
             ),
             patch(
-                "app.main._readiness_dependency_snapshot",
+                "app.api.readiness_helpers.readiness_dependency_snapshot",
                 return_value=(
                     {
                         "database": {
@@ -316,7 +326,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                     True,
                 ),
             ) as readiness_snapshot,
-            patch("app.main.SessionLocal", self.session_local),
+            patch("app.api.trading_status.SessionLocal", self.session_local),
         ):
             response = self.client.get("/trading/consumer-evidence")
             summary_response = self.client.get(
@@ -445,7 +455,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
             executable_alpha_settlement["schema_version"],
             "torghut.executable-alpha-settlement-slots-ref.v1",
         )
-        self.assertEqual(executable_alpha_settlement["status"], "inactive")
+        self.assertEqual(executable_alpha_settlement["status"], "blocked")
         self.assertEqual(executable_alpha_settlement["max_notional"], "0")
         alpha_repair_closure = payload["alpha_repair_closure_board"]
         self.assertEqual(
@@ -700,10 +710,14 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
         }
 
         with (
-            patch("app.main.resolve_hypothesis_dependency_quorum") as dependency_fetch,
-            patch("app.main.load_jangar_route_continuity_packet") as continuity_fetch,
             patch(
-                "app.main.load_jangar_dependency_quorum",
+                "app.api.trading_misc_modules.shared_context.resolve_hypothesis_dependency_quorum"
+            ) as dependency_fetch,
+            patch(
+                "app.api.trading_misc_modules.shared_context.load_jangar_route_continuity_packet"
+            ) as continuity_fetch,
+            patch(
+                "app.api.trading_misc_modules.shared_context.load_jangar_dependency_quorum",
                 return_value=JangarDependencyQuorumStatus(
                     decision="allow",
                     reasons=[],
@@ -713,7 +727,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 ),
             ) as jangar_fetch,
             patch(
-                "app.main._forecast_service_status",
+                "app.api.trading_status._forecast_service_status",
                 return_value={
                     "status": "healthy",
                     "authority": "empirical",
@@ -721,11 +735,11 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 },
             ),
             patch(
-                "app.main._lean_authority_status",
+                "app.api.trading_status._lean_authority_status",
                 return_value={"status": "healthy", "authority": "empirical"},
             ),
             patch(
-                "app.main._empirical_jobs_status",
+                "app.api.trading_status._empirical_jobs_status",
                 return_value={
                     "status": "healthy",
                     "ready": True,
@@ -734,20 +748,20 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 },
             ),
             patch(
-                "app.main.load_quant_evidence_status",
+                "app.api.trading_status.load_quant_evidence_status",
                 return_value={"ok": True, "required": False},
             ),
-            patch("app.main._load_tca_summary", return_value={}),
+            patch("app.api.health_checks._load_tca_summary", return_value={}),
             patch(
-                "app.main._build_live_submission_gate_payload",
+                "app.api.trading_status._build_live_submission_gate_payload",
                 return_value=live_submission_gate,
             ),
             patch(
-                "app.main.build_profitability_proof_floor_receipt",
+                "app.api.proof_floor_payloads_modules.shared_context.build_profitability_proof_floor_receipt",
                 return_value=proof_floor,
             ),
             patch(
-                "app.main._readiness_dependency_snapshot",
+                "app.api.readiness_helpers.readiness_dependency_snapshot",
                 return_value=(
                     {
                         "database": {
@@ -760,7 +774,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                     True,
                 ),
             ),
-            patch("app.main.SessionLocal", self.session_local),
+            patch("app.api.trading_status.SessionLocal", self.session_local),
         ):
             response = self.client.get("/trading/consumer-evidence")
 
@@ -811,11 +825,11 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.main.hypothesis_registry_requires_dependency_capability",
+                "app.api.proof_floor_payloads_modules.build_jangar_reliability_settlement_ref.hypothesis_registry_requires_dependency_capability",
                 return_value=True,
             ) as requires_capability,
             patch(
-                "app.main.load_jangar_route_continuity_packet",
+                "app.api.proof_floor_payloads_modules.build_jangar_reliability_settlement_ref.load_jangar_route_continuity_packet",
                 return_value=expected_packet,
             ) as continuity_fetch,
         ):
