@@ -21,7 +21,7 @@ from ..evidence_contracts import (
 from ..features import SignalFeatures, extract_signal_features
 from ..models import SignalEnvelope, StrategyDecision
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .signal_source import (
     FillPriceErrorBudgetReportV1,

@@ -106,7 +106,7 @@ from app.trading.discovery.stochastic_liquidity_resilience_stress import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v20"

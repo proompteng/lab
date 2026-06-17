@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.request import urlopen
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 SCHEMA_VERSION = "torghut.trading-readiness-verification.v1"

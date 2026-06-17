@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.request import urlopen
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from . import shared_context as _shared_context
 from . import target_plan_helpers as _target_plan_helpers

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F811
 from .common import (
     Any,
     Path,

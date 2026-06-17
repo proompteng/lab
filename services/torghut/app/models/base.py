@@ -48,14 +48,14 @@ class GUID(TypeDecorator[uuid.UUID]):
             return dialect.type_descriptor(PGUUID(as_uuid=True))
         return dialect.type_descriptor(CHAR(36))
 
-    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:  # noqa: ANN401 - SQLAlchemy typing
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
         if value is None:
             return value
         if isinstance(value, uuid.UUID):
             return str(value)
         return str(uuid.UUID(str(value)))
 
-    def process_result_value(self, value: Any, dialect: Dialect) -> Any:  # noqa: ANN401 - SQLAlchemy typing
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:
         if value is None:
             return value
         if isinstance(value, uuid.UUID):
@@ -78,7 +78,7 @@ class JSONType(TypeDecorator[Any]):
             return dialect.type_descriptor(JSONB())
         return dialect.type_descriptor(JSON())
 
-    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:  # noqa: ANN401 - SQLAlchemy typing
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:
         """Ensure JSON payloads contain only JSON-serializable primitives.
 
         Production incidents have been triggered by uuid.UUID values leaking into JSONB columns,

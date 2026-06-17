@@ -17,7 +17,7 @@ from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 def _stable_float(value: float) -> str:

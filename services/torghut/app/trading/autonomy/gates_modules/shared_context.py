@@ -10,7 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 GateStatus = Literal["pass", "fail"]

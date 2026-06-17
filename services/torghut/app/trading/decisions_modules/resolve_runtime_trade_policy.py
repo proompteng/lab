@@ -52,7 +52,7 @@ from ..strategy_runtime import (
     StrategyRuntime,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401, F821
 
 from .shared_context import (
     DecisionRuntimeTelemetry,

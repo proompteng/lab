@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     DOC29_LIVE_SCALE_GATE,

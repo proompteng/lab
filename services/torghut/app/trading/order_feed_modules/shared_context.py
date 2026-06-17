@@ -30,7 +30,7 @@ from ..tca import upsert_execution_tca_metric
 from ..tigerbeetle_journal import TigerBeetleLedgerJournal
 from ..tigerbeetle_reconcile import reconcile_tigerbeetle_transfers
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 logger = logging.getLogger(__name__)

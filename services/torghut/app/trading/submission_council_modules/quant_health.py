@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 from .common import (
     Any,
     AutoresearchCandidateSpec,

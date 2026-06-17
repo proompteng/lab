@@ -16,7 +16,7 @@ from ..quantity_rules import (
     resolve_quantity_resolution,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     AggregatedIntent,

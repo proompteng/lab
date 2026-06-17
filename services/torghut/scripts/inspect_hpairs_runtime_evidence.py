@@ -298,7 +298,7 @@ def load_dsn_rows(
     engine = create_engine(dsn)
     session_factory = sessionmaker(bind=engine)
     with session_factory() as session:
-        return source_census._load_session_rows(  # noqa: SLF001 - existing script helper is the repo's bounded reader.
+        return source_census._load_session_rows(
             cast(Session, session),
             identity=source_census.CensusIdentity(
                 hypothesis_id=identity.hypothesis_id,
@@ -319,7 +319,7 @@ def load_default_session_rows(
     ended_at: datetime | None,
 ) -> source_census.CensusSourceRows:
     with SessionLocal() as session:
-        return source_census._load_session_rows(  # noqa: SLF001 - existing script helper is the repo's bounded reader.
+        return source_census._load_session_rows(
             cast(Session, session),
             identity=source_census.CensusIdentity(
                 hypothesis_id=identity.hypothesis_id,
@@ -356,7 +356,7 @@ def load_status_payload(
         return {}, None, None
     try:
         request = urllib.request.Request(status_service_url, method="GET")
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 - explicit read-only URL supplied by operator.
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             loaded = json.loads(response.read().decode("utf-8"))
     except (OSError, json.JSONDecodeError, urllib.error.URLError) as exc:
         return {}, status_service_url, str(exc)

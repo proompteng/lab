@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Mapping, Sequence, cast
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 EVIDENCE_BUNDLE_SCHEMA_VERSION = "torghut.candidate-evidence-bundle.v1"

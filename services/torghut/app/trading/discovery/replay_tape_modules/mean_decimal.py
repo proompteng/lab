@@ -20,7 +20,7 @@ from app.trading.session_context import (
     regular_session_open_utc_for,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     HPAIRS_CLUSTERLOB_FEATURE_VERSION,

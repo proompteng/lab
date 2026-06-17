@@ -158,14 +158,14 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
             scheduler.state.market_context_alert_active = True
             scheduler.state.market_context_alert_reason = "market_context_stale"
             executor = OrderExecutor()
-            executor._shorting_metadata_status.update(  # noqa: SLF001
+            executor._shorting_metadata_status.update(
                 {
                     "account_ready": False,
                     "last_refresh_at": "2026-03-05T15:30:00+00:00",
                     "last_error": "account lookup unavailable",
                 }
             )
-            scheduler._pipeline = type(  # noqa: SLF001
+            scheduler._pipeline = type(
                 "PipelineStub",
                 (),
                 {"executor": executor, "llm_review_engine": None},

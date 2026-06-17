@@ -88,7 +88,7 @@ import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
 )
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     LatestCompleteWindowRequirement,

@@ -26,8 +26,6 @@ from ..schemas import (
     DSPyPromotionRecord,
 )
 
-# ruff: noqa: F401,F811,F821
-
 
 DSPyWorkflowLane = Literal[
     "dataset-build", "compile", "eval", "gepa-experiment", "promote"

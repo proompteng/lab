@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F811
 from .common import (
     ADVISOR_FALLBACK_SLO_CONTRACT_SCHEMA_VERSION,
     ADVISOR_FALLBACK_SLO_REQUIRED_REASONS,

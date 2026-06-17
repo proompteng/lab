@@ -69,7 +69,7 @@ def _post_repair(url: str, *, timeout_seconds: float) -> dict[str, Any]:
         },
         method="POST",
     )
-    with urllib.request.urlopen(  # noqa: S310 - in-cluster operator URL supplied by GitOps/CLI.
+    with urllib.request.urlopen(
         request,
         timeout=max(timeout_seconds, 1.0),
     ) as response:

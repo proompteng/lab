@@ -156,6 +156,6 @@ __all__ = [
     "TradeCursor",
 ]
 
-from ..trading import simulation_progress as _simulation_progress  # noqa: E402
+from ..trading import simulation_progress as _simulation_progress
 
 assert _simulation_progress is not None

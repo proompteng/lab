@@ -34,7 +34,7 @@ from ..strategy_specs import (
     strategy_type_supports_spec_v2,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 if TYPE_CHECKING:
     from .evaluate_microbar_cross_sectional import (
