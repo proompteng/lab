@@ -458,7 +458,17 @@ jobs:
 
       - name: Pylint file length gate
         working-directory: services/torghut
-        run: uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo_root="$(git rev-parse --show-toplevel)"
+          base_spec="origin/${GITHUB_BASE_REF:-main}"
+          base="$(git -C "${repo_root}" merge-base "${base_spec}" HEAD 2>/dev/null || git -C "${repo_root}" rev-parse HEAD^)"
+
+          uv run --frozen python scripts/run_pylint_torghut_file_length_gate.py \
+            --base "${base}" \
+            app scripts tests migrations
 
       - name: Pylint design complexity inventory (non-blocking)
         continue-on-error: true
