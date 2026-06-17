@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Rank exact replay ledger artifacts with runtime-ledger PnL semantics."""
 
 from __future__ import annotations
@@ -176,9 +175,11 @@ parse_window_datetime = _parse_window_datetime
 positive_decimal = _positive_decimal
 profit_factor = _profit_factor
 ranking_sort_key = _ranking_sort_key
+row_has_fill_status = _row_has_fill_status
 safe_divide = _safe_divide
 symbols = _symbols
 text = _text
+utc = _utc
 
 __all__ = (
     "best_day_share",
@@ -191,7 +192,9 @@ __all__ = (
     "positive_decimal",
     "profit_factor",
     "ranking_sort_key",
+    "row_has_fill_status",
     "safe_divide",
     "symbols",
     "text",
+    "utc",
 )

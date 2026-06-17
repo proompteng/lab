@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Walk-forward evaluation harness for offline backtests."""
 
 from __future__ import annotations
@@ -149,6 +148,16 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+# Public aliases used by split-module consumers.
+as_int = _as_int
+bootstrap_mean_samples = _bootstrap_mean_samples
+decimal_mean = _decimal_mean
+decimal_std = _decimal_std
+quantile_decimal = _quantile_decimal
+reproducibility_payload = _reproducibility_payload
+report_fold_net_pnls = _report_fold_net_pnls
+safe_ratio = _safe_ratio
+
 __all__ = [
     "FixtureSignalSource",
     "FillPriceErrorBudgetReportV1",
@@ -162,11 +171,19 @@ __all__ = [
     "WalkForwardDecision",
     "WalkForwardFold",
     "WalkForwardResults",
+    "as_int",
+    "bootstrap_mean_samples",
     "build_fill_price_error_budget_report_v1",
+    "decimal_mean",
+    "decimal_std",
     "build_profitability_evidence_v4",
     "execute_profitability_benchmark_v4",
     "generate_walk_forward_folds",
+    "quantile_decimal",
+    "reproducibility_payload",
+    "report_fold_net_pnls",
     "run_walk_forward",
+    "safe_ratio",
     "validate_profitability_evidence_v4",
     "write_walk_forward_results",
 ]

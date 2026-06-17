@@ -1,10 +1,8 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Kafka-backed order-feed ingestion and persistence helpers."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any, Callable, Mapping, cast
 
 from sqlalchemy import func, select
@@ -21,28 +19,28 @@ from ...models import (
 
 
 from .shared_context import (
-    EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
-    HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
-    NormalizationResult,
+    EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION as EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
+    HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION as HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+    NormalizationResult as NormalizationResult,
     NormalizedOrderEvent,
     ORDER_FEED_SOURCE_REVISION,
     logger,
 )
 
-from .order_feed_ingestor import OrderFeedIngestor
+from .order_feed_ingestor import OrderFeedIngestor as OrderFeedIngestor
 from .normalize_order_feed_record import (
-    apply_order_event_to_execution,
-    latest_order_event_for_execution,
-    link_order_events_to_execution,
-    normalize_order_feed_record,
-    persist_order_event,
+    apply_order_event_to_execution as apply_order_event_to_execution,
+    latest_order_event_for_execution as latest_order_event_for_execution,
+    link_order_events_to_execution as link_order_events_to_execution,
+    normalize_order_feed_record as normalize_order_feed_record,
+    persist_order_event as persist_order_event,
 )
 from .repair_order_feed_execution_links import (
-    backfill_order_feed_events_from_executions,
-    backfill_order_feed_source_windows,
-    repair_order_feed_execution_links,
-    repair_order_feed_execution_states,
-    repair_order_feed_fill_deltas,
+    backfill_order_feed_events_from_executions as backfill_order_feed_events_from_executions,
+    backfill_order_feed_source_windows as backfill_order_feed_source_windows,
+    repair_order_feed_execution_links as repair_order_feed_execution_links,
+    repair_order_feed_execution_states as repair_order_feed_execution_states,
+    repair_order_feed_fill_deltas as repair_order_feed_fill_deltas,
 )
 
 
@@ -212,53 +210,6 @@ def _upsert_order_feed_consumer_cursor_from_source(
         cursor.duplicate_event_count = int(cursor.duplicate_event_count or 0) + 1
     session.add(cursor)
     return True
-
-
-def _coerce_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        normalized = value.strip()
-        return normalized or None
-    return None
-
-
-def _coerce_datetime(value: Any) -> datetime | None:
-    text = _coerce_text(value)
-    if text is None:
-        return None
-    normalized = text.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _coerce_decimal(value: Any) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except (ArithmeticError, ValueError):
-        return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_mapping(value: Any) -> Mapping[str, Any] | None:
-    if isinstance(value, Mapping):
-        return cast(Mapping[str, Any], value)
-    return None
 
 
 def _is_stale_by_seq(execution: Execution, event: ExecutionOrderEvent) -> bool:

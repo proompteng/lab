@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Read-only H-PAIRS runtime authority proof verifier.
 
 This module deliberately only reads durable runtime-ledger buckets and turns them
@@ -26,7 +25,7 @@ from app.trading.runtime_ledger_proof_policy import (
 )
 from app.trading.runtime_ledger_source_authority import (
     EXECUTION_ECONOMICS_MISSING_BLOCKER,
-    ORDER_FEED_LIFECYCLE_MISSING_BLOCKER,
+    ORDER_FEED_LIFECYCLE_MISSING_BLOCKER as ORDER_FEED_LIFECYCLE_MISSING_BLOCKER,
     RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
     RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER,
     RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
@@ -62,17 +61,17 @@ from .shared_context import (
     AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER,
     AUTHORITY_TRADING_DAYS_BLOCKER,
     AUTHORITY_WORST_DAY_BLOCKER,
-    DEFAULT_HPAIRS_ACCOUNT_LABEL,
-    DEFAULT_HPAIRS_CANDIDATE_ID,
-    DEFAULT_HPAIRS_HYPOTHESIS_ID,
-    DEFAULT_HPAIRS_RUNTIME_STRATEGY,
-    HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION,
+    DEFAULT_HPAIRS_ACCOUNT_LABEL as DEFAULT_HPAIRS_ACCOUNT_LABEL,
+    DEFAULT_HPAIRS_CANDIDATE_ID as DEFAULT_HPAIRS_CANDIDATE_ID,
+    DEFAULT_HPAIRS_HYPOTHESIS_ID as DEFAULT_HPAIRS_HYPOTHESIS_ID,
+    DEFAULT_HPAIRS_RUNTIME_STRATEGY as DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+    HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION as HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION,
     RuntimeAuthorityEvidenceRow,
     DailyAccumulator as _DailyAccumulator,
     PROMOTION_GRADE_LEDGER_SCHEMAS as _PROMOTION_GRADE_LEDGER_SCHEMAS,
-    build_runtime_authority_report,
-    load_runtime_authority_rows,
-    runtime_authority_report_json,
+    build_runtime_authority_report as build_runtime_authority_report,
+    load_runtime_authority_rows as load_runtime_authority_rows,
+    runtime_authority_report_json as runtime_authority_report_json,
 )
 
 

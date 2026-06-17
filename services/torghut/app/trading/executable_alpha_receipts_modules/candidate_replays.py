@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Executable alpha receipt projection for zero-notional repair planning."""
 
 from __future__ import annotations
@@ -12,11 +11,11 @@ from typing import Any
 from .shared_context import (
     CAPITAL_REPLAY_BOARD_SCHEMA_VERSION,
     EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOT_SCHEMA_VERSION,
+    EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION as EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION,
+    EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION as EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION,
+    EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION as EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION,
+    EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_SCHEMA_VERSION as EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_SCHEMA_VERSION,
+    EXECUTABLE_ALPHA_SETTLEMENT_SLOT_SCHEMA_VERSION as EXECUTABLE_ALPHA_SETTLEMENT_SLOT_SCHEMA_VERSION,
     GraduationState,
     ALPHA_RUNTIME_REPLAY_CLASS as _ALPHA_RUNTIME_REPLAY_CLASS,
     BREADTH_HYPOTHESIS as _BREADTH_HYPOTHESIS,
@@ -33,9 +32,9 @@ from .shared_context import (
     text as _text,
 )
 from .build_executable_alpha_repair_receipts import (
-    build_executable_alpha_repair_receipts,
-    build_executable_alpha_settlement_slots,
-    compact_executable_alpha_settlement_slots,
+    build_executable_alpha_repair_receipts as build_executable_alpha_repair_receipts,
+    build_executable_alpha_settlement_slots as build_executable_alpha_settlement_slots,
+    compact_executable_alpha_settlement_slots as compact_executable_alpha_settlement_slots,
 )
 from .required_after_refs import (
     alpha_runtime_replay_item as _alpha_runtime_replay_item,

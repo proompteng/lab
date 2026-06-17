@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Kafka-backed order-feed ingestion and persistence helpers."""
 
 from __future__ import annotations
@@ -77,14 +76,6 @@ def _refresh_source_window_linkage_counts(*args: Any, **kwargs: Any) -> None:
     )
 
     refresh_linkage_counts(*args, **kwargs)
-
-
-def _stable_execution_source_offset(value: object) -> int:
-    from .resolve_execution_linkage_for_identity import (
-        stable_execution_source_offset,
-    )
-
-    return stable_execution_source_offset(value)
 
 
 def _source_offset_in_use(*args: Any, **kwargs: Any) -> bool:

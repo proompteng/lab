@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Evaluation report generation and governance gates for walk-forward runs."""
 
 from __future__ import annotations
@@ -16,23 +15,23 @@ from ..evaluation_trace import SweepCandidateResult
 
 
 from .evaluationreportconfig import (
-    EvaluationGateOutcome,
-    EvaluationGatePolicy,
+    EvaluationGateOutcome as EvaluationGateOutcome,
+    EvaluationGatePolicy as EvaluationGatePolicy,
     EvaluationImpactAssumptions,
-    EvaluationMetrics,
-    EvaluationReport,
-    EvaluationReportConfig,
-    MultipleTestingSummary,
-    PromotionEvidenceSummary,
-    PromotionRecommendation,
-    RobustnessFoldMetrics,
-    RobustnessReport,
+    EvaluationMetrics as EvaluationMetrics,
+    EvaluationReport as EvaluationReport,
+    EvaluationReportConfig as EvaluationReportConfig,
+    MultipleTestingSummary as MultipleTestingSummary,
+    PromotionEvidenceSummary as PromotionEvidenceSummary,
+    PromotionRecommendation as PromotionRecommendation,
+    RobustnessFoldMetrics as RobustnessFoldMetrics,
+    RobustnessReport as RobustnessReport,
     PositionState as _PositionState,
     ResolvedImpactInputs as _ResolvedImpactInputs,
     open_long as _open_long,
-    build_promotion_recommendation,
-    generate_evaluation_report,
-    write_evaluation_report,
+    build_promotion_recommendation as build_promotion_recommendation,
+    generate_evaluation_report as generate_evaluation_report,
+    write_evaluation_report as write_evaluation_report,
 )
 
 
