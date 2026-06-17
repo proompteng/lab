@@ -589,3 +589,104 @@ class TradingPipelineBase:
 
     def run_once(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
+
+    def _bounded_paper_route_execution_metadata(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _build_empirical_jobs_status(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _build_hypothesis_runtime_summary(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _build_profitability_proof_floor_receipt(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _build_submission_gate_market_context_status(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _build_tca_gate_inputs(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _load_quant_evidence_status(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _is_market_session_open(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_materialized_candidate(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_materialized_decision_with_execution_metadata(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_materialized_planned_candidate(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_materialized_planning_context(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_positions_without_materialized_open_order_projections(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_probe_reference_price(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_target_strategy(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_target_strategy_symbols(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_target_account_has_open_exposure(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_target_source_decision_metadata(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_target_source_cap(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_target_symbol_has_open_position(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_target_symbol_has_open_profit_proof_exposure(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _paper_route_target_symbol_has_open_strategy_exposure(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _reopen_rejected_paper_route_probe_exit_decision(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _reopen_rejected_paper_route_target_price_decision(
+        self, *args: Any, **kwargs: Any
+    ) -> Any:
+        raise NotImplementedError
+
+    def _with_paper_route_target_lineage(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError

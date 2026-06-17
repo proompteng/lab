@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading scheduler governance, autonomy, and safety workflows."""
 
 from __future__ import annotations
@@ -9,7 +8,7 @@ import sys
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ....config import settings
 from ...autonomy import (
@@ -18,58 +17,14 @@ from ...autonomy import (
 )
 from ...ingest import SignalBatch
 from ...models import SignalEnvelope
-from .. import safety as _safety_private_37
-
-
+from ..safety import (
+    latch_signal_continuity_alert_state as _latch_signal_continuity_alert_state,
+    record_signal_continuity_recovery_cycle as _record_signal_continuity_recovery_cycle,
+)
 from .shared_context import (
+    TradingSchedulerGovernanceMixinContract as _TradingSchedulerGovernanceMixinContract,
+    resolve_autonomy_artifact_root as _resolve_autonomy_artifact_root,
     logger,
-)
-from . import shared_context as _shared_context_private_53
-
-from . import (
-    governance_mixin_lifecycle_methods as _governance_mixin_lifecycle_methods_private_61,
-)
-
-_FRESH_TAIL_NO_SIGNAL_REASONS = getattr(
-    _safety_private_37, "_FRESH_TAIL_NO_SIGNAL_REASONS"
-)
-_coerce_recovery_reason_sequence = getattr(
-    _safety_private_37, "_coerce_recovery_reason_sequence"
-)
-_is_market_session_open = getattr(_safety_private_37, "_is_market_session_open")
-_is_recoverable_emergency_stop_reason = getattr(
-    _safety_private_37, "_is_recoverable_emergency_stop_reason"
-)
-_latch_signal_continuity_alert_state = getattr(
-    _safety_private_37, "_latch_signal_continuity_alert_state"
-)
-_merge_emergency_stop_reasons = getattr(
-    _safety_private_37, "_merge_emergency_stop_reasons"
-)
-_record_signal_continuity_recovery_cycle = getattr(
-    _safety_private_37, "_record_signal_continuity_recovery_cycle"
-)
-_signal_bootstrap_grace_active = getattr(
-    _safety_private_37, "_signal_bootstrap_grace_active"
-)
-_signal_tail_is_fresh = getattr(_safety_private_37, "_signal_tail_is_fresh")
-_split_emergency_stop_reasons = getattr(
-    _safety_private_37, "_split_emergency_stop_reasons"
-)
-_TradingSchedulerGovernanceMixinFields = getattr(
-    _shared_context_private_53, "_TradingSchedulerGovernanceMixinFields"
-)
-_incident_payload_complete = getattr(
-    _shared_context_private_53, "_incident_payload_complete"
-)
-_int_from_mapping = getattr(_shared_context_private_53, "_int_from_mapping")
-_parse_iso_datetime = getattr(_shared_context_private_53, "_parse_iso_datetime")
-_resolve_autonomy_artifact_root = getattr(
-    _shared_context_private_53, "_resolve_autonomy_artifact_root"
-)
-_TradingSchedulerGovernanceLifecycleMethods = getattr(
-    _governance_mixin_lifecycle_methods_private_61,
-    "_TradingSchedulerGovernanceLifecycleMethods",
 )
 
 
@@ -80,7 +35,15 @@ def _governance_root_export(name: str, fallback: Any) -> Any:
     return getattr(root_module, name, fallback)
 
 
-class _TradingSchedulerGovernanceDecisionMethods:
+if TYPE_CHECKING:
+    _TradingSchedulerGovernanceDecisionBase = _TradingSchedulerGovernanceMixinContract
+else:
+    _TradingSchedulerGovernanceDecisionBase = object
+
+
+class _TradingSchedulerGovernanceDecisionMethods(
+    _TradingSchedulerGovernanceDecisionBase,
+):
     def _run_autonomous_cycle(
         self,
         *,

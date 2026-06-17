@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Hypothesis registry loading and runtime alpha-readiness compilation."""
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from typing import Any, cast
 
 from .shared_context import (
     CapitalStage,
-    HypothesisManifest,
     HypothesisRegistryLoadResult,
     HypothesisState,
     JangarDependencyQuorumStatus,
@@ -23,8 +21,6 @@ from .shared_context import (
     parse_iso8601 as _parse_iso8601,
     ranked_candidate_dossiers as _ranked_candidate_dossiers,
     resolve_required_dependency_capabilities as _resolve_required_dependency_capabilities,
-    hypothesis_registry_requires_dependency_capability,
-    resolve_hypothesis_dependency_quorum,
 )
 from .extract_stage_renewal_bonds import (
     manifest_pair_contract_blockers as _manifest_pair_contract_blockers,
@@ -33,10 +29,6 @@ from .extract_stage_renewal_bonds import (
 )
 from .runtime_ledger_row_rank import (
     resolve_runtime_ledger_readiness_inputs as _resolve_runtime_ledger_readiness_inputs,
-    load_hypothesis_registry,
-    load_jangar_dependency_quorum,
-    resolve_hypothesis_registry_path,
-    validate_hypothesis_registry_from_settings,
 )
 
 
@@ -677,21 +669,6 @@ def summarize_hypothesis_runtime_statuses(
         "rollback_required_total": rollback_required_total,
         "dependency_quorum": dependency_quorum.as_payload(),
     }
-
-
-__all__ = [
-    "HypothesisManifest",
-    "HypothesisRegistryLoadResult",
-    "JangarDependencyQuorumStatus",
-    "compile_hypothesis_runtime_statuses",
-    "hypothesis_registry_requires_dependency_capability",
-    "load_hypothesis_registry",
-    "load_jangar_dependency_quorum",
-    "resolve_hypothesis_dependency_quorum",
-    "resolve_hypothesis_registry_path",
-    "summarize_hypothesis_runtime_statuses",
-    "validate_hypothesis_registry_from_settings",
-]
 
 
 __all__ = (

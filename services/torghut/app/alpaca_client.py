@@ -227,7 +227,7 @@ class TorghutAlpacaClient:
         return [self._model_to_dict(resp) for resp in responses]
 
     # ------------------- Market data -------------------
-    def get_bars(  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+    def get_bars(
         self, symbols: Iterable[str] | str, timeframe: str, lookback_bars: int
     ) -> Dict[str, List[Dict[str, Any]]]:
         timeframe_obj = self._parse_timeframe(timeframe)
@@ -243,7 +243,7 @@ class TorghutAlpacaClient:
             start=start,
             limit=lookback_bars,
         )
-        bars = self.data.get_stock_bars(request)
+        bars = cast(Any, self.data).get_stock_bars(request)
 
         raw_data = getattr(bars, "data", bars)  # allow raw dicts in tests
         if not isinstance(raw_data, dict):

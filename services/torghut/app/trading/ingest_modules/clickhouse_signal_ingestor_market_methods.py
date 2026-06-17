@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
@@ -7,7 +6,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 from urllib.parse import urlencode, urlsplit
 
 from sqlalchemy.orm import Session
@@ -22,6 +21,7 @@ from .shared_context import (
     ENVELOPE_SIGNAL_COLUMNS,
     FLAT_CURSOR_OVERLAP,
     FLAT_SIGNAL_COLUMNS,
+    ClickHouseSignalIngestorContract as _ClickHouseSignalIngestorContract,
     LATEST_SIGNAL_TS_CACHE_TTL,
     LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN,
     SignalBatch,
@@ -46,7 +46,13 @@ from .clickhouse_signal_ingestor_market_support import (
 logger = logging.getLogger("app.trading.ingest")
 
 
-class _ClickHouseSignalIngestorMarketMethods:
+if TYPE_CHECKING:
+    _ClickHouseSignalIngestorMarketBase = _ClickHouseSignalIngestorContract
+else:
+    _ClickHouseSignalIngestorMarketBase = object
+
+
+class _ClickHouseSignalIngestorMarketMethods(_ClickHouseSignalIngestorMarketBase):
     def _latest_signal_timestamp(
         self,
         time_column: str,

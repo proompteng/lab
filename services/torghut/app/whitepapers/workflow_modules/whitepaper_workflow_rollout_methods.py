@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
@@ -6,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,13 +28,25 @@ from .shared_context import (
     bool_env as _bool_env,
     int_env as _int_env,
     normalize_identifier as _normalize_identifier,
+    optional_decimal as _optional_decimal,
+    optional_json as _optional_json,
+    optional_text as _optional_text,
     sorted_unique as _sorted_unique,
     str_env as _str_env,
     logger,
 )
+from .ceph_s3_client import (
+    WhitepaperWorkflowServiceContract as _WhitepaperWorkflowServiceContract,
+)
 
 
-class _WhitepaperWorkflowRolloutMethods:
+if TYPE_CHECKING:
+    _WhitepaperWorkflowRolloutBase = _WhitepaperWorkflowServiceContract
+else:
+    _WhitepaperWorkflowRolloutBase = object
+
+
+class _WhitepaperWorkflowRolloutMethods(_WhitepaperWorkflowRolloutBase):
     def _dispatch_engineering_agentrun(
         self,
         session: Session,
@@ -47,31 +58,31 @@ class _WhitepaperWorkflowRolloutMethods:
         context = cast(dict[str, Any], run.orchestration_context_json or {})
         marker = cast(dict[str, Any], context.get("marker") or {})
         repository = (
-            self._optional_text(
+            _optional_text(
                 manual_approval.repository if manual_approval is not None else None
             )
-            or self._optional_text(context.get("repository"))
+            or _optional_text(context.get("repository"))
             or _str_env("WHITEPAPER_DEFAULT_REPOSITORY", "proompteng/lab")
             or "proompteng/lab"
         )
         base_branch = (
-            self._optional_text(
+            _optional_text(
                 manual_approval.base if manual_approval is not None else None
             )
-            or self._optional_text(marker.get("base_branch"))
+            or _optional_text(marker.get("base_branch"))
             or _str_env("WHITEPAPER_DEFAULT_BASE_BRANCH", "main")
             or "main"
         )
-        head_branch = self._optional_text(
+        head_branch = _optional_text(
             manual_approval.head if manual_approval is not None else None
         ) or self._default_engineering_head_branch(
             run.run_id,
             suffix="manual" if manual_approval is not None else "auto",
         )
         artifact_path = f"docs/whitepapers/{run.run_id}"
-        issue_url = self._optional_text(context.get("issue_url")) or ""
+        issue_url = _optional_text(context.get("issue_url")) or ""
         issue_title = (
-            self._optional_text((run.document.title if run.document else None))
+            _optional_text((run.document.title if run.document else None))
             or "Whitepaper analysis"
         )
         prompt = self._build_engineering_trigger_prompt(
@@ -225,19 +236,22 @@ class _WhitepaperWorkflowRolloutMethods:
         trigger: WhitepaperEngineeringTrigger,
         rollout_transitions: list[WhitepaperRolloutTransition],
     ) -> dict[str, Any]:
-        transitions_payload = [
-            {
-                "transition_id": item.transition_id,
-                "from_stage": item.from_stage,
-                "to_stage": item.to_stage,
-                "transition_type": item.transition_type,
-                "status": item.status,
-                "reason_codes": item.reason_codes_json or [],
-                "blocking_gate": item.blocking_gate,
-                "created_at": item.created_at.isoformat() if item.created_at else None,
-            }
-            for item in rollout_transitions
-        ]
+        transitions_payload: list[dict[str, Any]] = []
+        for item in rollout_transitions:
+            transitions_payload.append(
+                {
+                    "transition_id": item.transition_id,
+                    "from_stage": item.from_stage,
+                    "to_stage": item.to_stage,
+                    "transition_type": item.transition_type,
+                    "status": item.status,
+                    "reason_codes": self._coerce_string_list(item.reason_codes_json),
+                    "blocking_gate": item.blocking_gate,
+                    "created_at": (
+                        item.created_at.isoformat() if item.created_at else None
+                    ),
+                }
+            )
         return {
             "trigger_id": trigger.trigger_id,
             "run_id": trigger.whitepaper_run_id,
@@ -326,23 +340,23 @@ class _WhitepaperWorkflowRolloutMethods:
                     gate_id = gate_id.replace("gate", "g", 1)
                 status_value = None
                 if isinstance(gate_payload, Mapping):
-                    status_value = self._optional_text(
+                    status_value = _optional_text(
                         cast(Mapping[str, Any], gate_payload).get("status")
                     )
                 else:
-                    status_value = self._optional_text(gate_payload)
+                    status_value = _optional_text(gate_payload)
                 if status_value:
                     statuses[gate_id] = _normalize_identifier(status_value)
         elif isinstance(gates_raw, list):
-            for entry in gates_raw:
+            for entry in cast(list[object], gates_raw):
                 if not isinstance(entry, Mapping):
                     continue
                 gate_id_raw = (
-                    self._optional_text(cast(Mapping[str, Any], entry).get("gate_id"))
-                    or self._optional_text(cast(Mapping[str, Any], entry).get("id"))
-                    or self._optional_text(cast(Mapping[str, Any], entry).get("name"))
+                    _optional_text(cast(Mapping[str, Any], entry).get("gate_id"))
+                    or _optional_text(cast(Mapping[str, Any], entry).get("id"))
+                    or _optional_text(cast(Mapping[str, Any], entry).get("name"))
                 )
-                status_value = self._optional_text(
+                status_value = _optional_text(
                     cast(Mapping[str, Any], entry).get("status")
                 )
                 if not gate_id_raw or not status_value:
@@ -355,7 +369,7 @@ class _WhitepaperWorkflowRolloutMethods:
         for key, value in gate_snapshot.items():
             normalized_key = _normalize_identifier(str(key))
             if normalized_key in {"g1", "g2", "g3", "g4", "g5", "g6", "g7"}:
-                normalized_status = self._optional_text(value)
+                normalized_status = _optional_text(value)
                 if normalized_status:
                     statuses[normalized_key] = _normalize_identifier(normalized_status)
         return statuses
@@ -387,7 +401,7 @@ class _WhitepaperWorkflowRolloutMethods:
         if blocked_flag:
             reasons.append("gating_blocked_flag_true")
 
-        blocking_lists = (
+        blocking_lists: tuple[object, ...] = (
             gate_snapshot.get("blocking_reasons"),
             gate_snapshot.get("blockingReasons"),
             gate_snapshot.get("blockers"),
@@ -395,8 +409,8 @@ class _WhitepaperWorkflowRolloutMethods:
         )
         for raw_list in blocking_lists:
             if isinstance(raw_list, list):
-                for item in raw_list:
-                    text = self._optional_text(item)
+                for item in cast(list[object], raw_list):
+                    text = _optional_text(item)
                     if text:
                         reasons.append(f"gating_blocker_{_normalize_identifier(text)}")
 
@@ -456,7 +470,7 @@ class _WhitepaperWorkflowRolloutMethods:
         return rollout_profile in allowed_profiles
 
     def _normalize_rollout_profile(self, value: str | None) -> str:
-        profile = self._optional_text(value) or "manual"
+        profile = _optional_text(value) or "manual"
         normalized = _normalize_identifier(profile)
         if normalized not in {"manual", "assisted", "automatic"}:
             return "manual"
@@ -467,7 +481,7 @@ class _WhitepaperWorkflowRolloutMethods:
             run.synthesis.synthesis_json if run.synthesis is not None else None
         )
         if isinstance(synthesis_payload, Mapping):
-            explicit = self._optional_text(
+            explicit = _optional_text(
                 cast(Mapping[str, Any], synthesis_payload).get("hypothesis_id")
             )
             if explicit:
@@ -502,68 +516,60 @@ class _WhitepaperWorkflowRolloutMethods:
                     synthesis_payload.get("synthesis_version") or "v1"
                 ),
                 generated_by=str(synthesis_payload.get("generated_by") or "codex"),
-                model_name=self._optional_text(synthesis_payload.get("model_name")),
-                prompt_version=self._optional_text(
-                    synthesis_payload.get("prompt_version")
-                ),
+                model_name=_optional_text(synthesis_payload.get("model_name")),
+                prompt_version=_optional_text(synthesis_payload.get("prompt_version")),
                 executive_summary=executive_summary,
-                problem_statement=self._optional_text(
+                problem_statement=_optional_text(
                     synthesis_payload.get("problem_statement")
                 ),
-                methodology_summary=self._optional_text(
+                methodology_summary=_optional_text(
                     synthesis_payload.get("methodology_summary")
                 ),
-                key_findings_json=self._optional_json(
-                    synthesis_payload.get("key_findings")
-                ),
-                novelty_claims_json=self._optional_json(
+                key_findings_json=_optional_json(synthesis_payload.get("key_findings")),
+                novelty_claims_json=_optional_json(
                     synthesis_payload.get("novelty_claims")
                 ),
-                risk_assessment_json=self._optional_json(
+                risk_assessment_json=_optional_json(
                     synthesis_payload.get("risk_assessment")
                 ),
-                citations_json=self._optional_json(synthesis_payload.get("citations")),
-                implementation_plan_md=self._optional_text(
+                citations_json=_optional_json(synthesis_payload.get("citations")),
+                implementation_plan_md=_optional_text(
                     synthesis_payload.get("implementation_plan_md")
                 ),
-                confidence=self._optional_decimal(synthesis_payload.get("confidence")),
+                confidence=_optional_decimal(synthesis_payload.get("confidence")),
                 synthesis_json=coerce_json_payload(synthesis_payload),
             )
             session.add(synthesis)
             return
 
         synthesis.executive_summary = executive_summary
-        synthesis.problem_statement = self._optional_text(
+        synthesis.problem_statement = _optional_text(
             synthesis_payload.get("problem_statement")
         )
-        synthesis.methodology_summary = self._optional_text(
+        synthesis.methodology_summary = _optional_text(
             synthesis_payload.get("methodology_summary")
         )
-        synthesis.key_findings_json = self._optional_json(
+        synthesis.key_findings_json = _optional_json(
             synthesis_payload.get("key_findings")
         )
-        synthesis.novelty_claims_json = self._optional_json(
+        synthesis.novelty_claims_json = _optional_json(
             synthesis_payload.get("novelty_claims")
         )
-        synthesis.risk_assessment_json = self._optional_json(
+        synthesis.risk_assessment_json = _optional_json(
             synthesis_payload.get("risk_assessment")
         )
-        synthesis.citations_json = self._optional_json(
-            synthesis_payload.get("citations")
-        )
-        synthesis.implementation_plan_md = self._optional_text(
+        synthesis.citations_json = _optional_json(synthesis_payload.get("citations"))
+        synthesis.implementation_plan_md = _optional_text(
             synthesis_payload.get("implementation_plan_md")
         )
-        synthesis.confidence = self._optional_decimal(
-            synthesis_payload.get("confidence")
-        )
+        synthesis.confidence = _optional_decimal(synthesis_payload.get("confidence"))
         synthesis.synthesis_json = coerce_json_payload(synthesis_payload)
         session.add(synthesis)
 
     def _populate_missing_implementation_plan_md(
         self, run_id: str, synthesis_payload: dict[str, Any]
     ) -> None:
-        if self._optional_text(synthesis_payload.get("implementation_plan_md")):
+        if _optional_text(synthesis_payload.get("implementation_plan_md")):
             return
         derived_value = self._derive_implementation_plan_md(
             synthesis_payload.get("implementation_implications")
@@ -584,7 +590,7 @@ class _WhitepaperWorkflowRolloutMethods:
             return text or None
         if isinstance(value, list):
             bullet_points: list[str] = []
-            for item in value:
+            for item in cast(list[object], value):
                 text = str(item).strip() if item is not None else ""
                 if text:
                     bullet_points.append(f"- {text}")
@@ -605,27 +611,23 @@ class _WhitepaperWorkflowRolloutMethods:
                 WhitepaperViabilityVerdict.analysis_run_id == run.id
             )
         ).scalar_one_or_none()
-        verdict_text = (
-            self._optional_text(verdict_payload.get("verdict")) or "needs_review"
-        )
-        approved_by = self._optional_text(verdict_payload.get("approved_by"))
+        verdict_text = _optional_text(verdict_payload.get("verdict")) or "needs_review"
+        approved_by = _optional_text(verdict_payload.get("approved_by"))
         gating_payload = self._build_verdict_gating_payload(verdict_payload)
 
         if verdict is None:
             verdict = WhitepaperViabilityVerdict(
                 analysis_run_id=run.id,
                 verdict=verdict_text,
-                score=self._optional_decimal(verdict_payload.get("score")),
-                confidence=self._optional_decimal(verdict_payload.get("confidence")),
-                decision_policy=self._optional_text(
-                    verdict_payload.get("decision_policy")
-                ),
-                gating_json=self._optional_json(gating_payload),
-                rationale=self._optional_text(verdict_payload.get("rationale")),
-                rejection_reasons_json=self._optional_json(
+                score=_optional_decimal(verdict_payload.get("score")),
+                confidence=_optional_decimal(verdict_payload.get("confidence")),
+                decision_policy=_optional_text(verdict_payload.get("decision_policy")),
+                gating_json=_optional_json(gating_payload),
+                rationale=_optional_text(verdict_payload.get("rationale")),
+                rejection_reasons_json=_optional_json(
                     verdict_payload.get("rejection_reasons")
                 ),
-                recommendations_json=self._optional_json(
+                recommendations_json=_optional_json(
                     verdict_payload.get("recommendations")
                 ),
                 requires_followup=bool(verdict_payload.get("requires_followup")),
@@ -636,17 +638,15 @@ class _WhitepaperWorkflowRolloutMethods:
             return
 
         verdict.verdict = verdict_text
-        verdict.score = self._optional_decimal(verdict_payload.get("score"))
-        verdict.confidence = self._optional_decimal(verdict_payload.get("confidence"))
-        verdict.decision_policy = self._optional_text(
-            verdict_payload.get("decision_policy")
-        )
-        verdict.gating_json = self._optional_json(gating_payload)
-        verdict.rationale = self._optional_text(verdict_payload.get("rationale"))
-        verdict.rejection_reasons_json = self._optional_json(
+        verdict.score = _optional_decimal(verdict_payload.get("score"))
+        verdict.confidence = _optional_decimal(verdict_payload.get("confidence"))
+        verdict.decision_policy = _optional_text(verdict_payload.get("decision_policy"))
+        verdict.gating_json = _optional_json(gating_payload)
+        verdict.rationale = _optional_text(verdict_payload.get("rationale"))
+        verdict.rejection_reasons_json = _optional_json(
             verdict_payload.get("rejection_reasons")
         )
-        verdict.recommendations_json = self._optional_json(
+        verdict.recommendations_json = _optional_json(
             verdict_payload.get("recommendations")
         )
         verdict.requires_followup = bool(verdict_payload.get("requires_followup"))
@@ -685,16 +685,17 @@ class _WhitepaperWorkflowRolloutMethods:
         if isinstance(direct, list):
             return [
                 cast(dict[str, Any], item)
-                for item in direct
+                for item in cast(list[object], direct)
                 if isinstance(item, Mapping)
             ]
         synthesis_payload = payload.get("synthesis")
         if isinstance(synthesis_payload, Mapping):
-            nested = synthesis_payload.get(key)
+            synthesis_map = cast(Mapping[str, Any], synthesis_payload)
+            nested = synthesis_map.get(key)
             if isinstance(nested, list):
                 return [
                     cast(dict[str, Any], item)
-                    for item in nested
+                    for item in cast(list[object], nested)
                     if isinstance(item, Mapping)
                 ]
         return []

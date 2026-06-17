@@ -1,5 +1,3 @@
-# pyright: reportUnusedImport=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportAttributeAccessIssue=false
-
 from __future__ import annotations
 
 import logging

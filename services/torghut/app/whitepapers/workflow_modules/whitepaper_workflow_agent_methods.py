@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from subprocess import CalledProcessError, run
-from typing import Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -29,12 +28,24 @@ from .shared_context import (
     SEMANTIC_RELATIVE_DISTANCE_WINDOW as _SEMANTIC_RELATIVE_DISTANCE_WINDOW,
     int_env as _int_env,
     normalize_identifier as _normalize_identifier,
+    optional_int as _optional_int,
+    optional_json as _optional_json,
+    optional_text as _optional_text,
     sorted_unique as _sorted_unique,
     parse_marker_tags,
 )
+from .ceph_s3_client import (
+    WhitepaperWorkflowServiceContract as _WhitepaperWorkflowServiceContract,
+)
 
 
-class _WhitepaperWorkflowAgentMethods:
+if TYPE_CHECKING:
+    _WhitepaperWorkflowAgentBase = _WhitepaperWorkflowServiceContract
+else:
+    _WhitepaperWorkflowAgentBase = object
+
+
+class _WhitepaperWorkflowAgentMethods(_WhitepaperWorkflowAgentBase):
     def search_semantic(
         self,
         session: Session,
@@ -269,7 +280,7 @@ class _WhitepaperWorkflowAgentMethods:
     def _coerce_string_list(value: Any) -> list[str]:
         if isinstance(value, list):
             result: list[str] = []
-            for item in value:
+            for item in cast(list[object], value):
                 text = str(item).strip() if item is not None else ""
                 if text:
                     result.append(text)
@@ -302,7 +313,7 @@ class _WhitepaperWorkflowAgentMethods:
             return _sorted_unique(
                 [
                     _normalize_identifier(str(item))
-                    for item in value
+                    for item in cast(list[object], value)
                     if item is not None and str(item).strip()
                 ]
             )
@@ -410,13 +421,11 @@ class _WhitepaperWorkflowAgentMethods:
         extraction_meta: Mapping[str, Any] | None,
     ) -> None:
         version = run.document_version
-        if version is None:
-            raise RuntimeError("whitepaper_version_missing")
 
         normalized_text = full_text.strip()
         full_text_sha256 = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
         token_count = len(normalized_text.split()) if normalized_text else 0
-        page_count = self._optional_int((extraction_meta or {}).get("page_count"))
+        page_count = _optional_int((extraction_meta or {}).get("page_count"))
 
         content = session.execute(
             select(WhitepaperContent).where(
@@ -504,8 +513,6 @@ class _WhitepaperWorkflowAgentMethods:
         normalized_scope = source_scope.strip().lower()
         if normalized_scope not in {"full_text", "synthesis"}:
             raise ValueError("invalid_source_scope")
-        if run.document_version is None:
-            raise RuntimeError("whitepaper_version_missing")
 
         if not chunks:
             session.execute(
@@ -541,9 +548,9 @@ class _WhitepaperWorkflowAgentMethods:
             content = str(chunk.get("content") or "").strip()
             if not content:
                 continue
-            section_key = self._optional_text(chunk.get("section_key"))
-            token_count = self._optional_int(chunk.get("token_count"))
-            metadata_json = self._optional_json(chunk.get("metadata_json"))
+            section_key = _optional_text(chunk.get("section_key"))
+            token_count = _optional_int(chunk.get("token_count"))
+            metadata_json = _optional_json(chunk.get("metadata_json"))
             chunk_index = int(chunk.get("chunk_index") or 0)
             content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
             vector_text = self._vector_to_text(embedding)

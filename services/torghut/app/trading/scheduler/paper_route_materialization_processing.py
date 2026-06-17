@@ -1,4 +1,3 @@
-# pyright: reportUnusedImport=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportAttributeAccessIssue=false
 """Late-stage materialized paper-route processing mixin."""
 
 from __future__ import annotations
@@ -10,12 +9,13 @@ from datetime import datetime, timezone
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select  # pyright: ignore[reportUnknownVariableType]
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import Strategy, TradeDecision, coerce_json_payload
 from ..models import StrategyDecision
+from .pipeline_modules.shared import TradingPipelineBase
 from .target_plan_helpers import (
     bounded_sim_collection_metadata_from_decision as _bounded_sim_collection_metadata_from_decision,
     safe_int as _safe_int,
@@ -33,7 +33,7 @@ class _MaterializedCandidateContext:
     now: datetime
 
 
-class SimplePipelinePaperRouteMaterializationProcessingMixin:
+class SimplePipelinePaperRouteMaterializationProcessingMixin(TradingPipelineBase):
     def _active_materialized_paper_route_client_order_ids(
         self,
         *,

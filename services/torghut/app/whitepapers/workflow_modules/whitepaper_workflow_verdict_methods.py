@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
@@ -8,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -32,8 +31,12 @@ from .shared_context import (
     http_request_bytes as _http_request_bytes,
     int_env as _int_env,
     normalize_identifier as _normalize_identifier,
+    optional_text as _optional_text,
     sorted_unique as _sorted_unique,
     str_env as _str_env,
+)
+from .ceph_s3_client import (
+    WhitepaperWorkflowServiceContract as _WhitepaperWorkflowServiceContract,
 )
 
 
@@ -82,7 +85,13 @@ class EngineeringDecisionOutcome:
     dispatch_decision: str
 
 
-class WhitepaperWorkflowVerdictMethods:
+if TYPE_CHECKING:
+    _WhitepaperWorkflowVerdictBase = _WhitepaperWorkflowServiceContract
+else:
+    _WhitepaperWorkflowVerdictBase = object
+
+
+class WhitepaperWorkflowVerdictMethods(_WhitepaperWorkflowVerdictBase):
     def _embed_texts(self, texts: list[str]) -> tuple[str, int, list[list[float]]]:
         if not texts:
             raise ValueError("embedding_texts_required")
@@ -199,14 +208,15 @@ class WhitepaperWorkflowVerdictMethods:
         parsed = json.loads(body)
         if not isinstance(parsed, dict):
             raise RuntimeError("embedding_invalid_response")
+        parsed_payload = cast(Mapping[str, Any], parsed)
         if config.is_ollama_embed:
             return self._parse_ollama_embedding_response(
-                parsed,
+                parsed_payload,
                 batch_size=batch_size,
                 observed_dimension=observed_dimension,
             )
         return self._parse_openai_embedding_response(
-            parsed,
+            parsed_payload,
             batch_size=batch_size,
             observed_dimension=observed_dimension,
         )
@@ -223,10 +233,11 @@ class WhitepaperWorkflowVerdictMethods:
             raw_embeddings = parsed.get("embedding")
         if not isinstance(raw_embeddings, list):
             raise RuntimeError("embedding_invalid_data")
+        embedding_items = cast(list[Any], raw_embeddings)
         matrix = (
-            raw_embeddings
-            if raw_embeddings and isinstance(raw_embeddings[0], list)
-            else [raw_embeddings]
+            embedding_items
+            if embedding_items and isinstance(embedding_items[0], list)
+            else [embedding_items]
         )
         if len(matrix) != batch_size:
             raise RuntimeError("embedding_missing_row")
@@ -245,7 +256,7 @@ class WhitepaperWorkflowVerdictMethods:
         if not isinstance(data, list):
             raise RuntimeError("embedding_invalid_data")
         indexed_batch_embeddings = self._indexed_openai_embedding_rows(
-            data,
+            cast(list[Any], data),
             observed_dimension=observed_dimension,
         )
         embeddings: list[list[float]] = []
@@ -272,12 +283,13 @@ class WhitepaperWorkflowVerdictMethods:
         for row in data:
             if not isinstance(row, Mapping):
                 continue
-            index_raw = row.get("index")
-            embedding_raw = row.get("embedding")
+            row_payload = cast(Mapping[str, Any], row)
+            index_raw = row_payload.get("index")
+            embedding_raw = row_payload.get("embedding")
             if not isinstance(index_raw, int) or not isinstance(embedding_raw, list):
                 continue
             embedding_values, current_dimension = self._coerce_embedding_row(
-                embedding_raw,
+                cast(list[Any], embedding_raw),
                 observed_dimension=current_dimension,
             )
             indexed_batch_embeddings[index_raw] = embedding_values
@@ -295,7 +307,7 @@ class WhitepaperWorkflowVerdictMethods:
             if not isinstance(row, list):
                 raise RuntimeError("embedding_invalid_data")
             embedding_values, current_dimension = self._coerce_embedding_row(
-                row,
+                cast(list[Any], row),
                 observed_dimension=current_dimension,
             )
             embeddings.append(embedding_values)
@@ -367,7 +379,7 @@ class WhitepaperWorkflowVerdictMethods:
         ).scalar_one_or_none()
         already_dispatched = bool(
             existing_trigger is not None
-            and self._optional_text(existing_trigger.dispatched_agentrun_name)
+            and _optional_text(existing_trigger.dispatched_agentrun_name)
         )
         trigger = self._upsert_engineering_trigger(
             session,
@@ -391,7 +403,7 @@ class WhitepaperWorkflowVerdictMethods:
                     manual_approval=manual_approval,
                 )
                 trigger.decision = "dispatched"
-                trigger.dispatched_agentrun_name = self._optional_text(
+                trigger.dispatched_agentrun_name = _optional_text(
                     dispatch_result.get("agentrun_name")
                 )
             except Exception as exc:
@@ -510,6 +522,9 @@ class WhitepaperWorkflowVerdictMethods:
             verdict.gating_json if verdict is not None else None
         )
         gate_statuses = self._extract_gate_statuses(gate_snapshot)
+        verdict_text_raw = (
+            _optional_text(verdict.verdict) if verdict is not None else None
+        )
         return EngineeringDecisionSignals(
             gate_snapshot=gate_snapshot,
             gate_snapshot_hash=(
@@ -525,11 +540,9 @@ class WhitepaperWorkflowVerdictMethods:
                 gate_snapshot,
                 gate_statuses,
             ),
-            verdict_text=(
-                self._optional_text(verdict.verdict).lower()
-                if verdict is not None and verdict.verdict
-                else "missing"
-            ),
+            verdict_text=verdict_text_raw.lower()
+            if verdict_text_raw is not None
+            else "missing",
             score_value=(
                 float(verdict.score)
                 if verdict is not None and verdict.score is not None

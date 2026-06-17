@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Order execution and idempotency helpers."""
 
 from __future__ import annotations
@@ -9,7 +8,7 @@ import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 
 from ...models import (
@@ -18,11 +17,13 @@ from ...models import (
 from ...config import settings
 from ..models import ExecutionRequest, StrategyDecision
 from ..quantity_rules import (
+    QuantityResolution,
     resolve_quantity_resolution,
 )
 
 
 from .shared_context import (
+    OrderExecutorContract as _OrderExecutorContract,
     OrderExecutorFields as _OrderExecutorFields,
     SHORTING_METADATA_CACHE_TTL_SECONDS as _SHORTING_METADATA_CACHE_TTL_SECONDS,
     logger,
@@ -40,7 +41,13 @@ def _optional_decimal(value: Any) -> Decimal | None:
     return optional_decimal(value)
 
 
-class _OrderExecutorSubmissionMethods:
+if TYPE_CHECKING:
+    _OrderExecutorSubmissionBase = _OrderExecutorContract
+else:
+    _OrderExecutorSubmissionBase = object
+
+
+class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
     def _retry_sell_inventory_conflict_after_cancel(
         self,
         *,
@@ -136,7 +143,7 @@ class _OrderExecutorSubmissionMethods:
         self,
         execution_client: Any,
         request: ExecutionRequest,
-    ) -> Any:
+    ) -> QuantityResolution:
         position_qty = self._position_qty_for_symbol(
             execution_client,
             request.symbol.strip().upper(),

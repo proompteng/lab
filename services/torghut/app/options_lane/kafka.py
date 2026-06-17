@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib import import_module
 import threading
 from datetime import datetime
 from typing import Any, Protocol, cast
 
-from kafka import KafkaProducer  # pyright: ignore[reportMissingTypeStubs]
-
 from .json import dump_json
+
+KafkaProducer = getattr(import_module("kafka"), "KafkaProducer")
 
 
 class _KafkaProducerProtocol(Protocol):

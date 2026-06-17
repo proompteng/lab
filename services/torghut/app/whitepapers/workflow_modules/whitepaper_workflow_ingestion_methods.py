@@ -1,11 +1,10 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timezone
-from typing import Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
 import inngest
 from sqlalchemy import case, func, select
@@ -24,6 +23,8 @@ from .shared_context import (
     RETRYABLE_AGENTRUN_STATUSES as _RETRYABLE_AGENTRUN_STATUSES,
     bool_env as _bool_env,
     normalize_identifier as _normalize_identifier,
+    optional_int as _optional_int,
+    optional_text as _optional_text,
     sorted_unique as _sorted_unique,
     str_env as _str_env,
     whitepaper_ceph_bucket_name as _whitepaper_ceph_bucket_name,
@@ -44,10 +45,17 @@ from .ceph_s3_client import (
     IssueKickoffResult,
     IssueRunIdentity as _IssueRunIdentity,
     PdfStorageOutcome as _PdfStorageOutcome,
+    WhitepaperWorkflowServiceContract as _WhitepaperWorkflowServiceContract,
 )
 
 
-class _WhitepaperWorkflowIngestionMethods:
+if TYPE_CHECKING:
+    _WhitepaperWorkflowIngestionBase = _WhitepaperWorkflowServiceContract
+else:
+    _WhitepaperWorkflowIngestionBase = object
+
+
+class _WhitepaperWorkflowIngestionMethods(_WhitepaperWorkflowIngestionBase):
     def __init__(self) -> None:
         self.ceph_client: Any | None = CephS3Client.from_env()
         self.inngest_client: inngest.Inngest | None = None
@@ -277,15 +285,15 @@ class _WhitepaperWorkflowIngestionMethods:
         issue_event: Any,
         marker: Mapping[str, Any],
     ) -> WhitepaperDocument:
-        subject = self._optional_text(marker.get("subject"))
-        marker_tags = parse_marker_tags(self._optional_text(marker.get("tags")))
+        subject = _optional_text(marker.get("subject"))
+        marker_tags = parse_marker_tags(_optional_text(marker.get("tags")))
         metadata = {
             "repository": issue_event.repository,
             "issue_number": issue_event.issue_number,
             "issue_url": issue_event.issue_url,
             "subject": subject,
             "analysis_mode": normalize_analysis_mode(
-                self._optional_text(marker.get("analysis_mode"))
+                _optional_text(marker.get("analysis_mode"))
             ),
         }
         document = session.execute(
@@ -310,11 +318,12 @@ class _WhitepaperWorkflowIngestionMethods:
 
         document.title = issue_event.issue_title or document.title
         merged_tags: list[str] = []
-        if isinstance(document.tags_json, list):
+        document_tags_raw: object = document.tags_json
+        if isinstance(document_tags_raw, list):
             merged_tags.extend(
                 [
-                    self._optional_text(item) or ""
-                    for item in cast(list[Any], document.tags_json)
+                    _optional_text(item) or ""
+                    for item in cast(list[object], document_tags_raw)
                 ]
             )
         merged_tags.extend(marker_tags)
@@ -442,10 +451,10 @@ class _WhitepaperWorkflowIngestionMethods:
         storage: _PdfStorageOutcome,
     ) -> WhitepaperAnalysisRun:
         run_status = "queued" if storage.parse_status == "stored" else "failed"
-        subject = self._optional_text(marker.get("subject"))
-        tags = parse_marker_tags(self._optional_text(marker.get("tags")))
+        subject = _optional_text(marker.get("subject"))
+        tags = parse_marker_tags(_optional_text(marker.get("tags")))
         analysis_mode = normalize_analysis_mode(
-            self._optional_text(marker.get("analysis_mode"))
+            _optional_text(marker.get("analysis_mode"))
         )
         run_row = WhitepaperAnalysisRun(
             run_id=run_identity.run_id,
@@ -556,7 +565,7 @@ class _WhitepaperWorkflowIngestionMethods:
             cast(Mapping[str, Any], run_row.orchestration_context_json or {})
         )
         enqueue_attempt = (
-            self._optional_int(context.get("inngest_enqueue_attempt")) or 0
+            _optional_int(context.get("inngest_enqueue_attempt")) or 0
         ) + 1
         enqueue_key = f"{run_row.run_id}:{enqueue_attempt}"
         try:

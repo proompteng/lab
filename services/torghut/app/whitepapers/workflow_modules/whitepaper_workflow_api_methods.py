@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
@@ -9,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -36,12 +35,25 @@ from .shared_context import (
     http_request_bytes as _http_request_bytes,
     int_env as _int_env,
     normalize_identifier as _normalize_identifier,
+    optional_decimal as _optional_decimal,
+    optional_int as _optional_int,
+    optional_json as _optional_json,
+    optional_text as _optional_text,
     str_env as _str_env,
     normalize_analysis_mode,
 )
+from .ceph_s3_client import (
+    WhitepaperWorkflowServiceContract as _WhitepaperWorkflowServiceContract,
+)
 
 
-class _WhitepaperWorkflowApiMethods:
+if TYPE_CHECKING:
+    _WhitepaperWorkflowApiBase = _WhitepaperWorkflowServiceContract
+else:
+    _WhitepaperWorkflowApiBase = object
+
+
+class _WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
     def _compiled_experiment_specs_from_templates(
         self,
         *,
@@ -82,15 +94,15 @@ class _WhitepaperWorkflowApiMethods:
         results: list[dict[str, Any]] = []
         for index, template in enumerate(templates, start=1):
             template_id = (
-                self._optional_text(template.get("template_id")) or f"template-{index}"
+                _optional_text(template.get("template_id")) or f"template-{index}"
             )
             family_template_id = (
-                self._optional_text(template.get("family_template_id"))
+                _optional_text(template.get("family_template_id"))
                 or "unspecified_family"
             )
             hypothesis = (
-                self._optional_text(template.get("hypothesis"))
-                or self._optional_text(template.get("economic_mechanism"))
+                _optional_text(template.get("hypothesis"))
+                or _optional_text(template.get("economic_mechanism"))
                 or f"Experiment for {family_template_id}"
             )
             results.append(
@@ -125,7 +137,7 @@ class _WhitepaperWorkflowApiMethods:
         events: list[dict[str, Any]] = []
         for relation in relations:
             relation_type = _normalize_identifier(
-                self._optional_text(relation.get("relation_type")) or ""
+                _optional_text(relation.get("relation_type")) or ""
             )
             if relation_type not in {
                 "contradicts",
@@ -134,23 +146,21 @@ class _WhitepaperWorkflowApiMethods:
                 "conflict",
             }:
                 continue
-            relation_id = self._optional_text(relation.get("relation_id")) or str(
+            relation_id = _optional_text(relation.get("relation_id")) or str(
                 uuid.uuid4()
             )
-            source_claim_id = self._optional_text(relation.get("source_claim_id"))
+            source_claim_id = _optional_text(relation.get("source_claim_id"))
             if not source_claim_id:
                 continue
             events.append(
                 {
                     "event_id": f"contradiction-{relation_id}",
                     "source_claim_id": source_claim_id,
-                    "target_claim_id": self._optional_text(
-                        relation.get("target_claim_id")
-                    ),
-                    "target_run_id": self._optional_text(relation.get("target_run_id")),
+                    "target_claim_id": _optional_text(relation.get("target_claim_id")),
+                    "target_run_id": _optional_text(relation.get("target_run_id")),
                     "status": "open",
                     "required_action": "revalidate_linked_family",
-                    "rationale": self._optional_text(relation.get("rationale")),
+                    "rationale": _optional_text(relation.get("rationale")),
                     "metadata": {"derived_from_relation_id": relation_id},
                 }
             )
@@ -212,64 +222,62 @@ class _WhitepaperWorkflowApiMethods:
         )
 
         for claim in claims:
-            claim_id = self._optional_text(claim.get("claim_id"))
-            claim_text = self._optional_text(
-                claim.get("claim_text")
-            ) or self._optional_text(claim.get("claim"))
+            claim_id = _optional_text(claim.get("claim_id"))
+            claim_text = _optional_text(claim.get("claim_text")) or _optional_text(
+                claim.get("claim")
+            )
             if not claim_id or not claim_text:
                 continue
             session.add(
                 WhitepaperClaim(
                     analysis_run_id=run.id,
                     claim_id=claim_id,
-                    claim_type=self._optional_text(claim.get("claim_type"))
+                    claim_type=_optional_text(claim.get("claim_type"))
                     or "signal_mechanism",
                     claim_text=claim_text,
-                    asset_scope=self._optional_text(claim.get("asset_scope")),
-                    horizon_scope=self._optional_text(claim.get("horizon_scope")),
-                    data_requirements_json=self._optional_json(
+                    asset_scope=_optional_text(claim.get("asset_scope")),
+                    horizon_scope=_optional_text(claim.get("horizon_scope")),
+                    data_requirements_json=_optional_json(
                         claim.get("data_requirements")
                     ),
-                    expected_direction=self._optional_text(
-                        claim.get("expected_direction")
-                    ),
-                    required_activity_conditions_json=self._optional_json(
+                    expected_direction=_optional_text(claim.get("expected_direction")),
+                    required_activity_conditions_json=_optional_json(
                         claim.get("required_activity_conditions")
                     ),
-                    liquidity_constraints_json=self._optional_json(
+                    liquidity_constraints_json=_optional_json(
                         claim.get("liquidity_constraints")
                     ),
-                    validation_notes=self._optional_text(claim.get("validation_notes")),
-                    confidence=self._optional_decimal(claim.get("confidence")),
-                    metadata_json=self._optional_json(claim.get("metadata")),
+                    validation_notes=_optional_text(claim.get("validation_notes")),
+                    confidence=_optional_decimal(claim.get("confidence")),
+                    metadata_json=_optional_json(claim.get("metadata")),
                 )
             )
 
         for relation in relations:
-            relation_id = self._optional_text(relation.get("relation_id"))
-            source_claim_id = self._optional_text(relation.get("source_claim_id"))
-            target_claim_id = self._optional_text(relation.get("target_claim_id"))
+            relation_id = _optional_text(relation.get("relation_id"))
+            source_claim_id = _optional_text(relation.get("source_claim_id"))
+            target_claim_id = _optional_text(relation.get("target_claim_id"))
             if not relation_id or not source_claim_id or not target_claim_id:
                 continue
             session.add(
                 WhitepaperClaimRelation(
                     analysis_run_id=run.id,
                     relation_id=relation_id,
-                    relation_type=self._optional_text(relation.get("relation_type"))
+                    relation_type=_optional_text(relation.get("relation_type"))
                     or "supports",
                     source_claim_id=source_claim_id,
                     target_claim_id=target_claim_id,
-                    target_run_id=self._optional_text(relation.get("target_run_id")),
-                    rationale=self._optional_text(relation.get("rationale")),
-                    confidence=self._optional_decimal(relation.get("confidence")),
-                    metadata_json=self._optional_json(relation.get("metadata")),
+                    target_run_id=_optional_text(relation.get("target_run_id")),
+                    rationale=_optional_text(relation.get("rationale")),
+                    confidence=_optional_decimal(relation.get("confidence")),
+                    metadata_json=_optional_json(relation.get("metadata")),
                 )
             )
 
         for template in templates:
-            template_id = self._optional_text(template.get("template_id"))
-            family_template_id = self._optional_text(template.get("family_template_id"))
-            economic_mechanism = self._optional_text(template.get("economic_mechanism"))
+            template_id = _optional_text(template.get("template_id"))
+            family_template_id = _optional_text(template.get("family_template_id"))
+            economic_mechanism = _optional_text(template.get("economic_mechanism"))
             if not template_id or not family_template_id or not economic_mechanism:
                 continue
             session.add(
@@ -278,42 +286,34 @@ class _WhitepaperWorkflowApiMethods:
                     template_id=template_id,
                     family_template_id=family_template_id,
                     economic_mechanism=economic_mechanism,
-                    hypothesis=self._optional_text(template.get("hypothesis")),
-                    supported_markets_json=self._optional_json(
+                    hypothesis=_optional_text(template.get("hypothesis")),
+                    supported_markets_json=_optional_json(
                         template.get("supported_markets")
                     ),
-                    required_features_json=self._optional_json(
+                    required_features_json=_optional_json(
                         template.get("required_features")
                     ),
-                    allowed_normalizations_json=self._optional_json(
+                    allowed_normalizations_json=_optional_json(
                         template.get("allowed_normalizations")
                     ),
-                    entry_motifs_json=self._optional_json(template.get("entry_motifs")),
-                    exit_motifs_json=self._optional_json(template.get("exit_motifs")),
-                    risk_controls_json=self._optional_json(
-                        template.get("risk_controls")
-                    ),
-                    activity_model_json=self._optional_json(
-                        template.get("activity_model")
-                    ),
-                    liquidity_assumptions_json=self._optional_json(
+                    entry_motifs_json=_optional_json(template.get("entry_motifs")),
+                    exit_motifs_json=_optional_json(template.get("exit_motifs")),
+                    risk_controls_json=_optional_json(template.get("risk_controls")),
+                    activity_model_json=_optional_json(template.get("activity_model")),
+                    liquidity_assumptions_json=_optional_json(
                         template.get("liquidity_assumptions")
                     ),
-                    regime_activation_rules_json=self._optional_json(
+                    regime_activation_rules_json=_optional_json(
                         template.get("regime_activation_rules")
                     ),
-                    day_veto_rules_json=self._optional_json(
-                        template.get("day_veto_rules")
-                    ),
-                    metadata_json=self._optional_json(template.get("metadata")),
+                    day_veto_rules_json=_optional_json(template.get("day_veto_rules")),
+                    metadata_json=_optional_json(template.get("metadata")),
                 )
             )
 
         for experiment in experiment_specs:
-            experiment_id = self._optional_text(experiment.get("experiment_id"))
-            family_template_id = self._optional_text(
-                experiment.get("family_template_id")
-            )
+            experiment_id = _optional_text(experiment.get("experiment_id"))
+            family_template_id = _optional_text(experiment.get("family_template_id"))
             if not experiment_id or not family_template_id:
                 continue
             payload_json = coerce_json_payload(dict(experiment))
@@ -322,31 +322,31 @@ class _WhitepaperWorkflowApiMethods:
                     analysis_run_id=run.id,
                     experiment_id=experiment_id,
                     family_template_id=family_template_id,
-                    template_id=self._optional_text(experiment.get("template_id")),
-                    hypothesis=self._optional_text(experiment.get("hypothesis")),
-                    paper_claim_links_json=self._optional_json(
+                    template_id=_optional_text(experiment.get("template_id")),
+                    hypothesis=_optional_text(experiment.get("hypothesis")),
+                    paper_claim_links_json=_optional_json(
                         experiment.get("paper_claim_links")
                     ),
-                    dataset_snapshot_policy_json=self._optional_json(
+                    dataset_snapshot_policy_json=_optional_json(
                         experiment.get("dataset_snapshot_policy")
                     ),
-                    template_overrides_json=self._optional_json(
+                    template_overrides_json=_optional_json(
                         experiment.get("template_overrides")
                     ),
-                    feature_variants_json=self._optional_json(
+                    feature_variants_json=_optional_json(
                         experiment.get("feature_variants")
                     ),
-                    veto_controller_variants_json=self._optional_json(
+                    veto_controller_variants_json=_optional_json(
                         experiment.get("veto_controller_variants")
                     ),
-                    selection_objectives_json=self._optional_json(
+                    selection_objectives_json=_optional_json(
                         experiment.get("selection_objectives")
                     ),
-                    hard_vetoes_json=self._optional_json(experiment.get("hard_vetoes")),
-                    expected_failure_modes_json=self._optional_json(
+                    hard_vetoes_json=_optional_json(experiment.get("hard_vetoes")),
+                    expected_failure_modes_json=_optional_json(
                         experiment.get("expected_failure_modes")
                     ),
-                    promotion_contract_json=self._optional_json(
+                    promotion_contract_json=_optional_json(
                         experiment.get("promotion_contract")
                     ),
                     payload_json=payload_json,
@@ -363,8 +363,8 @@ class _WhitepaperWorkflowApiMethods:
 
         seen_event_ids: set[str] = set()
         for event in contradiction_events:
-            event_id = self._optional_text(event.get("event_id"))
-            source_claim_id = self._optional_text(event.get("source_claim_id"))
+            event_id = _optional_text(event.get("event_id"))
+            source_claim_id = _optional_text(event.get("source_claim_id"))
             if not event_id or not source_claim_id or event_id in seen_event_ids:
                 continue
             seen_event_ids.add(event_id)
@@ -373,12 +373,12 @@ class _WhitepaperWorkflowApiMethods:
                     analysis_run_id=run.id,
                     event_id=event_id,
                     source_claim_id=source_claim_id,
-                    target_claim_id=self._optional_text(event.get("target_claim_id")),
-                    target_run_id=self._optional_text(event.get("target_run_id")),
-                    status=self._optional_text(event.get("status")) or "open",
-                    required_action=self._optional_text(event.get("required_action")),
-                    rationale=self._optional_text(event.get("rationale")),
-                    metadata_json=self._optional_json(event.get("metadata")),
+                    target_claim_id=_optional_text(event.get("target_claim_id")),
+                    target_run_id=_optional_text(event.get("target_run_id")),
+                    status=_optional_text(event.get("status")) or "open",
+                    required_action=_optional_text(event.get("required_action")),
+                    rationale=_optional_text(event.get("rationale")),
+                    metadata_json=_optional_json(event.get("metadata")),
                 )
             )
 
@@ -389,7 +389,7 @@ class _WhitepaperWorkflowApiMethods:
         if isinstance(pr_payload_raw, list):
             return [
                 cast(dict[str, Any], item)
-                for item in pr_payload_raw
+                for item in cast(list[object], pr_payload_raw)
                 if isinstance(item, Mapping)
             ]
         return []
@@ -422,8 +422,8 @@ class _WhitepaperWorkflowApiMethods:
 
         if pr_row is None:
             repository = (
-                self._optional_text(pr_payload.get("repository"))
-                or self._optional_text(
+                _optional_text(pr_payload.get("repository"))
+                or _optional_text(
                     cast(dict[str, Any], run.orchestration_context_json or {}).get(
                         "repository"
                     )
@@ -433,22 +433,19 @@ class _WhitepaperWorkflowApiMethods:
             pr_row = WhitepaperDesignPullRequest(
                 analysis_run_id=run.id,
                 attempt=attempt,
-                status=self._optional_text(pr_payload.get("status")) or "opened",
+                status=_optional_text(pr_payload.get("status")) or "opened",
                 repository=repository,
-                base_branch=self._optional_text(pr_payload.get("base_branch"))
-                or "main",
-                head_branch=self._optional_text(pr_payload.get("head_branch"))
+                base_branch=_optional_text(pr_payload.get("base_branch")) or "main",
+                head_branch=_optional_text(pr_payload.get("head_branch"))
                 or "codex/whitepaper",
-                pr_number=self._optional_int(pr_payload.get("pr_number")),
-                pr_url=self._optional_text(pr_payload.get("pr_url")),
-                title=self._optional_text(pr_payload.get("title")),
-                body=self._optional_text(pr_payload.get("body")),
-                commit_sha=self._optional_text(pr_payload.get("commit_sha")),
-                merge_commit_sha=self._optional_text(
-                    pr_payload.get("merge_commit_sha")
-                ),
-                checks_url=self._optional_text(pr_payload.get("checks_url")),
-                ci_status=self._optional_text(pr_payload.get("ci_status")),
+                pr_number=_optional_int(pr_payload.get("pr_number")),
+                pr_url=_optional_text(pr_payload.get("pr_url")),
+                title=_optional_text(pr_payload.get("title")),
+                body=_optional_text(pr_payload.get("body")),
+                commit_sha=_optional_text(pr_payload.get("commit_sha")),
+                merge_commit_sha=_optional_text(pr_payload.get("merge_commit_sha")),
+                checks_url=_optional_text(pr_payload.get("checks_url")),
+                ci_status=_optional_text(pr_payload.get("ci_status")),
                 is_merged=bool(pr_payload.get("is_merged")),
                 merged_at=datetime.now(timezone.utc)
                 if pr_payload.get("is_merged")
@@ -458,25 +455,25 @@ class _WhitepaperWorkflowApiMethods:
             session.add(pr_row)
             return
 
-        pr_row.status = self._optional_text(pr_payload.get("status")) or pr_row.status
+        pr_row.status = _optional_text(pr_payload.get("status")) or pr_row.status
         pr_row.pr_number = (
-            self._optional_int(pr_payload.get("pr_number")) or pr_row.pr_number
+            _optional_int(pr_payload.get("pr_number")) or pr_row.pr_number
         )
-        pr_row.pr_url = self._optional_text(pr_payload.get("pr_url")) or pr_row.pr_url
-        pr_row.title = self._optional_text(pr_payload.get("title")) or pr_row.title
-        pr_row.body = self._optional_text(pr_payload.get("body")) or pr_row.body
+        pr_row.pr_url = _optional_text(pr_payload.get("pr_url")) or pr_row.pr_url
+        pr_row.title = _optional_text(pr_payload.get("title")) or pr_row.title
+        pr_row.body = _optional_text(pr_payload.get("body")) or pr_row.body
         pr_row.commit_sha = (
-            self._optional_text(pr_payload.get("commit_sha")) or pr_row.commit_sha
+            _optional_text(pr_payload.get("commit_sha")) or pr_row.commit_sha
         )
         pr_row.merge_commit_sha = (
-            self._optional_text(pr_payload.get("merge_commit_sha"))
+            _optional_text(pr_payload.get("merge_commit_sha"))
             or pr_row.merge_commit_sha
         )
         pr_row.checks_url = (
-            self._optional_text(pr_payload.get("checks_url")) or pr_row.checks_url
+            _optional_text(pr_payload.get("checks_url")) or pr_row.checks_url
         )
         pr_row.ci_status = (
-            self._optional_text(pr_payload.get("ci_status")) or pr_row.ci_status
+            _optional_text(pr_payload.get("ci_status")) or pr_row.ci_status
         )
         pr_row.is_merged = bool(pr_payload.get("is_merged"))
         if pr_row.is_merged and pr_row.merged_at is None:
@@ -493,12 +490,12 @@ class _WhitepaperWorkflowApiMethods:
         if not isinstance(artifact_payload_raw, list):
             return
 
-        for item in artifact_payload_raw:
+        for item in cast(list[object], artifact_payload_raw):
             if not isinstance(item, Mapping):
                 continue
             artifact = cast(dict[str, Any], item)
-            bucket = self._optional_text(artifact.get("ceph_bucket"))
-            key = self._optional_text(artifact.get("ceph_object_key"))
+            bucket = _optional_text(artifact.get("ceph_bucket"))
+            key = _optional_text(artifact.get("ceph_object_key"))
             if bucket and key:
                 existing_artifact = session.execute(
                     select(WhitepaperArtifact).where(
@@ -513,19 +510,17 @@ class _WhitepaperWorkflowApiMethods:
                     document_id=run.document_id,
                     document_version_id=run.document_version_id,
                     analysis_run_id=run.id,
-                    artifact_scope=self._optional_text(artifact.get("artifact_scope"))
+                    artifact_scope=_optional_text(artifact.get("artifact_scope"))
                     or "run",
-                    artifact_type=self._optional_text(artifact.get("artifact_type"))
+                    artifact_type=_optional_text(artifact.get("artifact_type"))
                     or "generic",
-                    artifact_role=self._optional_text(artifact.get("artifact_role")),
+                    artifact_role=_optional_text(artifact.get("artifact_role")),
                     ceph_bucket=bucket,
                     ceph_object_key=key,
-                    artifact_uri=self._optional_text(artifact.get("artifact_uri")),
-                    checksum_sha256=self._optional_text(
-                        artifact.get("checksum_sha256")
-                    ),
-                    size_bytes=self._optional_int(artifact.get("size_bytes")),
-                    content_type=self._optional_text(artifact.get("content_type")),
+                    artifact_uri=_optional_text(artifact.get("artifact_uri")),
+                    checksum_sha256=_optional_text(artifact.get("checksum_sha256")),
+                    size_bytes=_optional_int(artifact.get("size_bytes")),
+                    content_type=_optional_text(artifact.get("content_type")),
                     metadata_json=coerce_json_payload(artifact),
                 )
             )
@@ -539,7 +534,7 @@ class _WhitepaperWorkflowApiMethods:
         if not isinstance(steps_raw, list):
             return
 
-        for index, step_raw in enumerate(steps_raw, start=1):
+        for index, step_raw in enumerate(cast(list[object], steps_raw), start=1):
             if not isinstance(step_raw, Mapping):
                 continue
             self._upsert_single_step(
@@ -553,9 +548,7 @@ class _WhitepaperWorkflowApiMethods:
         step_payload: dict[str, Any],
         index: int,
     ) -> None:
-        step_name = (
-            self._optional_text(step_payload.get("step_name")) or f"step_{index}"
-        )
+        step_name = _optional_text(step_payload.get("step_name")) or f"step_{index}"
         attempt = int(step_payload.get("attempt") or 1)
         step = session.execute(
             select(WhitepaperAnalysisStep).where(
@@ -570,34 +563,32 @@ class _WhitepaperWorkflowApiMethods:
                 step_name=step_name,
                 step_order=int(step_payload.get("step_order") or index),
                 attempt=attempt,
-                status=self._optional_text(step_payload.get("status")) or "completed",
-                executor=self._optional_text(step_payload.get("executor")),
-                idempotency_key=self._optional_text(
-                    step_payload.get("idempotency_key")
-                ),
-                trace_id=self._optional_text(step_payload.get("trace_id")),
+                status=_optional_text(step_payload.get("status")) or "completed",
+                executor=_optional_text(step_payload.get("executor")),
+                idempotency_key=_optional_text(step_payload.get("idempotency_key")),
+                trace_id=_optional_text(step_payload.get("trace_id")),
                 started_at=datetime.now(timezone.utc),
                 completed_at=datetime.now(timezone.utc),
-                duration_ms=self._optional_int(step_payload.get("duration_ms")),
-                input_json=self._optional_json(step_payload.get("input_json")),
-                output_json=self._optional_json(step_payload.get("output_json")),
-                error_json=self._optional_json(step_payload.get("error_json")),
+                duration_ms=_optional_int(step_payload.get("duration_ms")),
+                input_json=_optional_json(step_payload.get("input_json")),
+                output_json=_optional_json(step_payload.get("output_json")),
+                error_json=_optional_json(step_payload.get("error_json")),
             )
             session.add(step)
             return
 
-        step.status = self._optional_text(step_payload.get("status")) or step.status
+        step.status = _optional_text(step_payload.get("status")) or step.status
         step.duration_ms = (
-            self._optional_int(step_payload.get("duration_ms")) or step.duration_ms
+            _optional_int(step_payload.get("duration_ms")) or step.duration_ms
         )
         step.input_json = (
-            self._optional_json(step_payload.get("input_json")) or step.input_json
+            _optional_json(step_payload.get("input_json")) or step.input_json
         )
         step.output_json = (
-            self._optional_json(step_payload.get("output_json")) or step.output_json
+            _optional_json(step_payload.get("output_json")) or step.output_json
         )
         step.error_json = (
-            self._optional_json(step_payload.get("error_json")) or step.error_json
+            _optional_json(step_payload.get("error_json")) or step.error_json
         )
         step.completed_at = datetime.now(timezone.utc)
         session.add(step)
@@ -608,53 +599,20 @@ class _WhitepaperWorkflowApiMethods:
         run: WhitepaperAnalysisRun,
         payload: Mapping[str, Any],
     ) -> None:
-        target_status = self._optional_text(payload.get("status")) or "completed"
+        target_status = _optional_text(payload.get("status")) or "completed"
         run.status = target_status
         run.result_payload_json = coerce_json_payload(cast(dict[str, Any], payload))
         run.completed_at = datetime.now(timezone.utc)
         run.failure_reason = (
             None
             if target_status == "completed"
-            else self._optional_text(payload.get("failure_reason"))
+            else _optional_text(payload.get("failure_reason"))
         )
         session.add(run)
 
-        if run.document is None:
-            return
         run.document.status = "analyzed" if target_status == "completed" else "failed"
         run.document.last_processed_at = datetime.now(timezone.utc)
         session.add(run.document)
-
-    @staticmethod
-    def _optional_text(value: Any) -> str | None:
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
-
-    @staticmethod
-    def _optional_int(value: Any) -> int | None:
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _optional_decimal(value: Any) -> Decimal | None:
-        if value is None:
-            return None
-        try:
-            return Decimal(str(value))
-        except Exception:
-            return None
-
-    @staticmethod
-    def _optional_json(value: Any) -> Any:
-        if value is None:
-            return None
-        return coerce_json_payload(value)
 
     @staticmethod
     def _download_pdf(url: str) -> bytes:

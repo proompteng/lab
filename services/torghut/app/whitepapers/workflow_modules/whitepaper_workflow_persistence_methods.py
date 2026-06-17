@@ -1,11 +1,10 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timezone
-from typing import Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -24,6 +23,7 @@ from .shared_context import (
     bool_env as _bool_env,
     int_env as _int_env,
     normalize_identifier as _normalize_identifier,
+    optional_text as _optional_text,
     sorted_unique as _sorted_unique,
     str_env as _str_env,
     github_issue_number_from_url,
@@ -35,10 +35,17 @@ from .shared_context import (
 )
 from .ceph_s3_client import (
     IssueKickoffResult,
+    WhitepaperWorkflowServiceContract as _WhitepaperWorkflowServiceContract,
 )
 
 
-class _WhitepaperWorkflowPersistenceMethods:
+if TYPE_CHECKING:
+    _WhitepaperWorkflowPersistenceBase = _WhitepaperWorkflowServiceContract
+else:
+    _WhitepaperWorkflowPersistenceBase = object
+
+
+class _WhitepaperWorkflowPersistenceMethods(_WhitepaperWorkflowPersistenceBase):
     def _requeue_existing_run(
         self,
         session: Session,
@@ -59,7 +66,7 @@ class _WhitepaperWorkflowPersistenceMethods:
             )
 
         version = run.document_version
-        if version is None or version.parse_status != "stored":
+        if getattr(version, "parse_status", None) != "stored":
             return IssueKickoffResult(
                 accepted=False,
                 reason="requeue_not_ready",
@@ -184,7 +191,12 @@ class _WhitepaperWorkflowPersistenceMethods:
             )
 
     def dispatch_codex_agentrun(
-        self, session: Session, run_id: str, *, allow_retry: bool = False
+        self,
+        session: Session,
+        run_id: str,
+        *,
+        force: bool = False,
+        allow_retry: bool = False,
     ) -> dict[str, Any]:
         run = session.execute(
             select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == run_id)
@@ -202,8 +214,9 @@ class _WhitepaperWorkflowPersistenceMethods:
             .first()
         )
         if existing is not None:
-            if not allow_retry or not self._is_retryable_agentrun_status(
-                existing.status
+            if not force and (
+                not allow_retry
+                or not self._is_retryable_agentrun_status(existing.status)
             ):
                 return {
                     "idempotent": True,
@@ -234,14 +247,14 @@ class _WhitepaperWorkflowPersistenceMethods:
         attachment_url = str(context.get("attachment_url") or "")
         marker = cast(dict[str, Any], context.get("marker") or {})
         analysis_profile = cast(dict[str, Any], run.analysis_profile_json or {})
-        subject = self._optional_text(
-            analysis_profile.get("subject")
-        ) or self._optional_text(context.get("subject"))
+        subject = _optional_text(analysis_profile.get("subject")) or _optional_text(
+            context.get("subject")
+        )
         tags = self._coerce_tag_list(
             analysis_profile.get("tags") or context.get("tags")
         )
         analysis_mode = normalize_analysis_mode(
-            self._optional_text(
+            _optional_text(
                 analysis_profile.get("analysis_mode") or context.get("analysis_mode")
             )
         )
@@ -256,11 +269,10 @@ class _WhitepaperWorkflowPersistenceMethods:
         head_branch = str(marker.get("head_branch") or default_head_branch)
 
         version = run.document_version
-        if version is None:
+        bucket = _optional_text(version.ceph_bucket)
+        key = _optional_text(version.ceph_object_key)
+        if bucket is None or key is None:
             raise ValueError("whitepaper_version_missing")
-
-        bucket = version.ceph_bucket
-        key = version.ceph_object_key
         ceph_uri = f"s3://{bucket}/{key}"
 
         prompt = self._build_whitepaper_prompt(
@@ -461,8 +473,8 @@ class _WhitepaperWorkflowPersistenceMethods:
         rollout_profile: str | None = None,
     ) -> dict[str, Any]:
         run = self._get_run_or_raise(session, run_id)
-        approver = self._optional_text(approved_by)
-        reason = self._optional_text(approval_reason)
+        approver = _optional_text(approved_by)
+        reason = _optional_text(approval_reason)
         if run.status != "completed":
             raise ValueError("whitepaper_run_not_completed")
         if not approver:
@@ -480,7 +492,7 @@ class _WhitepaperWorkflowPersistenceMethods:
             manual_approval=ManualApprovalPayload(
                 approved_by=approver,
                 approval_reason=reason,
-                approval_source=self._optional_text(approval_source) or "jangar_ui",
+                approval_source=_optional_text(approval_source) or "jangar_ui",
                 target_scope=target_scope,
                 repository=repository,
                 base=base,
@@ -525,7 +537,7 @@ class _WhitepaperWorkflowPersistenceMethods:
         session.add(run)
 
         context = cast(dict[str, Any], run.orchestration_context_json or {})
-        attachment_url = self._optional_text(context.get("attachment_url"))
+        attachment_url = _optional_text(context.get("attachment_url"))
         if not attachment_url:
             run.status = "failed"
             run.failure_reason = "attachment_url_missing"

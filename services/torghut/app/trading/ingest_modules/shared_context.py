@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, Mapping, Optional, cast
+from typing import Any, Mapping, Optional, Protocol, cast
 from urllib.parse import urlencode, urlsplit
 
 from sqlalchemy import select
@@ -120,8 +120,176 @@ class SignalBatch:
 class _ClickHouseSignalIngestorFields:
     """Poll ClickHouse for new TA signals using an event_ts cursor."""
 
+    url: str
+    username: Optional[str]
+    password: Optional[str]
+    table: str
+    batch_size: int
+    initial_lookback_minutes: int
+    schema: str
+    account_label: str
+    simulation_mode: bool
+    fast_forward_stale_cursor: bool
+    empty_batch_advance_seconds: int
+    _columns: Optional[set[str]]
+    _time_column: Optional[str]
+    _latest_signal_ts_cache: Optional[datetime]
+    _latest_signal_ts_checked_at: Optional[datetime]
+    _latest_signal_ts_last_error_at: Optional[datetime]
+    _latest_signal_ts_scoped_cache: dict[
+        tuple[tuple[str, ...], tuple[str, ...]], Optional[datetime]
+    ]
+    _latest_signal_ts_scoped_checked_at: dict[
+        tuple[tuple[str, ...], tuple[str, ...]], datetime
+    ]
+    _last_good_signal_batches: dict[
+        tuple[tuple[str, ...], tuple[str, ...]],
+        tuple[
+            datetime,
+            list[SignalEnvelope],
+            Optional[datetime],
+            Optional[datetime],
+        ],
+    ]
+
+
+class _ClickHouseSignalIngestorContract(Protocol):
+    url: str
+    username: Optional[str]
+    password: Optional[str]
+    table: str
+    batch_size: int
+    initial_lookback_minutes: int
+    schema: str
+    account_label: str
+    simulation_mode: bool
+    fast_forward_stale_cursor: bool
+    empty_batch_advance_seconds: int
+    _columns: Optional[set[str]]
+    _time_column: Optional[str]
+    _latest_signal_ts_cache: Optional[datetime]
+    _latest_signal_ts_checked_at: Optional[datetime]
+    _latest_signal_ts_last_error_at: Optional[datetime]
+    _latest_signal_ts_scoped_cache: dict[
+        tuple[tuple[str, ...], tuple[str, ...]], Optional[datetime]
+    ]
+    _latest_signal_ts_scoped_checked_at: dict[
+        tuple[tuple[str, ...], tuple[str, ...]], datetime
+    ]
+    _last_good_signal_batches: dict[
+        tuple[tuple[str, ...], tuple[str, ...]],
+        tuple[
+            datetime,
+            list[SignalEnvelope],
+            Optional[datetime],
+            Optional[datetime],
+        ],
+    ]
+
+    def _latest_signal_timestamp(
+        self,
+        time_column: str,
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+    ) -> Optional[datetime]: ...
+
+    def parse_row(self, row: dict[str, Any]) -> Optional[SignalEnvelope]: ...
+
+    def _build_query(
+        self,
+        cursor_at: datetime,
+        cursor_seq: Optional[int],
+        cursor_symbol: Optional[str],
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+    ) -> str: ...
+
+    def _dedupe_signals(
+        self, signals: list[SignalEnvelope]
+    ) -> list[SignalEnvelope]: ...
+
+    def _filter_signals(
+        self, signals: list[SignalEnvelope]
+    ) -> list[SignalEnvelope]: ...
+
+    def _sorted_signals(
+        self, signals: list[SignalEnvelope]
+    ) -> list[SignalEnvelope]: ...
+
+    def _query_clickhouse(self, query: str) -> list[dict[str, Any]]: ...
+
+    def _filter_cursor_boundary(
+        self,
+        signals: list[SignalEnvelope],
+        *,
+        cursor_at: datetime,
+        cursor_seq: Optional[int],
+        cursor_symbol: Optional[str],
+    ) -> list[SignalEnvelope]: ...
+
+    def _select_columns_and_expression(
+        self, time_column: str
+    ) -> tuple[list[str], str]: ...
+
+    def _maybe_join_microbar_volume(
+        self,
+        query: str,
+        *,
+        time_column: str,
+        selected_columns: list[str],
+    ) -> str: ...
+
+    def _source_where_clause(self) -> str | None: ...
+
+    def _scope_where_clauses(
+        self,
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+    ) -> list[str]: ...
+
+    def _resolve_columns(self, force: bool = False) -> Optional[set[str]]: ...
+
+    def _remember_last_good_signals(
+        self,
+        *,
+        scope_key: tuple[tuple[str, ...], tuple[str, ...]],
+        signals: list[SignalEnvelope],
+        query_start: Optional[datetime],
+        query_end: Optional[datetime],
+        observed_at: datetime,
+    ) -> None: ...
+
+    def _timeout_degraded_batch(
+        self,
+        *,
+        reason: str,
+        query_start: Optional[datetime],
+        query_end: Optional[datetime],
+        scope_key: tuple[tuple[str, ...], tuple[str, ...]],
+    ) -> SignalBatch: ...
+
+    def _resolve_time_column(self) -> str: ...
+
+    def _get_cursor(
+        self, session: Session
+    ) -> tuple[datetime, Optional[int], Optional[str]]: ...
+
+    def _set_cursor(
+        self,
+        session: Session,
+        cursor_at: datetime,
+        cursor_seq: Optional[int],
+        cursor_symbol: Optional[str],
+    ) -> None: ...
+
+    def _supports_seq_for_time_column(self, time_column: str) -> bool: ...
+
 
 # Public aliases used by split-module consumers.
+ClickHouseSignalIngestorContract = _ClickHouseSignalIngestorContract
 ClickHouseSignalIngestorFields = _ClickHouseSignalIngestorFields
 coerce_count = _coerce_count
 simulation_fetch_window = _simulation_fetch_window
@@ -135,6 +303,7 @@ __all__ = (
     "FLAT_SIGNAL_COLUMNS",
     "ENVELOPE_SIGNAL_COLUMNS",
     "SignalBatch",
+    "ClickHouseSignalIngestorContract",
     "ClickHouseSignalIngestorFields",
     "coerce_count",
     "simulation_fetch_window",
@@ -144,6 +313,7 @@ __all__ = (
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "Any",
+    "ClickHouseSignalIngestorContract",
     "ClickHouseSignalIngestorFields",
     "ENVELOPE_SIGNAL_COLUMNS",
     "FLAT_CURSOR_OVERLAP",
