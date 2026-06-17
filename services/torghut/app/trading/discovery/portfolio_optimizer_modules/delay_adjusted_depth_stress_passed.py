@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Deterministic portfolio sleeve optimizer for autoresearch candidates."""
 
 from __future__ import annotations
@@ -32,65 +32,65 @@ from .shared_context import (
     PORTFOLIO_WEIGHTING_EDGE_RISK_GROSS_EXPOSURE_BUDGET,
     PORTFOLIO_WEIGHTING_EQUAL_COUNT,
     PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET,
-    _ACCEPTED_LEDGER_PNL_SOURCES,
-    _active_ratio,
-    _artifact_refs_from_scorecard,
-    _best_day_share,
-    _boolish,
-    _candidate_passes_minimums,
-    _capital_safety_rejection,
-    _conformal_tail_loss_buffer,
-    _conformal_tail_risk_required,
-    _correlation,
-    _daily_filled_notional,
-    _daily_net,
-    _decimal,
-    _diversified_candidate_order,
-    _exact_replay_ledger_artifact_refs,
-    _exact_replay_ledger_fill_count,
-    _exact_replay_ledger_row_count,
-    _executable_replay_artifact_ref,
-    _executable_replay_buying_power,
-    _executable_replay_max_notional,
-    _executable_replay_order_count,
-    _executable_replay_passed,
-    _first_normalized_scorecard_text,
-    _hard_vetoes,
-    _implementation_uncertainty_interval_width_per_day,
-    _implementation_uncertainty_lower_net_per_day,
-    _implementation_uncertainty_model_count,
-    _implementation_uncertainty_required,
-    _implementation_uncertainty_stability_passed,
-    _implementation_uncertainty_upper_net_per_day,
-    _ledger_pnl_basis,
-    _ledger_pnl_source,
-    _mapping,
-    _market_impact_liquidity_evidence_present,
-    _market_impact_stress_artifact_ref,
-    _market_impact_stress_components,
-    _market_impact_stress_cost_bps,
-    _market_impact_stress_model,
-    _market_impact_stress_net_per_day,
-    _market_impact_stress_passed,
-    _max_drawdown,
-    _max_gross_exposure_pct_equity,
-    _mean,
-    _min_cash,
-    _negative_cash_observation_count,
-    _net_per_day,
-    _non_composable_hard_vetoes,
-    _portfolio_daily_filled_notional,
-    _portfolio_daily_net,
-    _positive_ratio,
-    _scorecard,
-    _scorecard_primary_symbol,
-    _scorecard_runtime_params,
-    _scorecard_signal,
-    _scorecard_sleeve_runtime_limits,
-    _scorecard_universe_symbols,
-    _string,
-    _trading_day_count,
-    _worst_day_loss,
+    ACCEPTED_LEDGER_PNL_SOURCES as _ACCEPTED_LEDGER_PNL_SOURCES,
+    active_ratio as _active_ratio,
+    artifact_refs_from_scorecard as _artifact_refs_from_scorecard,
+    best_day_share as _best_day_share,
+    boolish as _boolish,
+    candidate_passes_minimums as _candidate_passes_minimums,
+    capital_safety_rejection as _capital_safety_rejection,
+    conformal_tail_loss_buffer as _conformal_tail_loss_buffer,
+    conformal_tail_risk_required as _conformal_tail_risk_required,
+    correlation as _correlation,
+    daily_filled_notional as _daily_filled_notional,
+    daily_net as _daily_net,
+    decimal as _decimal,
+    diversified_candidate_order as _diversified_candidate_order,
+    exact_replay_ledger_artifact_refs as _exact_replay_ledger_artifact_refs,
+    exact_replay_ledger_fill_count as _exact_replay_ledger_fill_count,
+    exact_replay_ledger_row_count as _exact_replay_ledger_row_count,
+    executable_replay_artifact_ref as _executable_replay_artifact_ref,
+    executable_replay_buying_power as _executable_replay_buying_power,
+    executable_replay_max_notional as _executable_replay_max_notional,
+    executable_replay_order_count as _executable_replay_order_count,
+    executable_replay_passed as _executable_replay_passed,
+    first_normalized_scorecard_text as _first_normalized_scorecard_text,
+    hard_vetoes as _hard_vetoes,
+    implementation_uncertainty_interval_width_per_day as _implementation_uncertainty_interval_width_per_day,
+    implementation_uncertainty_lower_net_per_day as _implementation_uncertainty_lower_net_per_day,
+    implementation_uncertainty_model_count as _implementation_uncertainty_model_count,
+    implementation_uncertainty_required as _implementation_uncertainty_required,
+    implementation_uncertainty_stability_passed as _implementation_uncertainty_stability_passed,
+    implementation_uncertainty_upper_net_per_day as _implementation_uncertainty_upper_net_per_day,
+    ledger_pnl_basis as _ledger_pnl_basis,
+    ledger_pnl_source as _ledger_pnl_source,
+    mapping as _mapping,
+    market_impact_liquidity_evidence_present as _market_impact_liquidity_evidence_present,
+    market_impact_stress_artifact_ref as _market_impact_stress_artifact_ref,
+    market_impact_stress_components as _market_impact_stress_components,
+    market_impact_stress_cost_bps as _market_impact_stress_cost_bps,
+    market_impact_stress_model as _market_impact_stress_model,
+    market_impact_stress_net_per_day as _market_impact_stress_net_per_day,
+    market_impact_stress_passed as _market_impact_stress_passed,
+    max_drawdown as _max_drawdown,
+    max_gross_exposure_pct_equity as _max_gross_exposure_pct_equity,
+    mean as _mean,
+    min_cash as _min_cash,
+    negative_cash_observation_count as _negative_cash_observation_count,
+    net_per_day as _net_per_day,
+    non_composable_hard_vetoes as _non_composable_hard_vetoes,
+    portfolio_daily_filled_notional as _portfolio_daily_filled_notional,
+    portfolio_daily_net as _portfolio_daily_net,
+    positive_ratio as _positive_ratio,
+    scorecard as _scorecard,
+    scorecard_primary_symbol as _scorecard_primary_symbol,
+    scorecard_runtime_params as _scorecard_runtime_params,
+    scorecard_signal as _scorecard_signal,
+    scorecard_sleeve_runtime_limits as _scorecard_sleeve_runtime_limits,
+    scorecard_universe_symbols as _scorecard_universe_symbols,
+    string as _string,
+    trading_day_count as _trading_day_count,
+    worst_day_loss as _worst_day_loss,
 )
 
 
@@ -763,3 +763,63 @@ def _missing_sleeve_daily_net_count(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+bundle_symbol_shares = _bundle_symbol_shares
+cluster_contribution_shares = _cluster_contribution_shares
+cluster_id = _cluster_id
+contribution_shares = _contribution_shares
+delay_adjusted_depth_fillable_notional_per_day = (
+    _delay_adjusted_depth_fillable_notional_per_day
+)
+delay_adjusted_depth_liquidity_evidence_present = (
+    _delay_adjusted_depth_liquidity_evidence_present
+)
+delay_adjusted_depth_liquidity_missing_day_count = (
+    _delay_adjusted_depth_liquidity_missing_day_count
+)
+delay_adjusted_depth_p10_active_day_fillable_notional = (
+    _delay_adjusted_depth_p10_active_day_fillable_notional
+)
+delay_adjusted_depth_stress_artifact_ref = _delay_adjusted_depth_stress_artifact_ref
+delay_adjusted_depth_stress_ms = _delay_adjusted_depth_stress_ms
+delay_adjusted_depth_stress_net_per_day = _delay_adjusted_depth_stress_net_per_day
+delay_adjusted_depth_stress_passed = _delay_adjusted_depth_stress_passed
+delay_adjusted_depth_tail_coverage_passed = _delay_adjusted_depth_tail_coverage_passed
+delay_adjusted_depth_worst_active_day_fillable_notional = (
+    _delay_adjusted_depth_worst_active_day_fillable_notional
+)
+double_oos_artifact_ref = _double_oos_artifact_ref
+double_oos_cost_shock_net_per_day = _double_oos_cost_shock_net_per_day
+double_oos_fold_metrics = _double_oos_fold_metrics
+double_oos_independent_window_count = _double_oos_independent_window_count
+double_oos_net_per_day = _double_oos_net_per_day
+double_oos_pass_rate = _double_oos_pass_rate
+double_oos_passed = _double_oos_passed
+edge_risk_gross_exposure_budget_weights = _edge_risk_gross_exposure_budget_weights
+equal_weights = _equal_weights
+fill_survival_evidence_present = _fill_survival_evidence_present
+fill_survival_rate = _fill_survival_rate
+fill_survival_sample_count = _fill_survival_sample_count
+fold_passed = _fold_passed
+gross_exposure_allocation_edge_net_per_day = _gross_exposure_allocation_edge_net_per_day
+gross_exposure_allocation_priority = _gross_exposure_allocation_priority
+gross_exposure_budget_weights = _gross_exposure_budget_weights
+max_drawdown_from_daily = _max_drawdown_from_daily
+max_pairwise_correlation = _max_pairwise_correlation
+max_share = _max_share
+missing_sleeve_daily_net_count = _missing_sleeve_daily_net_count
+portfolio_max_gross_exposure_pct_equity = _portfolio_max_gross_exposure_pct_equity
+portfolio_min_cash = _portfolio_min_cash
+portfolio_negative_cash_observation_count = _portfolio_negative_cash_observation_count
+portfolio_weighting_mode = _portfolio_weighting_mode
+portfolio_weights = _portfolio_weights
+positive_net_contribution = _positive_net_contribution
+queue_ahead_depletion_evidence_present = _queue_ahead_depletion_evidence_present
+queue_ahead_depletion_sample_count = _queue_ahead_depletion_sample_count
+queue_position_survival_evidence_present = _queue_position_survival_evidence_present
+queue_position_survival_fill_rate = _queue_position_survival_fill_rate
+queue_position_survival_queue_ratio_p95 = _queue_position_survival_queue_ratio_p95
+queue_position_survival_sample_count = _queue_position_survival_sample_count
+queue_position_survival_stress_net_per_day = _queue_position_survival_stress_net_per_day
+symbol_contribution_shares = _symbol_contribution_shares

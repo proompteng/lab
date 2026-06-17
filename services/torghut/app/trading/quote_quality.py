@@ -571,6 +571,8 @@ def _optional_decimal(value: Any) -> Decimal | None:
     return optional_decimal(value)
 
 
+status = _status
+
 __all__ = [
     "DEFAULT_MAX_EXECUTABLE_SPREAD_BPS",
     "DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS",
@@ -579,4 +581,5 @@ __all__ = [
     "QuoteQualityStatus",
     "SignalQuoteQualityTracker",
     "assess_signal_quote_quality",
+    "status",
 ]

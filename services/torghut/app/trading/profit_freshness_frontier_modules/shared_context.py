@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Profit freshness frontier projection for zero-notional repair selection."""
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ def _sequence(value: object) -> Sequence[object]:
     return ()
 
 
-def _text(value: object, default: str = "") -> str:
+def text(value: object, default: str = "") -> str:
     if value is None:
         return default
     text = str(value).strip()
@@ -224,13 +224,13 @@ def _unique(values: Sequence[str]) -> list[str]:
 
 
 def _strings(value: object) -> list[str]:
-    return _unique([_text(item) for item in _sequence(value)])
+    return _unique([text(item) for item in _sequence(value)])
 
 
 def _symbols(value: object) -> list[str]:
     if isinstance(value, str):
         return _unique([value.upper()])
-    return _unique([_text(item).upper() for item in _sequence(value)])
+    return _unique([text(item).upper() for item in _sequence(value)])
 
 
 def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
@@ -301,7 +301,7 @@ def _hypothesis_ids_for_reasons(
         reasons = set(_strings(item.get("reasons")))
         if not targets or reasons.intersection(targets):
             for key in ("hypothesis_id", "id", "candidate_id", "strategy_id"):
-                if value := _text(item.get(key)):
+                if value := text(item.get(key)):
                     ids.append(value)
                     break
     return _unique(ids)
@@ -337,7 +337,7 @@ def _dimension(
 ) -> dict[str, object]:
     observed = _timestamp(observed_at) or generated_at
     fresh = (
-        _text(fresh_until)
+        text(fresh_until)
         or (
             observed + timedelta(seconds=_FRESHNESS_SECONDS)
             if state == "current"
@@ -363,7 +363,7 @@ def _proof_dimension(
 ) -> Mapping[str, Any]:
     for raw_dimension in _sequence(proof_floor_receipt.get("proof_dimensions")):
         dimension = _mapping(raw_dimension)
-        if _text(dimension.get("dimension")) == dimension_name:
+        if text(dimension.get("dimension")) == dimension_name:
             return dimension
     return {}
 
@@ -391,7 +391,7 @@ def _market_dimension(
             *_strings(market_context_status.get("last_risk_flags")),
         ]
     )
-    status = _text(
+    status = text(
         _mapping(market_context_status.get("health")).get("status")
         or market_context_status.get("status")
         or market_context_status.get("state")
@@ -402,14 +402,14 @@ def _market_dimension(
         _market_domain_states(market_context_status)
     ).items():
         domain = _mapping(raw_domain)
-        domain_state = _text(domain.get("status") or domain.get("state")).lower()
+        domain_state = text(domain.get("status") or domain.get("state")).lower()
         if domain_state == "stale" or domain.get("stale") is True:
             stale_domains.append(str(domain_name))
     if _bool(market_context_status.get("alert_active")):
         reasons.extend(
             active_market_context_reasons(
                 [
-                    _text(
+                    text(
                         market_context_status.get("alert_reason"),
                         "market_context_alert_active",
                     )
@@ -439,7 +439,7 @@ def _market_dimension(
         generated_at=generated_at,
         reason_codes=reasons,
         evidence_refs=[
-            _text(market_context_status.get("last_symbol"), "market_context"),
+            text(market_context_status.get("last_symbol"), "market_context"),
             *_unique([f"market_context:{domain}" for domain in stale_domains]),
         ],
         blocking_hypotheses=_hypothesis_ids_for_reasons(
@@ -484,13 +484,11 @@ def _signal_dimension(
             default=0,
         ),
     )
-    status = _text(quant_evidence.get("status") or quant_evidence.get("state")).lower()
+    status = text(quant_evidence.get("status") or quant_evidence.get("state")).lower()
     quant_required = quant_evidence.get("required") is True
     quant_is_not_required = quant_evidence.get("required") is False and (
         status == "not_required"
-        or not _text(
-            quant_evidence.get("source_url") or quant_evidence.get("sourceUrl")
-        )
+        or not text(quant_evidence.get("source_url") or quant_evidence.get("sourceUrl"))
     )
     quant_counts_are_authoritative = quant_required or not quant_is_not_required
     if quant_counts_are_authoritative and latest_count <= 0:
@@ -498,9 +496,9 @@ def _signal_dimension(
     if quant_counts_are_authoritative and stage_count <= 0:
         reasons.append("signal_pipeline_stages_missing")
     if quant_evidence.get("ok") is False:
-        reasons.append(_text(quant_evidence.get("reason"), "quant_health_degraded"))
+        reasons.append(text(quant_evidence.get("reason"), "quant_health_degraded"))
     elif status and status not in _CURRENT_STATES and status != "not_required":
-        reasons.append(_text(quant_evidence.get("reason"), f"quant_health_{status}"))
+        reasons.append(text(quant_evidence.get("reason"), f"quant_health_{status}"))
     return _dimension(
         name="signal_ingestion",
         state=_state_from_reasons(
@@ -510,7 +508,7 @@ def _signal_dimension(
         ),
         generated_at=generated_at,
         reason_codes=reasons,
-        evidence_refs=[_text(quant_evidence.get("source_url"), "quant_health")],
+        evidence_refs=[text(quant_evidence.get("source_url"), "quant_health")],
         blocking_hypotheses=_hypothesis_ids_for_reasons(
             hypothesis_payload, ["signal_lag_exceeded"]
         ),
@@ -558,7 +556,7 @@ def _empirical_dimension(
     ready = _bool(empirical_jobs_status.get("ready"))
     if not ready and not reasons:
         reasons.append(
-            _text(empirical_jobs_status.get("status"), "empirical_jobs_not_ready")
+            text(empirical_jobs_status.get("status"), "empirical_jobs_not_ready")
         )
     state = _state_from_reasons(
         reasons,
@@ -632,9 +630,9 @@ def _route_rows(
 def _route_symbols(route_reacquisition_board: Mapping[str, Any]) -> list[str]:
     return sorted(
         {
-            _text(row.get("symbol")).upper()
+            text(row.get("symbol")).upper()
             for row in _route_rows(route_reacquisition_board)
-            if _text(row.get("symbol"))
+            if text(row.get("symbol"))
         }
     )
 
@@ -646,3 +644,56 @@ def _routeability_only_tca_reason(reason: str) -> bool:
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+ALPHA_FEATURE_REPLAY_PRIORITY_BONUS = _ALPHA_FEATURE_REPLAY_PRIORITY_BONUS
+ALPHA_FEATURE_REPLAY_REASON_CODES = _ALPHA_FEATURE_REPLAY_REASON_CODES
+ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS = _ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS
+ALPHA_READINESS_ROUTEABILITY_REASON_CODES = _ALPHA_READINESS_ROUTEABILITY_REASON_CODES
+BAD_STATES = _BAD_STATES
+bool_value = _bool
+CURRENT_STATES = _CURRENT_STATES
+DAILY_NET_PNL_UNLOCK_KEYS = _DAILY_NET_PNL_UNLOCK_KEYS
+decimal = _decimal
+decimal_text = _decimal_text
+dimension = _dimension
+DIMENSION_ACTION = _DIMENSION_ACTION
+DIMENSION_EXPECTED_BPS = _DIMENSION_EXPECTED_BPS
+DIMENSION_REPAIR_CLASSES = _DIMENSION_REPAIR_CLASSES
+DIMENSION_REPAIR_COST = _DIMENSION_REPAIR_COST
+DIMENSION_SUCCESS = _DIMENSION_SUCCESS
+empirical_dimension = _empirical_dimension
+float_value = _float
+FRESHNESS_SECONDS = _FRESHNESS_SECONDS
+hypothesis_dimension = _hypothesis_dimension
+hypothesis_ids_for_reasons = _hypothesis_ids_for_reasons
+hypothesis_items = _hypothesis_items
+hypothesis_summary = _hypothesis_summary
+int_value = _int
+mapping = _mapping
+market_dimension = _market_dimension
+market_domain_states = _market_domain_states
+NONBLOCKING_JANGAR_RELIABILITY_REASONS = _NONBLOCKING_JANGAR_RELIABILITY_REASONS
+NONBLOCKING_QUANT_HEALTH_REASONS = _NONBLOCKING_QUANT_HEALTH_REASONS
+proof_dimension = _proof_dimension
+reason_total = _reason_total
+REPAIR_COST_PENALTY = _REPAIR_COST_PENALTY
+REPAIRABLE_DIMENSIONS = _REPAIRABLE_DIMENSIONS
+route_rows = _route_rows
+ROUTE_SETTLED_ROW_STATES = _ROUTE_SETTLED_ROW_STATES
+route_symbols = _route_symbols
+routeability_only_tca_reason = _routeability_only_tca_reason
+ROUTEABILITY_ONLY_TCA_REASON_CODES = _ROUTEABILITY_ONLY_TCA_REASON_CODES
+ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES
+ROUTEABILITY_TCA_REPAIR_ACTION = _ROUTEABILITY_TCA_REPAIR_ACTION
+ROUTEABILITY_TCA_REPAIR_LOT_TYPES = _ROUTEABILITY_TCA_REPAIR_LOT_TYPES
+ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS = _ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS
+ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES = _ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES
+sequence = _sequence
+signal_dimension = _signal_dimension
+stable_ref = _stable_ref
+state_from_reasons = _state_from_reasons
+strings = _strings
+symbols = _symbols
+timestamp = _timestamp
+unique = _unique

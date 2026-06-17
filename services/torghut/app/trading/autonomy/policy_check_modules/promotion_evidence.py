@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Promotion evidence evaluation and policy toggles."""
 
 from __future__ import annotations
@@ -14,36 +14,40 @@ from .common import (
     parse_evidence_contract,
 )
 from .requirements import (
-    _as_dict,
-    _int_or_default,
-    _list_of_strings,
-    _requires_alpha_readiness_contract,
-    _requires_fold_evidence,
-    _requires_jangar_dependency_quorum,
-    _requires_stress_evidence,
+    as_dict as _as_dict,
+    int_or_default as _int_or_default,
+    list_of_strings as _list_of_strings,
+    requires_alpha_readiness_contract as _requires_alpha_readiness_contract,
+    requires_fold_evidence as _requires_fold_evidence,
+    requires_jangar_dependency_quorum as _requires_jangar_dependency_quorum,
+    requires_stress_evidence as _requires_stress_evidence,
 )
 
-from .advisor_fallback import _evaluate_advisor_fallback_slo_evidence
+from .advisor_fallback import (
+    evaluate_advisor_fallback_slo_evidence as _evaluate_advisor_fallback_slo_evidence,
+)
 from .benchmark_parity import (
-    _evaluate_benchmark_parity_evidence,
+    evaluate_benchmark_parity_evidence as _evaluate_benchmark_parity_evidence,
 )
 from .deeplob_bdlob import (
-    _evaluate_deeplob_bdlob_contract_evidence,
+    evaluate_deeplob_bdlob_contract_evidence as _evaluate_deeplob_bdlob_contract_evidence,
 )
 from .evidence_artifacts import (
-    _evaluate_fold_metrics_evidence,
-    _evaluate_rationale_evidence,
-    _evaluate_shadow_live_deviation_evidence,
-    _evaluate_simulation_calibration_evidence,
-    _evaluate_stress_metrics_evidence,
+    evaluate_fold_metrics_evidence as _evaluate_fold_metrics_evidence,
+    evaluate_rationale_evidence as _evaluate_rationale_evidence,
+    evaluate_shadow_live_deviation_evidence as _evaluate_shadow_live_deviation_evidence,
+    evaluate_simulation_calibration_evidence as _evaluate_simulation_calibration_evidence,
+    evaluate_stress_metrics_evidence as _evaluate_stress_metrics_evidence,
 )
 from .evidence_core import (
-    _evaluate_contamination_registry_evidence,
-    _evaluate_expert_router_registry_evidence,
-    _evaluate_hmm_state_posterior_evidence,
-    _evaluate_janus_evidence,
+    evaluate_contamination_registry_evidence as _evaluate_contamination_registry_evidence,
+    evaluate_expert_router_registry_evidence as _evaluate_expert_router_registry_evidence,
+    evaluate_hmm_state_posterior_evidence as _evaluate_hmm_state_posterior_evidence,
+    evaluate_janus_evidence as _evaluate_janus_evidence,
 )
-from .foundation_router import _evaluate_foundation_router_parity_evidence
+from .foundation_router import (
+    evaluate_foundation_router_parity_evidence as _evaluate_foundation_router_parity_evidence,
+)
 
 
 def _evaluate_promotion_evidence(
@@ -488,3 +492,7 @@ def _extract_evidence_authority_payload(payload: dict[str, Any]) -> dict[str, An
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+evaluate_alpha_readiness_summary = _evaluate_alpha_readiness_summary
+evaluate_promotion_evidence = _evaluate_promotion_evidence

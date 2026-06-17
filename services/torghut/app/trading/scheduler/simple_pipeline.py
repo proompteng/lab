@@ -1,5 +1,5 @@
 """Simplified trading pipeline with a minimal direct-submit hot path."""
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
 # ruff: noqa: F401
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from ..prices import MarketSnapshot
 from ..quote_quality import (
     QuoteQualityPolicy,
     QuoteQualityStatus,
-    _status,
+    status as _status,
     assess_signal_quote_quality,
 )
 from ..quantity_rules import quantize_qty_for_symbol, resolve_quantity_resolution
@@ -73,8 +73,8 @@ from ..tca import build_tca_gate_inputs
 from ..time_source import trading_now
 from .pipeline import TradingPipeline
 from .pipeline_helpers import (
-    _extract_json_error_payload,
-    _price_snapshot_payload,
+    extract_json_error_payload as _extract_json_error_payload,
+    price_snapshot_payload as _price_snapshot_payload,
 )
 from .paper_route_materialization import SimplePipelinePaperRouteMaterializationMixin
 from .paper_route_probe import SimplePipelinePaperRouteProbeMixin
@@ -82,38 +82,38 @@ from .proof_floor import SimplePipelineProofFloorMixin
 from .source_collection import SimplePipelineSourceCollectionMixin
 from .submission_preparation import SimplePipelineSubmissionPreparationMixin
 from .target_plan_helpers import (
-    _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
-    _SIGNAL_INGEST_UNAVAILABLE_REASONS,
-    _TargetProbeQuantityResolution,
-    _bounded_paper_route_collection_entry_metadata,
-    _bounded_sim_collection_blockers,
-    _bounded_sim_collection_metadata_from_decision,
-    _bounded_sim_collection_reserves_account,
-    _bounded_sim_collection_target_with_runtime_account_audit,
-    _executable_bid_ask_present,
-    _paper_route_probe_entry_metadata,
-    _paper_route_probe_lineage_from_params,
-    _parse_target_datetime,
-    _quote_snapshot_matches_symbol,
-    _quote_snapshot_reference_price,
-    _safe_text,
-    _safe_int,
-    _simple_drift_feature_thresholds,
-    _simple_drift_thresholds,
-    _strategy_signal_paper_entry_metadata,
-    _target_active_in_window,
-    _target_metadata_quote_snapshot,
-    _target_notional_sizing_audit_from_params,
-    _target_pair_balance_state,
-    _target_probe_action,
-    _target_requires_bounded_sim_collection_gate,
-    _target_probe_symbol_actions,
-    _target_probe_symbol_notional_budget,
-    _target_probe_symbol_quantities,
-    _target_probe_window,
-    _target_runtime_account_matches,
-    _target_symbols,
-    _target_truthy,
+    PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS as _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
+    SIGNAL_INGEST_UNAVAILABLE_REASONS as _SIGNAL_INGEST_UNAVAILABLE_REASONS,
+    TargetProbeQuantityResolution as _TargetProbeQuantityResolution,
+    bounded_paper_route_collection_entry_metadata as _bounded_paper_route_collection_entry_metadata,
+    bounded_sim_collection_blockers as _bounded_sim_collection_blockers,
+    bounded_sim_collection_metadata_from_decision as _bounded_sim_collection_metadata_from_decision,
+    bounded_sim_collection_reserves_account as _bounded_sim_collection_reserves_account,
+    bounded_sim_collection_target_with_runtime_account_audit as _bounded_sim_collection_target_with_runtime_account_audit,
+    executable_bid_ask_present as _executable_bid_ask_present,
+    paper_route_probe_entry_metadata as _paper_route_probe_entry_metadata,
+    paper_route_probe_lineage_from_params as _paper_route_probe_lineage_from_params,
+    parse_target_datetime as _parse_target_datetime,
+    quote_snapshot_matches_symbol as _quote_snapshot_matches_symbol,
+    quote_snapshot_reference_price as _quote_snapshot_reference_price,
+    safe_text as _safe_text,
+    safe_int as _safe_int,
+    simple_drift_feature_thresholds as _simple_drift_feature_thresholds,
+    simple_drift_thresholds as _simple_drift_thresholds,
+    strategy_signal_paper_entry_metadata as _strategy_signal_paper_entry_metadata,
+    target_active_in_window as _target_active_in_window,
+    target_metadata_quote_snapshot as _target_metadata_quote_snapshot,
+    target_notional_sizing_audit_from_params as _target_notional_sizing_audit_from_params,
+    target_pair_balance_state as _target_pair_balance_state,
+    target_probe_action as _target_probe_action,
+    target_requires_bounded_sim_collection_gate as _target_requires_bounded_sim_collection_gate,
+    target_probe_symbol_actions as _target_probe_symbol_actions,
+    target_probe_symbol_notional_budget as _target_probe_symbol_notional_budget,
+    target_probe_symbol_quantities as _target_probe_symbol_quantities,
+    target_probe_window as _target_probe_window,
+    target_runtime_account_matches as _target_runtime_account_matches,
+    target_symbols as _target_symbols,
+    target_truthy as _target_truthy,
 )
 
 

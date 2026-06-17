@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
@@ -57,30 +57,30 @@ from .shared_context import (
     EngineeringGradeDecision,
     GithubIssueEvent,
     ManualApprovalPayload,
-    _ELIGIBLE_AUTO_VERDICTS,
-    _GITHUB_ISSUE_ACTIONS,
-    _GITHUB_ISSUE_COMMENT_ACTIONS,
-    _MAX_SEMANTIC_RELEVANT_DISTANCE,
-    _PASS_GATE_STATUSES,
-    _REJECT_VERDICTS,
-    _RETRYABLE_AGENTRUN_STATUSES,
-    _SEMANTIC_RELATIVE_DISTANCE_WINDOW,
-    _WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
-    _WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
-    _bool_env,
-    _coerce_issue_number,
-    _extract_github_event_metadata,
-    _extract_github_issue_payload,
-    _extract_sender_login,
-    _float_env,
-    _http_request_bytes,
-    _int_env,
-    _mounted_or_env_value,
-    _normalize_identifier,
-    _read_text_file,
-    _sorted_unique,
-    _str_env,
-    _whitepaper_ceph_bucket_name,
+    ELIGIBLE_AUTO_VERDICTS as _ELIGIBLE_AUTO_VERDICTS,
+    GITHUB_ISSUE_ACTIONS as _GITHUB_ISSUE_ACTIONS,
+    GITHUB_ISSUE_COMMENT_ACTIONS as _GITHUB_ISSUE_COMMENT_ACTIONS,
+    MAX_SEMANTIC_RELEVANT_DISTANCE as _MAX_SEMANTIC_RELEVANT_DISTANCE,
+    PASS_GATE_STATUSES as _PASS_GATE_STATUSES,
+    REJECT_VERDICTS as _REJECT_VERDICTS,
+    RETRYABLE_AGENTRUN_STATUSES as _RETRYABLE_AGENTRUN_STATUSES,
+    SEMANTIC_RELATIVE_DISTANCE_WINDOW as _SEMANTIC_RELATIVE_DISTANCE_WINDOW,
+    WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR as _WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
+    WHITEPAPER_CEPH_DEFAULT_SECRET_DIR as _WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
+    bool_env as _bool_env,
+    coerce_issue_number as _coerce_issue_number,
+    extract_github_event_metadata as _extract_github_event_metadata,
+    extract_github_issue_payload as _extract_github_issue_payload,
+    extract_sender_login as _extract_sender_login,
+    float_env as _float_env,
+    http_request_bytes as _http_request_bytes,
+    int_env as _int_env,
+    mounted_or_env_value as _mounted_or_env_value,
+    normalize_identifier as _normalize_identifier,
+    read_text_file as _read_text_file,
+    sorted_unique as _sorted_unique,
+    str_env as _str_env,
+    whitepaper_ceph_bucket_name as _whitepaper_ceph_bucket_name,
     build_whitepaper_run_id,
     comment_requests_requeue,
     extract_pdf_urls,
@@ -103,23 +103,23 @@ from .shared_context import (
 from .ceph_s3_client import (
     CephS3Client,
     IssueKickoffResult,
-    _IssueRunIdentity,
-    _PdfStorageOutcome,
-    _WhitepaperWorkflowServiceFields,
+    IssueRunIdentity as _IssueRunIdentity,
+    PdfStorageOutcome as _PdfStorageOutcome,
+    WhitepaperWorkflowServiceFields as _WhitepaperWorkflowServiceFields,
 )
 from .whitepaper_workflow_ingestion_methods import (
-    _WhitepaperWorkflowIngestionMethods,
+    WhitepaperWorkflowIngestionMethods as _WhitepaperWorkflowIngestionMethods,
 )
 from .whitepaper_workflow_persistence_methods import (
-    _WhitepaperWorkflowPersistenceMethods,
+    WhitepaperWorkflowPersistenceMethods as _WhitepaperWorkflowPersistenceMethods,
 )
 from .whitepaper_workflow_agent_methods import (
-    _WhitepaperWorkflowAgentMethods,
+    WhitepaperWorkflowAgentMethods as _WhitepaperWorkflowAgentMethods,
 )
 
 
 @dataclass(frozen=True)
-class _EmbeddingRequestConfig:
+class EmbeddingRequestConfig:
     base_url: str
     api_key: str | None
     embedding_model: str
@@ -134,7 +134,7 @@ class _EmbeddingRequestConfig:
 
 
 @dataclass(frozen=True)
-class _EngineeringDecisionPolicy:
+class EngineeringDecisionPolicy:
     policy_ref: str
     rollout_profile: str
     min_confidence: float
@@ -145,7 +145,7 @@ class _EngineeringDecisionPolicy:
 
 
 @dataclass(frozen=True)
-class _EngineeringDecisionSignals:
+class EngineeringDecisionSignals:
     gate_snapshot: dict[str, Any] | None
     gate_snapshot_hash: str | None
     gate_missing_codes: list[str]
@@ -158,12 +158,12 @@ class _EngineeringDecisionSignals:
 
 
 @dataclass(frozen=True)
-class _EngineeringDecisionOutcome:
+class EngineeringDecisionOutcome:
     implementation_grade: str
     dispatch_decision: str
 
 
-class _WhitepaperWorkflowVerdictMethods:
+class WhitepaperWorkflowVerdictMethods:
     def _embed_texts(self, texts: list[str]) -> tuple[str, int, list[list[float]]]:
         if not texts:
             raise ValueError("embedding_texts_required")
@@ -202,7 +202,7 @@ class _WhitepaperWorkflowVerdictMethods:
 
         return config.embedding_model, dimension, ordered_embeddings
 
-    def _embedding_request_config(self) -> _EmbeddingRequestConfig:
+    def _embedding_request_config(self) -> EmbeddingRequestConfig:
         base_url = (
             _str_env("WHITEPAPER_EMBEDDING_API_BASE_URL")
             or _str_env("OPENAI_BASE_URL")
@@ -217,7 +217,7 @@ class _WhitepaperWorkflowVerdictMethods:
             or "text-embedding-3-large"
         )
         is_ollama_embed = base_url.endswith("/api")
-        return _EmbeddingRequestConfig(
+        return EmbeddingRequestConfig(
             base_url=base_url,
             api_key=api_key,
             embedding_model=embedding_model,
@@ -238,7 +238,7 @@ class _WhitepaperWorkflowVerdictMethods:
 
     @staticmethod
     def _embedding_request_payload(
-        config: _EmbeddingRequestConfig,
+        config: EmbeddingRequestConfig,
         batch: list[str],
     ) -> dict[str, Any]:
         if config.is_ollama_embed:
@@ -270,7 +270,7 @@ class _WhitepaperWorkflowVerdictMethods:
         raw: bytes,
         *,
         status: int,
-        config: _EmbeddingRequestConfig,
+        config: EmbeddingRequestConfig,
         batch_size: int,
         observed_dimension: int | None,
     ) -> tuple[list[list[float]], int | None]:
@@ -546,7 +546,7 @@ class _WhitepaperWorkflowVerdictMethods:
     def _engineering_decision_policy(
         self,
         manual_approval: ManualApprovalPayload | None,
-    ) -> _EngineeringDecisionPolicy:
+    ) -> EngineeringDecisionPolicy:
         policy_ref = (
             _str_env(
                 "WHITEPAPER_ENGINEERING_TRIGGER_POLICY_REF",
@@ -563,7 +563,7 @@ class _WhitepaperWorkflowVerdictMethods:
             )
         min_confidence = _float_env("WHITEPAPER_ENGINEERING_MIN_CONFIDENCE", 0.80)
         min_score = _float_env("WHITEPAPER_ENGINEERING_MIN_SCORE", 0.75)
-        return _EngineeringDecisionPolicy(
+        return EngineeringDecisionPolicy(
             policy_ref=policy_ref,
             rollout_profile=rollout_profile,
             min_confidence=min_confidence,
@@ -586,12 +586,12 @@ class _WhitepaperWorkflowVerdictMethods:
         self,
         run: WhitepaperAnalysisRun,
         verdict: WhitepaperViabilityVerdict | None,
-    ) -> _EngineeringDecisionSignals:
+    ) -> EngineeringDecisionSignals:
         gate_snapshot = self._as_json_record(
             verdict.gating_json if verdict is not None else None
         )
         gate_statuses = self._extract_gate_statuses(gate_snapshot)
-        return _EngineeringDecisionSignals(
+        return EngineeringDecisionSignals(
             gate_snapshot=gate_snapshot,
             gate_snapshot_hash=(
                 self._compute_json_hash(gate_snapshot)
@@ -632,16 +632,16 @@ class _WhitepaperWorkflowVerdictMethods:
         *,
         run: WhitepaperAnalysisRun,
         verdict: WhitepaperViabilityVerdict | None,
-        policy: _EngineeringDecisionPolicy,
-        signals: _EngineeringDecisionSignals,
+        policy: EngineeringDecisionPolicy,
+        signals: EngineeringDecisionSignals,
         reason_codes: list[str],
-    ) -> _EngineeringDecisionOutcome:
+    ) -> EngineeringDecisionOutcome:
         if run.status != "completed":
             reason_codes.append("run_status_not_completed")
-            return _EngineeringDecisionOutcome("research_only", "suppressed")
+            return EngineeringDecisionOutcome("research_only", "suppressed")
         if verdict is None:
             reason_codes.append("verdict_missing")
-            return _EngineeringDecisionOutcome("reject", "suppressed")
+            return EngineeringDecisionOutcome("reject", "suppressed")
         self._append_verdict_quality_reason_codes(policy, signals, reason_codes)
         return self._completed_verdict_engineering_outcome(
             policy, signals, reason_codes
@@ -649,8 +649,8 @@ class _WhitepaperWorkflowVerdictMethods:
 
     @staticmethod
     def _append_verdict_quality_reason_codes(
-        policy: _EngineeringDecisionPolicy,
-        signals: _EngineeringDecisionSignals,
+        policy: EngineeringDecisionPolicy,
+        signals: EngineeringDecisionSignals,
         reason_codes: list[str],
     ) -> None:
         if signals.verdict_text not in _ELIGIBLE_AUTO_VERDICTS:
@@ -670,27 +670,27 @@ class _WhitepaperWorkflowVerdictMethods:
 
     def _completed_verdict_engineering_outcome(
         self,
-        policy: _EngineeringDecisionPolicy,
-        signals: _EngineeringDecisionSignals,
+        policy: EngineeringDecisionPolicy,
+        signals: EngineeringDecisionSignals,
         reason_codes: list[str],
-    ) -> _EngineeringDecisionOutcome:
+    ) -> EngineeringDecisionOutcome:
         if self._verdict_should_reject(policy, signals):
-            return _EngineeringDecisionOutcome("reject", "suppressed")
+            return EngineeringDecisionOutcome("reject", "suppressed")
         if self._verdict_requires_research_only(signals):
             if signals.gate_snapshot is None:
                 reason_codes.append("gating_json_missing")
-            return _EngineeringDecisionOutcome("research_only", "suppressed")
+            return EngineeringDecisionOutcome("research_only", "suppressed")
         if self._verdict_queues_engineering(policy, signals):
-            return _EngineeringDecisionOutcome(
+            return EngineeringDecisionOutcome(
                 self._engineering_grade_for_scores(policy, signals),
                 "queued" if policy.auto_dispatch_enabled else "suppressed",
             )
-        return _EngineeringDecisionOutcome("research_only", "suppressed")
+        return EngineeringDecisionOutcome("research_only", "suppressed")
 
     @staticmethod
     def _verdict_should_reject(
-        policy: _EngineeringDecisionPolicy,
-        signals: _EngineeringDecisionSignals,
+        policy: EngineeringDecisionPolicy,
+        signals: EngineeringDecisionSignals,
     ) -> bool:
         return signals.verdict_text in _REJECT_VERDICTS or (
             signals.confidence_value is not None
@@ -698,7 +698,7 @@ class _WhitepaperWorkflowVerdictMethods:
         )
 
     @staticmethod
-    def _verdict_requires_research_only(signals: _EngineeringDecisionSignals) -> bool:
+    def _verdict_requires_research_only(signals: EngineeringDecisionSignals) -> bool:
         return (
             signals.requires_followup
             or signals.gate_snapshot is None
@@ -708,8 +708,8 @@ class _WhitepaperWorkflowVerdictMethods:
 
     @staticmethod
     def _verdict_queues_engineering(
-        policy: _EngineeringDecisionPolicy,
-        signals: _EngineeringDecisionSignals,
+        policy: EngineeringDecisionPolicy,
+        signals: EngineeringDecisionSignals,
     ) -> bool:
         return (
             signals.verdict_text in _ELIGIBLE_AUTO_VERDICTS
@@ -721,8 +721,8 @@ class _WhitepaperWorkflowVerdictMethods:
 
     @staticmethod
     def _engineering_grade_for_scores(
-        policy: _EngineeringDecisionPolicy,
-        signals: _EngineeringDecisionSignals,
+        policy: EngineeringDecisionPolicy,
+        signals: EngineeringDecisionSignals,
     ) -> str:
         if (
             signals.confidence_value is not None
@@ -735,12 +735,12 @@ class _WhitepaperWorkflowVerdictMethods:
 
     def _apply_manual_engineering_override(
         self,
-        outcome: _EngineeringDecisionOutcome,
+        outcome: EngineeringDecisionOutcome,
         *,
         manual_approval: ManualApprovalPayload | None,
         rollout_profile: str,
         reason_codes: list[str],
-    ) -> _EngineeringDecisionOutcome:
+    ) -> EngineeringDecisionOutcome:
         if manual_approval is None:
             return outcome
         if self._manual_approval_allowed(rollout_profile):
@@ -748,16 +748,16 @@ class _WhitepaperWorkflowVerdictMethods:
             reason_codes.append(
                 f"manual_override_source_{_normalize_identifier(manual_approval.approval_source)}"
             )
-            return _EngineeringDecisionOutcome(
+            return EngineeringDecisionOutcome(
                 outcome.implementation_grade,
                 "queued",
             )
         reason_codes.append("manual_override_not_allowed_for_profile")
-        return _EngineeringDecisionOutcome(outcome.implementation_grade, "suppressed")
+        return EngineeringDecisionOutcome(outcome.implementation_grade, "suppressed")
 
     @staticmethod
     def _append_engineering_dispatch_reason_codes(
-        outcome: _EngineeringDecisionOutcome,
+        outcome: EngineeringDecisionOutcome,
         *,
         manual_approval: ManualApprovalPayload | None,
         auto_dispatch_enabled: bool,
@@ -772,9 +772,9 @@ class _WhitepaperWorkflowVerdictMethods:
     def _engineering_approval_token(
         *,
         run: WhitepaperAnalysisRun,
-        outcome: _EngineeringDecisionOutcome,
-        policy: _EngineeringDecisionPolicy,
-        signals: _EngineeringDecisionSignals,
+        outcome: EngineeringDecisionOutcome,
+        policy: EngineeringDecisionPolicy,
+        signals: EngineeringDecisionSignals,
         manual_approval: ManualApprovalPayload | None,
     ) -> str:
         approval_seed = {

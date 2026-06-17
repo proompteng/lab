@@ -760,3 +760,6 @@ class _TradingSchedulerGovernanceDecisionMethods:
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+TradingSchedulerGovernanceDecisionMethods = _TradingSchedulerGovernanceDecisionMethods

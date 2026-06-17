@@ -144,7 +144,7 @@ def _attr(value: object, name: str) -> Any:
     raise AttributeError(name)
 
 
-def _payload_value(row: TigerBeetleTransferRef, key: str) -> str | None:
+def payload_value(row: TigerBeetleTransferRef, key: str) -> str | None:
     raw_payload = cast(object, row.payload_json)
     payload: Mapping[str, object] = (
         cast(Mapping[str, object], raw_payload)
@@ -169,8 +169,8 @@ def _account_payload_matches(
     key: str,
     expected_account_id: int,
 ) -> bool:
-    payload_value = _payload_value(ref, key)
-    return payload_value is None or _u128_text(payload_value) == u128_decimal(
+    payload_text = payload_value(ref, key)
+    return payload_text is None or _u128_text(payload_text) == u128_decimal(
         expected_account_id
     )
 
@@ -282,7 +282,7 @@ def _ref_matches_expected_event(
         session,
         event,
         settings_obj=settings_obj,
-        prefer_pending_ref=_payload_value(ref, "pending_mode") != "standalone_fill",
+        prefer_pending_ref=payload_value(ref, "pending_mode") != "standalone_fill",
     )
     if plan is None:
         return False
@@ -661,3 +661,21 @@ usd_to_micros = _usd_to_micros
 uuid_or_none = _uuid_or_none
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+account_payload_matches = _account_payload_matches
+append_sample = _append_sample
+archived_source_amount_micros = _archived_source_amount_micros
+as_aware_utc = _as_aware_utc
+compact_reconciliation_ref_counts = _compact_reconciliation_ref_counts
+legacy_unversioned_source_ref = _legacy_unversioned_source_ref
+order_event_ref_exists = _order_event_ref_exists
+payload_mapping = _payload_mapping
+ref_matches_expected_event = _ref_matches_expected_event
+ref_sample = _ref_sample
+runtime_ledger_ref_is_signed = _runtime_ledger_ref_is_signed
+source_materialization_payload = _source_materialization_payload
+source_ref_exists = _source_ref_exists
+stable_ref_payload = _stable_ref_payload
+transfer_lookup_key = _transfer_lookup_key
+u128_text = _u128_text

@@ -112,7 +112,7 @@ _order_event_ref_exists = getattr(_shared_context_private_52, "_order_event_ref_
 _payload_int = getattr(_shared_context_private_52, "_payload_int")
 _payload_mapping = getattr(_shared_context_private_52, "_payload_mapping")
 _payload_string_list = getattr(_shared_context_private_52, "_payload_string_list")
-_payload_value = getattr(_shared_context_private_52, "_payload_value")
+_payload_value = getattr(_shared_context_private_52, "payload_value")
 _ref_matches_expected_event = getattr(
     _shared_context_private_52, "_ref_matches_expected_event"
 )

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Profitability manifest and prerequisite evidence checks."""
 
 from __future__ import annotations
@@ -8,25 +8,25 @@ from .common import (
     Any,
     NON_AUTHORITATIVE_PROVENANCE,
     Path,
-    _PROFITABILITY_STAGE_ORDER,
-    _PROFITABILITY_STAGE_REQUIRED_CHECKS,
+    PROFITABILITY_STAGE_ORDER as _PROFITABILITY_STAGE_ORDER,
+    PROFITABILITY_STAGE_REQUIRED_CHECKS as _PROFITABILITY_STAGE_REQUIRED_CHECKS,
     contract_from_artifact_payload,
     parse_evidence_contract,
     urlparse,
 )
 from .requirements import (
-    _as_dict,
-    _as_list_of_dicts,
-    _benchmark_parity_artifact_candidates,
-    _benchmark_parity_artifact_reference,
-    _int_or_default,
-    _list_count,
-    _list_of_strings,
-    _load_json_if_exists,
-    _normalize_artifact_path,
-    _regime_slice_count,
-    _sha256_json,
-    _sha256_path,
+    as_dict as _as_dict,
+    as_list_of_dicts as _as_list_of_dicts,
+    benchmark_parity_artifact_candidates as _benchmark_parity_artifact_candidates,
+    benchmark_parity_artifact_reference as _benchmark_parity_artifact_reference,
+    int_or_default as _int_or_default,
+    list_count as _list_count,
+    list_of_strings as _list_of_strings,
+    load_json_if_exists as _load_json_if_exists,
+    normalize_artifact_path as _normalize_artifact_path,
+    regime_slice_count as _regime_slice_count,
+    sha256_json as _sha256_json,
+    sha256_path as _sha256_path,
 )
 
 
@@ -910,3 +910,14 @@ def _append_benchmark_parity_evidence_reasons(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+append_benchmark_parity_evidence_reasons = _append_benchmark_parity_evidence_reasons
+append_janus_evidence_reasons = _append_janus_evidence_reasons
+append_portfolio_optimizer_evidence_reasons = (
+    _append_portfolio_optimizer_evidence_reasons
+)
+append_profitability_evidence_reasons = _append_profitability_evidence_reasons
+append_profitability_stage_manifest_reasons = (
+    _append_profitability_stage_manifest_reasons
+)

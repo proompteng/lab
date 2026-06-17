@@ -231,3 +231,34 @@ __all__ = [
     "target_plan_symbols",
     "text_from_mapping",
 ]
+
+# Public aliases used by split modules.
+bounded_sim_collection_blockers = _bounded_sim_collection_blockers
+bounded_sim_collection_reserves_account = _bounded_sim_collection_reserves_account
+bounded_sim_collection_target_with_runtime_account_audit = (
+    _bounded_sim_collection_target_with_runtime_account_audit
+)
+merge_paper_route_probe_lineage = _merge_paper_route_probe_lineage
+paper_route_probe_lineage_from_params = _paper_route_probe_lineage_from_params
+PAPER_ROUTE_PROBE_REASONS = _PAPER_ROUTE_PROBE_REASONS
+PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS = _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS
+PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = (
+    _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS
+)
+quote_snapshot_matches_symbol = _quote_snapshot_matches_symbol
+SIGNAL_INGEST_UNAVAILABLE_REASONS = _SIGNAL_INGEST_UNAVAILABLE_REASONS
+SIMPLE_ALLOWED_REJECT_REASONS = _SIMPLE_ALLOWED_REJECT_REASONS
+simple_drift_feature_thresholds = _simple_drift_feature_thresholds
+simple_drift_thresholds = _simple_drift_thresholds
+SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL
+strategy_signal_paper_entry_metadata = _strategy_signal_paper_entry_metadata
+target_active_in_window = _target_active_in_window
+target_pair_balance_state = _target_pair_balance_state
+target_plan_lineage = _target_plan_lineage
+target_probe_action = _target_probe_action
+target_probe_window = _target_probe_window
+target_requires_bounded_sim_collection_gate = (
+    _target_requires_bounded_sim_collection_gate
+)
+target_runtime_account_matches = _target_runtime_account_matches
+target_truthy = _target_truthy

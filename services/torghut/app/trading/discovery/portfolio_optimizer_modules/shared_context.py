@@ -831,3 +831,72 @@ def _conformal_tail_loss_buffer(values: Sequence[Decimal]) -> Decimal:
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+ACCEPTED_LEDGER_PNL_SOURCES = _ACCEPTED_LEDGER_PNL_SOURCES
+active_ratio = _active_ratio
+artifact_refs_from_scorecard = _artifact_refs_from_scorecard
+best_day_share = _best_day_share
+boolish = _boolish
+candidate_passes_minimums = _candidate_passes_minimums
+capital_safety_rejection = _capital_safety_rejection
+conformal_tail_loss_buffer = _conformal_tail_loss_buffer
+conformal_tail_risk_required = _conformal_tail_risk_required
+correlation = _correlation
+daily_filled_notional = _daily_filled_notional
+daily_net = _daily_net
+decimal = _decimal
+diversified_candidate_order = _diversified_candidate_order
+exact_replay_ledger_artifact_refs = _exact_replay_ledger_artifact_refs
+exact_replay_ledger_fill_count = _exact_replay_ledger_fill_count
+exact_replay_ledger_row_count = _exact_replay_ledger_row_count
+executable_replay_artifact_ref = _executable_replay_artifact_ref
+executable_replay_buying_power = _executable_replay_buying_power
+executable_replay_max_notional = _executable_replay_max_notional
+executable_replay_order_count = _executable_replay_order_count
+executable_replay_passed = _executable_replay_passed
+first_normalized_scorecard_text = _first_normalized_scorecard_text
+hard_vetoes = _hard_vetoes
+implementation_uncertainty_interval_width_per_day = (
+    _implementation_uncertainty_interval_width_per_day
+)
+implementation_uncertainty_lower_net_per_day = (
+    _implementation_uncertainty_lower_net_per_day
+)
+implementation_uncertainty_model_count = _implementation_uncertainty_model_count
+implementation_uncertainty_required = _implementation_uncertainty_required
+implementation_uncertainty_stability_passed = (
+    _implementation_uncertainty_stability_passed
+)
+implementation_uncertainty_upper_net_per_day = (
+    _implementation_uncertainty_upper_net_per_day
+)
+ledger_pnl_basis = _ledger_pnl_basis
+ledger_pnl_source = _ledger_pnl_source
+mapping = _mapping
+market_impact_liquidity_evidence_present = _market_impact_liquidity_evidence_present
+market_impact_stress_artifact_ref = _market_impact_stress_artifact_ref
+market_impact_stress_components = _market_impact_stress_components
+market_impact_stress_cost_bps = _market_impact_stress_cost_bps
+market_impact_stress_model = _market_impact_stress_model
+market_impact_stress_net_per_day = _market_impact_stress_net_per_day
+market_impact_stress_passed = _market_impact_stress_passed
+max_drawdown = _max_drawdown
+max_gross_exposure_pct_equity = _max_gross_exposure_pct_equity
+mean = _mean
+min_cash = _min_cash
+negative_cash_observation_count = _negative_cash_observation_count
+net_per_day = _net_per_day
+non_composable_hard_vetoes = _non_composable_hard_vetoes
+portfolio_daily_filled_notional = _portfolio_daily_filled_notional
+portfolio_daily_net = _portfolio_daily_net
+positive_ratio = _positive_ratio
+scorecard = _scorecard
+scorecard_primary_symbol = _scorecard_primary_symbol
+scorecard_runtime_params = _scorecard_runtime_params
+scorecard_signal = _scorecard_signal
+scorecard_sleeve_runtime_limits = _scorecard_sleeve_runtime_limits
+scorecard_universe_symbols = _scorecard_universe_symbols
+string = _string
+trading_day_count = _trading_day_count
+worst_day_loss = _worst_day_loss

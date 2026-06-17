@@ -44,7 +44,7 @@ from tests.policy_checks.policy_checks_artifact_support import (
 )
 
 from app.trading.autonomy.policy_checks import (
-    _evaluate_alpha_readiness_summary,
+    evaluate_alpha_readiness_summary,
     evaluate_promotion_prerequisites,
     evaluate_rollback_readiness,
 )

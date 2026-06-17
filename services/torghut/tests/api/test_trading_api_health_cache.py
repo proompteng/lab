@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.api import common as common_api
+
 from tests.api.trading_api_support import (
     Event,
     Future,
@@ -65,8 +67,8 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     def test_trading_health_evaluation_timeout_returns_fail_closed_quickly(
         self,
     ) -> None:
-        original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
-        main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
+        original_timeout = common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+        common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
         with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
             main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
             main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
@@ -85,7 +87,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 elapsed = time.monotonic() - started_at
             time.sleep(0.25)
         finally:
-            main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
+            common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
             with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
                 main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
                 main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
@@ -107,8 +109,8 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
         self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
 
     def test_trading_health_timeout_uses_cached_dependency_shape(self) -> None:
-        original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
-        main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
+        original_timeout = common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+        common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
         health_cache_key = main_module._trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
@@ -146,7 +148,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 response = self.client.get("/trading/health")
             time.sleep(0.25)
         finally:
-            main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
+            common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
             with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
                 main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
                 main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
@@ -306,8 +308,8 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     def test_trading_health_serves_cached_payload_when_idle_and_refreshes(
         self,
     ) -> None:
-        original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
-        main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
+        original_timeout = common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+        common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
         cache_key = main_module._trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
@@ -364,7 +366,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 self.assertEqual(len(refresh_calls), 1)
         finally:
             release_refresh.set()
-            main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
+            common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
             with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
                 refresh_futures = list(
                     main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.values()
@@ -481,8 +483,8 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
         self.assertFalse(gate["final_promotion_allowed"])
 
     def test_trading_health_timeout_uses_cached_blockers_fail_closed(self) -> None:
-        original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
-        main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
+        original_timeout = common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+        common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
         cache_key = main_module._trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
@@ -529,7 +531,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 response = self.client.get("/trading/health")
             time.sleep(0.25)
         finally:
-            main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
+            common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
             with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
                 main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
                 main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()

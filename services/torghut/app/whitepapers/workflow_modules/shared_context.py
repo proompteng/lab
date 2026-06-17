@@ -633,3 +633,29 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+bool_env = _bool_env
+coerce_issue_number = _coerce_issue_number
+ELIGIBLE_AUTO_VERDICTS = _ELIGIBLE_AUTO_VERDICTS
+extract_github_event_metadata = _extract_github_event_metadata
+extract_github_issue_payload = _extract_github_issue_payload
+extract_sender_login = _extract_sender_login
+float_env = _float_env
+GITHUB_ISSUE_ACTIONS = _GITHUB_ISSUE_ACTIONS
+GITHUB_ISSUE_COMMENT_ACTIONS = _GITHUB_ISSUE_COMMENT_ACTIONS
+http_request_bytes = _http_request_bytes
+int_env = _int_env
+MAX_SEMANTIC_RELEVANT_DISTANCE = _MAX_SEMANTIC_RELEVANT_DISTANCE
+mounted_or_env_value = _mounted_or_env_value
+normalize_identifier = _normalize_identifier
+PASS_GATE_STATUSES = _PASS_GATE_STATUSES
+read_text_file = _read_text_file
+REJECT_VERDICTS = _REJECT_VERDICTS
+RETRYABLE_AGENTRUN_STATUSES = _RETRYABLE_AGENTRUN_STATUSES
+SEMANTIC_RELATIVE_DISTANCE_WINDOW = _SEMANTIC_RELATIVE_DISTANCE_WINDOW
+sorted_unique = _sorted_unique
+str_env = _str_env
+whitepaper_ceph_bucket_name = _whitepaper_ceph_bucket_name
+WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR = _WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR
+WHITEPAPER_CEPH_DEFAULT_SECRET_DIR = _WHITEPAPER_CEPH_DEFAULT_SECRET_DIR

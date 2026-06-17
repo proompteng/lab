@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Runtime ledger summary payload helpers."""
 
 from __future__ import annotations
@@ -38,48 +38,48 @@ from .common import (
     TradeDecision,
     VNextDatasetSnapshot,
     VNextPromotionDecision,
-    _AUTORESEARCH_PORTFOLIO_READY_STATUSES,
-    _CAPITAL_STAGE_ORDER,
-    _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
-    _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
-    _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
-    _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES,
-    _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
-    _PROMOTION_PORTFOLIO_SAMPLE_LIMIT,
-    _PROMOTION_SCALAR_COUNT_LIMIT,
-    _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
-    _PortfolioPromotionRow,
-    _QUANT_HEALTH_CACHE,
-    _QUANT_HEALTH_CACHE_LOCK,
-    _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT,
-    _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
-    _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS,
-    _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV,
-    _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS,
-    _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS,
-    _RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT,
-    _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES,
-    _STALE_SEGMENT_STATES,
-    _TA_CORE_REASON_CODES,
-    _TYPED_QUANT_HEALTH_PATH,
-    _bounded_paper_route_probe_collection_payload,
-    _bounded_paper_route_probe_notional,
-    _certificate_evidence_reason_codes,
-    _coerce_aware_datetime,
-    _compat_symbol,
-    _decimal_text,
-    _maybe_set_runtime_ledger_status_statement_timeout,
-    _normalize_reason_codes,
-    _rollback_runtime_ledger_status_session,
-    _runtime_ledger_status_query_timeout_ms,
-    _safe_attr_text,
-    _safe_bool,
-    _safe_decimal,
-    _safe_int,
-    _safe_text,
-    _sqlalchemy_error_indicates_statement_timeout,
-    _stage_rank,
-    _unavailable_certificate_evidence_rows,
+    AUTORESEARCH_PORTFOLIO_READY_STATUSES as _AUTORESEARCH_PORTFOLIO_READY_STATUSES,
+    CAPITAL_STAGE_ORDER as _CAPITAL_STAGE_ORDER,
+    CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT as _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
+    CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT as _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
+    CERTIFICATE_EVIDENCE_WINDOW_LIMIT as _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
+    LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES as _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES,
+    PROMOTION_PORTFOLIO_READY_SCAN_LIMIT as _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
+    PROMOTION_PORTFOLIO_SAMPLE_LIMIT as _PROMOTION_PORTFOLIO_SAMPLE_LIMIT,
+    PROMOTION_SCALAR_COUNT_LIMIT as _PROMOTION_SCALAR_COUNT_LIMIT,
+    PROMOTION_TABLE_COUNT_SCAN_LIMIT as _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
+    PortfolioPromotionRow as _PortfolioPromotionRow,
+    QUANT_HEALTH_CACHE as _QUANT_HEALTH_CACHE,
+    QUANT_HEALTH_CACHE_LOCK as _QUANT_HEALTH_CACHE_LOCK,
+    RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT as _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT,
+    RUNTIME_LEDGER_REPAIR_SCAN_LIMIT as _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
+    RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS as _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS,
+    RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV as _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV,
+    RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS as _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS,
+    RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS as _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS,
+    RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT as _RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT,
+    RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES as _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES,
+    STALE_SEGMENT_STATES as _STALE_SEGMENT_STATES,
+    TA_CORE_REASON_CODES as _TA_CORE_REASON_CODES,
+    TYPED_QUANT_HEALTH_PATH as _TYPED_QUANT_HEALTH_PATH,
+    bounded_paper_route_probe_collection_payload as _bounded_paper_route_probe_collection_payload,
+    bounded_paper_route_probe_notional as _bounded_paper_route_probe_notional,
+    certificate_evidence_reason_codes as _certificate_evidence_reason_codes,
+    coerce_aware_datetime as _coerce_aware_datetime,
+    compat_symbol as _compat_symbol,
+    decimal_text as _decimal_text,
+    maybe_set_runtime_ledger_status_statement_timeout as _maybe_set_runtime_ledger_status_statement_timeout,
+    normalize_reason_codes as _normalize_reason_codes,
+    rollback_runtime_ledger_status_session as _rollback_runtime_ledger_status_session,
+    runtime_ledger_status_query_timeout_ms as _runtime_ledger_status_query_timeout_ms,
+    safe_attr_text as _safe_attr_text,
+    safe_bool as _safe_bool,
+    safe_decimal as _safe_decimal,
+    safe_int as _safe_int,
+    safe_text as _safe_text,
+    sqlalchemy_error_indicates_statement_timeout as _sqlalchemy_error_indicates_statement_timeout,
+    stage_rank as _stage_rank,
+    unavailable_certificate_evidence_rows as _unavailable_certificate_evidence_rows,
     active_market_context_mapping,
     active_market_context_reasons,
     bounded_paper_route_probe_collection_payload,
@@ -134,10 +134,12 @@ def build_hypothesis_runtime_summary(
     feature_readiness: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     from .certificate_loading import (
-        _load_latest_certificate_evidence,
-        _merge_runtime_certificate_evidence,
+        load_latest_certificate_evidence as _load_latest_certificate_evidence,
+        merge_runtime_certificate_evidence as _merge_runtime_certificate_evidence,
     )
-    from .runtime_certificates import _load_latest_runtime_ledger_summary
+    from .runtime_certificates import (
+        load_latest_runtime_ledger_summary as _load_latest_runtime_ledger_summary,
+    )
 
     registry = _compat_symbol("load_hypothesis_registry", load_hypothesis_registry)()
     if dependency_quorum is None:
@@ -555,7 +557,9 @@ _RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = (
 def _runtime_ledger_source_evidence_payload(
     candidate: Mapping[str, object],
 ) -> dict[str, object]:
-    from .paper_probation import _runtime_ledger_paper_probation_payload
+    from .paper_probation import (
+        runtime_ledger_paper_probation_payload as _runtime_ledger_paper_probation_payload,
+    )
 
     payload = _runtime_ledger_paper_probation_payload(candidate)
     evidence: dict[str, object] = {}
@@ -725,3 +729,31 @@ def _certificate_runtime_ledger_payload(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+certificate_runtime_ledger_payload = _certificate_runtime_ledger_payload
+normalized_strategy_family = _normalized_strategy_family
+runtime_ledger_aggregate_candidate_payloads = (
+    _runtime_ledger_aggregate_candidate_payloads
+)
+RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS = _RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS
+RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS = _RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS
+RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS = _RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS
+RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS = _RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS
+runtime_ledger_bucket_matches_metric_window = (
+    _runtime_ledger_bucket_matches_metric_window
+)
+runtime_ledger_bucket_payload = _runtime_ledger_bucket_payload
+RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS = _RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS
+runtime_ledger_bucket_symbol = _runtime_ledger_bucket_symbol
+runtime_ledger_bucket_window_reason_code = _runtime_ledger_bucket_window_reason_code
+runtime_ledger_bucket_within_metric_window = _runtime_ledger_bucket_within_metric_window
+runtime_ledger_candidate_group_key = _runtime_ledger_candidate_group_key
+runtime_ledger_common_text = _runtime_ledger_common_text
+runtime_ledger_hash_count = _runtime_ledger_hash_count
+runtime_ledger_latest_payloads_per_symbol = _runtime_ledger_latest_payloads_per_symbol
+runtime_ledger_merge_count_maps = _runtime_ledger_merge_count_maps
+runtime_ledger_payload_from_runtime_item = _runtime_ledger_payload_from_runtime_item
+RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = _RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS
+runtime_ledger_source_evidence_payload = _runtime_ledger_source_evidence_payload
+runtime_ledger_unique_sequence = _runtime_ledger_unique_sequence

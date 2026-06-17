@@ -212,75 +212,73 @@ from ..common import main_runtime_value
 from ..proxy import capture_module_exports
 
 _COMMON_PRIVATE_EXPORTS = common_api.__dict__
-_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _COMMON_PRIVATE_EXPORTS[
-    "_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS"
+ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _COMMON_PRIVATE_EXPORTS[
+    "ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS"
 ]
-_ALPACA_HEALTH_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS["_ALPACA_HEALTH_CACHE_LOCK"]
-_ALPACA_HEALTH_STATE = _COMMON_PRIVATE_EXPORTS["_ALPACA_HEALTH_STATE"]
-_OPTIONS_CATALOG_FRESHNESS_CACHE = _COMMON_PRIVATE_EXPORTS[
-    "_OPTIONS_CATALOG_FRESHNESS_CACHE"
+ALPACA_HEALTH_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS["ALPACA_HEALTH_CACHE_LOCK"]
+ALPACA_HEALTH_STATE = _COMMON_PRIVATE_EXPORTS["ALPACA_HEALTH_STATE"]
+OPTIONS_CATALOG_FRESHNESS_CACHE = _COMMON_PRIVATE_EXPORTS[
+    "OPTIONS_CATALOG_FRESHNESS_CACHE"
 ]
-_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
-    "_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK"
+OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
+    "OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK"
 ]
-_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = _COMMON_PRIVATE_EXPORTS[
-    "_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL"
+PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = _COMMON_PRIVATE_EXPORTS[
+    "PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL"
 ]
-_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = _COMMON_PRIVATE_EXPORTS[
-    "_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS"
+PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = _COMMON_PRIVATE_EXPORTS[
+    "PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS"
 ]
-_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
-    "_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK"
+PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
+    "PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK"
 ]
-_READINESS_PROMOTION_AUTHORITY_KEYS = _COMMON_PRIVATE_EXPORTS[
-    "_READINESS_PROMOTION_AUTHORITY_KEYS"
+READINESS_PROMOTION_AUTHORITY_KEYS = _COMMON_PRIVATE_EXPORTS[
+    "READINESS_PROMOTION_AUTHORITY_KEYS"
 ]
-_RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _COMMON_PRIVATE_EXPORTS[
-    "_RETRYABLE_TCA_RECOMPUTE_SQLSTATES"
+RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _COMMON_PRIVATE_EXPORTS[
+    "RETRYABLE_TCA_RECOMPUTE_SQLSTATES"
 ]
-_SIMPLE_LANE_ALLOWED_REJECT_REASONS = _COMMON_PRIVATE_EXPORTS[
-    "_SIMPLE_LANE_ALLOWED_REJECT_REASONS"
+SIMPLE_LANE_ALLOWED_REJECT_REASONS = _COMMON_PRIVATE_EXPORTS[
+    "SIMPLE_LANE_ALLOWED_REJECT_REASONS"
 ]
-_TRADING_DEPENDENCY_HEALTH_CACHE = _COMMON_PRIVATE_EXPORTS[
-    "_TRADING_DEPENDENCY_HEALTH_CACHE"
+TRADING_DEPENDENCY_HEALTH_CACHE = _COMMON_PRIVATE_EXPORTS[
+    "TRADING_DEPENDENCY_HEALTH_CACHE"
 ]
-_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
-    "_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK"
+TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
+    "TRADING_DEPENDENCY_HEALTH_CACHE_LOCK"
 ]
-_TRADING_HEALTH_SURFACE_EVALUATIONS = _COMMON_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_EVALUATIONS"
+TRADING_HEALTH_SURFACE_EVALUATIONS = _COMMON_PRIVATE_EXPORTS[
+    "TRADING_HEALTH_SURFACE_EVALUATIONS"
 ]
-_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _COMMON_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR"
+TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _COMMON_PRIVATE_EXPORTS[
+    "TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR"
 ]
-_TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _COMMON_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_EVALUATION_LOCK"
+TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _COMMON_PRIVATE_EXPORTS[
+    "TRADING_HEALTH_SURFACE_EVALUATION_LOCK"
 ]
-_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _COMMON_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE"
+TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _COMMON_PRIVATE_EXPORTS[
+    "TRADING_HEALTH_SURFACE_PAYLOAD_CACHE"
 ]
-_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _COMMON_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS"
+TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _COMMON_PRIVATE_EXPORTS[
+    "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS"
 ]
-_TRADING_STATUS_READ_BUDGET_SECONDS = _COMMON_PRIVATE_EXPORTS[
-    "_TRADING_STATUS_READ_BUDGET_SECONDS"
+TRADING_STATUS_READ_BUDGET_SECONDS = _COMMON_PRIVATE_EXPORTS[
+    "TRADING_STATUS_READ_BUDGET_SECONDS"
 ]
-_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _COMMON_PRIVATE_EXPORTS[
-    "_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS"
+ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _COMMON_PRIVATE_EXPORTS[
+    "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS"
 ]
-_paper_route_target_plan_success_cache = _COMMON_PRIVATE_EXPORTS[
-    "_paper_route_target_plan_success_cache"
+paper_route_target_plan_success_cache = _COMMON_PRIVATE_EXPORTS[
+    "paper_route_target_plan_success_cache"
 ]
-_retryable_tca_recompute_error = _COMMON_PRIVATE_EXPORTS[
-    "_retryable_tca_recompute_error"
-]
-_shared_mapping_items = _COMMON_PRIVATE_EXPORTS["_shared_mapping_items"]
-_shared_paper_route_target_plan_from_payload = _COMMON_PRIVATE_EXPORTS[
-    "_shared_paper_route_target_plan_from_payload"
+retryable_tca_recompute_error = _COMMON_PRIVATE_EXPORTS["retryable_tca_recompute_error"]
+shared_mapping_items = _COMMON_PRIVATE_EXPORTS["shared_mapping_items"]
+shared_paper_route_target_plan_from_payload = _COMMON_PRIVATE_EXPORTS[
+    "shared_paper_route_target_plan_from_payload"
 ]
 
 
-def _readiness_dependency_cache_key(include_database_contract: bool) -> str:
+def readiness_dependency_cache_key(include_database_contract: bool) -> str:
     trading_mode = int(settings.trading_enabled)
     cache_mode = int(settings.trading_readiness_dependency_cache_enabled)
     tigerbeetle_mode = ":".join(
@@ -295,7 +293,7 @@ def _readiness_dependency_cache_key(include_database_contract: bool) -> str:
     return f"readyz:{trading_mode}:{cache_mode}:{int(include_database_contract)}:{tigerbeetle_mode}"
 
 
-def _readiness_dependency_checks(
+def readiness_dependency_checks(
     session: Session,
     *,
     include_database_contract: bool,
@@ -397,7 +395,7 @@ def _readiness_dependency_checks(
     return dependencies, datetime.now(timezone.utc)
 
 
-def _readiness_dependency_snapshot(
+def readiness_dependency_snapshot(
     session: Session,
     *,
     include_database_contract: bool,
@@ -407,7 +405,7 @@ def _readiness_dependency_snapshot(
         not settings.trading_readiness_dependency_cache_enabled
         or settings.trading_readiness_dependency_cache_ttl_seconds <= 0
     ):
-        dependencies, checked_at = _readiness_dependency_checks(
+        dependencies, checked_at = readiness_dependency_checks(
             session,
             include_database_contract=include_database_contract,
         )
@@ -421,10 +419,10 @@ def _readiness_dependency_snapshot(
         int(settings.trading_readiness_dependency_cache_stale_tolerance_seconds),
     )
     now = datetime.now(timezone.utc)
-    cache_key = _readiness_dependency_cache_key(include_database_contract)
+    cache_key = readiness_dependency_cache_key(include_database_contract)
 
-    with _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
-        cache_entry = _TRADING_DEPENDENCY_HEALTH_CACHE.get(cache_key)
+    with TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
+        cache_entry = TRADING_DEPENDENCY_HEALTH_CACHE.get(cache_key)
         if cache_entry:
             cache_checked_at = cast(datetime, cache_entry["checked_at"])
             cache_age = now - cache_checked_at
@@ -445,19 +443,19 @@ def _readiness_dependency_snapshot(
                     True,
                 )
 
-    dependencies, checked_at = _readiness_dependency_checks(
+    dependencies, checked_at = readiness_dependency_checks(
         session,
         include_database_contract=include_database_contract,
     )
-    with _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
-        _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key] = {
+    with TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
+        TRADING_DEPENDENCY_HEALTH_CACHE[cache_key] = {
             "checked_at": checked_at,
             "dependencies": dependencies,
         }
     return dependencies, checked_at, False
 
 
-def _readiness_authority_truthy(value: object) -> bool:
+def readiness_authority_truthy(value: object) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, int | float | Decimal):
@@ -465,13 +463,13 @@ def _readiness_authority_truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _append_unique_reason(target: list[object], reason: str) -> list[object]:
+def append_unique_reason(target: list[object], reason: str) -> list[object]:
     if reason not in {str(item) for item in target}:
         target.append(reason)
     return target
 
 
-def _readiness_dependency_degradation_reason_codes(
+def readiness_dependency_degradation_reason_codes(
     dependencies: Mapping[str, object],
     *,
     scheduler_ok: bool,
@@ -491,7 +489,7 @@ def _readiness_dependency_degradation_reason_codes(
     return sorted(set(reason_codes))
 
 
-def _guard_live_submission_gate_for_readiness(
+def guard_live_submission_gate_for_readiness(
     live_submission_gate: Mapping[str, object],
     *,
     readiness_dependency_reasons: Sequence[str],
@@ -509,7 +507,7 @@ def _guard_live_submission_gate_for_readiness(
         "final_promotion_authorized",
     )
     claims_authority = any(
-        _readiness_authority_truthy(gate.get(key)) for key in authority_keys
+        readiness_authority_truthy(gate.get(key)) for key in authority_keys
     )
     if not claims_authority:
         return gate
@@ -529,9 +527,9 @@ def _guard_live_submission_gate_for_readiness(
     gate["reason"] = guard_reason
 
     blocked_reasons = list(cast(Sequence[object], gate.get("blocked_reasons") or []))
-    gate["blocked_reasons"] = _append_unique_reason(blocked_reasons, guard_reason)
+    gate["blocked_reasons"] = append_unique_reason(blocked_reasons, guard_reason)
     reason_codes = list(cast(Sequence[object], gate.get("reason_codes") or []))
-    gate["reason_codes"] = _append_unique_reason(reason_codes, guard_reason)
+    gate["reason_codes"] = append_unique_reason(reason_codes, guard_reason)
 
     plan = gate.get("runtime_ledger_paper_probation_import_plan")
     if isinstance(plan, Mapping):
@@ -560,28 +558,26 @@ def _guard_live_submission_gate_for_readiness(
     return gate
 
 
-def _strip_promotion_authority_claims_for_readiness(value: object) -> object:
+def strip_promotion_authority_claims_for_readiness(value: object) -> object:
     if isinstance(value, Mapping):
         payload: dict[str, object] = {}
         mapping_value = cast(Mapping[object, object], value)
         for raw_key, raw_child in mapping_value.items():
             key = str(raw_key)
-            if key in _READINESS_PROMOTION_AUTHORITY_KEYS and raw_child is True:
+            if key in READINESS_PROMOTION_AUTHORITY_KEYS and raw_child is True:
                 payload[key] = False
             else:
-                payload[key] = _strip_promotion_authority_claims_for_readiness(
-                    raw_child
-                )
+                payload[key] = strip_promotion_authority_claims_for_readiness(raw_child)
         return payload
     if isinstance(value, list):
         list_value = cast(list[object], value)
         return [
-            _strip_promotion_authority_claims_for_readiness(item) for item in list_value
+            strip_promotion_authority_claims_for_readiness(item) for item in list_value
         ]
     return value
 
 
-def _core_readiness_live_submission_gate() -> dict[str, object]:
+def core_readiness_live_submission_gate() -> dict[str, object]:
     blocked_reasons: list[str] = ["readyz_core_dependencies_only"]
     if settings.trading_mode == "live":
         if not settings.trading_enabled:
@@ -632,7 +628,7 @@ def _evaluate_core_readiness_payload(
 
     now = datetime.now(timezone.utc)
     with SessionLocal() as session:
-        dependencies, checked_at, cache_used = _readiness_dependency_snapshot(
+        dependencies, checked_at, cache_used = readiness_dependency_snapshot(
             session,
             include_database_contract=include_database_contract,
             allow_stale_dependency_cache=allow_stale_dependency_cache,
@@ -658,7 +654,7 @@ def _evaluate_core_readiness_payload(
         "cache_stale": cache_stale,
     }
 
-    readiness_dependency_reasons = _readiness_dependency_degradation_reason_codes(
+    readiness_dependency_reasons = readiness_dependency_degradation_reason_codes(
         dependencies,
         scheduler_ok=scheduler_ok,
     )
@@ -681,15 +677,15 @@ def _evaluate_core_readiness_payload(
         "pipeline_mode": settings.trading_pipeline_mode,
         "trading_enabled": settings.trading_enabled,
         "readiness_surface": "core_dependencies_only",
-        "live_submission_gate": _core_readiness_live_submission_gate(),
+        "live_submission_gate": core_readiness_live_submission_gate(),
     }
     return cast(
         dict[str, object],
-        _strip_promotion_authority_claims_for_readiness(payload),
+        strip_promotion_authority_claims_for_readiness(payload),
     ), status_code
 
 
-def _trading_health_surface_cache_key(
+def trading_health_surface_cache_key(
     *,
     include_database_contract: bool,
     allow_stale_dependency_cache: bool,
@@ -700,28 +696,28 @@ def _trading_health_surface_cache_key(
     )
 
 
-def _cache_completed_trading_health_surface_payload(
+def cache_completed_trading_health_surface_payload(
     cache_key: str,
     payload: dict[str, object],
     status_code: int,
 ) -> None:
-    with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-        _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+    with TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
             "payload": deepcopy(payload),
             "status_code": status_code,
             "checked_at": datetime.now(timezone.utc),
         }
 
 
-def _record_trading_health_surface_completion(
+def record_trading_health_surface_completion(
     cache_key: str,
     future: Future[tuple[dict[str, object], int]],
 ) -> None:
-    with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-        current = _TRADING_HEALTH_SURFACE_EVALUATIONS.get(cache_key)
+    with TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        current = TRADING_HEALTH_SURFACE_EVALUATIONS.get(cache_key)
         if current is not future:
             return
-        _TRADING_HEALTH_SURFACE_EVALUATIONS.pop(cache_key, None)
+        TRADING_HEALTH_SURFACE_EVALUATIONS.pop(cache_key, None)
 
     try:
         payload, status_code = future.result()
@@ -731,14 +727,14 @@ def _record_trading_health_surface_completion(
         )
         return
 
-    _cache_completed_trading_health_surface_payload(cache_key, payload, status_code)
+    cache_completed_trading_health_surface_payload(cache_key, payload, status_code)
 
 
-def _cached_trading_health_surface_payload(
+def cached_trading_health_surface_payload(
     cache_key: str,
 ) -> tuple[dict[str, object], datetime] | None:
-    with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-        cache_entry = _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.get(cache_key)
+    with TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        cache_entry = TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.get(cache_key)
         if cache_entry is None:
             return None
         payload = deepcopy(cast(dict[str, object], cache_entry["payload"]))
@@ -746,13 +742,13 @@ def _cached_trading_health_surface_payload(
     return payload, checked_at
 
 
-def _cached_readiness_dependencies_for_health_surface(
+def cached_readiness_dependencies_for_health_surface(
     *,
     include_database_contract: bool,
 ) -> tuple[dict[str, object], datetime] | None:
-    cache_key = _readiness_dependency_cache_key(include_database_contract)
-    with _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
-        cache_entry = _TRADING_DEPENDENCY_HEALTH_CACHE.get(cache_key)
+    cache_key = readiness_dependency_cache_key(include_database_contract)
+    with TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
+        cache_entry = TRADING_DEPENDENCY_HEALTH_CACHE.get(cache_key)
         if cache_entry is None:
             return None
         dependencies = deepcopy(cast(dict[str, object], cache_entry["dependencies"]))
@@ -760,7 +756,7 @@ def _cached_readiness_dependencies_for_health_surface(
     return dependencies, checked_at
 
 
-def _fail_closed_health_evaluation_gate(
+def fail_closed_health_evaluation_gate(
     *,
     reason_code: str,
     detail: str,
@@ -779,7 +775,7 @@ def _fail_closed_health_evaluation_gate(
     }
 
 
-def _health_surface_timeout_dependency_placeholder(
+def health_surface_timeout_dependency_placeholder(
     *,
     reason_code: str,
     detail: str,
@@ -792,7 +788,7 @@ def _health_surface_timeout_dependency_placeholder(
     }
 
 
-def _minimal_health_surface_timeout_live_submission_gate(
+def minimal_health_surface_timeout_live_submission_gate(
     *,
     reason_code: str,
     detail: str,
@@ -841,7 +837,7 @@ def _minimal_health_surface_timeout_live_submission_gate(
     }
 
 
-def _minimal_health_surface_timeout_proof_floor() -> dict[str, object]:
+def minimal_health_surface_timeout_proof_floor() -> dict[str, object]:
     return {
         "route_state": "repair_only",
         "capital_state": "zero_notional",
@@ -858,7 +854,7 @@ def _minimal_health_surface_timeout_payload(
     reason_code: str,
     detail: str,
 ) -> dict[str, object]:
-    cached_dependencies = _cached_readiness_dependencies_for_health_surface(
+    cached_dependencies = cached_readiness_dependencies_for_health_surface(
         include_database_contract=include_database_contract,
     )
     if cached_dependencies is None:
@@ -866,13 +862,13 @@ def _minimal_health_surface_timeout_payload(
         unavailable_detail = f"not evaluated before {reason_code}"
         for dependency_name in ("postgres", "clickhouse", "alpaca", "tigerbeetle"):
             dependencies[dependency_name] = (
-                _health_surface_timeout_dependency_placeholder(
+                health_surface_timeout_dependency_placeholder(
                     reason_code=reason_code,
                     detail=unavailable_detail,
                 )
             )
         if include_database_contract:
-            dependencies["database"] = _health_surface_timeout_dependency_placeholder(
+            dependencies["database"] = health_surface_timeout_dependency_placeholder(
                 reason_code=reason_code,
                 detail=unavailable_detail,
             )
@@ -901,11 +897,11 @@ def _minimal_health_surface_timeout_payload(
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     _scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
-    live_submission_gate = _minimal_health_surface_timeout_live_submission_gate(
+    live_submission_gate = minimal_health_surface_timeout_live_submission_gate(
         reason_code=reason_code,
         detail=detail,
     )
-    proof_floor = _minimal_health_surface_timeout_proof_floor()
+    proof_floor = minimal_health_surface_timeout_proof_floor()
     live_mode = settings.trading_mode == "live"
     dependencies["live_submission_gate"] = {
         "ok": bool(live_submission_gate.get("allowed", False)),
@@ -920,7 +916,7 @@ def _minimal_health_surface_timeout_payload(
     }
     return cast(
         dict[str, object],
-        _strip_promotion_authority_claims_for_readiness(
+        strip_promotion_authority_claims_for_readiness(
             {
                 "status": "degraded",
                 "reason": reason_code,
@@ -934,14 +930,14 @@ def _minimal_health_surface_timeout_payload(
     )
 
 
-def _health_surface_timeout_fallback_payload(
+def health_surface_timeout_fallback_payload(
     *,
     cache_key: str,
     include_database_contract: bool,
     reason_code: str,
     detail: str,
 ) -> dict[str, object]:
-    cached = _cached_trading_health_surface_payload(cache_key)
+    cached = cached_trading_health_surface_payload(cache_key)
     if cached is None:
         return _minimal_health_surface_timeout_payload(
             include_database_contract=include_database_contract,
@@ -953,7 +949,7 @@ def _health_surface_timeout_fallback_payload(
     payload["status"] = "degraded"
     payload["reason"] = reason_code
     reason_codes = list(cast(Sequence[object], payload.get("reason_codes") or []))
-    payload["reason_codes"] = _append_unique_reason(reason_codes, reason_code)
+    payload["reason_codes"] = append_unique_reason(reason_codes, reason_code)
     payload["health_evaluation_timeout"] = {
         "ok": False,
         "detail": detail,
@@ -974,19 +970,22 @@ def _health_surface_timeout_fallback_payload(
     payload["dependencies"] = dependencies_payload
     live_submission_gate = payload.get("live_submission_gate")
     if isinstance(live_submission_gate, Mapping):
-        payload["live_submission_gate"] = _guard_live_submission_gate_for_readiness(
+        payload["live_submission_gate"] = guard_live_submission_gate_for_readiness(
             cast(Mapping[str, object], live_submission_gate),
             readiness_dependency_reasons=[reason_code],
         )
     else:
-        payload["live_submission_gate"] = _fail_closed_health_evaluation_gate(
+        payload["live_submission_gate"] = fail_closed_health_evaluation_gate(
             reason_code=reason_code,
             detail=detail,
         )
     return cast(
         dict[str, object],
-        _strip_promotion_authority_claims_for_readiness(payload),
+        strip_promotion_authority_claims_for_readiness(payload),
     )
 
+
+evaluate_core_readiness_payload = _evaluate_core_readiness_payload
+minimal_health_surface_timeout_payload = _minimal_health_surface_timeout_payload
 
 __all__ = [name for name in globals() if not name.startswith("__")]
