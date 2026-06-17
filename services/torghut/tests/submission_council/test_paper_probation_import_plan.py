@@ -205,7 +205,10 @@ class TestSubmissionCouncilPaperProbationImportPlan(SubmissionCouncilTestCase):
         self.assertFalse(
             target["paper_probation_satisfied_for_bounded_live_paper_collection"]
         )
-        self.assertFalse(target["bounded_live_paper_collection_authorized"])
+        self.assertTrue(target["bounded_live_paper_collection_authorized"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
+        self.assertEqual(target["max_notional"], "25")
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_authorized"])
         self.assertFalse(target["final_promotion_allowed"])
