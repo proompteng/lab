@@ -3,6 +3,8 @@ kind: ConfigMap
 metadata:
   name: torghut-hyperliquid-clickhouse-schema
   namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
 data:
   schema.sql: |-
     CREATE DATABASE IF NOT EXISTS torghut ON CLUSTER default;

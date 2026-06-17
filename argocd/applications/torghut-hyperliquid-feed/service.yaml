@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: torghut-hyperliquid-feed
   namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
   labels:
     app: torghut-hyperliquid-feed
 spec:
