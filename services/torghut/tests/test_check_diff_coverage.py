@@ -13,6 +13,7 @@ from scripts.check_diff_coverage import (
     FileDiffCoverage,
     _drop_missing_non_executable_files,
     _executable_source_lines,
+    _format_missing_lines,
     _format_summary,
     _git,
     _git_optional,
@@ -453,6 +454,34 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         )
 
         self.assertEqual(summary, [])
+
+    def test_format_missing_lines_formats_consecutive_ranges(self) -> None:
+        self.assertEqual(_format_missing_lines((1, 2, 3)), "1-3")
+        self.assertEqual(_format_missing_lines((1, 2, 3, 5, 6)), "1-3, 5-6")
+        self.assertEqual(_format_missing_lines((1, 3, 5)), "1, 3, 5")
+        self.assertEqual(_format_missing_lines((1,)), "1")
+        self.assertEqual(_format_missing_lines(()), "")
+
+    def test_format_missing_lines_handles_sorted_input(self) -> None:
+        # Input is already sorted in the tuple, but we verify it handles reversed order
+        self.assertEqual(_format_missing_lines((5, 3, 1)), "1, 3, 5")
+
+    def test_format_summary_includes_consecutive_line_ranges(self) -> None:
+        text = _format_summary(
+            [
+                FileDiffCoverage(
+                    filename="app/trading/foo.py",
+                    executable_changed_lines=5,
+                    covered_lines=2,
+                    missing_lines=(2, 3, 5, 8, 9, 10),
+                )
+            ]
+        )
+
+        self.assertIn("2-3", text)  # consecutive lines 2,3
+        self.assertIn("8-10", text)  # consecutive lines 8,9,10
+        self.assertIn("5", text)  # single line 5
+        self.assertIn("- 6 missing", text)  # concise count
 
     def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
         text = _format_summary(

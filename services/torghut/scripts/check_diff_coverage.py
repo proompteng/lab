@@ -265,6 +265,30 @@ def summarize_changed_coverage(
     return summary
 
 
+def _format_missing_lines(missing_lines: tuple[int, ...]) -> str:
+    if not missing_lines:
+        return ""
+    ranges: list[str] = []
+    sorted_lines = sorted(missing_lines)
+    start = sorted_lines[0]
+    end = start
+    for line in sorted_lines[1:]:
+        if line == end + 1:
+            end = line
+        else:
+            if start == end:
+                ranges.append(str(start))
+            else:
+                ranges.append(f"{start}-{end}")
+            start = line
+            end = line
+    if start == end:
+        ranges.append(str(start))
+    else:
+        ranges.append(f"{start}-{end}")
+    return ", ".join(ranges)
+
+
 def _format_summary(summary: list[FileDiffCoverage]) -> str:
     lines: list[str] = []
     for item in summary:
@@ -272,12 +296,11 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
         suffix = " missing-from-coverage" if item.missing_from_coverage else ""
         lines.append(
             f"{item.filename}: {item.covered_lines}/{item.executable_changed_lines} "
-            f"lines covered ({coverage_pct:.2f}%){suffix}"
+            f"lines covered ({coverage_pct:.2f}%) - {len(item.missing_lines)} missing{suffix}"
         )
         if item.missing_lines:
-            lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
-            )
+            formatted = _format_missing_lines(item.missing_lines)
+            lines.append(f"  missing lines: {formatted}")
     return "\n".join(lines)
 
 
