@@ -66,10 +66,13 @@ failures. If no variant passes, leave `anypi-agent` on `minimal`, record the fai
 
 | Variant | Task | AgentRun | PR | Local validation | Required CI | Repairs | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| mixed | five-run batch | `20260616a` | `#10911`, `#10912`, `#10913` before invalidation | Some local validations passed | Invalid measurement: image had `gh` 2.46.0 without `pr checks --json`, so the runner saw zero checks while GitHub had failures | Not scored | Do not promote from this batch |
-| mixed | five-run batch | `20260616b` | `#10918`, `#10919`, `#10920`, `#10921` before invalidation | Some local validations passed | Invalid measurement: the required-check probe reported no checks as unavailable before falling back to all PR checks, so CI repair behavior was not scored | Not scored | Do not promote from this batch |
-| mixed | five-run batch | `20260616c` | `#10922` before invalidation | Targeted Torghut validation passed before CI wait | Invalid measurement: all-checks probe before GitHub created checks was still treated as unavailable instead of pending/retryable | Not scored | Do not promote from this batch |
-| pending | five-run batch | `20260616d` | pending | pending | pending | pending | Scheduled with `registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66` |
+| `repair-loop` | five-run batch | `20260616a` | `#10911`, `#10912`, `#10913` (invalidated) | Some local validations passed | Failed: gh CLI version 2.46.0 lacks `pr checks --json`, runner saw zero checks while GitHub had failures | 1 validation, 0 CI repairs | Do not promote - image issue fixed in `fc4a51679` |
+| `repair-loop` | five-run batch | `20260616b` | `#10918`, `#10919`, `#10920`, `#10921` (invalidated) | Some local validations passed | Failed: required-check probe treated no-checks as unavailable instead of retryable before falling back to all PR checks | 1 validation, 0 CI repairs | Do not promote - CI probe improved in `fc4a51679` |
+| `repair-loop` | five-run batch | `20260616c` | `#10922` (invalidated) | Targeted Torghut validation passed before CI wait | Failed: all-checks probe before GitHub created checks treated as unavailable instead of pending/retryable | 1 validation, 0 CI repairs | Do not promote - CI probe improved in `fc4a51679` |
+| `repair-loop` | five-run batch | `20260616d` | pending | pending | pending | pending | Scheduled with multi-arch `fc4a51679` image |
+| `repair-loop` | agents-docs-manifests | `20260616e` | pending | pending | pending | pending | Scheduled with multi-arch `fc4a51679` image |
+
+> **Note**: Batches `20260616a`, `20260616b`, `20260616c` were invalidated due to tooling issues in the `292c28dc` image. The `fc4a51679` multi-arch image includes fixes for `gh` CLI version requirements and CI probe behavior. Use the updated image for all new evaluations.
 
 ## Commands
 
@@ -79,3 +82,17 @@ kubectl -n agents get agent anypi-eval-agent
 kubectl -n agents get agentrun -l app.kubernetes.io/part-of=anypi-prompt-eval
 kubectl apply -f docs/agents/anypi-prompt-eval-agentruns.yaml
 ```
+
+## Validation and Audit Checklist
+
+Every prompt-eval AgentRun should:
+
+- [ ] Use a unique `spec.parameters.head` branch following `codex/anypi-eval/<variant>/<task>/<yyyymmddhhmm>` format
+- [ ] Include `anypi.proompteng.ai/eval-batch`, `anypi.proompteng.ai/prompt-variant`, and `anypi.proompteng.ai/task` labels
+- [ ] Set `runtime.config.nodeSelector` with `kubernetes.io/arch` for multi-arch coverage
+- [ ] Run the full validation plan (local commands + CI checks) before merging
+- [ ] Produce a PR with green required checks and no placeholder content
+- [ ] Have status evidence written to `/workspace/.agent/status.json` with all required fields
+- [ ] Have a PR body that follows the repository template with all sections filled
+
+Invalid AgentRuns (failed before PR or with PR checklist violations) should be marked as such in the results table with the reason for invalidation.

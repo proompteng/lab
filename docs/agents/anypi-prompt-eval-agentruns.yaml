@@ -5,6 +5,17 @@
 # - Five AgentRuns start together with unique branches.
 # - The batch covers at least three prompt variants and all required task classes.
 # - Runtime node selectors force both amd64 and arm64 runner coverage for the multi-arch Anypi image.
+#
+# Validation:
+# - Apply with `kubectl apply -f docs/agents/anypi-prompt-eval-agentruns.yaml`
+# - Verify Argo render: `bun run tf:render agents` (check `argocd/applications/agents`)
+# - All AgentRuns must have distinct `metadata.name`, `head`, and `promptVariant` values
+# - `validationCommands` must pass locally before CI checks will succeed
+#
+# PR Template Compliance:
+# - All generated PRs use `.github/PULL_REQUEST_TEMPLATE.md` when present
+# - Checklist items are auto-filled as `[x]` by the runner
+# - Do not modify the template file itself; changes go in this file's AgentRuns
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -16,6 +27,8 @@ metadata:
     anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: minimal
     anypi.proompteng.ai/task: torghut-diff-coverage
+    anypi.proompteng.ai/validate-branch: "true"
+    anypi.proompteng.ai/validate-pr-template: "true"
 spec:
   agentRef:
     name: anypi-eval-agent
@@ -68,6 +81,8 @@ metadata:
     anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: repair-loop
     anypi.proompteng.ai/task: torghut-diff-coverage
+    anypi.proompteng.ai/validate-branch: "true"
+    anypi.proompteng.ai/validate-pr-template: "true"
 spec:
   agentRef:
     name: anypi-eval-agent
@@ -120,6 +135,8 @@ metadata:
     anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: finish-gated
     anypi.proompteng.ai/task: anypi-status-evidence
+    anypi.proompteng.ai/validate-branch: "true"
+    anypi.proompteng.ai/validate-pr-template: "true"
 spec:
   agentRef:
     name: anypi-eval-agent
@@ -173,6 +190,8 @@ metadata:
     anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: strict-repo
     anypi.proompteng.ai/task: anypi-ci-watcher
+    anypi.proompteng.ai/validate-branch: "true"
+    anypi.proompteng.ai/validate-pr-template: "true"
 spec:
   agentRef:
     name: anypi-eval-agent
@@ -226,6 +245,8 @@ metadata:
     anypi.proompteng.ai/eval-batch: "20260616d"
     anypi.proompteng.ai/prompt-variant: repair-loop
     anypi.proompteng.ai/task: agents-docs-manifests
+    anypi.proompteng.ai/validate-branch: "true"
+    anypi.proompteng.ai/validate-pr-template: "true"
 spec:
   agentRef:
     name: anypi-eval-agent
@@ -254,6 +275,11 @@ spec:
     promptVariant: repair-loop
     validationCommands: |
       kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
+      # Validate all AgentRuns have required validation labels
+      grep -q 'anypi.proompteng.ai/validate-branch: "true"' docs/agents/anypi-prompt-eval-agentruns.yaml
+      grep -q 'anypi.proompteng.ai/validate-pr-template: "true"' docs/agents/anypi-prompt-eval-agentruns.yaml
+      # Ensure all head branches follow the expected pattern
+      grep 'head: codex/anypi-eval' docs/agents/anypi-prompt-eval-agentruns.yaml | grep -q '20260616d'
   secrets:
     - github-token
   workload:

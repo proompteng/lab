@@ -48,6 +48,23 @@ export const normalizeConventionalSummary = (raw: string | undefined, fallback: 
 }
 
 const writeStatus = async (path: string, status: AnypiStatus) => {
+  // Validate required status fields for auditing
+  const requiredFields: (keyof AnypiStatus)[] = [
+    'provider',
+    'status',
+    'startedAt',
+    'promptVariant',
+    'promptHash',
+    'validationPlan',
+    'agentAttempts',
+    'validationAttempts',
+    'ciAttempts',
+    'promptChars',
+  ]
+  const missingFields = requiredFields.filter((field) => status[field] === undefined)
+  if (missingFields.length > 0) {
+    throw new Error(`Status missing required fields: ${missingFields.join(', ')}`)
+  }
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
 }
