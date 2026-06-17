@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
@@ -27,8 +26,6 @@ from ..simulation import (
 from ..simulation_progress import active_simulation_runtime_context
 from ..simulation_window import normalize_simulation_cursor, simulation_window_bounds
 from ..time_source import trading_now
-
-# ruff: noqa: F401
 
 
 logger = logging.getLogger(__name__)
@@ -141,4 +138,54 @@ __all__ = (
     "ClickHouseSignalIngestorFields",
     "coerce_count",
     "simulation_fetch_window",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "ClickHouseSignalIngestorFields",
+    "ENVELOPE_SIGNAL_COLUMNS",
+    "FLAT_CURSOR_OVERLAP",
+    "FLAT_SIGNAL_COLUMNS",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "LATEST_SIGNAL_TS_CACHE_TTL",
+    "LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN",
+    "Mapping",
+    "Optional",
+    "SIMULATION_CURSOR_BASELINE",
+    "Session",
+    "SignalBatch",
+    "SignalEnvelope",
+    "TradeCursor",
+    "_ClickHouseSignalIngestorFields",
+    "_coerce_count",
+    "_simulation_fetch_window",
+    "active_simulation_runtime_context",
+    "annotations",
+    "cast",
+    "coerce_count",
+    "dataclass",
+    "datetime",
+    "field",
+    "json",
+    "logger",
+    "logging",
+    "normalize_simulation_cursor",
+    "normalize_symbol",
+    "re",
+    "resolve_simulation_context",
+    "select",
+    "settings",
+    "signal_ingest_runtime",
+    "simulation_context_enabled",
+    "simulation_fetch_window",
+    "simulation_window_bounds",
+    "timedelta",
+    "timezone",
+    "to_datetime64",
+    "trading_now",
+    "urlencode",
+    "urlsplit",
 )

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading scheduler governance, autonomy, and safety workflows."""
 
 from __future__ import annotations
@@ -46,8 +45,6 @@ from ..safety import (
     split_emergency_stop_reasons as _split_emergency_stop_reasons,
 )
 from ..state import TradingState
-
-# ruff: noqa: F401
 
 
 logger = logging.getLogger(__name__)
@@ -162,3 +159,63 @@ incident_payload_complete = _incident_payload_complete
 int_from_mapping = _int_from_mapping
 parse_iso_datetime = _parse_iso_datetime
 TradingSchedulerGovernanceMixinFields = _TradingSchedulerGovernanceMixinFields
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "Decimal",
+    "DriftThresholds",
+    "DriftTriggerPolicy",
+    "FeatureQualityThresholds",
+    "Literal",
+    "Mapping",
+    "Optional",
+    "Path",
+    "Sequence",
+    "SignalBatch",
+    "SignalEnvelope",
+    "TradingPipeline",
+    "TradingSchedulerGovernanceMixinFields",
+    "TradingState",
+    "_FRESH_TAIL_NO_SIGNAL_REASONS",
+    "_TradingSchedulerGovernanceMixinFields",
+    "_coerce_recovery_reason_sequence",
+    "_incident_payload_complete",
+    "_int_from_mapping",
+    "_is_market_session_open",
+    "_is_recoverable_emergency_stop_reason",
+    "_latch_signal_continuity_alert_state",
+    "_merge_emergency_stop_reasons",
+    "_parse_iso_datetime",
+    "_record_signal_continuity_recovery_cycle",
+    "_resolve_autonomy_artifact_root",
+    "_signal_bootstrap_grace_active",
+    "_signal_tail_is_fresh",
+    "_split_emergency_stop_reasons",
+    "annotations",
+    "build_phase_manifest_payload_with_runtime_and_rollback",
+    "cast",
+    "coerce_path_strings",
+    "datetime",
+    "decide_drift_action",
+    "detect_drift",
+    "evaluate_evidence_continuity",
+    "evaluate_feature_batch_quality",
+    "evaluate_live_promotion_evidence",
+    "incident_payload_complete",
+    "int_from_mapping",
+    "json",
+    "logger",
+    "logging",
+    "os",
+    "parse_iso_datetime",
+    "resolve_autonomy_artifact_root",
+    "run_autonomous_lane",
+    "settings",
+    "tempfile",
+    "timedelta",
+    "timezone",
+    "trading_now",
+    "upsert_autonomy_no_signal_run",
+)

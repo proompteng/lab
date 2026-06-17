@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 from decimal import Decimal
 from typing import Any
@@ -130,3 +129,36 @@ class _TestWhitepaperAutoresearchArtifactsBase(TestCase):
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "Any",
+    "Decimal",
+    "HYPOTHESIS_CARD_SCHEMA_VERSION",
+    "HypothesisCard",
+    "MlxTrainingRow",
+    "TestCase",
+    "_FakeTorchCpu",
+    "_FakeTorchCpuModule",
+    "_FakeTorchCuda",
+    "_FakeTorchModule",
+    "_FakeTorchTensor",
+    "_TestWhitepaperAutoresearchArtifactsBase",
+    "_profile_ids_for_family",
+    "build_hypothesis_cards",
+    "build_mlx_training_rows",
+    "candidate_spec_from_payload",
+    "candidate_specs_module",
+    "compile_candidate_specs",
+    "evidence_bundle_blockers",
+    "evidence_bundle_from_frontier_candidate",
+    "evidence_bundle_from_payload",
+    "evidence_bundles_module",
+    "hypothesis_card_from_payload",
+    "mlx_ranker_model_from_payload",
+    "mlx_training_data_module",
+    "np",
+    "optimize_portfolio_candidate",
+    "patch",
+    "rank_training_rows",
+    "train_mlx_ranker",
+)

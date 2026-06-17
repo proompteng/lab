@@ -1,4 +1,3 @@
-# ruff: noqa: F401
 # fmt: off
 from __future__ import annotations
 
@@ -230,3 +229,46 @@ class _TestCompletionTraceBase(TestCase):
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "Any",
+    "Base",
+    "DOC29_EMPIRICAL_JOBS_GATE",
+    "DOC29_EMPIRICAL_MANIFEST_GATE",
+    "DOC29_LIVE_CANARY_GATE",
+    "DOC29_LIVE_SCALE_GATE",
+    "DOC29_PAPER_GATE",
+    "DOC29_SIMULATION_FULL_DAY_GATE",
+    "DOC29_SIMULATION_SMOKE_GATE",
+    "Decimal",
+    "StaticPool",
+    "StrategyHypothesisMetricWindow",
+    "StrategyPromotionDecision",
+    "StrategyRuntimeLedgerBucket",
+    "TRACE_STATUS_SATISFIED",
+    "TestCase",
+    "VNextEmpiricalJobRun",
+    "_TestCompletionTraceBase",
+    "_add_truthful_empirical_jobs",
+    "_median_decimal",
+    "_p10_decimal",
+    "_promotion_decision",
+    "_runtime_ledger_bucket",
+    "_runtime_ledger_bucket_matches_window",
+    "_runtime_ledger_bucket_refs_for_windows",
+    "_runtime_ledger_bucket_summary",
+    "_runtime_ledger_daily_summary",
+    "_runtime_ledger_source_authority_payload",
+    "_runtime_ledger_trading_day_key",
+    "_truthful_empirical_payload",
+    "build_completion_trace",
+    "build_doc29_completion_status",
+    "create_engine",
+    "datetime",
+    "patch",
+    "persist_completion_trace",
+    "runtime_and_doc_completion_matrices_match",
+    "sessionmaker",
+    "timedelta",
+    "timezone",
+)

@@ -6,56 +6,27 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Literal, Protocol, cast
+from typing import Any, cast
 
 from ...models import Strategy
 from ...strategies.catalog import extract_catalog_metadata
-from ..evaluation_trace import GateTrace, StrategyTrace, ThresholdTrace
+from ..evaluation_trace import StrategyTrace
 from ..features import FeatureVectorV3, validate_declared_features
-from ..intraday_tsmom_contract import evaluate_intraday_tsmom_signal
 from ..research_sleeves import (
-    SleeveSignalEvaluation,
-    SleeveSignalResult,
-    evaluate_breakout_continuation_long,
     evaluate_end_of_day_reversal_long,
     evaluate_late_day_continuation_long,
-    evaluate_mean_reversion_exhaustion_short,
-    evaluate_mean_reversion_rebound_long,
-    evaluate_momentum_pullback_long,
-    evaluate_washout_rebound_long,
 )
-from ..session_context import regular_session_minutes_elapsed
 from ..strategy_specs import (
     build_compiled_strategy_artifacts,
     strategy_type_supports_spec_v2,
 )
 
-# ruff: noqa: F401, F811
 
 from .empty_meta import (
-    decimal as _decimal,
-    empty_meta as _empty_meta,
-    generic_plugin_trace as _generic_plugin_trace,
-    microbar_entry_window_minutes as _microbar_entry_window_minutes,
-    microbar_exit_minute_after_open as _microbar_exit_minute_after_open,
-    microbar_minutes_elapsed as _microbar_minutes_elapsed,
-    microbar_observed_rank_universe_size as _microbar_observed_rank_universe_size,
-    microbar_pair_max_legs as _microbar_pair_max_legs,
-    microbar_pair_rank_thresholds as _microbar_pair_rank_thresholds,
-    microbar_pair_side_count as _microbar_pair_side_count,
-    microbar_rank_thresholds as _microbar_rank_thresholds,
-    microbar_rank_universe_size as _microbar_rank_universe_size,
-    microbar_required_features as _microbar_required_features,
-    microbar_runtime_position_qty as _microbar_runtime_position_qty,
-    microbar_universe_size as _microbar_universe_size,
     plugin_result_from_sleeve_result as _plugin_result_from_sleeve_result,
 )
 from .evaluate_microbar_cross_sectional import (
-    AggregatedIntent,
     PluginEvaluationResult,
     RuntimeDecision,
     RuntimeErrorRecord,
@@ -64,27 +35,12 @@ from .evaluate_microbar_cross_sectional import (
     StrategyContext,
     StrategyDefinition,
     StrategyIntent,
-    StrategyPlugin,
-    evaluate_microbar_cross_sectional as _evaluate_microbar_cross_sectional,
 )
 from .coerce_plugin_result import (
     IntentAggregator,
-    IntradayTsmomPlugin,
-    LegacyMacdRsiPlugin,
-    MomentumPullbackLongPlugin,
     StrategyRegistry,
-    CircuitState as _CircuitState,
     coerce_plugin_result as _coerce_plugin_result,
     trace_suppression_reason as _trace_suppression_reason,
-)
-from .breakout_continuation_long_plugin import (
-    BreakoutContinuationLongPlugin,
-    MeanReversionExhaustionShortPlugin,
-    MeanReversionReboundLongPlugin,
-    MicrobarCrossSectionalLongPlugin,
-    MicrobarCrossSectionalPairsPlugin,
-    MicrobarCrossSectionalShortPlugin,
-    WashoutReboundLongPlugin,
 )
 
 

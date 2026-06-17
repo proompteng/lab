@@ -1,93 +1,34 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Deterministic portfolio sleeve optimizer for autoresearch candidates."""
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
 
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
-    evidence_bundle_blockers,
-    evidence_bundle_is_valid,
-)
-from app.trading.discovery.portfolio_candidates import (
-    PORTFOLIO_CANDIDATE_SCHEMA_VERSION,
-    PortfolioCandidateSpec,
-    portfolio_candidate_id_for_payload,
 )
 from app.trading.discovery.objectives import deployable_lower_bound_net_pnl_per_day
-from app.trading.discovery.profit_target_oracle import evaluate_profit_target_oracle
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
-from app.trading.runtime_ledger import POST_COST_PNL_BASIS
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    CONFORMAL_TAIL_RISK_ALPHA,
-    MAX_ALLOWED_PAIRWISE_CORRELATION,
-    PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES,
-    PORTFOLIO_RUNTIME_LEDGER_PNL_SOURCE,
-    PORTFOLIO_SEARCH_BEAM_WIDTH,
     PORTFOLIO_WEIGHTING_EDGE_RISK_GROSS_EXPOSURE_BUDGET,
     PORTFOLIO_WEIGHTING_EQUAL_COUNT,
     PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET,
-    ACCEPTED_LEDGER_PNL_SOURCES as _ACCEPTED_LEDGER_PNL_SOURCES,
     active_ratio as _active_ratio,
-    artifact_refs_from_scorecard as _artifact_refs_from_scorecard,
     best_day_share as _best_day_share,
     boolish as _boolish,
-    candidate_passes_minimums as _candidate_passes_minimums,
-    capital_safety_rejection as _capital_safety_rejection,
-    conformal_tail_loss_buffer as _conformal_tail_loss_buffer,
-    conformal_tail_risk_required as _conformal_tail_risk_required,
     correlation as _correlation,
-    daily_filled_notional as _daily_filled_notional,
     daily_net as _daily_net,
     decimal as _decimal,
-    diversified_candidate_order as _diversified_candidate_order,
-    exact_replay_ledger_artifact_refs as _exact_replay_ledger_artifact_refs,
-    exact_replay_ledger_fill_count as _exact_replay_ledger_fill_count,
-    exact_replay_ledger_row_count as _exact_replay_ledger_row_count,
-    executable_replay_artifact_ref as _executable_replay_artifact_ref,
-    executable_replay_buying_power as _executable_replay_buying_power,
-    executable_replay_max_notional as _executable_replay_max_notional,
-    executable_replay_order_count as _executable_replay_order_count,
-    executable_replay_passed as _executable_replay_passed,
-    first_normalized_scorecard_text as _first_normalized_scorecard_text,
-    hard_vetoes as _hard_vetoes,
-    implementation_uncertainty_interval_width_per_day as _implementation_uncertainty_interval_width_per_day,
-    implementation_uncertainty_lower_net_per_day as _implementation_uncertainty_lower_net_per_day,
-    implementation_uncertainty_model_count as _implementation_uncertainty_model_count,
-    implementation_uncertainty_required as _implementation_uncertainty_required,
-    implementation_uncertainty_stability_passed as _implementation_uncertainty_stability_passed,
-    implementation_uncertainty_upper_net_per_day as _implementation_uncertainty_upper_net_per_day,
-    ledger_pnl_basis as _ledger_pnl_basis,
-    ledger_pnl_source as _ledger_pnl_source,
-    mapping as _mapping,
-    market_impact_liquidity_evidence_present as _market_impact_liquidity_evidence_present,
-    market_impact_stress_artifact_ref as _market_impact_stress_artifact_ref,
-    market_impact_stress_components as _market_impact_stress_components,
-    market_impact_stress_cost_bps as _market_impact_stress_cost_bps,
-    market_impact_stress_model as _market_impact_stress_model,
-    market_impact_stress_net_per_day as _market_impact_stress_net_per_day,
-    market_impact_stress_passed as _market_impact_stress_passed,
     max_drawdown as _max_drawdown,
     max_gross_exposure_pct_equity as _max_gross_exposure_pct_equity,
-    mean as _mean,
     min_cash as _min_cash,
     negative_cash_observation_count as _negative_cash_observation_count,
     net_per_day as _net_per_day,
-    non_composable_hard_vetoes as _non_composable_hard_vetoes,
-    portfolio_daily_filled_notional as _portfolio_daily_filled_notional,
-    portfolio_daily_net as _portfolio_daily_net,
     positive_ratio as _positive_ratio,
     scorecard as _scorecard,
-    scorecard_primary_symbol as _scorecard_primary_symbol,
-    scorecard_runtime_params as _scorecard_runtime_params,
-    scorecard_signal as _scorecard_signal,
-    scorecard_sleeve_runtime_limits as _scorecard_sleeve_runtime_limits,
-    scorecard_universe_symbols as _scorecard_universe_symbols,
     string as _string,
     trading_day_count as _trading_day_count,
     worst_day_loss as _worst_day_loss,

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Strategy runtime scaffolding for deterministic plugin execution."""
 
 from __future__ import annotations
@@ -34,7 +33,6 @@ from ..strategy_specs import (
     strategy_type_supports_spec_v2,
 )
 
-# ruff: noqa: F401
 
 if TYPE_CHECKING:
     from .evaluate_microbar_cross_sectional import (
@@ -379,4 +377,81 @@ __all__ = (
     "plugin_result_from_sleeve_result",
     "resolved_target_notional",
     "target_notional",
+)
+
+
+# Explicit module exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "Decimal",
+    "FeatureVectorV3",
+    "GateTrace",
+    "Literal",
+    "Protocol",
+    "SleeveSignalEvaluation",
+    "SleeveSignalResult",
+    "Strategy",
+    "StrategyTrace",
+    "TYPE_CHECKING",
+    "ThresholdTrace",
+    "_decimal",
+    "_empty_meta",
+    "_generic_plugin_trace",
+    "_microbar_entry_window_minutes",
+    "_microbar_exit_minute_after_open",
+    "_microbar_minutes_elapsed",
+    "_microbar_observed_rank_universe_size",
+    "_microbar_pair_max_legs",
+    "_microbar_pair_rank_thresholds",
+    "_microbar_pair_side_count",
+    "_microbar_rank_thresholds",
+    "_microbar_rank_universe_size",
+    "_microbar_required_features",
+    "_microbar_runtime_position_qty",
+    "_microbar_universe_size",
+    "_plugin_result_from_sleeve_result",
+    "_resolved_target_notional",
+    "_target_notional",
+    "annotations",
+    "build_compiled_strategy_artifacts",
+    "cast",
+    "dataclass",
+    "datetime",
+    "decimal",
+    "defaultdict",
+    "empty_meta",
+    "evaluate_breakout_continuation_long",
+    "evaluate_end_of_day_reversal_long",
+    "evaluate_intraday_tsmom_signal",
+    "evaluate_late_day_continuation_long",
+    "evaluate_mean_reversion_exhaustion_short",
+    "evaluate_mean_reversion_rebound_long",
+    "evaluate_momentum_pullback_long",
+    "evaluate_washout_rebound_long",
+    "extract_catalog_metadata",
+    "field",
+    "generic_plugin_trace",
+    "hashlib",
+    "json",
+    "microbar_entry_window_minutes",
+    "microbar_exit_minute_after_open",
+    "microbar_minutes_elapsed",
+    "microbar_observed_rank_universe_size",
+    "microbar_pair_max_legs",
+    "microbar_pair_rank_thresholds",
+    "microbar_pair_side_count",
+    "microbar_rank_thresholds",
+    "microbar_rank_universe_size",
+    "microbar_required_features",
+    "microbar_runtime_position_qty",
+    "microbar_universe_size",
+    "plugin_result_from_sleeve_result",
+    "regular_session_minutes_elapsed",
+    "resolved_target_notional",
+    "strategy_type_supports_spec_v2",
+    "target_notional",
+    "time",
+    "timedelta",
+    "timezone",
+    "validate_declared_features",
 )

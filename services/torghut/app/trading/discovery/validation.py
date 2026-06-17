@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportAttributeAccessIssue=false
 
 import hashlib
+import importlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
 from math import isfinite, log, sqrt
 from statistics import NormalDist
-from typing import Any, Callable, Iterable, Sequence, cast
-
-import pandas as pd
+from typing import Any, Callable, Iterable, Sequence
 
 from ..alpha.metrics import PerformanceSummary, to_jsonable
 from ..alpha.search import CandidateConfig, CandidateResult
+
+pd: Any = importlib.import_module("pandas")
 
 
 def _stable_hash(payload: object) -> str:
@@ -28,9 +28,7 @@ def _z_value(confidence_level: float) -> float:
     return float(NormalDist().inv_cdf((1.0 + bounded) / 2.0))
 
 
-def _series_summary(
-    values: pd.Series, *, confidence_level: float = 0.95
-) -> dict[str, Any]:
+def _series_summary(values: Any, *, confidence_level: float = 0.95) -> dict[str, Any]:
     sample = values.dropna().astype("float64")
     if sample.empty:
         return {
@@ -70,11 +68,11 @@ def _config_payload(config: CandidateConfig) -> dict[str, Any]:
     }
 
 
-def _series_column(frame: pd.DataFrame, column: str) -> pd.Series:
-    return cast(pd.Series, frame[column])
+def _series_column(frame: Any, column: str) -> Any:
+    return frame[column]
 
 
-def _datetime_index_bound(index: pd.Index, *, which: str) -> datetime | None:
+def _datetime_index_bound(index: Any, *, which: str) -> datetime | None:
     if not isinstance(index, pd.DatetimeIndex) or len(index) == 0:
         return None
     value = index.min() if which == "min" else index.max()
@@ -255,8 +253,8 @@ def _transaction_cost_stress_bundle(
 
 def _temporal_embargo_bundle(
     *,
-    train_debug: pd.DataFrame,
-    test_debug: pd.DataFrame,
+    train_debug: Any,
+    test_debug: Any,
 ) -> dict[str, Any]:
     train_start = _datetime_index_bound(train_debug.index, which="min")
     train_end = _datetime_index_bound(train_debug.index, which="max")
@@ -339,8 +337,8 @@ def build_strategy_factory_evaluation(
     candidate_id: str,
     best_candidate: CandidateResult,
     all_candidates: list[CandidateResult],
-    train_debug: pd.DataFrame,
-    test_debug: pd.DataFrame,
+    train_debug: Any,
+    test_debug: Any,
     train_summary: PerformanceSummary,
     test_summary: PerformanceSummary,
     incumbent_summary: PerformanceSummary,

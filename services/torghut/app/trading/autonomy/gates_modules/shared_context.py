@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Gate policy matrix evaluator for Torghut v3 autonomous lanes."""
 
 from __future__ import annotations
@@ -9,8 +8,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
-
-# ruff: noqa: F401
 
 
 GateStatus = Literal["pass", "fail"]
@@ -740,3 +737,59 @@ gate3_shadow_paper_quality = _gate3_shadow_paper_quality
 gate4_operational_readiness = _gate4_operational_readiness
 gate5_live_ramp_readiness = _gate5_live_ramp_readiness
 gate6_profitability_evidence = _gate6_profitability_evidence
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "Decimal",
+    "GateEvaluationReport",
+    "GateInputs",
+    "GatePolicyMatrix",
+    "GateResult",
+    "GateStatus",
+    "Literal",
+    "Path",
+    "PromotionTarget",
+    "UncertaintyGateAction",
+    "UncertaintyGateOutcome",
+    "_decimal",
+    "_decimal_or_default",
+    "_empty_artifact_refs",
+    "_empty_dict",
+    "_empty_str_list",
+    "_gate0_data_integrity",
+    "_gate1_statistical_robustness",
+    "_gate2_base_reasons",
+    "_gate2_risk_and_capacity",
+    "_gate2_tca_reasons",
+    "_gate3_shadow_paper_quality",
+    "_gate4_operational_readiness",
+    "_gate5_live_ramp_readiness",
+    "_gate6_early_result",
+    "_gate6_janus_q_reasons",
+    "_gate6_profitability_evidence",
+    "_gate6_reproducibility_reasons",
+    "_gate6_schema_reasons",
+    "_gate6_threshold_reasons",
+    "_gate7_helpers",
+    "_gate7_uncertainty_calibration",
+    "annotations",
+    "cast",
+    "dataclass",
+    "datetime",
+    "empty_artifact_refs",
+    "empty_dict",
+    "empty_str_list",
+    "evaluate_gate_matrix",
+    "field",
+    "gate0_data_integrity",
+    "gate1_statistical_robustness",
+    "gate2_risk_and_capacity",
+    "gate3_shadow_paper_quality",
+    "gate4_operational_readiness",
+    "gate5_live_ramp_readiness",
+    "gate6_profitability_evidence",
+    "json",
+    "timezone",
+)

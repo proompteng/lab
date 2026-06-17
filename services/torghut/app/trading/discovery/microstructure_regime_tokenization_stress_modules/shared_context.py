@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only microstructure regime/tokenization replay stress.
 
 This module converts current 2025-2026 market-microstructure papers into
@@ -25,10 +24,8 @@ from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401
 
-
-def _stable_float(value: float) -> str:
+def _stable_float(value: float) -> float:
     from .microstructure_observation import stable_float as impl
 
     return impl(value)
@@ -765,4 +762,63 @@ __all__ = (
     "SIDE_FIELDS",
     "SIZE_FIELDS",
     "SPREAD_FIELDS",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "BINNED_FIELD_TOKENS",
+    "DEPTH_FIELDS",
+    "EARLY_WARNING_LOOKAHEAD",
+    "EVENT_TYPE_FIELDS",
+    "LOBERT_LIFECYCLE_ACTIONS",
+    "MESSAGE_TIME_DELTA_FIELDS",
+    "MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_CONTRACT_SCHEMA_VERSION",
+    "MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_PRIMARY_SOURCES",
+    "MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_PROOF_SEMANTICS_LABEL",
+    "MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_SCHEMA_VERSION",
+    "MIN_EARLY_WARNING_ROWS",
+    "Mapping",
+    "MicrostructureRegimeTokenizationStressSummary",
+    "OFI_FIELDS",
+    "ORDER_ID_FIELDS",
+    "POST_MESSAGE_SNAPSHOT_PRICE_FIELDS",
+    "PRICE_FIELDS",
+    "RAW_EVENT_FIELDS",
+    "RETURN_BPS_FIELDS",
+    "SIDE_FIELDS",
+    "SIZE_FIELDS",
+    "SPREAD_FIELDS",
+    "Sequence",
+    "SignalEnvelope",
+    "_BINNED_FIELD_TOKENS",
+    "_DEPTH_FIELDS",
+    "_EARLY_WARNING_LOOKAHEAD",
+    "_EVENT_TYPE_FIELDS",
+    "_LOBERT_LIFECYCLE_ACTIONS",
+    "_MESSAGE_TIME_DELTA_FIELDS",
+    "_MIN_EARLY_WARNING_ROWS",
+    "_OFI_FIELDS",
+    "_ORDER_ID_FIELDS",
+    "_POST_MESSAGE_SNAPSHOT_PRICE_FIELDS",
+    "_PRICE_FIELDS",
+    "_RAW_EVENT_FIELDS",
+    "_RETURN_BPS_FIELDS",
+    "_SIDE_FIELDS",
+    "_SIZE_FIELDS",
+    "_SPREAD_FIELDS",
+    "_stable_float",
+    "_stable_hash",
+    "annotations",
+    "build_microstructure_regime_tokenization_stress_schema_hash",
+    "cast",
+    "dataclass",
+    "datetime",
+    "extract_microstructure_regime_tokenization_stress",
+    "hashlib",
+    "isfinite",
+    "json",
+    "median",
+    "microstructure_regime_tokenization_stress_contract",
 )

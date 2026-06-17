@@ -3,15 +3,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import logging
 import sys
 import time
-from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any, NamedTuple, Optional, cast
+from typing import Any, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -19,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from ...models import (
     Execution,
-    LeanExecutionShadowEvent,
     Strategy,
     TradeDecision,
     coerce_json_payload,
@@ -32,40 +28,16 @@ from ..models import ExecutionRequest, StrategyDecision, decision_hash
 from ..quantity_rules import (
     min_qty_for_symbol,
     quantize_qty_for_symbol,
-    qty_has_valid_increment,
-    qty_step_for_symbol,
-    resolve_quantity_resolution,
 )
 from ..simulation import (
     resolve_event_persisted_at,
-    resolve_simulation_context,
-    simulation_context_enabled,
 )
-from ..time_source import trading_now
 from ..tca import upsert_execution_tca_metric
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE as _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    COST_MODEL_HASH_KEYS as _COST_MODEL_HASH_KEYS,
-    COST_MODEL_PAYLOAD_KEYS as _COST_MODEL_PAYLOAD_KEYS,
-    EXECUTION_POLICY_HASH_KEYS as _EXECUTION_POLICY_HASH_KEYS,
-    LINEAGE_HASH_KEYS as _LINEAGE_HASH_KEYS,
-    LINEAGE_PAYLOAD_KEYS as _LINEAGE_PAYLOAD_KEYS,
-    OrderExecutorFields as _OrderExecutorFields,
-    RUNTIME_COST_AMOUNT_KEYS as _RUNTIME_COST_AMOUNT_KEYS,
-    RUNTIME_COST_BASIS_KEYS as _RUNTIME_COST_BASIS_KEYS,
-    RUNTIME_COST_PAYLOAD_KEYS as _RUNTIME_COST_PAYLOAD_KEYS,
     SHORTING_METADATA_CACHE_TTL_SECONDS as _SHORTING_METADATA_CACHE_TTL_SECONDS,
-    TARGET_PLAN_SOURCE_DECISION_MODE as _TARGET_PLAN_SOURCE_DECISION_MODE,
-    TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS as _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS,
-    has_target_plan_source_decision as _has_target_plan_source_decision,
-    mapping_payload as _mapping_payload,
-    target_plan_ref_value as _target_plan_ref_value,
-    target_plan_source_decision_mode as _target_plan_source_decision_mode,
     target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
-    target_plan_source_metadata as _target_plan_source_metadata,
     logger,
 )
 
@@ -78,13 +50,10 @@ from .order_executor_core_support import (
     coerce_json as _coerce_json,
     coerce_string_list as _coerce_string_list,
     decision_state_payload as _decision_state_payload,
-    extract_execution_advice_provenance as _extract_execution_advice_provenance,
-    extract_execution_metadata as _extract_execution_metadata,
     extract_execution_policy_context as _extract_execution_policy_context,
     extract_sizing_debug as _extract_sizing_debug,
     execution_request_from_decision as _execution_request_from_decision,
     merge_decision_metadata as _merge_decision_metadata,
-    merge_execution_audit as _merge_execution_audit,
     merge_unique_strings as _merge_unique_strings,
     normalize_reject_reasons as _normalize_reject_reasons,
     normalize_submission_block_reasons as _normalize_submission_block_reasons,
@@ -92,7 +61,6 @@ from .order_executor_core_support import (
     optional_decimal as _optional_decimal,
     order_payload_with_execution_metadata as _order_payload_with_execution_metadata,
     persist_lean_shadow_event as _persist_lean_shadow_event,
-    resolve_submission_simulation_context as _resolve_submission_simulation_context,
     sell_inventory_conflict_payload as _sell_inventory_conflict_payload,
     sell_inventory_metadata_update as _sell_inventory_metadata_update,
     sell_inventory_request_symbol as _sell_inventory_request_symbol,

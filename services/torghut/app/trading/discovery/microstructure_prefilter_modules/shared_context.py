@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Bounded H-PAIRS ClusterLOB/OFI candidate prefiltering.
 
 The scores in this module are discovery metadata only. They intentionally rank
@@ -21,8 +20,6 @@ from numpy.typing import NDArray
 
 from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.models import SignalEnvelope
-
-# ruff: noqa: F401
 
 
 HPAIRS_PREFILTER_SCHEMA_VERSION = "torghut.hpairs-microstructure-prefilter.v1"
@@ -796,5 +793,63 @@ __all__ = (
     "select_frontier_buckets_split_export",
     "source_field_diagnostics_split_export",
     "source_input_blockers_split_export",
+    "with_rank_and_bucket_split_export",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "CandidateSpec",
+    "Counter",
+    "Decimal",
+    "HPAIRS_AUTHORITY_BLOCKERS",
+    "HPAIRS_FAMILY_TEMPLATE_ID",
+    "HPAIRS_HORIZONS",
+    "HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL",
+    "HPAIRS_PREFILTER_PROOF_SOURCE",
+    "HPAIRS_PREFILTER_ROW_SCHEMA_VERSION",
+    "HPAIRS_PREFILTER_SCHEMA_VERSION",
+    "HPAIRS_RUNTIME_STRATEGY_NAME",
+    "Mapping",
+    "MicrostructureCandidatePrefilterRow",
+    "MicrostructurePrefilterResult",
+    "NDArray",
+    "Sequence",
+    "SignalEnvelope",
+    "SymbolMicrostructureStats",
+    "SymbolMicrostructureStats_split_export",
+    "_SymbolMicrostructureStats",
+    "_build_symbol_microstructure_stats",
+    "_rank_key",
+    "_score_spec",
+    "_select_frontier_buckets",
+    "_source_field_diagnostics",
+    "_source_input_blockers",
+    "_with_rank_and_bucket",
+    "annotations",
+    "build_hpairs_microstructure_prefilter",
+    "build_symbol_microstructure_stats",
+    "build_symbol_microstructure_stats_split_export",
+    "cast",
+    "dataclass",
+    "exp",
+    "field",
+    "isfinite",
+    "log",
+    "np",
+    "rank_key",
+    "rank_key_split_export",
+    "score_spec",
+    "score_spec_split_export",
+    "select_frontier_buckets",
+    "select_frontier_buckets_split_export",
+    "source_field_diagnostics",
+    "source_field_diagnostics_split_export",
+    "source_input_blockers",
+    "source_input_blockers_split_export",
+    "sqrt",
+    "timezone",
+    "with_rank_and_bucket",
     "with_rank_and_bucket_split_export",
 )

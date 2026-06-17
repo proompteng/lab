@@ -3,44 +3,26 @@
 
 from __future__ import annotations
 
-import json
-import logging
-import re
 import sys
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass, field
-from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, Mapping, Optional, cast
-from urllib.parse import urlencode, urlsplit
+from typing import Any, Optional
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...config import settings
-from ...models import TradeCursor
 from ..clickhouse import normalize_symbol, to_datetime64
 from ..models import SignalEnvelope
 from ..simulation import (
-    resolve_simulation_context,
     signal_ingest_runtime,
     simulation_context_enabled,
 )
-from ..simulation_progress import active_simulation_runtime_context
-from ..simulation_window import normalize_simulation_cursor, simulation_window_bounds
+from ..simulation_window import simulation_window_bounds
 from ..time_source import trading_now
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    ENVELOPE_SIGNAL_COLUMNS,
     FLAT_CURSOR_OVERLAP,
-    FLAT_SIGNAL_COLUMNS,
-    LATEST_SIGNAL_TS_CACHE_TTL,
-    LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN,
-    SIMULATION_CURSOR_BASELINE,
     SignalBatch,
-    ClickHouseSignalIngestorFields as _ClickHouseSignalIngestorFields,
-    coerce_count as _coerce_count,
     simulation_fetch_window as _simulation_fetch_window,
     logger,
 )

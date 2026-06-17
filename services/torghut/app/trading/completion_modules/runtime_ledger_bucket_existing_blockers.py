@@ -4,28 +4,20 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from functools import lru_cache
-from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
-from zoneinfo import ZoneInfo
 
-import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...models import (
     StrategyHypothesisMetricWindow,
-    StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
     VNextCompletionGateResult,
     VNextEmpiricalJobRun,
 )
-from ..empirical_jobs import EMPIRICAL_JOB_TYPES, build_empirical_jobs_status
-from ..hypotheses import HypothesisManifest, load_hypothesis_registry
+from ..empirical_jobs import EMPIRICAL_JOB_TYPES
 from ..runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
     is_non_promotion_grade_runtime_cost_basis,
@@ -36,63 +28,28 @@ from ..runtime_ledger_source_authority import (
     runtime_ledger_promotion_source_authority_blockers,
 )
 
-# ruff: noqa: F401
 
 from .runtime_matrix_path import (
-    DOC29_COMPLETION_ENDPOINT,
-    DOC29_COMPLETION_MATRIX_DOC_PATH,
-    DOC29_COMPLETION_MATRIX_RUNTIME_PATH,
-    DOC29_EMPIRICAL_JOBS_GATE,
-    DOC29_EMPIRICAL_MANIFEST_GATE,
-    DOC29_LIVE_CANARY_GATE,
-    DOC29_LIVE_SCALE_GATE,
-    DOC29_PAPER_GATE,
-    DOC29_SIMULATION_FULL_DAY_GATE,
-    DOC29_SIMULATION_SMOKE_GATE,
-    TRACE_STATUSES,
     TRACE_STATUS_BLOCKED,
-    TRACE_STATUS_REGRESSED,
     TRACE_STATUS_SATISFIED,
-    TRACE_STATUS_STALE,
-    US_EQUITIES_REGULAR_TIMEZONE,
     PromotionDecisionKey as _PromotionDecisionKey,
     RUNTIME_LEDGER_BUCKET_SCHEMAS as _RUNTIME_LEDGER_BUCKET_SCHEMAS,
     as_dict as _as_dict,
     as_list as _as_list,
     as_text as _as_text,
-    candidate_hypothesis_manifests as _candidate_hypothesis_manifests,
-    doc_matrix_path as _doc_matrix_path,
     gate_policy_parameters as _gate_policy_parameters,
-    latest_completion_rows as _latest_completion_rows,
-    latest_completion_rows_filtered as _latest_completion_rows_filtered,
-    latest_empirical_rows as _latest_empirical_rows,
-    latest_hypothesis_windows as _latest_hypothesis_windows,
-    load_hypothesis_manifests_by_id as _load_hypothesis_manifests_by_id,
-    load_yaml_mapping as _load_yaml_mapping,
     manifest_runtime_session_threshold as _manifest_runtime_session_threshold,
     median_decimal as _median_decimal,
-    normalize_gate_definition as _normalize_gate_definition,
     p10_decimal as _p10_decimal,
     policy_int as _policy_int,
     positive_hash_count as _positive_hash_count,
     promotion_decision_blocked_reason as _promotion_decision_blocked_reason,
-    promotion_decision_key as _promotion_decision_key,
-    promotion_decision_key_for_decision as _promotion_decision_key_for_decision,
-    promotion_decision_key_for_window as _promotion_decision_key_for_window,
-    promotion_decision_keys_for_windows as _promotion_decision_keys_for_windows,
     runtime_ledger_bucket_promotion_payload as _runtime_ledger_bucket_promotion_payload,
     runtime_ledger_trading_day_key as _runtime_ledger_trading_day_key,
-    runtime_matrix_path as _runtime_matrix_path,
     safe_float as _safe_float,
     safe_int as _safe_int,
     utc as _utc,
     windows_with_allowed_promotion_decisions as _windows_with_allowed_promotion_decisions,
-    build_completion_trace,
-    load_doc29_completion_matrix,
-    persist_completion_trace,
-    runtime_and_doc_completion_matrices_match,
-    upsert_completion_gate_result,
-    validate_doc29_completion_matrix,
 )
 
 @dataclass(frozen=True)

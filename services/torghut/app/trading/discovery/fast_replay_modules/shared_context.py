@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only vectorized scoring over manifest-verified replay tapes."""
 
 from __future__ import annotations
@@ -105,8 +104,6 @@ from app.trading.discovery.stochastic_liquidity_resilience_stress import (
 )
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
-
-# ruff: noqa: F401
 
 
 FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v20"
@@ -660,4 +657,72 @@ __all__ = (
     "FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS",
     "FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS",
     "FastReplayPreviewRow",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "CandidateSpec",
+    "Decimal",
+    "FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT",
+    "FAST_REPLAY_DEFAULT_EXPLORATION_COUNT",
+    "FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION",
+    "FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP",
+    "FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS",
+    "FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS",
+    "FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION",
+    "FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION",
+    "FAST_REPLAY_PREVIEW_SCHEMA_VERSION",
+    "FAST_REPLAY_PROOF_SEMANTICS_LABEL",
+    "FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION",
+    "FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SOURCES",
+    "FAST_REPLAY_TARGET_NET_PNL_PER_DAY",
+    "FAST_REPLAY_WHITEPAPER_MECHANISMS",
+    "FastReplayPreviewRow",
+    "HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION",
+    "HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL",
+    "HPAIRS_PREFILTER_PROOF_SOURCE",
+    "Mapping",
+    "NDArray",
+    "ReplayTapeManifest",
+    "Sequence",
+    "SignalEnvelope",
+    "annotations",
+    "build_hpairs_microstructure_prefilter",
+    "cast",
+    "dataclass",
+    "extract_adaptive_market_limit_allocation_stress",
+    "extract_adaptive_signal_falsification_stress",
+    "extract_alpha_decay_predictability_stress",
+    "extract_bootstrap_robust_optimization_stress",
+    "extract_cluster_lob_features",
+    "extract_cost_aware_forecast_filter_stress",
+    "extract_counterfactual_regime_replay_stress",
+    "extract_execution_schedule_stress",
+    "extract_feed_lag_liquidity_stress",
+    "extract_hawkes_excitation_summary",
+    "extract_hawkes_transient_impact_stress",
+    "extract_institutional_mechanism_fidelity_stress",
+    "extract_intraday_jump_burst_stress",
+    "extract_intraday_price_path_asymmetry_stress",
+    "extract_lead_lag_cross_asset_stress",
+    "extract_lob_reality_gap_stress",
+    "extract_metaorder_adverse_selection_stress",
+    "extract_microstructure_regime_tokenization_stress",
+    "extract_nonlinear_impact_execution_stress",
+    "extract_ofi_response_horizon_stress",
+    "extract_option_gamma_flow_stress",
+    "extract_order_book_observability_stress",
+    "extract_order_flow_entropy_regime_stress",
+    "extract_order_transition_stress",
+    "extract_queue_survival_fill_stress",
+    "extract_rough_flow_volatility_stress",
+    "extract_signal_adaptive_execution_resilience_stress",
+    "extract_stochastic_liquidity_resilience_stress",
+    "field",
+    "hashlib",
+    "json",
+    "np",
+    "timezone",
 )

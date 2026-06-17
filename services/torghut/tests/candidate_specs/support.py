@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 from decimal import Decimal
 from pathlib import Path
@@ -41,3 +40,24 @@ class _TestCandidateSpecsBase(TestCase):
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "Decimal",
+    "HYPOTHESIS_CARD_SCHEMA_VERSION",
+    "HypothesisCard",
+    "Path",
+    "RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE",
+    "StrategyCatalogConfig",
+    "TestCase",
+    "_CHIP_UNIVERSE_SYMBOLS",
+    "_TestCandidateSpecsBase",
+    "_capital_profile",
+    "build_factor_acceptance_artifact",
+    "build_factor_acceptance_artifact_from_scorecard",
+    "build_hypothesis_cards",
+    "candidate_spec_capital_features",
+    "candidate_spec_from_payload",
+    "candidate_specs_module",
+    "compile_candidate_specs",
+    "compile_whitepaper_candidate_specs",
+)

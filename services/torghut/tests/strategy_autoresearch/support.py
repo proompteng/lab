@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 import copy
 import json
@@ -201,3 +200,38 @@ class StrategyAutoresearchTestCase(TestCase):
 
 
 __all__ = ("StrategyAutoresearchTestCase",)
+
+__all__: tuple[str, ...] = (
+    "Decimal",
+    "FamilyAutoresearchPlan",
+    "FamilyTemplate",
+    "MutationSpace",
+    "Namespace",
+    "Path",
+    "SignalEnvelope",
+    "StrategyAutoresearchTestCase",
+    "StrategyObjective",
+    "TemporaryDirectory",
+    "TestCase",
+    "UTC",
+    "_family_template",
+    "apply_program_objective",
+    "autoresearch",
+    "build_mutated_sweep_config",
+    "build_strategy_discovery_history_notebook",
+    "build_strategy_factory_history_notebook",
+    "candidate_meets_objective",
+    "copy",
+    "date",
+    "datetime",
+    "frontier",
+    "json",
+    "load_strategy_autoresearch_program",
+    "patch",
+    "runner",
+    "sys",
+    "timedelta",
+    "write_autoresearch_notebooks",
+    "write_strategy_factory_notebooks",
+    "yaml",
+)

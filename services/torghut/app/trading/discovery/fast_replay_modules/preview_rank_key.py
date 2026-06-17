@@ -1,143 +1,14 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only vectorized scoring over manifest-verified replay tapes."""
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import timezone
-from decimal import Decimal
 from typing import Any, cast
 
-import numpy as np
-from numpy.typing import NDArray
-
-from app.trading.discovery.candidate_specs import CandidateSpec
-from app.trading.discovery.adaptive_signal_falsification_stress import (
-    extract_adaptive_signal_falsification_stress,
-)
-from app.trading.discovery.bootstrap_robust_optimization_stress import (
-    extract_bootstrap_robust_optimization_stress,
-)
-from app.trading.discovery.adaptive_market_limit_allocation_stress import (
-    extract_adaptive_market_limit_allocation_stress,
-)
-from app.trading.discovery.alpha_decay_predictability_stress import (
-    extract_alpha_decay_predictability_stress,
-)
-from app.trading.discovery.counterfactual_regime_replay_stress import (
-    extract_counterfactual_regime_replay_stress,
-)
-from app.trading.discovery.cost_aware_forecast_filter_stress import (
-    extract_cost_aware_forecast_filter_stress,
-)
-from app.trading.discovery.cluster_lob_features import (
-    HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
-    extract_cluster_lob_features,
-    extract_hawkes_excitation_summary,
-)
-from app.trading.discovery.execution_schedule_stress import (
-    extract_execution_schedule_stress,
-)
-from app.trading.discovery.feed_lag_liquidity_stress import (
-    extract_feed_lag_liquidity_stress,
-)
-from app.trading.discovery.hawkes_transient_impact_stress import (
-    extract_hawkes_transient_impact_stress,
-)
-from app.trading.discovery.intraday_jump_burst_stress import (
-    extract_intraday_jump_burst_stress,
-)
-from app.trading.discovery.intraday_price_path_asymmetry_stress import (
-    extract_intraday_price_path_asymmetry_stress,
-)
-from app.trading.discovery.institutional_mechanism_fidelity_stress import (
-    extract_institutional_mechanism_fidelity_stress,
-)
-from app.trading.discovery.lead_lag_cross_asset_stress import (
-    extract_lead_lag_cross_asset_stress,
-)
-from app.trading.discovery.metaorder_adverse_selection_stress import (
-    extract_metaorder_adverse_selection_stress,
-)
-from app.trading.discovery.lob_reality_gap_stress import (
-    extract_lob_reality_gap_stress,
-)
-from app.trading.discovery.microstructure_regime_tokenization_stress import (
-    extract_microstructure_regime_tokenization_stress,
-)
-from app.trading.discovery.microstructure_prefilter import (
-    HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
-    HPAIRS_PREFILTER_PROOF_SOURCE,
-    build_hpairs_microstructure_prefilter,
-)
-from app.trading.discovery.nonlinear_impact_execution_stress import (
-    extract_nonlinear_impact_execution_stress,
-)
-from app.trading.discovery.order_book_observability_stress import (
-    extract_order_book_observability_stress,
-)
-from app.trading.discovery.ofi_response_horizon_stress import (
-    extract_ofi_response_horizon_stress,
-)
-from app.trading.discovery.option_gamma_flow_stress import (
-    extract_option_gamma_flow_stress,
-)
-from app.trading.discovery.order_transition_stress import (
-    extract_order_transition_stress,
-)
-from app.trading.discovery.order_flow_entropy_regime_stress import (
-    extract_order_flow_entropy_regime_stress,
-)
-from app.trading.discovery.queue_survival_fill_stress import (
-    extract_queue_survival_fill_stress,
-)
-from app.trading.discovery.rough_flow_volatility_stress import (
-    extract_rough_flow_volatility_stress,
-)
-from app.trading.discovery.signal_adaptive_execution_resilience_stress import (
-    extract_signal_adaptive_execution_resilience_stress,
-)
-from app.trading.discovery.stochastic_liquidity_resilience_stress import (
-    extract_stochastic_liquidity_resilience_stress,
-)
-from app.trading.discovery.replay_tape import ReplayTapeManifest
-from app.trading.models import SignalEnvelope
-
-# ruff: noqa: F401
 
 from .shared_context import (
-    FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
-    FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
-    FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION,
-    FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP,
-    FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS,
-    FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS,
-    FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION,
-    FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION,
-    FAST_REPLAY_PREVIEW_SCHEMA_VERSION,
-    FAST_REPLAY_PROOF_SEMANTICS_LABEL,
-    FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION,
-    FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SOURCES,
-    FAST_REPLAY_TARGET_NET_PNL_PER_DAY,
-    FAST_REPLAY_WHITEPAPER_MECHANISMS,
     FastReplayPreviewRow,
 )
-from .fast_replay_preview_result import (
-    FastReplayPreviewResult,
-    SymbolTapeStats as _SymbolTapeStats,
-    build_clusterlob_feature_lane_by_symbol as _build_clusterlob_feature_lane_by_symbol,
-    build_symbol_stats as _build_symbol_stats,
-    build_fast_replay_preview,
-)
-from .candidate_clusterlob_feature_lane import (
-    candidate_clusterlob_feature_lane as _candidate_clusterlob_feature_lane,
-    clusterlob_feature_lane_manifest as _clusterlob_feature_lane_manifest,
-    clusterlob_feature_lane_score as _clusterlob_feature_lane_score,
-)
-from .score_candidate_spec import score_candidate_spec as _score_candidate_spec
 
 
 def _float_or_none(value: Any) -> float | None:

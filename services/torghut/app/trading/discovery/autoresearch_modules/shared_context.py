@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Autoresearch-style outer loop helpers for strategy discovery."""
 
 from __future__ import annotations
@@ -18,8 +17,6 @@ from app.trading.discovery.family_templates import (
     family_template_dir,
     load_family_template,
 )
-
-# ruff: noqa: F401
 
 
 _SCHEMA_VERSION = "torghut.strategy-autoresearch.v1"
@@ -515,3 +512,65 @@ SCHEMA_VERSION = _SCHEMA_VERSION
 stable_value_key = _stable_value_key
 string = _string
 string_list = _string_list
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "Decimal",
+    "FamilyAutoresearchPlan",
+    "FamilyTemplate",
+    "InvalidOperation",
+    "Mapping",
+    "MutationSpace",
+    "Path",
+    "ProposalModelPolicy",
+    "ROUND_CEILING",
+    "ReplayBudget",
+    "ResearchClaim",
+    "ResearchSource",
+    "RuntimeClosurePolicy",
+    "SCHEMA_VERSION",
+    "SnapshotPolicy",
+    "StrategyAutoresearchProgram",
+    "StrategyObjective",
+    "UTC",
+    "_SCHEMA_VERSION",
+    "_coerce_decimal",
+    "_current_grid_value",
+    "_decimal_from_candidate",
+    "_dedupe_preserve_order",
+    "_format_numeric_like",
+    "_json_clone",
+    "_load_mutation_space",
+    "_load_runtime_closure_policy",
+    "_mapping",
+    "_resolve_program_path",
+    "_resolve_seed_sweep_path",
+    "_stable_value_key",
+    "_string",
+    "_string_list",
+    "annotations",
+    "cast",
+    "coerce_decimal",
+    "current_grid_value",
+    "dataclass",
+    "datetime",
+    "decimal_from_candidate",
+    "dedupe_preserve_order",
+    "family_template_dir",
+    "format_numeric_like",
+    "hashlib",
+    "json",
+    "json_clone",
+    "load_family_template",
+    "load_mutation_space",
+    "load_runtime_closure_policy",
+    "mapping",
+    "resolve_program_path",
+    "resolve_seed_sweep_path",
+    "stable_value_key",
+    "string",
+    "string_list",
+    "yaml",
+)

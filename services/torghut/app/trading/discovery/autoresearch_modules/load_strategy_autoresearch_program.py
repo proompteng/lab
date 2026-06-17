@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Autoresearch-style outer loop helpers for strategy discovery."""
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from app.trading.discovery.family_templates import (
     load_family_template,
 )
 
-# ruff: noqa: F401
 
 from .shared_context import (
     FamilyAutoresearchPlan,
@@ -884,4 +882,80 @@ __all__ = (
     "candidate_meets_objective",
     "stable_payload_hash",
     "run_id",
+)
+
+
+# Explicit module exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "Decimal",
+    "FamilyAutoresearchPlan",
+    "FamilyTemplate",
+    "InvalidOperation",
+    "Mapping",
+    "MutationSpace",
+    "Path",
+    "ProposalModelPolicy",
+    "ROUND_CEILING",
+    "ReplayBudget",
+    "ResearchClaim",
+    "ResearchSource",
+    "RuntimeClosurePolicy",
+    "SnapshotPolicy",
+    "StrategyAutoresearchProgram",
+    "StrategyObjective",
+    "UTC",
+    "_CandidateObjectiveMetrics",
+    "_MutatedGridResult",
+    "_SCHEMA_VERSION",
+    "_build_mutated_grid",
+    "_candidate_objective_metrics",
+    "_coerce_decimal",
+    "_current_grid_value",
+    "_decimal_from_candidate",
+    "_dedupe_preserve_order",
+    "_format_numeric_like",
+    "_json_clone",
+    "_load_family_autoresearch_plan",
+    "_load_family_autoresearch_plans",
+    "_load_mutation_space",
+    "_load_mutation_spaces",
+    "_load_proposal_model_policy",
+    "_load_replay_budget",
+    "_load_research_claims",
+    "_load_research_sources",
+    "_load_runtime_closure_policy",
+    "_load_snapshot_policy",
+    "_load_strategy_objective",
+    "_mapping",
+    "_mutation_grid_values",
+    "_objective_daily_net_pnl_ok",
+    "_objective_drawdown_passes",
+    "_objective_every_day_active_ok",
+    "_objective_observed_days_ok",
+    "_objective_start_equity",
+    "_objective_thresholds_ok",
+    "_objective_total_net_pnl",
+    "_research_claim_from_payload",
+    "_resolve_program_path",
+    "_resolve_seed_sweep_path",
+    "_resolved_mutation_values",
+    "_stable_value_key",
+    "_string",
+    "_string_list",
+    "annotations",
+    "apply_program_objective",
+    "build_mutated_sweep_config",
+    "candidate_meets_objective",
+    "cast",
+    "dataclass",
+    "datetime",
+    "family_template_dir",
+    "hashlib",
+    "json",
+    "load_family_template",
+    "load_strategy_autoresearch_program",
+    "run_id",
+    "stable_payload_hash",
+    "yaml",
 )

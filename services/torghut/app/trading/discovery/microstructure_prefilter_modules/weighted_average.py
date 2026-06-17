@@ -10,24 +10,17 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import timezone
 from decimal import Decimal
-from math import exp, isfinite, log, sqrt
+from math import exp, isfinite, log
 from typing import Any, cast
 
 import numpy as np
 from numpy.typing import NDArray
 
-from app.trading.discovery.candidate_specs import CandidateSpec
-from app.trading.models import SignalEnvelope
-
-# ruff: noqa: F401
 
 from .shared_context import (
     HPAIRS_AUTHORITY_BLOCKERS,
     HPAIRS_FAMILY_TEMPLATE_ID,
-    HPAIRS_HORIZONS,
     HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
     HPAIRS_PREFILTER_PROOF_SOURCE,
     HPAIRS_PREFILTER_ROW_SCHEMA_VERSION,
@@ -35,45 +28,7 @@ from .shared_context import (
     HPAIRS_RUNTIME_STRATEGY_NAME,
     MicrostructureCandidatePrefilterRow,
     MicrostructurePrefilterResult,
-    SymbolMicrostructureStats_split_export as _SymbolMicrostructureStats,
-    build_symbol_microstructure_stats_split_export as _build_symbol_microstructure_stats,
-    rank_key_split_export as _rank_key,
-    score_spec_split_export as _score_spec,
-    select_frontier_buckets_split_export as _select_frontier_buckets,
-    source_field_diagnostics_split_export as _source_field_diagnostics,
-    source_input_blockers_split_export as _source_input_blockers,
-    with_rank_and_bucket_split_export as _with_rank_and_bucket,
     build_hpairs_microstructure_prefilter,
-)
-from .horizon_ofi_features import (
-    candidate_direction_split_export as _candidate_direction,
-    candidate_notional as _candidate_notional,
-    candidate_symbols_split_export as _candidate_symbols,
-    capacity_penalty_bps_split_export as _capacity_penalty_bps,
-    cluster_behavior_split_export as _cluster_behavior,
-    empty_cluster_behavior_split_export as _empty_cluster_behavior,
-    empty_horizon_features_split_export as _empty_horizon_features,
-    empty_macro_window_stress_split_export as _empty_macro_window_stress,
-    empty_pair_convergence_risk_split_export as _empty_pair_convergence_risk,
-    empty_regime_stress_veto_split_export as _empty_regime_stress_veto,
-    event_label_split_export as _event_label,
-    extract_microprice_bias_bps_split_export as _extract_microprice_bias_bps,
-    extract_ofi_pressure_split_export as _extract_ofi_pressure,
-    extract_price_split_export as _extract_price,
-    extract_quote_depth_imbalance as _extract_quote_depth_imbalance,
-    extract_regime_stress_split_export as _extract_regime_stress,
-    extract_spread_bps_split_export as _extract_spread_bps,
-    extract_volume_split_export as _extract_volume,
-    horizon_ofi_features_split_export as _horizon_ofi_features,
-    impact_capacity_lineage_split_export as _impact_capacity_lineage,
-    is_hpairs_candidate_split_export as _is_hpairs_candidate,
-    macro_window_stress_from_regime_split_export as _macro_window_stress_from_regime,
-    merged_horizon_features_split_export as _merged_horizon_features,
-    pair_convergence_payload as _pair_convergence_payload,
-    pair_convergence_risk_split_export as _pair_convergence_risk,
-    regime_stress_veto_split_export as _regime_stress_veto,
-    timestamp_key_split_export as _timestamp_key,
-    volume_score_split_export as _volume_score,
 )
 
 

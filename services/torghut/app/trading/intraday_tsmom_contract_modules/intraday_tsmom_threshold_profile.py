@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Shared parameter contract for intraday_tsmom_v1 across runtimes."""
 
 from __future__ import annotations
@@ -7,8 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal, Mapping
-
-# ruff: noqa: F401
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -891,4 +888,50 @@ __all__ = (
     "optional_decimal_param",
     "price_within_entry_band",
     "profile_for_timeframe",
+)
+
+
+# Explicit module exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "DEFAULT_PROFILE",
+    "Decimal",
+    "IntradayTsmomEvaluation",
+    "IntradayTsmomThresholdProfile",
+    "Literal",
+    "Mapping",
+    "ONE_SECOND_PROFILE",
+    "_DEFAULT_PROFILE",
+    "_ONE_SECOND_PROFILE",
+    "_decayed_minimum",
+    "_decimal",
+    "_decimal_param",
+    "_isolated_continuation_strength_confirmed",
+    "_normalize_timeframe",
+    "_optional_decimal_param",
+    "_optional_max_threshold",
+    "_optional_min_threshold",
+    "_price_within_entry_band",
+    "_profile_for_timeframe",
+    "_relax_floor_for_isolated_strength",
+    "_resolve_live_continuation_rank",
+    "_rsi_within_bearish_bounds",
+    "_spread_bps",
+    "_validate_optional_decimal_param",
+    "_validate_optional_minute_param",
+    "_validate_optional_rsi_param",
+    "_volatility_within_budget",
+    "_within_entry_window",
+    "annotations",
+    "dataclass",
+    "datetime",
+    "decimal_param",
+    "evaluate_intraday_tsmom_signal",
+    "normalize_timeframe",
+    "optional_decimal_param",
+    "price_within_entry_band",
+    "profile_for_timeframe",
+    "resolve_intraday_tsmom_thresholds",
+    "timezone",
+    "validate_intraday_tsmom_params",
 )

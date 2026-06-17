@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Canonical evidence bundles for autoresearch candidates."""
 
 from __future__ import annotations
@@ -8,8 +7,6 @@ import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Mapping, Sequence, cast
-
-# ruff: noqa: F401
 
 
 EVIDENCE_BUNDLE_SCHEMA_VERSION = "torghut.candidate-evidence-bundle.v1"
@@ -713,3 +710,71 @@ runtime_ledger_lineage_handoff = _runtime_ledger_lineage_handoff
 stable_hash = _stable_hash
 string = _string
 string_list = _string_list
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS",
+    "ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS",
+    "Any",
+    "BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS",
+    "CONFORMAL_COST_BUFFER_SCORECARD_KEYS",
+    "DELAY_ADJUSTED_DEPTH_STRESS_COST_BPS",
+    "DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS",
+    "DELAY_ADJUSTED_DEPTH_STRESS_MS",
+    "DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS",
+    "Decimal",
+    "EVIDENCE_BUNDLE_SCHEMA_VERSION",
+    "FILL_SURVIVAL_SCORECARD_KEYS",
+    "InvalidOperation",
+    "Literal",
+    "MARKET_IMPACT_SCORECARD_KEYS",
+    "MARKET_IMPACT_STRESS_COST_BPS",
+    "MIN_CONFORMAL_TAIL_RISK_SAMPLE_COUNT",
+    "Mapping",
+    "OFI_RESPONSE_HORIZON_SCORECARD_KEYS",
+    "REPLAY_ACTIVITY_SCORECARD_KEYS",
+    "RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS",
+    "STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS",
+    "Sequence",
+    "VALID_COST_CALIBRATION_STATUSES",
+    "_artifact_refs_from_scorecard",
+    "_bool",
+    "_decimal",
+    "_decimal_mapping_total",
+    "_frontier_replay_config",
+    "_frontier_replay_params",
+    "_frontier_strategy_overrides",
+    "_int",
+    "_int_mapping",
+    "_mapping",
+    "_order_lifecycle_metrics",
+    "_order_type_ablation_metrics",
+    "_order_type_execution_metrics",
+    "_runtime_ledger_lineage_handoff",
+    "_stable_hash",
+    "_string",
+    "_string_list",
+    "annotations",
+    "artifact_refs_from_scorecard",
+    "bool_value",
+    "cast",
+    "dataclass",
+    "decimal",
+    "decimal_mapping_total",
+    "frontier_replay_config",
+    "frontier_replay_params",
+    "frontier_strategy_overrides",
+    "hashlib",
+    "int_mapping",
+    "int_value",
+    "json",
+    "mapping",
+    "order_lifecycle_metrics",
+    "order_type_ablation_metrics",
+    "order_type_execution_metrics",
+    "runtime_ledger_lineage_handoff",
+    "stable_hash",
+    "string",
+    "string_list",
+)

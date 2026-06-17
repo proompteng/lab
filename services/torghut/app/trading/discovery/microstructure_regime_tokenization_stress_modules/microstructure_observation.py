@@ -18,37 +18,22 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from math import isfinite
 from statistics import median
 from typing import Any, cast
 
-from app.trading.models import SignalEnvelope
-
-# ruff: noqa: F401
 
 from .shared_context import (
-    MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_CONTRACT_SCHEMA_VERSION,
     MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_PRIMARY_SOURCES,
     MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_PROOF_SEMANTICS_LABEL,
     MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_SCHEMA_VERSION,
     MicrostructureRegimeTokenizationStressSummary,
-    BINNED_FIELD_TOKENS as _BINNED_FIELD_TOKENS,
     DEPTH_FIELDS as _DEPTH_FIELDS,
     EARLY_WARNING_LOOKAHEAD as _EARLY_WARNING_LOOKAHEAD,
     EVENT_TYPE_FIELDS as _EVENT_TYPE_FIELDS,
     LOBERT_LIFECYCLE_ACTIONS as _LOBERT_LIFECYCLE_ACTIONS,
-    MESSAGE_TIME_DELTA_FIELDS as _MESSAGE_TIME_DELTA_FIELDS,
     MIN_EARLY_WARNING_ROWS as _MIN_EARLY_WARNING_ROWS,
-    OFI_FIELDS as _OFI_FIELDS,
-    ORDER_ID_FIELDS as _ORDER_ID_FIELDS,
     POST_MESSAGE_SNAPSHOT_PRICE_FIELDS as _POST_MESSAGE_SNAPSHOT_PRICE_FIELDS,
-    PRICE_FIELDS as _PRICE_FIELDS,
-    RAW_EVENT_FIELDS as _RAW_EVENT_FIELDS,
-    RETURN_BPS_FIELDS as _RETURN_BPS_FIELDS,
-    SIDE_FIELDS as _SIDE_FIELDS,
-    SIZE_FIELDS as _SIZE_FIELDS,
-    SPREAD_FIELDS as _SPREAD_FIELDS,
     build_microstructure_regime_tokenization_stress_schema_hash,
     extract_microstructure_regime_tokenization_stress,
     microstructure_regime_tokenization_stress_contract,

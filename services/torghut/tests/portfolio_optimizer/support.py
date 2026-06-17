@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 from decimal import Decimal
 from unittest import TestCase
@@ -104,3 +103,18 @@ class _TestPortfolioOptimizerBase(TestCase):
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "CandidateEvidenceBundle",
+    "Decimal",
+    "ProfitTargetOraclePolicy",
+    "TestCase",
+    "_TestPortfolioOptimizerBase",
+    "_executable_scorecard_fields",
+    "evidence_bundle_blockers",
+    "evidence_bundle_from_frontier_candidate",
+    "evidence_bundle_from_payload",
+    "optimize_portfolio_candidate",
+    "portfolio_candidate_from_payload",
+    "portfolio_optimizer_module",
+)

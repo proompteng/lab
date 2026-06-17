@@ -1,11 +1,9 @@
 """Shared live-submission gate helpers for status and runtime paths."""
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-# ruff: noqa: F401
 from .submission_council_modules.common import (
     Any,
     Mapping,
@@ -40,20 +38,26 @@ from .submission_council_modules.common import (
     urlopen,
 )
 from .submission_council_modules.quant_health import (
-    autoresearch_portfolio_current_oracle_passed as _autoresearch_portfolio_current_oracle_passed,
     runtime_window_import_health_gate_inputs as _runtime_window_import_health_gate_inputs,
+    autoresearch_portfolio_current_oracle_passed as _autoresearch_portfolio_current_oracle_passed,
     build_shadow_first_toggle_parity,
     critical_trading_toggle_snapshot,
     load_quant_evidence_status,
     resolve_active_capital_stage,
     resolve_quant_health_url,
 )
-from .submission_council_modules.runtime_summary import build_hypothesis_runtime_summary
+from .submission_council_modules.runtime_summary import (
+    runtime_ledger_aggregate_candidate_payloads as _runtime_ledger_aggregate_candidate_payloads,
+    runtime_ledger_latest_payloads_per_symbol as _runtime_ledger_latest_payloads_per_symbol,
+    runtime_ledger_merge_count_maps as _runtime_ledger_merge_count_maps,
+    runtime_ledger_unique_sequence as _runtime_ledger_unique_sequence,
+    build_hypothesis_runtime_summary,
+)
 from .submission_council_modules.paper_probation import (
     RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER as _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER,
     bounded_source_collection_probe_window as _bounded_source_collection_probe_window,
-    runtime_ledger_paper_probation_candidates as _runtime_ledger_paper_probation_candidates,
     runtime_ledger_paper_probation_blockers as _runtime_ledger_paper_probation_blockers,
+    runtime_ledger_paper_probation_candidates as _runtime_ledger_paper_probation_candidates,
     runtime_ledger_source_collection_candidates as _runtime_ledger_source_collection_candidates,
     runtime_ledger_source_collection_target_progress_payload as _runtime_ledger_source_collection_target_progress_payload,
 )
@@ -73,6 +77,7 @@ from .submission_council_modules.certificate_loading import (
     load_latest_certificate_evidence as _load_latest_certificate_evidence,
     merge_runtime_certificate_evidence as _merge_runtime_certificate_evidence,
     metric_window_activity_reason_codes as _metric_window_activity_reason_codes,
+    promotion_decision_blocking_reason_codes as _promotion_decision_blocking_reason_codes,
 )
 from .submission_council_modules.certificate_eval import (
     attach_lineage_refs as _attach_lineage_refs,
@@ -83,24 +88,18 @@ from .submission_council_modules.certificate_eval import (
     runtime_ledger_hypothesis_ids_for_gate_scope as _runtime_ledger_hypothesis_ids_for_gate_scope,
     segment_summary as _segment_summary,
 )
-from .submission_council_modules.profit_readiness import (
-    build_profit_data_readiness_summary as _build_profit_data_readiness_summary,
-    build_profit_live_controls as _build_profit_live_controls,
-    build_profit_rejection_summary as _build_profit_rejection_summary,
-    load_persisted_profit_rejection_summary as _load_persisted_profit_rejection_summary,
-    load_profit_promotion_table_counts as _load_profit_promotion_table_counts,
-)
 from .submission_council_modules.runtime_certificates import (
     certificate_evidence_authority_score as _certificate_evidence_authority_score,
     load_latest_runtime_ledger_summary as _load_latest_runtime_ledger_summary,
     runtime_ledger_repair_reason_codes as _runtime_ledger_repair_reason_codes,
     runtime_ledger_repair_score as _runtime_ledger_repair_score,
 )
-from .submission_council_modules.runtime_summary import (
-    runtime_ledger_aggregate_candidate_payloads as _runtime_ledger_aggregate_candidate_payloads,
-    runtime_ledger_latest_payloads_per_symbol as _runtime_ledger_latest_payloads_per_symbol,
-    runtime_ledger_merge_count_maps as _runtime_ledger_merge_count_maps,
-    runtime_ledger_unique_sequence as _runtime_ledger_unique_sequence,
+from .submission_council_modules.profit_readiness import (
+    build_profit_data_readiness_summary as _build_profit_data_readiness_summary,
+    build_profit_live_controls as _build_profit_live_controls,
+    build_profit_rejection_summary as _build_profit_rejection_summary,
+    load_persisted_profit_rejection_summary as _load_persisted_profit_rejection_summary,
+    load_profit_promotion_table_counts as _load_profit_promotion_table_counts,
 )
 from .live_submit_activation import (
     live_submit_activation_blocker,
@@ -150,7 +149,7 @@ class _SubmissionRuntimeLedgerContext:
 class _SubmissionRuntimeInputs:
     registry_item_payloads: list[dict[str, object]]
     runtime_ledger: _SubmissionRuntimeLedgerContext
-    evidence_rows: list[Mapping[str, object]]
+    evidence_rows: Sequence[Mapping[str, object]]
 
 
 @dataclass(frozen=True)
@@ -174,7 +173,7 @@ class _SubmissionGateContext:
     now: datetime
     runtime_inputs: _SubmissionRuntimeInputs
     totals: _SubmissionTotals
-    segment_summary: dict[str, object]
+    segment_summary: Mapping[str, Mapping[str, object]]
     profit_lease_projection: dict[str, object]
     empirical_jobs_status: Mapping[str, Any] | None
 
@@ -269,6 +268,7 @@ def _build_submission_gate_context(
     inputs: _SubmissionGateBuildInputs,
 ) -> _SubmissionGateContext:
     summary, runtime_items = _extract_runtime_summary(inputs.hypothesis_summary)
+    runtime_items = [dict(item) for item in runtime_items]
     dependencies = _submission_dependency_context(
         inputs.state,
         summary=summary,
@@ -554,7 +554,7 @@ def _submission_totals(
             runtime_items=runtime_items,
             runtime_ledger_candidates=runtime_ledger.paper_probation_candidates,
         ),
-        active_capital_stage=resolve_active_capital_stage(summary),
+        active_capital_stage=resolve_active_capital_stage(summary) or "unknown",
     )
 
 
@@ -566,14 +566,14 @@ def _submission_profit_lease_projection(
         list[dict[str, Any]],
         _SubmissionQuantContext,
         _SubmissionDependencyContext,
-        dict[str, object],
+        Mapping[str, Mapping[str, object]],
         datetime,
     ],
     clickhouse_ta_status: Mapping[str, Any] | None,
     quant_account_label: str | None,
     empirical_jobs_status: Mapping[str, Any] | None,
 ) -> dict[str, object]:
-    runtime_items, quant, dependencies, segment_summary, now = context_values
+    runtime_items, quant, dependencies, _segment_summary, now = context_values
     return build_profit_lease_projection(
         runtime_items=runtime_items,
         quant_evidence=quant.evidence,
@@ -849,21 +849,18 @@ def _submission_profit_window_contract(
     *,
     lineage_ref: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    kwargs: dict[str, object] = {}
-    if lineage_ref is not None:
-        kwargs["lineage_ref"] = lineage_ref
     return build_profit_window_contract(
         runtime_items=context.runtime_items,
         quant_evidence=context.quant.evidence,
         empirical_jobs_status=context.empirical_jobs_status,
         market_context_ref=context.market_context_ref,
         segment_summary=context.segment_summary,
+        lineage_ref=lineage_ref,
         account=_safe_text(context.quant.evidence.get("account")),
         window=_safe_text(context.quant.evidence.get("window")),
         market_session_open=getattr(context.state, "market_session_open", None),
         replay=bool(getattr(context.state, "simulation_replay_active", False)),
         now=context.now,
-        **kwargs,
     )
 
 
@@ -985,12 +982,50 @@ def _live_submission_gate_payload(
 
 
 __all__ = [
+    "_CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT",
+    "_PROMOTION_PORTFOLIO_READY_SCAN_LIMIT",
+    "_PROMOTION_TABLE_COUNT_SCAN_LIMIT",
+    "_QUANT_HEALTH_CACHE",
+    "_attach_lineage_refs",
+    "_autoresearch_portfolio_current_oracle_passed",
+    "_bounded_source_collection_probe_window",
+    "_certificate_evidence_authority_score",
+    "_certificate_evidence_selection_key",
+    "_coerce_aware_datetime",
+    "_load_latest_certificate_evidence",
+    "_load_latest_runtime_ledger_summary",
+    "_load_persisted_profit_rejection_summary",
+    "_load_profit_promotion_table_counts",
+    "_load_runtime_ledger_repair_candidates",
+    "_maybe_set_runtime_ledger_status_statement_timeout",
+    "_merge_runtime_certificate_evidence",
+    "_metric_window_activity_reason_codes",
+    "_promotion_decision_blocking_reason_codes",
+    "_refresh_runtime_summary_totals",
+    "_rollback_runtime_ledger_status_session",
+    "_runtime_ledger_aggregate_candidate_payloads",
+    "_runtime_ledger_latest_payloads_per_symbol",
+    "_runtime_ledger_merge_count_maps",
+    "_runtime_ledger_paper_probation_blockers",
+    "_runtime_ledger_paper_probation_candidates",
+    "_runtime_ledger_paper_probation_import_plan",
+    "_runtime_ledger_repair_reason_codes",
+    "_runtime_ledger_repair_score",
+    "_runtime_ledger_source_collection_candidates",
+    "_runtime_ledger_source_collection_target_progress_payload",
+    "_runtime_ledger_status_query_timeout_ms",
+    "_runtime_ledger_unique_sequence",
+    "build_tca_gate_inputs",
     "build_hypothesis_runtime_summary",
     "build_live_submission_gate_payload",
     "build_shadow_first_toggle_parity",
     "build_submission_gate_market_context_status",
+    "compile_hypothesis_runtime_statuses",
     "critical_trading_toggle_snapshot",
     "load_quant_evidence_status",
+    "load_hypothesis_registry",
     "resolve_active_capital_stage",
+    "resolve_hypothesis_dependency_quorum",
     "resolve_quant_health_url",
+    "urlopen",
 ]

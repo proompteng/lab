@@ -1,5 +1,4 @@
 """Pure and shared helpers for the trading pipeline."""
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
 
 from __future__ import annotations
 
@@ -951,8 +950,10 @@ __all__ = [
     "_extract_top_regime_posterior_probability",
     "_format_order_submit_rejection",
     "_hash_payload",
+    "_is_market_session_open",
     "_is_llm_stage_policy_violation",
     "_is_runtime_risk_increasing_entry",
+    "_latch_signal_continuity_alert_state",
     "_llm_guardrail_controls_snapshot",
     "_load_recent_decisions",
     "_normalize_optional_text",
@@ -963,6 +964,7 @@ __all__ = [
     "_position_qty",
     "_price_snapshot_payload",
     "_project_open_orders_onto_positions",
+    "_record_signal_continuity_recovery_cycle",
     "_resolve_decision_regime_label",
     "_resolve_decision_regime_label_with_source",
     "_resolve_llm_review_error_reject_reason",

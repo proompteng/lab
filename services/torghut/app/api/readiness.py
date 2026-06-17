@@ -1,11 +1,9 @@
 """Extracted Torghut API route and support functions."""
 
-# pyright: reportUnusedImport=false
-# ruff: noqa: F401
 from __future__ import annotations
 
 from fastapi import APIRouter
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass

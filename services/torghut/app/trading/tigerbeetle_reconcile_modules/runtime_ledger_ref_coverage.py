@@ -5,105 +5,47 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from typing import Any, cast
-from uuid import UUID
+from decimal import Decimal
+from typing import cast
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.config import Settings, settings
+from app.config import settings
 from app.models import (
-    Execution,
-    ExecutionOrderEvent,
-    ExecutionTCAMetric,
     StrategyRuntimeLedgerBucket,
     TigerBeetleAccountRef,
     TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
-    coerce_json_payload,
 )
-from app.trading.tigerbeetle_client import (
-    TigerBeetleClientProtocol,
-    create_tigerbeetle_client,
-)
-from app.trading.tigerbeetle_ids import stable_ref_u128, u128_decimal
 from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION,
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     SOURCE_TYPE_EXECUTION_TCA_METRIC,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
-    execution_tca_metric_source_id,
-    build_order_event_transfer_plan,
     build_runtime_ledger_bucket_transfer_plan,
-    runtime_ledger_amount_source,
 )
 from app.trading.tigerbeetle_ledger_model import (
-    TRANSFER_KIND_EXECUTION_COST,
-    TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_KIND_RUNTIME_NET_PNL,
-    decimal_usd_to_nearest_micros,
 )
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    BLOCKER_AMOUNT_MISMATCH,
     BLOCKER_CLIENT_UNAVAILABLE,
-    BLOCKER_CODE_MISMATCH,
-    BLOCKER_CREDIT_ACCOUNT_MISMATCH,
-    BLOCKER_DEBIT_ACCOUNT_MISMATCH,
-    BLOCKER_LEDGER_MISMATCH,
-    BLOCKER_POSTGRES_REF_MISMATCH,
-    BLOCKER_RECONCILIATION_STALE,
-    BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING,
-    BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH,
-    BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH,
-    BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING,
-    BLOCKER_SOURCE_AMOUNT_MISMATCH,
-    BLOCKER_SOURCE_ROW_MISSING,
-    BLOCKER_STABLE_REF_PAYLOAD_MISMATCH,
-    BLOCKER_TRANSFER_MISSING,
-    BLOCKER_UNLINKED_COST,
-    BLOCKER_UNLINKED_EVENT,
-    BLOCKER_UNLINKED_EXECUTION,
-    BLOCKER_UNLINKED_RUNTIME_LEDGER,
-    COMPACT_REF_COUNT_FLAG_KEYS,
-    COMPACT_REF_COUNT_KEYS,
     REF_COUNT_FIELD_NAMES,
     SAMPLE_LIMIT,
     SCHEMA_VERSION,
-    account_payload_matches as _account_payload_matches,
-    append_sample as _append_sample,
-    archived_runtime_ledger_amount_micros as _archived_runtime_ledger_amount_micros,
-    archived_source_amount_micros as _archived_source_amount_micros,
     as_aware_utc as _as_aware_utc,
     attr as _attr,
     compact_reconciliation_ref_counts as _compact_reconciliation_ref_counts,
-    cost_amount_micros as _cost_amount_micros,
-    execution_amount_micros as _execution_amount_micros,
-    expected_source_amount_micros as _expected_source_amount_micros,
-    legacy_unversioned_source_ref as _legacy_unversioned_source_ref,
-    order_event_ref_exists as _order_event_ref_exists,
     payload_int as _payload_int,
     payload_mapping as _payload_mapping,
     payload_string_list as _payload_string_list,
-    payload_value as _payload_value,
-    ref_matches_expected_event as _ref_matches_expected_event,
-    ref_sample as _ref_sample,
-    runtime_ledger_amount_micros as _runtime_ledger_amount_micros,
     runtime_ledger_payload_account_ids as _runtime_ledger_payload_account_ids,
     runtime_ledger_ref_is_signed as _runtime_ledger_ref_is_signed,
-    source_materialization_payload as _source_materialization_payload,
-    source_ref_exists as _source_ref_exists,
-    stable_ref_archives_event_transfer as _stable_ref_archives_event_transfer,
     stable_ref_matches as _stable_ref_matches,
     stable_ref_payload as _stable_ref_payload,
-    transfer_lookup_key as _transfer_lookup_key,
-    u128_text as _u128_text,
-    usd_to_micros as _usd_to_micros,
-    uuid_or_none as _uuid_or_none,
 )
 
 

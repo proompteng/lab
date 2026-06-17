@@ -1,68 +1,28 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Hypothesis registry loading and runtime alpha-readiness compilation."""
 
 from __future__ import annotations
 
-import json
-from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
-from threading import Lock
-from typing import Any, Literal, cast
-from urllib.request import Request, urlopen
+from typing import Any, cast
 
-import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from ...config import settings
-from ..runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
+from ..runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    CapitalStage,
-    DependencyQuorumDecision,
-    HypothesisEntryRequirements,
     HypothesisManifest,
-    HypothesisRegistryLoadResult,
-    HypothesisState,
-    CAPITAL_STAGE_RANK as _CAPITAL_STAGE_RANK,
-    DEPENDENCY_REASONS as _DEPENDENCY_REASONS,
-    EDGE_OR_COST_REASONS as _EDGE_OR_COST_REASONS,
-    EVIDENCE_REFRESH_REASONS as _EVIDENCE_REFRESH_REASONS,
-    JANGAR_QUORUM_CACHE as _JANGAR_QUORUM_CACHE,
-    JANGAR_QUORUM_CACHE_LOCK as _JANGAR_QUORUM_CACHE_LOCK,
-    JangarDependencyQuorumStatus,
-    KNOWN_DEPENDENCY_CAPABILITIES as _KNOWN_DEPENDENCY_CAPABILITIES,
-    KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS as _KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS,
-    RUNTIME_LEDGER_PROVENANCE_REASONS as _RUNTIME_LEDGER_PROVENANCE_REASONS,
-    SAMPLE_REASONS as _SAMPLE_REASONS,
     as_payload_dict as _as_payload_dict,
     as_payload_dict_list as _as_payload_dict_list,
-    bounded_route_evidence_collection_readiness as _bounded_route_evidence_collection_readiness,
-    candidate_blocker_class as _candidate_blocker_class,
-    candidate_blocker_rank as _candidate_blocker_rank,
     coerce_decimal as _coerce_decimal,
     decimal_to_string as _decimal_to_string,
-    empty_payload_dict as _empty_payload_dict,
-    empty_payload_dict_list as _empty_payload_dict_list,
-    extract_stage_trust as _extract_stage_trust,
-    first_matching_reason as _first_matching_reason,
-    is_dependency_required as _is_dependency_required,
-    normalize_dependency_capability as _normalize_dependency_capability,
     optional_bool as _optional_bool,
     optional_decimal as _optional_decimal,
     optional_int as _optional_int,
     parse_iso8601 as _parse_iso8601,
-    ranked_candidate_dossiers as _ranked_candidate_dossiers,
-    resolve_required_dependency_capabilities as _resolve_required_dependency_capabilities,
     sequence as _sequence,
-    stable_string_list as _stable_string_list,
-    hypothesis_registry_requires_dependency_capability,
-    resolve_hypothesis_dependency_quorum,
 )
 
 

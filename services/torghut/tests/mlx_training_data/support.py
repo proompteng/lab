@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 from decimal import Decimal
 from unittest import TestCase
@@ -37,3 +36,22 @@ class _TestMlxTrainingDataBase(TestCase):
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "CandidateSpec",
+    "Decimal",
+    "MlxRankerModel",
+    "MlxTrainingRow",
+    "TestCase",
+    "_TestMlxTrainingDataBase",
+    "_capital_profile",
+    "build_hypothesis_cards",
+    "build_mlx_training_rows",
+    "candidate_spec_capital_features",
+    "compile_candidate_specs",
+    "evidence_bundle_from_frontier_candidate",
+    "mlx_training_data_module",
+    "rank_training_rows",
+    "rank_training_rows_with_lift_policy",
+    "train_mlx_ranker",
+)

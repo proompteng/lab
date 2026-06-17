@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Single-strategy quantity sizing helpers for the trading decision engine."""
 
 from __future__ import annotations
@@ -17,67 +16,12 @@ from ..quantity_rules import (
     resolve_quantity_resolution,
 )
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    AggregatedIntent,
-    DecisionRuntimeTelemetry,
-    FeatureNormalizationError,
-    FeatureVectorV3,
-    ForecastRoutingTelemetry,
-    HMM_UNKNOWN_REGIME_ID,
-    Iterable,
-    Literal,
-    MarketSnapshot,
-    PriceFetcher,
-    QuoteQualityPolicy,
-    ROUND_HALF_UP,
-    RuntimeDecision,
-    RuntimeErrorRecord,
-    RuntimeEvaluation,
-    RuntimeObservation,
-    SessionContextTracker,
-    SignalEnvelope,
-    SignalFeatures,
-    StrategyDecision,
-    StrategyRegistry,
-    StrategyRuntime,
-    StrategyTrace,
-    BUY_EXIT_ONLY_STRATEGY_TYPES as _BUY_EXIT_ONLY_STRATEGY_TYPES,
-    DecisionEngineFields as _DecisionEngineFields,
     EXIT_ONLY_BUY_FLAT_REASON as _EXIT_ONLY_BUY_FLAT_REASON,
     EXIT_ONLY_SELL_FLAT_REASON as _EXIT_ONLY_SELL_FLAT_REASON,
-    MICROBAR_PAIR_EXIT_RATIONALE as _MICROBAR_PAIR_EXIT_RATIONALE,
-    RUNTIME_TRADE_POLICY_SHARED_OWNER as _RUNTIME_TRADE_POLICY_SHARED_OWNER,
-    RuntimeTradePolicySessionState as _RuntimeTradePolicySessionState,
     SAME_DIRECTION_REENTRY_REASON as _SAME_DIRECTION_REENTRY_REASON,
-    SELL_EXIT_ONLY_STRATEGY_TYPES as _SELL_EXIT_ONLY_STRATEGY_TYPES,
     SHORT_ENTRY_BELOW_MIN_QTY_REASON as _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
-    feature_vector_with_positions as _feature_vector_with_positions,
-    feature_vector_with_runtime_position as _feature_vector_with_runtime_position,
-    merge_runtime_counter as _merge_runtime_counter,
-    merge_runtime_evaluations as _merge_runtime_evaluations,
-    runtime_position_side as _runtime_position_side,
-    build_default_forecast_router,
-    date,
-    datetime,
-    extract_catalog_metadata,
-    extract_signal_features,
-    field,
-    hashlib,
-    json,
-    logger,
-    logging,
-    normalize_feature_vector_v3,
-    parse_microstructure_state,
-    re,
-    resolve_hmm_context,
-    resolve_regime_route_label,
-    resolve_simulation_context,
-    timezone,
-)
-from .decision_engine_core_methods import (
-    DecisionEngineCoreMethods as _DecisionEngineCoreMethods,
 )
 
 

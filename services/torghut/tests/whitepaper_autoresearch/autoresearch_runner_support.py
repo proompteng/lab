@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 from contextlib import contextmanager
 from dataclasses import replace
 import json
@@ -213,3 +212,51 @@ def _compact_recent_whitepaper_sources(
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "Any",
+    "AutoresearchCandidateSpec",
+    "AutoresearchEpoch",
+    "AutoresearchPortfolioCandidate",
+    "AutoresearchProposalScore",
+    "Base",
+    "Decimal",
+    "Namespace",
+    "Path",
+    "REPLAY_TAPE_MANIFEST_SCHEMA_VERSION",
+    "RejectedSignalOutcomeEvent",
+    "ReplayTapeManifest",
+    "Sequence",
+    "Session",
+    "SignalEnvelope",
+    "TemporaryDirectory",
+    "TestCase",
+    "WhitepaperAnalysisRun",
+    "WhitepaperClaim",
+    "WhitepaperClaimRelation",
+    "WhitepaperDocument",
+    "WhitepaperDocumentVersion",
+    "_CHIP_UNIVERSE",
+    "_FakeSigalrmSignal",
+    "_authoritative_exact_replay_ledger_rows",
+    "_compact_recent_whitepaper_sources",
+    "_source_from_payload",
+    "_source_jsonl_payload",
+    "cast",
+    "claim_compiler_script",
+    "contextmanager",
+    "create_engine",
+    "date",
+    "datetime",
+    "evidence_bundle_blockers",
+    "fast_replay",
+    "json",
+    "materialize_signal_tape",
+    "patch",
+    "ranker_trainer",
+    "replace",
+    "runner",
+    "select",
+    "sys",
+    "timezone",
+)

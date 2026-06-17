@@ -1,59 +1,31 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Training-row and ranker helpers for the MLX autoresearch proposal model."""
 
 from __future__ import annotations
 
-import hashlib
-import importlib
-import json
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Mapping, Sequence, cast
 
 from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.discovery.capital_budget import estimate_capital_budget
-from app.trading.discovery.evidence_bundles import CandidateEvidenceBundle
 from app.trading.discovery.objectives import (
     deployable_lower_bound_missing_count,
     deployable_lower_bound_net_pnl_per_day,
     deployable_proof_failed_gate_count,
 )
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    MLX_RANKER_SCHEMA_VERSION,
-    MlxRankBucketLift,
-    MlxRankedCandidate,
-    MlxRankedRowsPolicyResult,
-    MlxRankerModel,
-    MlxTrainingRow,
     MECHANISM_OVERLAY_FEATURE_NAMES as _MECHANISM_OVERLAY_FEATURE_NAMES,
     MECHANISM_OVERLAY_IDS as _MECHANISM_OVERLAY_IDS,
-    PAPER_CONTRACT_FEATURE_NAMES as _PAPER_CONTRACT_FEATURE_NAMES,
-    TorchArrayBackend as _TorchArrayBackend,
     artifact_present as _artifact_present,
     average_claim_confidence as _average_claim_confidence,
-    bool_feature as _bool_feature,
     claim_type_count as _claim_type_count,
-    daily_target_shortfall as _daily_target_shortfall,
     float_value as _float,
-    format_float as _format_float,
-    hard_veto_count as _hard_veto_count,
-    import_array_backend as _import_array_backend,
-    import_torch_array_backend as _import_torch_array_backend,
     mapping as _mapping,
     mapping_sequence as _mapping_sequence,
-    mean as _mean,
     mechanism_overlay_ids as _mechanism_overlay_ids,
-    params as _params,
     positive_or_default as _positive_or_default,
     requirement_present as _requirement_present,
-    sequence_length as _sequence_length,
     sequence_strings as _sequence_strings,
-    stable_hash as _stable_hash,
-    strategy_universe_size as _strategy_universe_size,
-    strings as _strings,
     truthy_contract_key_count as _truthy_contract_key_count,
     truthy_feature as _truthy_feature,
     unique_string_count as _unique_string_count,

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Walk-forward evaluation harness for offline backtests."""
 
 from __future__ import annotations
@@ -21,8 +20,6 @@ from ..evidence_contracts import (
 )
 from ..features import SignalFeatures, extract_signal_features
 from ..models import SignalEnvelope, StrategyDecision
-
-# ruff: noqa: F401
 
 
 def _bootstrap_helpers() -> Any:
@@ -814,4 +811,83 @@ __all__ = (
     "empty_decisions",
     "fold_payload",
     "fold_regime_payload",
+)
+
+
+# Explicit module exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "ArtifactProvenance",
+    "Decimal",
+    "DecisionEngine",
+    "EvidenceMaturity",
+    "FillPriceErrorBudgetReportV1",
+    "FixtureSignalSource",
+    "FoldResult",
+    "Iterable",
+    "Path",
+    "ProfitabilityBenchmarkSliceV4",
+    "ProfitabilityBenchmarkV4",
+    "ProfitabilityEvidenceThresholdsV4",
+    "ProfitabilityEvidenceV4",
+    "ProfitabilityEvidenceValidationResultV4",
+    "Protocol",
+    "ShadowLiveDeviationReportV1",
+    "SignalEnvelope",
+    "SignalFeatures",
+    "SignalSource",
+    "SimulationCalibrationReportV1",
+    "Strategy",
+    "StrategyDecision",
+    "WalkForwardDecision",
+    "WalkForwardFold",
+    "WalkForwardResults",
+    "_as_dict",
+    "_as_int",
+    "_benchmark_summary",
+    "_bootstrap_helpers",
+    "_calibration_helpers",
+    "_confidence_summary",
+    "_decimal",
+    "_decimal_mean",
+    "_decimal_std",
+    "_decimal_str",
+    "_empty_decisions",
+    "_empty_slice_metrics",
+    "_extract_report_slices",
+    "_fold_payload",
+    "_fold_regime_payload",
+    "_report_fold_net_pnls",
+    "_reproducibility_payload",
+    "_safe_ratio",
+    "_significance_summary",
+    "_slice_deltas",
+    "_validate_profitability_confidence_metrics",
+    "_validate_profitability_cost_metrics",
+    "_validate_profitability_reproducibility",
+    "_validate_profitability_risk_metrics",
+    "_validate_profitability_schema_versions",
+    "_validate_profitability_significance_metrics",
+    "annotations",
+    "build_profitability_evidence_v4",
+    "cast",
+    "dataclass",
+    "datetime",
+    "decimal_str",
+    "empty_decisions",
+    "evidence_contract_payload",
+    "execute_profitability_benchmark_v4",
+    "extract_signal_features",
+    "field",
+    "fold_payload",
+    "fold_regime_payload",
+    "generate_walk_forward_folds",
+    "hashlib",
+    "importlib",
+    "json",
+    "run_walk_forward",
+    "timedelta",
+    "timezone",
+    "validate_profitability_evidence_v4",
+    "write_walk_forward_results",
 )
