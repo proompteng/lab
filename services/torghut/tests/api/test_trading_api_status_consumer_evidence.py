@@ -95,8 +95,11 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
 
         with (
             patch("app.trading.hypotheses.urlopen") as jangar_status_fetch,
-            patch("app.main._load_llm_evaluation", side_effect=_load_llm_evaluation),
-            patch("app.main._load_tca_summary", side_effect=_load_tca),
+            patch(
+                "app.api.status_helpers._load_llm_evaluation",
+                side_effect=_load_llm_evaluation,
+            ),
+            patch("app.api.status_helpers._load_tca_summary", side_effect=_load_tca),
             patch("app.main.SessionLocal", self.session_local),
         ):
             response = self.client.get("/trading/status")

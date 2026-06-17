@@ -11,11 +11,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.main import (
-    _build_tigerbeetle_ledger_status,
-    _check_tigerbeetle_protocol_health,
-    _tigerbeetle_status_int,
+from app.api.health_checks import (
+    build_tigerbeetle_ledger_status,
+    check_tigerbeetle_protocol_health,
+    tigerbeetle_status_int,
 )
+from app.api.health_checks_modules import shared_context as health_checks_context
 from app.models import (
     Base,
     StrategyRuntimeLedgerBucket,
@@ -61,7 +62,7 @@ class TestTigerBeetleStatus(TestCase):
 
     def test_disabled_tigerbeetle_status_is_non_blocking(self) -> None:
         with Session(self.engine) as session:
-            payload = _build_tigerbeetle_ledger_status(session)
+            payload = build_tigerbeetle_ledger_status(session)
 
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["enabled"])
@@ -85,10 +86,10 @@ class TestTigerBeetleStatus(TestCase):
         }
 
         with Session(self.engine) as session:
-            with patch(
-                "app.main.tigerbeetle_ref_counts", return_value=ref_counts
+            with patch.object(
+                health_checks_context, "tigerbeetle_ref_counts", return_value=ref_counts
             ) as ref_counts_mock:
-                payload = _build_tigerbeetle_ledger_status(session)
+                payload = build_tigerbeetle_ledger_status(session)
 
         self.assertTrue(payload["ok"])
         self.assertEqual(ref_counts_mock.call_args.kwargs["full_ref_scan"], False)
@@ -116,13 +117,16 @@ class TestTigerBeetleStatus(TestCase):
 
         with Session(self.engine) as session:
             with (
-                patch(
-                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                patch.object(
+                    health_checks_context,
+                    "latest_tigerbeetle_reconciliation_payload",
                     return_value=latest_reconciliation,
                 ),
-                patch("app.main.tigerbeetle_ref_counts") as ref_counts_mock,
+                patch.object(
+                    health_checks_context, "tigerbeetle_ref_counts"
+                ) as ref_counts_mock,
             ):
-                payload = _build_tigerbeetle_ledger_status(session)
+                payload = build_tigerbeetle_ledger_status(session)
 
         ref_counts_mock.assert_not_called()
         self.assertTrue(payload["ok"])
@@ -158,13 +162,16 @@ class TestTigerBeetleStatus(TestCase):
 
         with Session(self.engine) as session:
             with (
-                patch(
-                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                patch.object(
+                    health_checks_context,
+                    "latest_tigerbeetle_reconciliation_payload",
                     return_value=latest_reconciliation,
                 ),
-                patch("app.main.tigerbeetle_ref_counts") as ref_counts_mock,
+                patch.object(
+                    health_checks_context, "tigerbeetle_ref_counts"
+                ) as ref_counts_mock,
             ):
-                payload = _build_tigerbeetle_ledger_status(session)
+                payload = build_tigerbeetle_ledger_status(session)
 
         ref_counts_mock.assert_not_called()
         self.assertTrue(payload["ok"])
@@ -219,16 +226,18 @@ class TestTigerBeetleStatus(TestCase):
             )
             session.flush()
             with (
-                patch(
-                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                patch.object(
+                    health_checks_context,
+                    "latest_tigerbeetle_reconciliation_payload",
                     side_effect=AssertionError("legacy payload query was called"),
                 ),
-                patch(
-                    "app.main.tigerbeetle_ref_counts",
+                patch.object(
+                    health_checks_context,
+                    "tigerbeetle_ref_counts",
                     side_effect=AssertionError("live ref-count scan was called"),
                 ),
             ):
-                payload = _build_tigerbeetle_ledger_status(session)
+                payload = build_tigerbeetle_ledger_status(session)
 
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["claimed_by_runtime_evidence"])
@@ -282,16 +291,18 @@ class TestTigerBeetleStatus(TestCase):
             )
             session.flush()
             with (
-                patch(
-                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                patch.object(
+                    health_checks_context,
+                    "latest_tigerbeetle_reconciliation_payload",
                     side_effect=AssertionError("legacy payload query was called"),
                 ),
-                patch(
-                    "app.main.tigerbeetle_ref_counts",
+                patch.object(
+                    health_checks_context,
+                    "tigerbeetle_ref_counts",
                     side_effect=AssertionError("live ref-count scan was called"),
                 ),
             ):
-                payload = _build_tigerbeetle_ledger_status(session)
+                payload = build_tigerbeetle_ledger_status(session)
 
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["reconciliation_ok"])
@@ -306,11 +317,12 @@ class TestTigerBeetleStatus(TestCase):
 
     def test_ref_count_failure_degrades_without_status_exception(self) -> None:
         with Session(self.engine) as session:
-            with patch(
-                "app.main.tigerbeetle_ref_counts",
+            with patch.object(
+                health_checks_context,
+                "tigerbeetle_ref_counts",
                 side_effect=SQLAlchemyError("idle in transaction timeout"),
             ):
-                payload = _build_tigerbeetle_ledger_status(session)
+                payload = build_tigerbeetle_ledger_status(session)
 
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["ref_counts"]["ref_counts_unavailable"])
@@ -319,11 +331,11 @@ class TestTigerBeetleStatus(TestCase):
     def test_tigerbeetle_status_int_normalizes_bool_strings_and_bad_values(
         self,
     ) -> None:
-        self.assertEqual(_tigerbeetle_status_int(True), 1)
-        self.assertEqual(_tigerbeetle_status_int(False), 0)
-        self.assertEqual(_tigerbeetle_status_int("7"), 7)
-        self.assertEqual(_tigerbeetle_status_int("not-an-int"), 0)
-        self.assertEqual(_tigerbeetle_status_int(None), 0)
+        self.assertEqual(tigerbeetle_status_int(True), 1)
+        self.assertEqual(tigerbeetle_status_int(False), 0)
+        self.assertEqual(tigerbeetle_status_int("7"), 7)
+        self.assertEqual(tigerbeetle_status_int("not-an-int"), 0)
+        self.assertEqual(tigerbeetle_status_int(None), 0)
 
     def test_required_protocol_failure_blocks_readiness_dependency(self) -> None:
         settings.tigerbeetle_enabled = True
@@ -338,8 +350,10 @@ class TestTigerBeetleStatus(TestCase):
         )
 
         with Session(self.engine) as session:
-            with patch("app.main.check_tigerbeetle_health", return_value=health):
-                payload = _build_tigerbeetle_ledger_status(session)
+            with patch.object(
+                health_checks_context, "check_tigerbeetle_health", return_value=health
+            ):
+                payload = build_tigerbeetle_ledger_status(session)
 
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["protocol_ok"])
@@ -350,7 +364,7 @@ class TestTigerBeetleStatus(TestCase):
         settings.tigerbeetle_reconcile_required = True
 
         with Session(self.engine) as session:
-            payload = _build_tigerbeetle_ledger_status(session)
+            payload = build_tigerbeetle_ledger_status(session)
 
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["reconciliation_ok"])
@@ -369,10 +383,10 @@ class TestTigerBeetleStatus(TestCase):
         )
 
         with Session(self.engine) as session:
-            with patch(
-                "app.main.check_tigerbeetle_health", return_value=health
+            with patch.object(
+                health_checks_context, "check_tigerbeetle_health", return_value=health
             ) as health_mock:
-                payload = _build_tigerbeetle_ledger_status(session)
+                payload = build_tigerbeetle_ledger_status(session)
 
         self.assertTrue(payload["ok"])
         health_mock.assert_not_called()
@@ -453,7 +467,7 @@ class TestTigerBeetleStatus(TestCase):
             )
             session.flush()
 
-            payload = _build_tigerbeetle_ledger_status(session)
+            payload = build_tigerbeetle_ledger_status(session)
 
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["claimed_by_runtime_evidence"])
@@ -475,8 +489,10 @@ class TestTigerBeetleStatus(TestCase):
         settings.tigerbeetle_required = False
         settings.tigerbeetle_health_timeout_seconds = 0.01
 
-        with patch("app.main.check_tigerbeetle_health") as health_mock:
-            payload = _check_tigerbeetle_protocol_health()
+        with patch.object(
+            health_checks_context, "check_tigerbeetle_health"
+        ) as health_mock:
+            payload = check_tigerbeetle_protocol_health()
 
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["protocol_ok"])
@@ -500,8 +516,10 @@ class TestTigerBeetleStatus(TestCase):
                 last_error=None,
             )
 
-        with patch("app.main.check_tigerbeetle_health", side_effect=slow_health):
-            payload = _check_tigerbeetle_protocol_health()
+        with patch.object(
+            health_checks_context, "check_tigerbeetle_health", side_effect=slow_health
+        ):
+            payload = check_tigerbeetle_protocol_health()
 
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["protocol_ok"])
@@ -538,8 +556,10 @@ class TestTigerBeetleStatus(TestCase):
                 )
             )
             session.flush()
-            with patch("app.main.check_tigerbeetle_health", return_value=health):
-                payload = _build_tigerbeetle_ledger_status(session)
+            with patch.object(
+                health_checks_context, "check_tigerbeetle_health", return_value=health
+            ):
+                payload = build_tigerbeetle_ledger_status(session)
 
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["reconciliation_ok"])
@@ -580,8 +600,10 @@ class TestTigerBeetleStatus(TestCase):
                 )
             )
             session.flush()
-            with patch("app.main.check_tigerbeetle_health", return_value=health):
-                payload = _build_tigerbeetle_ledger_status(session)
+            with patch.object(
+                health_checks_context, "check_tigerbeetle_health", return_value=health
+            ):
+                payload = build_tigerbeetle_ledger_status(session)
 
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["reconciliation_ok"])

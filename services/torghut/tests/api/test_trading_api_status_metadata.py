@@ -292,7 +292,9 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
-    @patch("app.main._load_tca_summary", side_effect=SQLAlchemyError("boom"))
+    @patch(
+        "app.api.status_helpers._load_tca_summary", side_effect=SQLAlchemyError("boom")
+    )
     def test_trading_status_maps_unhandled_db_errors_to_503(
         self, _mock_tca: object
     ) -> None:

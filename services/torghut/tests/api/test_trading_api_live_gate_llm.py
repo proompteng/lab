@@ -166,7 +166,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     ),
                 ),
                 patch(
-                    "app.main._empirical_jobs_status",
+                    "app.api.trading_status._empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
             ):
@@ -257,7 +257,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     ),
                 ),
                 patch(
-                    "app.main._empirical_jobs_status",
+                    "app.api.trading_status._empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
@@ -426,7 +426,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     ),
                 ),
                 patch(
-                    "app.main._empirical_jobs_status",
+                    "app.api.trading_status._empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
@@ -442,6 +442,10 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                         "source_url": "http://torghut.test/quant/health",
                         "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
                     },
+                ),
+                patch(
+                    "app.api.trading_status._build_live_submission_gate_payload",
+                    return_value=shared_gate,
                 ),
                 patch(
                     "app.main._build_live_submission_gate_payload",
