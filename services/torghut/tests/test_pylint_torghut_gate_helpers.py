@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import subprocess
+
+from scripts import run_pylint_torghut_file_length_gate as file_length_gate
 from scripts.run_pylint_torghut_file_length_gate import (
+    _TRANSITIONAL_EXTRACTED_SOURCE_MODULES,
     _filter_legacy_extracted_messages,
 )
 from scripts.run_pylint_torghut_quality_diff_gate import _source_literal_lines
@@ -30,3 +34,60 @@ def test_file_length_filter_ignores_only_extracted_source_paths() -> None:
     assert messages == [
         "app/trading/new_long_module.py:1:0: C0302: Too many lines in module (1200/1000) (too-many-lines)"
     ]
+
+
+def test_file_length_filter_carries_transitional_extracted_source_baseline() -> None:
+    output = "\n".join(
+        (
+            "scripts/run_whitepaper_autoresearch_profit_target.py:1:0: C0302: Too many lines in module (13541/1000) (too-many-lines)",
+            "scripts/new_long_tool.py:1:0: C0302: Too many lines in module (1200/1000) (too-many-lines)",
+        )
+    )
+
+    messages = _filter_legacy_extracted_messages(
+        output,
+        extracted_paths=_TRANSITIONAL_EXTRACTED_SOURCE_MODULES,
+    )
+
+    assert messages == [
+        "scripts/new_long_tool.py:1:0: C0302: Too many lines in module (1200/1000) (too-many-lines)"
+    ]
+
+
+def test_file_length_main_combines_transitional_extracted_source_baseline(
+    monkeypatch,
+    capsys,
+) -> None:
+    def fake_base_extracted_source_paths(base: str) -> set[str]:
+        assert base == "HEAD^"
+        return set()
+
+    def fake_run(command, *, check: bool, cwd=None):
+        assert check is False
+        assert cwd is None
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                "scripts/run_whitepaper_autoresearch_profit_target.py:1:0: "
+                "C0302: Too many lines in module (13541/1000) (too-many-lines)\n"
+            ),
+        )
+
+    monkeypatch.setattr(
+        file_length_gate,
+        "_base_extracted_source_paths",
+        fake_base_extracted_source_paths,
+    )
+    monkeypatch.setattr(file_length_gate, "_run", fake_run)
+
+    result = file_length_gate.main(
+        [
+            "--base",
+            "HEAD^",
+            "scripts/run_whitepaper_autoresearch_profit_target.py",
+        ]
+    )
+
+    assert result == 0
+    assert "No blocking Pylint file-length violations." in capsys.readouterr().out

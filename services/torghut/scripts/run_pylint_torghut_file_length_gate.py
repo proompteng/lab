@@ -16,6 +16,17 @@ _PYLINT_MESSAGE_RE = re.compile(
     r"(?P<code>[A-Z]\d+): "
 )
 _SOURCE_PAYLOAD_FILE_PREFIX = "source_" + "segment_"
+# PR 10945 turned these generated payloads into real modules. Later cleanup PRs
+# should split them; until then, keep the gate blocking every other long file.
+_TRANSITIONAL_EXTRACTED_SOURCE_MODULES = {
+    "app/trading/autonomy/lane.py",
+    "app/trading/discovery/candidate_specs.py",
+    "app/trading/research_sleeves.py",
+    "scripts/assemble_runtime_ledger_proof_packet.py",
+    "scripts/import_hypothesis_runtime_windows.py",
+    "scripts/run_whitepaper_autoresearch_profit_target.py",
+    "scripts/search_consistent_profitability_frontier.py",
+}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -28,7 +39,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("files", nargs="+", help="Paths to pass to Pylint")
     args = parser.parse_args(argv)
 
-    extracted_paths = _base_extracted_source_paths(args.base)
+    extracted_paths = (
+        _TRANSITIONAL_EXTRACTED_SOURCE_MODULES | _base_extracted_source_paths(args.base)
+    )
     pylint_output = _run(
         [
             sys.executable,

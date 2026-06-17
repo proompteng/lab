@@ -387,6 +387,31 @@ jobs:
         working-directory: services/torghut
         run: uv sync --frozen --extra dev
 
+      - name: Resolve Torghut diff base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          repo_root="$(git rev-parse --show-toplevel)"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            if [ -z "${BASE_REF}" ]; then
+              echo "BASE_REF is required for pull_request Torghut diff base resolution" >&2
+              exit 1
+            fi
+            base="$(git -C "${repo_root}" merge-base "origin/${BASE_REF}" HEAD)"
+          elif [ -n "${BEFORE_SHA}" ] && ! [[ "${BEFORE_SHA}" =~ ^0+$ ]] && git -C "${repo_root}" cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            base="${BEFORE_SHA}"
+          else
+            base="$(git -C "${repo_root}" rev-parse HEAD^)"
+          fi
+
+          echo "Resolved Torghut diff base: ${base}"
+          echo "TORGHUT_DIFF_BASE=${base}" >> "${GITHUB_ENV}"
+
       - name: Bytecode check
         working-directory: services/torghut
         run: uv run --frozen python -m compileall app scripts
@@ -406,8 +431,7 @@ jobs:
           set -euo pipefail
 
           repo_root="$(git rev-parse --show-toplevel)"
-          base_spec="origin/${GITHUB_BASE_REF:-main}"
-          base="$(git -C "${repo_root}" merge-base "${base_spec}" HEAD 2>/dev/null || git -C "${repo_root}" rev-parse HEAD^)"
+          base="${TORGHUT_DIFF_BASE:?TORGHUT_DIFF_BASE is required}"
           changed_python=()
           while IFS= read -r python_file; do
             changed_python+=("${python_file}")
@@ -434,8 +458,7 @@ jobs:
           set -euo pipefail
 
           repo_root="$(git rev-parse --show-toplevel)"
-          base_spec="origin/${GITHUB_BASE_REF:-main}"
-          base="$(git -C "${repo_root}" merge-base "${base_spec}" HEAD 2>/dev/null || git -C "${repo_root}" rev-parse HEAD^)"
+          base="${TORGHUT_DIFF_BASE:?TORGHUT_DIFF_BASE is required}"
           changed_python=()
           while IFS= read -r python_file; do
             changed_python+=("${python_file}")
@@ -463,8 +486,7 @@ jobs:
           set -euo pipefail
 
           repo_root="$(git rev-parse --show-toplevel)"
-          base_spec="origin/${GITHUB_BASE_REF:-main}"
-          base="$(git -C "${repo_root}" merge-base "${base_spec}" HEAD 2>/dev/null || git -C "${repo_root}" rev-parse HEAD^)"
+          base="${TORGHUT_DIFF_BASE:?TORGHUT_DIFF_BASE is required}"
           changed_python=()
           while IFS= read -r python_file; do
             changed_python+=("${python_file}")
