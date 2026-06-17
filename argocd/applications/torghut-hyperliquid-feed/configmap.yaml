@@ -11,7 +11,8 @@ data:
   HYPERLIQUID_WS_URL: "wss://api.hyperliquid.xyz/ws"
   HYPERLIQUID_INCLUDE_PERPS: "true"
   HYPERLIQUID_INCLUDE_SPOT: "true"
-  HYPERLIQUID_MARKET_COVERAGE: "all"
+  HYPERLIQUID_MARKET_COVERAGE: "canary"
+  HYPERLIQUID_CANARY_COINS: "BTC,ETH,SOL,HYPE"
   HYPERLIQUID_WS_CHANNELS: "allMids,trades,l2Book,bbo,candle,activeAssetCtx,allDexsAssetCtxs"
   # Keep websocket subscription pressure below the documented 1000-subscription limit.
   # Additional candle intervals are backfill/query scope, not always-on websocket scope.
