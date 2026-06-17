@@ -103,9 +103,10 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('Torghut-managed image pull failures remain after deploy')
   })
 
-  it('grants the ARC runner read access to Torghut Knative Service readiness', () => {
+  it('grants the ARC runner read access to Torghut post-deploy resources', () => {
     expect(agentsCiClusterRbac).toContain('agents-ci-runner-torghut-post-deploy-read')
     expect(agentsCiClusterRbac).toContain('serving.knative.dev')
+    expect(agentsCiClusterRbac).toContain('resources:\n      - pods')
     expect(agentsCiClusterRbac).toContain('arc-arm64-gha-rs-kube-mode')
   })
 
