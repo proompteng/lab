@@ -226,7 +226,31 @@ jobs:
 
           echo "Changed files for image classification:"
           cat "${CHANGED_FILES}"
-          bun packages/scripts/src/agents/resolve-agents-image-mode.ts < "${CHANGED_FILES}" >> "${GITHUB_OUTPUT}"
+          CLASSIFICATION_OUTPUT="$(mktemp)"
+          bun packages/scripts/src/agents/resolve-agents-image-mode.ts < "${CHANGED_FILES}" > "${CLASSIFICATION_OUTPUT}"
+          cat "${CLASSIFICATION_OUTPUT}"
+
+          NEEDS_LOCAL_AGENTS_IMAGE="$(awk -F= '$1 == "NEEDS_LOCAL_AGENTS_IMAGE" { print $2 }' "${CLASSIFICATION_OUTPUT}" | tail -n 1)"
+          AGENTS_IMAGE_MODE="$(awk -F= '$1 == "AGENTS_IMAGE_MODE" { print $2 }' "${CLASSIFICATION_OUTPUT}" | tail -n 1)"
+          MATCHED_PATHS="$(awk -F= '$1 == "matched_paths" { print substr($0, index($0, "=") + 1) }' "${CLASSIFICATION_OUTPUT}" | tail -n 1)"
+
+          PUBLISHED_AGENTS_REGISTRY_HOST="registry.ide-newton.ts.net"
+          if [ "${NEEDS_LOCAL_AGENTS_IMAGE}" != "true" ] && ! getent hosts "${PUBLISHED_AGENTS_REGISTRY_HOST}" >/dev/null 2>&1; then
+            echo "Published Agents registry host ${PUBLISHED_AGENTS_REGISTRY_HOST} is not resolvable from this runner; building local images for kind smoke."
+            NEEDS_LOCAL_AGENTS_IMAGE="true"
+            AGENTS_IMAGE_MODE="build-local-image"
+            if [ -n "${MATCHED_PATHS}" ]; then
+              MATCHED_PATHS="${MATCHED_PATHS},registry-unreachable:${PUBLISHED_AGENTS_REGISTRY_HOST}"
+            else
+              MATCHED_PATHS="registry-unreachable:${PUBLISHED_AGENTS_REGISTRY_HOST}"
+            fi
+          fi
+
+          {
+            echo "NEEDS_LOCAL_AGENTS_IMAGE=${NEEDS_LOCAL_AGENTS_IMAGE}"
+            echo "AGENTS_IMAGE_MODE=${AGENTS_IMAGE_MODE}"
+            echo "matched_paths=${MATCHED_PATHS}"
+          } >> "${GITHUB_OUTPUT}"
 
           echo "Selected Agents image mode:"
           cat "${GITHUB_OUTPUT}" | tail -n 3

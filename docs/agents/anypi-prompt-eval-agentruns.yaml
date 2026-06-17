@@ -13,7 +13,7 @@ metadata:
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616f"
+    anypi.proompteng.ai/eval-batch: '20260616f'
     anypi.proompteng.ai/prompt-variant: minimal
     anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
@@ -48,12 +48,12 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
     resources:
       requests:
-        cpu: "2"
-        memory: 4Gi
+        cpu: '2'
+        memory: 8Gi
         ephemeral-storage: 12Gi
       limits:
-        memory: 12Gi
-        ephemeral-storage: 24Gi
+        memory: 64Gi
+        ephemeral-storage: 48Gi
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -62,7 +62,7 @@ metadata:
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616f"
+    anypi.proompteng.ai/eval-batch: '20260616f'
     anypi.proompteng.ai/prompt-variant: repair-loop
     anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
@@ -97,12 +97,12 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
     resources:
       requests:
-        cpu: "2"
-        memory: 4Gi
+        cpu: '2'
+        memory: 8Gi
         ephemeral-storage: 12Gi
       limits:
-        memory: 12Gi
-        ephemeral-storage: 24Gi
+        memory: 64Gi
+        ephemeral-storage: 48Gi
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -111,7 +111,7 @@ metadata:
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616f"
+    anypi.proompteng.ai/eval-batch: '20260616f'
     anypi.proompteng.ai/prompt-variant: finish-gated
     anypi.proompteng.ai/task: anypi-status-evidence
 spec:
@@ -147,12 +147,12 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
     resources:
       requests:
-        cpu: "2"
-        memory: 4Gi
+        cpu: '2'
+        memory: 8Gi
         ephemeral-storage: 12Gi
       limits:
-        memory: 12Gi
-        ephemeral-storage: 24Gi
+        memory: 64Gi
+        ephemeral-storage: 48Gi
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -161,7 +161,7 @@ metadata:
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616f"
+    anypi.proompteng.ai/eval-batch: '20260616f'
     anypi.proompteng.ai/prompt-variant: strict-repo
     anypi.proompteng.ai/task: anypi-ci-watcher
 spec:
@@ -197,12 +197,12 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
     resources:
       requests:
-        cpu: "2"
-        memory: 4Gi
+        cpu: '2'
+        memory: 8Gi
         ephemeral-storage: 12Gi
       limits:
-        memory: 12Gi
-        ephemeral-storage: 24Gi
+        memory: 64Gi
+        ephemeral-storage: 48Gi
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -211,7 +211,7 @@ metadata:
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: "20260616f"
+    anypi.proompteng.ai/eval-batch: '20260616f'
     anypi.proompteng.ai/prompt-variant: repair-loop
     anypi.proompteng.ai/task: agents-docs-manifests
 spec:
@@ -245,9 +245,9 @@ spec:
     image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
     resources:
       requests:
-        cpu: "2"
-        memory: 4Gi
+        cpu: '2'
+        memory: 8Gi
         ephemeral-storage: 12Gi
       limits:
-        memory: 12Gi
-        ephemeral-storage: 24Gi
+        memory: 64Gi
+        ephemeral-storage: 48Gi
