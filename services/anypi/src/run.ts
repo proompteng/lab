@@ -17,6 +17,7 @@ import {
   countCommitsAhead,
   createOrUpdatePullRequest,
   gitStatusShort,
+  gitWorktreeContentHash,
   prepareRepository,
   pushBranch,
   resolveGitContext,
@@ -183,14 +184,18 @@ const failedValidation = (results: ValidationResult[]) => results.find((result) 
 export type WorktreeProgressSnapshot = {
   status: string
   commitsAhead: number
+  contentHash: string
 }
 
 export const hasWorktreeProgress = (before: WorktreeProgressSnapshot, after: WorktreeProgressSnapshot) =>
-  before.status !== after.status || before.commitsAhead !== after.commitsAhead
+  before.status !== after.status ||
+  before.commitsAhead !== after.commitsAhead ||
+  before.contentHash !== after.contentHash
 
 const getWorktreeProgress = async (git: GitContext | null, worktree: string): Promise<WorktreeProgressSnapshot> => ({
   status: await gitStatusShort(worktree, git?.env),
   commitsAhead: git ? await countCommitsAhead(git) : 0,
+  contentHash: git ? await gitWorktreeContentHash(worktree, git.env) : '',
 })
 
 const formatValidationError = (result: ValidationResult) =>

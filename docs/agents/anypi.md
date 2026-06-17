@@ -51,10 +51,11 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 
 ## Prompt Contract
 
-The system prompt is a measured runner artifact, not a fixed Agent default. The default provider starts with `minimal`;
-`anypi-eval-agent` runs comparative variants through `ANYPI_PROMPT_VARIANT={{parameters.promptVariant}}`. The Kubernetes
-`Agent` placeholder exists only because the Agents controller requires a `defaults.systemPrompt` field before it will
-materialize a run.
+The system prompt is a measured runner artifact, not an Agent-owned prose blob. The default provider uses
+`repair-loop`, selected from prompt-evaluation evidence because it reached green PRs across Torghut and Agents manifest
+tasks without policy violations. `anypi-eval-agent` runs comparative variants through
+`ANYPI_PROMPT_VARIANT={{parameters.promptVariant}}`. The Kubernetes `Agent` placeholder exists only because the Agents
+controller requires a `defaults.systemPrompt` field before it will materialize a run.
 
 Prompt variants are intentionally small and repo-focused. They do not mention Anypi, yolo mode, Kubernetes, Flamingo, or
 the Pi SDK. Runtime details stay in runner config and logs, not in the model's behavioral contract. Root `AGENTS.md` is

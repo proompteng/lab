@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
@@ -183,6 +184,35 @@ export const prepareRepository = async (
 
 export const gitStatusShort = async (worktree: string, env?: Record<string, string | undefined>) =>
   (await runCommand('git', ['status', '--short'], { cwd: worktree, env })).stdout.trim()
+
+export const gitWorktreeContentHash = async (worktree: string, env?: Record<string, string | undefined>) => {
+  const hash = createHash('sha256')
+  const commands = [
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    ['diff', '--no-ext-diff', '--binary'],
+    ['diff', '--cached', '--no-ext-diff', '--binary'],
+  ]
+  for (const args of commands) {
+    const result = await runCommand('git', args, { cwd: worktree, env, allowFailure: true })
+    hash.update(`git ${args.join(' ')}\0${result.exitCode}\0${result.stdout}\0${result.stderr}\0`)
+  }
+
+  const untracked = await runCommand('git', ['ls-files', '--others', '--exclude-standard', '-z'], {
+    cwd: worktree,
+    env,
+    allowFailure: true,
+  })
+  for (const path of untracked.stdout.split('\0').filter(Boolean).sort()) {
+    const result = await runCommand('git', ['hash-object', '--no-filters', path], {
+      cwd: worktree,
+      env,
+      allowFailure: true,
+    })
+    hash.update(`untracked\0${path}\0${result.exitCode}\0${result.stdout}\0${result.stderr}\0`)
+  }
+
+  return hash.digest('hex')
+}
 
 const splitLines = (value: string) =>
   value

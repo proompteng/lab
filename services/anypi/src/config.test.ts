@@ -461,13 +461,27 @@ describe('Anypi prompt contract', () => {
   test('detects whether a repair attempt changed worktree progress', () => {
     expect(
       hasWorktreeProgress(
-        { status: ' M services/anypi/src/run.ts', commitsAhead: 0 },
-        { status: ' M services/anypi/src/run.ts\n M services/anypi/src/config.ts', commitsAhead: 0 },
+        { status: ' M services/anypi/src/run.ts', commitsAhead: 0, contentHash: 'a' },
+        { status: ' M services/anypi/src/run.ts\n M services/anypi/src/config.ts', commitsAhead: 0, contentHash: 'b' },
       ),
     ).toBe(true)
-    expect(hasWorktreeProgress({ status: '', commitsAhead: 0 }, { status: '', commitsAhead: 1 })).toBe(true)
     expect(
-      hasWorktreeProgress({ status: ' M foo.ts', commitsAhead: 1 }, { status: ' M foo.ts', commitsAhead: 1 }),
+      hasWorktreeProgress(
+        { status: ' M foo.ts', commitsAhead: 0, contentHash: 'before' },
+        { status: ' M foo.ts', commitsAhead: 0, contentHash: 'after' },
+      ),
+    ).toBe(true)
+    expect(
+      hasWorktreeProgress(
+        { status: '', commitsAhead: 0, contentHash: 'a' },
+        { status: '', commitsAhead: 1, contentHash: 'a' },
+      ),
+    ).toBe(true)
+    expect(
+      hasWorktreeProgress(
+        { status: ' M foo.ts', commitsAhead: 1, contentHash: 'same' },
+        { status: ' M foo.ts', commitsAhead: 1, contentHash: 'same' },
+      ),
     ).toBe(false)
   })
 })
