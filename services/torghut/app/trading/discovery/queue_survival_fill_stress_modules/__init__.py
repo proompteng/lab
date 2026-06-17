@@ -1,59 +1,44 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.extract_queue_survival_fill_stress"
+from .shared_context import (
+    hashlib,
+    json,
+    Mapping,
+    Sequence,
+    dataclass,
+    exp,
+    isfinite,
+    log1p,
+    Any,
+    cast,
+    SignalEnvelope,
+    QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION,
+    QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION,
+    QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL,
+    QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES,
+    QueueSurvivalFillStressSummary,
+    queue_survival_fill_stress_contract,
+    build_queue_survival_fill_stress_schema_hash,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .extract_queue_survival_fill_stress import extract_queue_survival_fill_stress
 
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.group_normalized_downside_reward_penalty_b"
-)
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "hashlib",
+    "json",
+    "Mapping",
+    "Sequence",
+    "dataclass",
+    "exp",
+    "isfinite",
+    "log1p",
+    "Any",
+    "cast",
+    "SignalEnvelope",
+    "QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION",
+    "QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION",
+    "QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL",
+    "QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES",
+    "QueueSurvivalFillStressSummary",
+    "queue_survival_fill_stress_contract",
+    "build_queue_survival_fill_stress_schema_hash",
+    "extract_queue_survival_fill_stress",
 ]
-del __compat_module__

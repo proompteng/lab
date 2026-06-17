@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Kafka-backed order-feed ingestion and persistence helpers."""
 
 from __future__ import annotations
@@ -42,58 +42,63 @@ from .shared_context import (
     NormalizationResult,
     NormalizedOrderEvent,
     ORDER_FEED_SOURCE_REVISION,
-    OrderFeedIngestor,
-    _AccountAliasResolution,
-    _ExecutionLinkageResolution,
-    _FILL_EVENT_TYPES,
-    _IngestRecordContext,
-    _IngestRecordOutcome,
-    _ManualAssignmentHooks,
-    _OrderFeedSourceIdentity,
-    _TradeDecisionLinkageResolution,
-    _broker_high_watermark_from_record,
-    _create_order_feed_source_window,
-    _event_out_of_scope_for_default_account,
-    _log_manual_assignment_ready,
-    _manual_assignment_hooks,
-    _manual_topic_partitions,
-    _position_manual_topic_partitions,
-    _record_source_identity,
-    _reset_manual_unpositioned_partitions,
-    _source_topic_from_record,
-    _upsert_drop_cursor,
+    AccountAliasResolution as _AccountAliasResolution,
+    ExecutionLinkageResolution as _ExecutionLinkageResolution,
+    FILL_EVENT_TYPES as _FILL_EVENT_TYPES,
+    IngestRecordContext as _IngestRecordContext,
+    IngestRecordOutcome as _IngestRecordOutcome,
+    ManualAssignmentHooks as _ManualAssignmentHooks,
+    OrderFeedSourceIdentity as _OrderFeedSourceIdentity,
+    TradeDecisionLinkageResolution as _TradeDecisionLinkageResolution,
+    as_mapping as _as_mapping,
+    broker_high_watermark_from_record as _broker_high_watermark_from_record,
+    coerce_text as _coerce_text,
+    create_order_feed_source_window as _create_order_feed_source_window,
+    event_out_of_scope_for_default_account as _event_out_of_scope_for_default_account,
+    log_manual_assignment_ready as _log_manual_assignment_ready,
+    manual_assignment_hooks as _manual_assignment_hooks,
+    order_feed_cursor_consumer_group as _order_feed_cursor_consumer_group,
+    manual_topic_partitions as _manual_topic_partitions,
+    position_manual_topic_partitions as _position_manual_topic_partitions,
+    record_source_identity as _record_source_identity,
+    reset_manual_unpositioned_partitions as _reset_manual_unpositioned_partitions,
+    source_topic_from_record as _source_topic_from_record,
+    update_trade_decision_from_execution as _update_trade_decision_from_execution,
+    upsert_drop_cursor as _upsert_drop_cursor,
     logger,
 )
+
+from .order_feed_ingestor import OrderFeedIngestor
 from .classify_source_window_drop import (
-    _classify_source_window_drop,
-    _classify_source_window_event,
-    _classify_source_window_unhandled_failure,
-    _dedupe,
-    _execution_correlation_identity_from_payload,
-    _increment_drop_counter,
-    _lifecycle_payload,
-    _mark_order_event_account_alias,
-    _missing_linkage_blockers,
-    _order_event_account_label_alias,
-    _order_event_client_identity,
-    _order_event_evidence_payload,
-    _order_event_execution_correlation_identity,
-    _order_event_linkage_blockers,
-    _order_identity_payload,
-    _raw_event_with_linkage_blockers,
-    _raw_record_source_evidence_payload,
-    _source_window_event_status_reason,
-    _source_window_failure_reason,
-    _source_window_source_identity_payload,
-    _source_window_source_identity_payload_for_values,
+    classify_source_window_drop as _classify_source_window_drop,
+    classify_source_window_event as _classify_source_window_event,
+    classify_source_window_unhandled_failure as _classify_source_window_unhandled_failure,
+    dedupe as _dedupe,
+    execution_correlation_identity_from_payload as _execution_correlation_identity_from_payload,
+    increment_drop_counter as _increment_drop_counter,
+    lifecycle_payload as _lifecycle_payload,
+    mark_order_event_account_alias as _mark_order_event_account_alias,
+    missing_linkage_blockers as _missing_linkage_blockers,
+    order_event_account_label_alias as _order_event_account_label_alias,
+    order_event_client_identity as _order_event_client_identity,
+    order_event_evidence_payload as _order_event_evidence_payload,
+    order_event_execution_correlation_identity as _order_event_execution_correlation_identity,
+    order_event_linkage_blockers as _order_event_linkage_blockers,
+    order_identity_payload as _order_identity_payload,
+    raw_event_with_linkage_blockers as _raw_event_with_linkage_blockers,
+    raw_record_source_evidence_payload as _raw_record_source_evidence_payload,
+    source_window_event_status_reason as _source_window_event_status_reason,
+    source_window_failure_reason as _source_window_failure_reason,
+    source_window_source_identity_payload as _source_window_source_identity_payload,
+    source_window_source_identity_payload_for_values as _source_window_source_identity_payload_for_values,
 )
 from .normalize_order_feed_record import (
-    _event_with_default_account_label_if_in_scope,
-    _fill_delta_fields,
-    _fingerprint_normalized_order_event,
-    _is_fill_event,
-    _journal_tigerbeetle_order_event,
-    _order_identity_matches_account_scope,
+    event_with_default_account_label_if_in_scope as _event_with_default_account_label_if_in_scope,
+    fill_delta_fields as _fill_delta_fields,
+    fingerprint_normalized_order_event as _fingerprint_normalized_order_event,
+    is_fill_event as _is_fill_event,
+    journal_tigerbeetle_order_event as _journal_tigerbeetle_order_event,
+    order_identity_matches_account_scope as _order_identity_matches_account_scope,
     apply_order_event_to_execution,
     latest_order_event_for_execution,
     link_order_events_to_execution,
@@ -102,12 +107,12 @@ from .normalize_order_feed_record import (
     persist_order_event,
 )
 from .repair_order_feed_execution_links import (
-    _ensure_source_window_for_event,
-    _event_precedes_order_event,
-    _execution_activity_at,
-    _execution_activity_timestamp,
-    _execution_order_event_exists_for_execution_clause,
-    _order_event_identity_clauses,
+    ensure_source_window_for_event as _ensure_source_window_for_event,
+    event_precedes_order_event as _event_precedes_order_event,
+    execution_activity_at as _execution_activity_at,
+    execution_activity_timestamp as _execution_activity_timestamp,
+    execution_order_event_exists_for_execution_clause as _execution_order_event_exists_for_execution_clause,
+    order_event_identity_clauses as _order_event_identity_clauses,
     backfill_order_feed_events_from_executions,
     backfill_order_feed_source_windows,
     repair_order_feed_execution_links,
@@ -800,5 +805,34 @@ def _normalize_decoded_payload(raw: Any) -> dict[str, Any] | list[Any] | None:
         return cast(list[Any], raw)
     return None
 
+
+# Public aliases used by split-module consumers.
+create_execution_backfill_source_window = _create_execution_backfill_source_window
+create_historical_source_window_for_event = _create_historical_source_window_for_event
+ensure_aware_utc = _ensure_aware_utc
+execution_backfill_order_event = _execution_backfill_order_event
+find_existing_source_window_for_event = _find_existing_source_window_for_event
+order_event_has_failed_unhandled_source_window = (
+    _order_event_has_failed_unhandled_source_window
+)
+refresh_source_window_linkage_counts = _refresh_source_window_linkage_counts
+resolve_execution_linkage_for_identity = _resolve_execution_linkage_for_identity
+resolve_trade_decision_linkage_for_identity = (
+    _resolve_trade_decision_linkage_for_identity
+)
+retry_failed_duplicate_order_event_application = (
+    _retry_failed_duplicate_order_event_application
+)
+source_offset_in_use = _source_offset_in_use
+stable_execution_source_offset = _stable_execution_source_offset
+cross_dsn_linkage_counts_for_source_window = _cross_dsn_linkage_counts_for_source_window
+decode_json_payload = _decode_json_payload
+decode_json_text_payload = _decode_json_text_payload
+event_timestamp_for_source_window = _event_timestamp_for_source_window
+execution_backfill_event_type = _execution_backfill_event_type
+execution_backfill_raw_event = _execution_backfill_raw_event
+extract_trade_update_payload = _extract_trade_update_payload
+isoformat_datetime = _isoformat_datetime
+normalize_decoded_payload = _normalize_decoded_payload
 
 __all__ = [name for name in globals() if not name.startswith("__")]

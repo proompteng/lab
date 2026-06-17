@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Order execution and idempotency helpers."""
 
 from __future__ import annotations
@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sys
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -46,43 +47,66 @@ from ..tca import upsert_execution_tca_metric
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .shared_context import (
-    _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    _COST_MODEL_HASH_KEYS,
-    _COST_MODEL_PAYLOAD_KEYS,
-    _EXECUTION_POLICY_HASH_KEYS,
-    _LINEAGE_HASH_KEYS,
-    _LINEAGE_PAYLOAD_KEYS,
-    _OrderExecutorFields,
-    _RUNTIME_COST_AMOUNT_KEYS,
-    _RUNTIME_COST_BASIS_KEYS,
-    _RUNTIME_COST_PAYLOAD_KEYS,
-    _SHORTING_METADATA_CACHE_TTL_SECONDS,
-    _TARGET_PLAN_SOURCE_DECISION_MODE,
-    _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS,
-    _has_target_plan_source_decision,
-    _mapping_payload,
-    _target_plan_ref_value,
-    _target_plan_source_decision_mode,
-    _target_plan_source_decision_needs_refresh,
-    _target_plan_source_metadata,
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE as _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    COST_MODEL_HASH_KEYS as _COST_MODEL_HASH_KEYS,
+    COST_MODEL_PAYLOAD_KEYS as _COST_MODEL_PAYLOAD_KEYS,
+    EXECUTION_POLICY_HASH_KEYS as _EXECUTION_POLICY_HASH_KEYS,
+    LINEAGE_HASH_KEYS as _LINEAGE_HASH_KEYS,
+    LINEAGE_PAYLOAD_KEYS as _LINEAGE_PAYLOAD_KEYS,
+    OrderExecutorFields as _OrderExecutorFields,
+    RUNTIME_COST_AMOUNT_KEYS as _RUNTIME_COST_AMOUNT_KEYS,
+    RUNTIME_COST_BASIS_KEYS as _RUNTIME_COST_BASIS_KEYS,
+    RUNTIME_COST_PAYLOAD_KEYS as _RUNTIME_COST_PAYLOAD_KEYS,
+    SHORTING_METADATA_CACHE_TTL_SECONDS as _SHORTING_METADATA_CACHE_TTL_SECONDS,
+    TARGET_PLAN_SOURCE_DECISION_MODE as _TARGET_PLAN_SOURCE_DECISION_MODE,
+    TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS as _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS,
+    has_target_plan_source_decision as _has_target_plan_source_decision,
+    mapping_payload as _mapping_payload,
+    target_plan_ref_value as _target_plan_ref_value,
+    target_plan_source_decision_mode as _target_plan_source_decision_mode,
+    target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
+    target_plan_source_metadata as _target_plan_source_metadata,
     logger,
 )
 
+from .order_executor_core_support import (
+    PreparedOrderSubmission as _PreparedOrderSubmission,
+    ResolvedSellInventory as _ResolvedSellInventory,
+    SellInventoryReservations as _SellInventoryReservations,
+    apply_execution_status as _apply_execution_status,
+    attach_execution_policy_context as _attach_execution_policy_context,
+    coerce_json as _coerce_json,
+    coerce_string_list as _coerce_string_list,
+    decision_state_payload as _decision_state_payload,
+    extract_execution_advice_provenance as _extract_execution_advice_provenance,
+    extract_execution_metadata as _extract_execution_metadata,
+    extract_execution_policy_context as _extract_execution_policy_context,
+    extract_sizing_debug as _extract_sizing_debug,
+    execution_request_from_decision as _execution_request_from_decision,
+    merge_decision_metadata as _merge_decision_metadata,
+    merge_execution_audit as _merge_execution_audit,
+    merge_unique_strings as _merge_unique_strings,
+    normalize_reject_reasons as _normalize_reject_reasons,
+    normalize_submission_block_reasons as _normalize_submission_block_reasons,
+    open_sell_order_reserves_symbol as _open_sell_order_reserves_symbol,
+    optional_decimal as _optional_decimal,
+    order_payload_with_execution_metadata as _order_payload_with_execution_metadata,
+    persist_lean_shadow_event as _persist_lean_shadow_event,
+    resolve_submission_simulation_context as _resolve_submission_simulation_context,
+    sell_inventory_conflict_payload as _sell_inventory_conflict_payload,
+    sell_inventory_metadata_update as _sell_inventory_metadata_update,
+    sell_inventory_request_symbol as _sell_inventory_request_symbol,
+    submission_extra_params as _submission_extra_params,
+    unknown_position_sell_inventory_conflict as _unknown_position_sell_inventory_conflict,
+    validate_pre_submit_request as _validate_pre_submit_request,
+)
 
-class _PreparedOrderSubmission(NamedTuple):
-    request: ExecutionRequest
-    quantity_resolution: Any
-    extra_params: dict[str, Any]
 
-
-class _SellInventoryReservations(NamedTuple):
-    held_qty: Decimal
-    existing_order_ids: list[str]
-
-
-class _ResolvedSellInventory(NamedTuple):
-    request: ExecutionRequest
-    decision: StrategyDecision
+def _execution_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("app.trading.execution")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 class _OrderExecutorCoreMethods:
@@ -461,7 +485,8 @@ class _OrderExecutorCoreMethods:
                 order_response=order_payload,
             )
         )
-        return sync_order_to_db(
+        sync_order = _execution_root_export("sync_order_to_db", sync_order_to_db)
+        return sync_order(
             session,
             order_payload,
             trade_decision_id=str(decision_row.id),
@@ -856,116 +881,7 @@ class _OrderExecutorCoreMethods:
         return adjusted_request, adjustment, None
 
 
-def _execution_request_from_decision(
-    decision: StrategyDecision,
-    decision_row: TradeDecision,
-) -> ExecutionRequest:
-    return ExecutionRequest(
-        decision_id=str(decision_row.id),
-        symbol=decision.symbol,
-        side=decision.action,
-        qty=decision.qty,
-        order_type=decision.order_type,
-        time_in_force=decision.time_in_force,
-        limit_price=decision.limit_price,
-        stop_price=decision.stop_price,
-        client_order_id=decision_row.decision_hash,
-    )
-
-
-def _submission_extra_params(
-    *,
-    execution_client: Any,
-    decision: StrategyDecision,
-    decision_row: TradeDecision,
-    execution_policy_context: dict[str, Any],
-    request: ExecutionRequest,
-) -> dict[str, Any]:
-    extra_params: dict[str, Any] = {"client_order_id": request.client_order_id}
-    simulation_context = _resolve_submission_simulation_context(
-        execution_client=execution_client,
-        decision=decision,
-        decision_row=decision_row,
-        execution_policy_context=execution_policy_context,
-    )
-    if simulation_context is not None:
-        extra_params["simulation_context"] = simulation_context
-    return extra_params
-
-
-def _order_payload_with_execution_metadata(
-    order_response: Any,
-    decision: StrategyDecision,
-    *,
-    decision_row: TradeDecision,
-    execution_policy_context: dict[str, Any],
-) -> dict[str, Any]:
-    order_payload = dict(order_response)
-    advice_provenance = _extract_execution_advice_provenance(
-        decision,
-        decision_row=decision_row,
-    )
-    if advice_provenance is not None:
-        order_payload["_execution_advice_provenance"] = advice_provenance
-    execution_metadata = _extract_execution_metadata(
-        decision,
-        decision_row=decision_row,
-        execution_policy_context=execution_policy_context,
-    )
-    if execution_metadata is not None:
-        _merge_execution_audit(order_payload, execution_metadata)
-    return order_payload
-
-
-def _merge_execution_audit(
-    order_payload: dict[str, Any],
-    execution_metadata: Mapping[str, Any],
-) -> None:
-    existing_audit = order_payload.get("_execution_audit")
-    audit_payload = (
-        {
-            str(key): value
-            for key, value in cast(Mapping[object, Any], existing_audit).items()
-        }
-        if isinstance(existing_audit, Mapping)
-        else {}
-    )
-    audit_payload.update(execution_metadata)
-    order_payload["_execution_audit"] = audit_payload
-
-
-def _sell_inventory_metadata_update(
-    adjustment: dict[str, Any] | None,
-    recovery: dict[str, Any] | None,
-) -> dict[str, Any]:
-    metadata_update: dict[str, Any] = {}
-    if adjustment is not None:
-        metadata_update["broker_precheck_adjustment"] = adjustment
-    if recovery is not None:
-        metadata_update["broker_precheck_recovery"] = recovery
-    return metadata_update
-
-
-def _sell_inventory_request_symbol(request: ExecutionRequest) -> str | None:
-    request_symbol = request.symbol.strip().upper()
-    request_side = request.side.strip().lower()
-    if not request_symbol or request_side != "sell":
-        return None
-    return request_symbol
-
-
-def _open_sell_order_reserves_symbol(
-    order: Mapping[str, Any],
-    request_symbol: str,
-) -> bool:
-    symbol = str(order.get("symbol") or "").strip().upper()
-    if symbol != request_symbol:
-        return False
-    side = str(order.get("side") or "").strip().lower()
-    if side != "sell":
-        return False
-    status = str(order.get("status") or "").strip().lower()
-    return status not in {"filled", "canceled", "cancelled", "rejected", "expired"}
-
+# Public aliases used by split-module consumers.
+OrderExecutorCoreMethods = _OrderExecutorCoreMethods
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from http.client import HTTPConnection, HTTPSConnection
@@ -38,11 +39,87 @@ from .shared_context import (
     LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN,
     SIMULATION_CURSOR_BASELINE,
     SignalBatch,
-    _ClickHouseSignalIngestorFields,
-    _coerce_count,
-    _simulation_fetch_window,
+    ClickHouseSignalIngestorFields as _ClickHouseSignalIngestorFields,
+    coerce_count as _coerce_count,
+    simulation_fetch_window as _simulation_fetch_window,
     logger,
 )
+
+
+def _ingest_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("app.trading.ingest")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
+
+
+def _qualified_table_name(table: str) -> str:
+    from .attach_simulation_context import (
+        qualified_table_name,
+    )
+
+    return qualified_table_name(table)
+
+
+def _safe_identifier(value: str, *, kind: str) -> str:
+    from .attach_simulation_context import (
+        safe_identifier,
+    )
+
+    return safe_identifier(value, kind=kind)
+
+
+def _normalized_signal_symbols(symbols: set[str] | None) -> tuple[str, ...]:
+    from .clickhouse_signal_ingestor_persistence_methods import (
+        normalized_signal_symbols,
+    )
+
+    return normalized_signal_symbols(symbols)
+
+
+def _normalized_signal_timeframes(timeframes: set[str] | None) -> tuple[str, ...]:
+    from .clickhouse_signal_ingestor_persistence_methods import (
+        normalized_signal_timeframes,
+    )
+
+    return normalized_signal_timeframes(timeframes)
+
+
+def _signal_scope_key(
+    symbols: tuple[str, ...], timeframes: tuple[str, ...]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    from .clickhouse_signal_ingestor_persistence_methods import (
+        signal_scope_key,
+    )
+
+    return signal_scope_key(symbols, timeframes)
+
+
+def _next_signal_cursor_state(
+    *,
+    signal: SignalEnvelope,
+    max_event_ts: Optional[datetime],
+    max_seq: Optional[int],
+    max_symbol: Optional[str],
+) -> tuple[Optional[datetime], Optional[int], Optional[str]]:
+    from .clickhouse_signal_ingestor_persistence_methods import (
+        next_signal_cursor_state,
+    )
+
+    return next_signal_cursor_state(
+        signal=signal,
+        max_event_ts=max_event_ts,
+        max_seq=max_seq,
+        max_symbol=max_symbol,
+    )
+
+
+def _quote_literal(value: str) -> str:
+    from .clickhouse_signal_ingestor_persistence_methods import (
+        quote_literal,
+    )
+
+    return quote_literal(value)
 
 
 class _ClickHouseSignalIngestorCoreMethods:
@@ -113,7 +190,8 @@ class _ClickHouseSignalIngestorCoreMethods:
                 no_signal_reason="clickhouse_url_missing",
             )
 
-        poll_started_at = trading_now(account_label=self.account_label)
+        now_provider = _ingest_root_export("trading_now", trading_now)
+        poll_started_at = now_provider(account_label=self.account_label)
         query_window_start: datetime | None = None
         scoped_symbols = _normalized_signal_symbols(symbols)
         scoped_timeframes = _normalized_signal_timeframes(timeframes)
@@ -776,5 +854,8 @@ class _ClickHouseSignalIngestorCoreMethods:
             )
         return no_signal_reason, signal_lag_seconds
 
+
+# Public aliases used by split-module consumers.
+ClickHouseSignalIngestorCoreMethods = _ClickHouseSignalIngestorCoreMethods
 
 __all__ = [name for name in globals() if not name.startswith("__")]

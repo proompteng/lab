@@ -1,55 +1,102 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
+from .shared_context import (
+    gzip,
+    hashlib,
+    json,
+    Iterable,
+    Mapping,
+    Sequence,
+    dataclass,
+    field,
+    date,
+    datetime,
+    timezone,
+    Decimal,
+    InvalidOperation,
+    Path,
+    Any,
+    TextIO,
+    cast,
+    SignalEnvelope,
+    iter_regular_equities_session_dates,
+    regular_session_close_utc_for,
+    regular_session_open_utc_for,
+    REPLAY_TAPE_SCHEMA_VERSION,
+    REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
+    REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION,
+    HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+    HPAIRS_REPLAY_TAPE_FEATURE_CONTRACT_SCHEMA_VERSION,
+    HPAIRS_OFI_MEMORY_REGIME_SCHEMA_VERSION,
+    HPAIRS_CLUSTERLOB_FEATURE_VERSION,
+    HPAIRS_OFI_FEATURE_VERSION,
+    ReplayTapeCoverageError,
+    ReplayTapeManifest,
+    ReplayTape,
+    default_manifest_path,
+    build_source_query_digest,
+    hpairs_replay_tape_feature_versions,
+    hpairs_replay_tape_feature_contract,
+    build_hpairs_replay_tape_feature_schema_hash,
+    build_replay_tape_cache_key,
+    build_replay_tape_cache_identity_diagnostics,
+    materialize_signal_tape,
+    load_replay_tape,
+)
+from .validate_tape_freshness import (
+    validate_tape_freshness,
+    slice_tape_by_window,
+    slice_tape_by_symbols,
+    signal_to_tape_payload,
+    signal_from_tape_payload,
+    hpairs_replay_tape_features,
+)
 
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.validate_tape_freshness")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.mean_decimal")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "gzip",
+    "hashlib",
+    "json",
+    "Iterable",
+    "Mapping",
+    "Sequence",
+    "dataclass",
+    "field",
+    "date",
+    "datetime",
+    "timezone",
+    "Decimal",
+    "InvalidOperation",
+    "Path",
+    "Any",
+    "TextIO",
+    "cast",
+    "SignalEnvelope",
+    "iter_regular_equities_session_dates",
+    "regular_session_close_utc_for",
+    "regular_session_open_utc_for",
+    "REPLAY_TAPE_SCHEMA_VERSION",
+    "REPLAY_TAPE_MANIFEST_SCHEMA_VERSION",
+    "REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION",
+    "HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION",
+    "HPAIRS_REPLAY_TAPE_FEATURE_CONTRACT_SCHEMA_VERSION",
+    "HPAIRS_OFI_MEMORY_REGIME_SCHEMA_VERSION",
+    "HPAIRS_CLUSTERLOB_FEATURE_VERSION",
+    "HPAIRS_OFI_FEATURE_VERSION",
+    "ReplayTapeCoverageError",
+    "ReplayTapeManifest",
+    "ReplayTape",
+    "default_manifest_path",
+    "build_source_query_digest",
+    "hpairs_replay_tape_feature_versions",
+    "hpairs_replay_tape_feature_contract",
+    "build_hpairs_replay_tape_feature_schema_hash",
+    "build_replay_tape_cache_key",
+    "build_replay_tape_cache_identity_diagnostics",
+    "materialize_signal_tape",
+    "load_replay_tape",
+    "validate_tape_freshness",
+    "slice_tape_by_window",
+    "slice_tape_by_symbols",
+    "signal_to_tape_payload",
+    "signal_from_tape_payload",
+    "hpairs_replay_tape_features",
 ]
-del __compat_module__

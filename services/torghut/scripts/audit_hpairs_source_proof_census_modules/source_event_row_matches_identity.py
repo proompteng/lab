@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python
 """Read-only H-PAIRS/TORGHUT_SIM source-proof census/readback CLI.
 
@@ -106,6 +106,101 @@ from .shared_context import (
     load_fixture_rows,
     parse_args,
 )
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    from .parse_timestamp import _mapping as owned
+
+    return owned(value)
+
+
+def _sequence(value: object) -> Sequence[object]:
+    from .parse_timestamp import _sequence as owned
+
+    return owned(value)
+
+
+def _text(value: object, *, default: str | None = None) -> str | None:
+    from .parse_timestamp import _text as owned
+
+    return owned(value, default=default)
+
+
+def _int(value: object) -> int:
+    from .parse_timestamp import _int as owned
+
+    return owned(value)
+
+
+def _decimal(value: object) -> Decimal:
+    from .parse_timestamp import _decimal as owned
+
+    return owned(value)
+
+
+def _decimal_text(value: Decimal) -> str:
+    from .parse_timestamp import _decimal_text as owned
+
+    return owned(value)
+
+
+def _sum_daily_int(daily: Sequence[Mapping[str, object]], key: str) -> int:
+    from .blocker_ladder import _sum_daily_int as owned
+
+    return owned(daily, key)
+
+
+def _row_days(
+    rows: Sequence[Mapping[str, object]],
+    key: str,
+    *,
+    fallback_key: str | None = None,
+) -> set[str]:
+    from .blocker_ladder import _row_days as owned
+
+    return owned(rows, key, fallback_key=fallback_key)
+
+
+def _ledger_days(ledger_report: Mapping[str, object]) -> set[str]:
+    from .blocker_ladder import _ledger_days as owned
+
+    return owned(ledger_report)
+
+
+def _rows_on_day(
+    rows: Sequence[Mapping[str, object]],
+    day: str,
+    key: str,
+    *,
+    fallback_key: str | None = None,
+) -> list[Mapping[str, object]]:
+    from .blocker_ladder import _rows_on_day as owned
+
+    return owned(rows, day, key, fallback_key=fallback_key)
+
+
+def _filled_execution(row: Mapping[str, object]) -> bool:
+    from .blocker_ladder import _filled_execution as owned
+
+    return owned(row)
+
+
+def _fill_event(row: Mapping[str, object]) -> bool:
+    from .blocker_ladder import _fill_event as owned
+
+    return owned(row)
+
+
+def _event_quantity_present(row: Mapping[str, object]) -> bool:
+    from .blocker_ladder import _event_quantity_present as owned
+
+    return owned(row)
+
+
+def _event_source_offset_present(row: Mapping[str, object]) -> bool:
+    from .blocker_ladder import _event_source_offset_present as owned
+
+    return owned(row)
 
 
 def _source_event_row_matches_identity(

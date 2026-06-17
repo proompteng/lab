@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Strategy runtime scaffolding for deterministic plugin execution."""
 
 from __future__ import annotations
@@ -37,21 +37,22 @@ from ..strategy_specs import (
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .empty_meta import (
-    _empty_meta,
-    _generic_plugin_trace,
-    _microbar_entry_window_minutes,
-    _microbar_exit_minute_after_open,
-    _microbar_minutes_elapsed,
-    _microbar_observed_rank_universe_size,
-    _microbar_pair_max_legs,
-    _microbar_pair_rank_thresholds,
-    _microbar_pair_side_count,
-    _microbar_rank_thresholds,
-    _microbar_rank_universe_size,
-    _microbar_required_features,
-    _microbar_runtime_position_qty,
-    _microbar_universe_size,
-    _plugin_result_from_sleeve_result,
+    decimal as _decimal,
+    empty_meta as _empty_meta,
+    generic_plugin_trace as _generic_plugin_trace,
+    microbar_entry_window_minutes as _microbar_entry_window_minutes,
+    microbar_exit_minute_after_open as _microbar_exit_minute_after_open,
+    microbar_minutes_elapsed as _microbar_minutes_elapsed,
+    microbar_observed_rank_universe_size as _microbar_observed_rank_universe_size,
+    microbar_pair_max_legs as _microbar_pair_max_legs,
+    microbar_pair_rank_thresholds as _microbar_pair_rank_thresholds,
+    microbar_pair_side_count as _microbar_pair_side_count,
+    microbar_rank_thresholds as _microbar_rank_thresholds,
+    microbar_rank_universe_size as _microbar_rank_universe_size,
+    microbar_required_features as _microbar_required_features,
+    microbar_runtime_position_qty as _microbar_runtime_position_qty,
+    microbar_universe_size as _microbar_universe_size,
+    plugin_result_from_sleeve_result as _plugin_result_from_sleeve_result,
 )
 from .evaluate_microbar_cross_sectional import (
     AggregatedIntent,
@@ -64,7 +65,7 @@ from .evaluate_microbar_cross_sectional import (
     StrategyDefinition,
     StrategyIntent,
     StrategyPlugin,
-    _evaluate_microbar_cross_sectional,
+    evaluate_microbar_cross_sectional as _evaluate_microbar_cross_sectional,
 )
 from .coerce_plugin_result import (
     IntentAggregator,
@@ -72,9 +73,9 @@ from .coerce_plugin_result import (
     LegacyMacdRsiPlugin,
     MomentumPullbackLongPlugin,
     StrategyRegistry,
-    _CircuitState,
-    _coerce_plugin_result,
-    _trace_suppression_reason,
+    CircuitState as _CircuitState,
+    coerce_plugin_result as _coerce_plugin_result,
+    trace_suppression_reason as _trace_suppression_reason,
 )
 
 

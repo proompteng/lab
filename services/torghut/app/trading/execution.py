@@ -1,14 +1,110 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
+from app.trading.execution_modules import (
+    hashlib,
+    json,
+    logging,
+    time,
+    Mapping,
+    Sequence,
+    datetime,
+    timezone,
+    Decimal,
+    Any,
+    NamedTuple,
+    Optional,
+    cast,
+    select,
+    IntegrityError,
+    Session,
+    Execution,
+    LeanExecutionShadowEvent,
+    Strategy,
+    TradeDecision,
+    coerce_json_payload,
+    settings,
+    sync_order_to_db,
+    resolve_order_route_metadata,
+    should_retry_order_error,
+    ExecutionRequest,
+    StrategyDecision,
+    decision_hash,
+    min_qty_for_symbol,
+    quantize_qty_for_symbol,
+    qty_has_valid_increment,
+    qty_step_for_symbol,
+    resolve_quantity_resolution,
+    resolve_event_persisted_at,
+    resolve_simulation_context,
+    simulation_context_enabled,
+    trading_now,
+    upsert_execution_tca_metric,
+    logger,
+    OrderExecutor,
+)
+from app.trading.execution_modules.order_executor_core_support import (
+    apply_execution_status as _apply_execution_status,
+    extract_execution_metadata as _extract_execution_metadata,
+    persist_lean_shadow_event as _persist_lean_shadow_event,
+)
+from app.trading.execution_modules.order_executor_submission_methods import (
+    json_default as _json_default,
+    normalize_reject_reason as _normalize_reject_reason,
+    stable_payload_hash as _stable_payload_hash,
+)
+from app.trading.execution_modules.shared_context import (
+    target_plan_ref_value as _target_plan_ref_value,
+    target_plan_source_decision_mode as _target_plan_source_decision_mode,
+    target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
+)
 
-from importlib import import_module as _import_module
-import sys as _sys
-
-_module_name = __name__
-_parent_name, _, _module_attr = _module_name.rpartition(".")
-_impl = _import_module("app.trading.execution_modules")
-globals().update(_impl.__dict__)
-_sys.modules[_module_name] = _impl
-_parent = _sys.modules.get(_parent_name)
-if _parent is not None:
-    setattr(_parent, _module_attr, _impl)
+__all__ = [
+    "hashlib",
+    "json",
+    "logging",
+    "time",
+    "Mapping",
+    "Sequence",
+    "datetime",
+    "timezone",
+    "Decimal",
+    "Any",
+    "NamedTuple",
+    "Optional",
+    "cast",
+    "select",
+    "IntegrityError",
+    "Session",
+    "Execution",
+    "LeanExecutionShadowEvent",
+    "Strategy",
+    "TradeDecision",
+    "coerce_json_payload",
+    "settings",
+    "sync_order_to_db",
+    "resolve_order_route_metadata",
+    "should_retry_order_error",
+    "ExecutionRequest",
+    "StrategyDecision",
+    "decision_hash",
+    "min_qty_for_symbol",
+    "quantize_qty_for_symbol",
+    "qty_has_valid_increment",
+    "qty_step_for_symbol",
+    "resolve_quantity_resolution",
+    "resolve_event_persisted_at",
+    "resolve_simulation_context",
+    "simulation_context_enabled",
+    "trading_now",
+    "upsert_execution_tca_metric",
+    "logger",
+    "OrderExecutor",
+    "_apply_execution_status",
+    "_extract_execution_metadata",
+    "_json_default",
+    "_normalize_reject_reason",
+    "_persist_lean_shadow_event",
+    "_stable_payload_hash",
+    "_target_plan_ref_value",
+    "_target_plan_source_decision_mode",
+    "_target_plan_source_decision_needs_refresh",
+]

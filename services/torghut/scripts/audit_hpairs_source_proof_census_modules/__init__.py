@@ -1,73 +1,172 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.source_event_row_matches_identity"
+from .shared_context import (
+    argparse,
+    json,
+    sys,
+    Mapping,
+    Sequence,
+    Set,
+    dataclass,
+    field,
+    datetime,
+    timezone,
+    Decimal,
+    InvalidOperation,
+    Path,
+    cast,
+    create_engine,
+    or_,
+    select,
+    Session,
+    sessionmaker,
+    Execution,
+    ExecutionOrderEvent,
+    ExecutionTCAMetric,
+    OrderFeedSourceWindow,
+    Strategy,
+    TradeDecision,
+    AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER,
+    AUTHORITY_BUCKET_BLOCKERS_PRESENT,
+    AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER,
+    AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER,
+    AUTHORITY_EVIDENCE_MISSING_BLOCKER,
+    AUTHORITY_EXPLICIT_COSTS_BLOCKER,
+    AUTHORITY_FILLED_NOTIONAL_BLOCKER,
+    AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER,
+    AUTHORITY_MEAN_PNL_BLOCKER,
+    AUTHORITY_MEDIAN_PNL_BLOCKER,
+    AUTHORITY_OPEN_POSITIONS_BLOCKER,
+    AUTHORITY_P10_PNL_BLOCKER,
+    AUTHORITY_READ_ERROR_BLOCKER,
+    AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER,
+    AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER,
+    AUTHORITY_TRADING_DAYS_BLOCKER,
+    AUTHORITY_WORST_DAY_BLOCKER,
+    DEFAULT_HPAIRS_ACCOUNT_LABEL,
+    DEFAULT_HPAIRS_CANDIDATE_ID,
+    DEFAULT_HPAIRS_HYPOTHESIS_ID,
+    DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+    build_runtime_authority_report,
+    load_runtime_authority_rows,
+    EXECUTION_ECONOMICS_MISSING_BLOCKER,
+    ORDER_FEED_LIFECYCLE_MISSING_BLOCKER,
+    ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER,
+    RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
+    RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
+    SCHEMA_VERSION,
+    AUTHORITY_CANDIDATE_READY,
+    NO_SOURCE_ACTIVITY,
+    LIFECYCLE_MISSING,
+    ECONOMICS_MISSING,
+    SOURCE_REFS_MISSING,
+    OPEN_POSITIONS,
+    AUTHORITY_DISTRIBUTION_MISSING,
+    CANDIDATE_CONFIG_MISMATCH_BLOCKER,
+    SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER,
+    SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER,
+    LADDER_PASS,
+    LADDER_MISSING,
+    LADDER_BLOCKED,
+    SUBMITTED_ORDERS_MISSING_BLOCKER,
+    CensusIdentity,
+    CensusSourceRows,
+    parse_args,
+    build_source_proof_census,
+    census_json,
+    load_fixture_rows,
+    load_dsn_rows,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .parse_timestamp import main
 
-__compat_module__ = __compat_import_module__(f"{__name__}.totals")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.blocker_ladder")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.parse_timestamp")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "argparse",
+    "json",
+    "sys",
+    "Mapping",
+    "Sequence",
+    "Set",
+    "dataclass",
+    "field",
+    "datetime",
+    "timezone",
+    "Decimal",
+    "InvalidOperation",
+    "Path",
+    "cast",
+    "create_engine",
+    "or_",
+    "select",
+    "Session",
+    "sessionmaker",
+    "Execution",
+    "ExecutionOrderEvent",
+    "ExecutionTCAMetric",
+    "OrderFeedSourceWindow",
+    "Strategy",
+    "TradeDecision",
+    "AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER",
+    "AUTHORITY_BUCKET_BLOCKERS_PRESENT",
+    "AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER",
+    "AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER",
+    "AUTHORITY_EVIDENCE_MISSING_BLOCKER",
+    "AUTHORITY_EXPLICIT_COSTS_BLOCKER",
+    "AUTHORITY_FILLED_NOTIONAL_BLOCKER",
+    "AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER",
+    "AUTHORITY_MEAN_PNL_BLOCKER",
+    "AUTHORITY_MEDIAN_PNL_BLOCKER",
+    "AUTHORITY_OPEN_POSITIONS_BLOCKER",
+    "AUTHORITY_P10_PNL_BLOCKER",
+    "AUTHORITY_READ_ERROR_BLOCKER",
+    "AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER",
+    "AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER",
+    "AUTHORITY_TRADING_DAYS_BLOCKER",
+    "AUTHORITY_WORST_DAY_BLOCKER",
+    "DEFAULT_HPAIRS_ACCOUNT_LABEL",
+    "DEFAULT_HPAIRS_CANDIDATE_ID",
+    "DEFAULT_HPAIRS_HYPOTHESIS_ID",
+    "DEFAULT_HPAIRS_RUNTIME_STRATEGY",
+    "build_runtime_authority_report",
+    "load_runtime_authority_rows",
+    "EXECUTION_ECONOMICS_MISSING_BLOCKER",
+    "ORDER_FEED_LIFECYCLE_MISSING_BLOCKER",
+    "ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER",
+    "RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER",
+    "SCHEMA_VERSION",
+    "AUTHORITY_CANDIDATE_READY",
+    "NO_SOURCE_ACTIVITY",
+    "LIFECYCLE_MISSING",
+    "ECONOMICS_MISSING",
+    "SOURCE_REFS_MISSING",
+    "OPEN_POSITIONS",
+    "AUTHORITY_DISTRIBUTION_MISSING",
+    "CANDIDATE_CONFIG_MISMATCH_BLOCKER",
+    "SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER",
+    "SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER",
+    "LADDER_PASS",
+    "LADDER_MISSING",
+    "LADDER_BLOCKED",
+    "SUBMITTED_ORDERS_MISSING_BLOCKER",
+    "CensusIdentity",
+    "CensusSourceRows",
+    "parse_args",
+    "build_source_proof_census",
+    "census_json",
+    "load_fixture_rows",
+    "load_dsn_rows",
+    "main",
 ]
-del __compat_module__

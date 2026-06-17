@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python
 """Verify Torghut trading readiness from a `/trading/status` payload."""
 
@@ -15,59 +15,127 @@ from urllib.request import urlopen
 
 # ruff: noqa: F401,F403,F405,F811,F821
 
-from .shared_context import (
-    DOC29_LIVE_SCALE_GATE,
-    NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION,
-    REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS,
-    ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION,
-    ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION,
-    RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
-    SCHEMA_VERSION,
-    TIGERBEETLE_PARITY_STATUS_PASS,
-    TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION,
-    _MISSING_QUANT_REASONS,
-    _QUOTE_FILLABILITY_REASON_TOKENS,
-    _QUOTE_FILLABILITY_REPAIR_ACTIONS,
-    _RUNTIME_LEDGER_TRADING_DAY_KEYS,
-    _add_check,
-    _append_unique_text,
-    _bool,
-    _decimal,
-    _decimal_positive,
-    _dimension_by_name,
-    _dimension_is_required,
-    _expected_floor_states,
-    _health_gate_bool,
-    _int,
-    _load_json_object,
-    _load_optional_json_object,
-    _load_status_url,
-    _mapping,
-    _market_session_open,
-    _paper_route_probe_summary,
-    _paper_route_quote_fillability_summary,
-    _quote_fillability_reason,
-    _quote_fillability_repair_action,
-    _sequence,
-    _text,
-    _text_list,
+from . import paper_route_target_plan_summary as _paper_route_target_plan_summary_module
+from . import shared_context as _shared_context
+
+DOC29_LIVE_SCALE_GATE = _shared_context.DOC29_LIVE_SCALE_GATE
+NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION = (
+    _shared_context.NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION
 )
-from .paper_route_target_plan_summary import (
-    _PAPER_ROUTE_PREOPEN_SOFT_CHECKS,
-    _add_runtime_ledger_proof_packet_check,
-    _apply_paper_route_preopen_evidence_collection,
-    _build_paper_route_preopen_evidence_collection_ready,
-    _build_proofs_target_plan_summary,
-    _completion_gate,
-    _legacy_paper_route_target_plan_summary,
-    _paper_route_preopen_evidence_collection_ready,
-    _paper_route_target_plan_summary,
-    _proofs_target_plan_summary,
-    _runtime_ledger_daily_net_pnl,
-    _runtime_ledger_proof_packet_check_payload,
-    _runtime_ledger_refs,
-    _runtime_ledger_summary,
-    _runtime_ledger_trading_day_count,
+REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS = (
+    _shared_context.REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS
+)
+ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION = (
+    _shared_context.ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION
+)
+ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION = (
+    _shared_context.ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION
+)
+RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION = (
+    _shared_context.RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION
+)
+SCHEMA_VERSION = _shared_context.SCHEMA_VERSION
+TIGERBEETLE_PARITY_STATUS_PASS = _shared_context.TIGERBEETLE_PARITY_STATUS_PASS
+TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION = (
+    _shared_context.TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION
+)
+_MISSING_QUANT_REASONS = getattr(_shared_context, "_MISSING_QUANT_REASONS")
+_QUOTE_FILLABILITY_REASON_TOKENS = getattr(
+    _shared_context,
+    "_QUOTE_FILLABILITY_REASON_TOKENS",
+)
+_QUOTE_FILLABILITY_REPAIR_ACTIONS = getattr(
+    _shared_context,
+    "_QUOTE_FILLABILITY_REPAIR_ACTIONS",
+)
+_RUNTIME_LEDGER_TRADING_DAY_KEYS = getattr(
+    _shared_context,
+    "_RUNTIME_LEDGER_TRADING_DAY_KEYS",
+)
+_add_check = getattr(_shared_context, "_add_check")
+_append_unique_text = getattr(_shared_context, "_append_unique_text")
+_bool = getattr(_shared_context, "_bool")
+_decimal = getattr(_shared_context, "_decimal")
+_decimal_positive = getattr(_shared_context, "_decimal_positive")
+_dimension_by_name = getattr(_shared_context, "_dimension_by_name")
+_dimension_is_required = getattr(_shared_context, "_dimension_is_required")
+_expected_floor_states = getattr(_shared_context, "_expected_floor_states")
+_health_gate_bool = getattr(_shared_context, "_health_gate_bool")
+_int = getattr(_shared_context, "_int")
+_load_json_object = getattr(_shared_context, "_load_json_object")
+_load_optional_json_object = getattr(_shared_context, "_load_optional_json_object")
+_load_status_url = getattr(_shared_context, "_load_status_url")
+_mapping = getattr(_shared_context, "_mapping")
+_market_session_open = getattr(_shared_context, "_market_session_open")
+_paper_route_probe_summary = getattr(_shared_context, "_paper_route_probe_summary")
+_paper_route_quote_fillability_summary = getattr(
+    _shared_context,
+    "_paper_route_quote_fillability_summary",
+)
+_quote_fillability_reason = getattr(_shared_context, "_quote_fillability_reason")
+_quote_fillability_repair_action = getattr(
+    _shared_context,
+    "_quote_fillability_repair_action",
+)
+_sequence = getattr(_shared_context, "_sequence")
+_text = getattr(_shared_context, "_text")
+_text_list = getattr(_shared_context, "_text_list")
+_PAPER_ROUTE_PREOPEN_SOFT_CHECKS = getattr(
+    _paper_route_target_plan_summary_module,
+    "_PAPER_ROUTE_PREOPEN_SOFT_CHECKS",
+)
+_add_runtime_ledger_proof_packet_check = getattr(
+    _paper_route_target_plan_summary_module,
+    "_add_runtime_ledger_proof_packet_check",
+)
+_apply_paper_route_preopen_evidence_collection = getattr(
+    _paper_route_target_plan_summary_module,
+    "_apply_paper_route_preopen_evidence_collection",
+)
+_build_paper_route_preopen_evidence_collection_ready = getattr(
+    _paper_route_target_plan_summary_module,
+    "_build_paper_route_preopen_evidence_collection_ready",
+)
+_build_proofs_target_plan_summary = getattr(
+    _paper_route_target_plan_summary_module,
+    "_build_proofs_target_plan_summary",
+)
+_completion_gate = getattr(_paper_route_target_plan_summary_module, "_completion_gate")
+_legacy_paper_route_target_plan_summary = getattr(
+    _paper_route_target_plan_summary_module,
+    "_legacy_paper_route_target_plan_summary",
+)
+_paper_route_preopen_evidence_collection_ready = getattr(
+    _paper_route_target_plan_summary_module,
+    "_paper_route_preopen_evidence_collection_ready",
+)
+_paper_route_target_plan_summary = getattr(
+    _paper_route_target_plan_summary_module,
+    "_paper_route_target_plan_summary",
+)
+_proofs_target_plan_summary = getattr(
+    _paper_route_target_plan_summary_module,
+    "_proofs_target_plan_summary",
+)
+_runtime_ledger_daily_net_pnl = getattr(
+    _paper_route_target_plan_summary_module,
+    "_runtime_ledger_daily_net_pnl",
+)
+_runtime_ledger_proof_packet_check_payload = getattr(
+    _paper_route_target_plan_summary_module,
+    "_runtime_ledger_proof_packet_check_payload",
+)
+_runtime_ledger_refs = getattr(
+    _paper_route_target_plan_summary_module,
+    "_runtime_ledger_refs",
+)
+_runtime_ledger_summary = getattr(
+    _paper_route_target_plan_summary_module,
+    "_runtime_ledger_summary",
+)
+_runtime_ledger_trading_day_count = getattr(
+    _paper_route_target_plan_summary_module,
+    "_runtime_ledger_trading_day_count",
 )
 
 
@@ -397,5 +465,7 @@ def _add_execution_tca_lineage_check(
         },
     )
 
+
+readiness_next_action = _readiness_next_action
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Bounded H-PAIRS ClusterLOB/OFI candidate prefiltering.
 
 The scores in this module are discovery metadata only. They intentionally rank
@@ -35,16 +35,86 @@ from .shared_context import (
     HPAIRS_RUNTIME_STRATEGY_NAME,
     MicrostructureCandidatePrefilterRow,
     MicrostructurePrefilterResult,
-    _SymbolMicrostructureStats,
-    _build_symbol_microstructure_stats,
-    _rank_key,
-    _score_spec,
-    _select_frontier_buckets,
-    _source_field_diagnostics,
-    _source_input_blockers,
-    _with_rank_and_bucket,
+    SymbolMicrostructureStats as _SymbolMicrostructureStats,
+    build_symbol_microstructure_stats as _build_symbol_microstructure_stats,
+    rank_key as _rank_key,
+    score_spec as _score_spec,
+    select_frontier_buckets as _select_frontier_buckets,
+    source_field_diagnostics as _source_field_diagnostics,
+    source_input_blockers as _source_input_blockers,
+    with_rank_and_bucket as _with_rank_and_bucket,
     build_hpairs_microstructure_prefilter,
 )
+
+
+def _concat_arrays(
+    arrays: Sequence[NDArray[np.float64]],
+) -> NDArray[np.float64]:
+    from .weighted_average import concat_arrays as impl
+
+    return impl(arrays)
+
+
+def _decimal(value: float) -> Decimal:
+    from .weighted_average import decimal as impl
+
+    return impl(value)
+
+
+def _dominant_label(labels: Sequence[str]) -> str:
+    from .weighted_average import dominant_label as impl
+
+    return impl(labels)
+
+
+def _ewma_last(values: NDArray[np.float64], *, half_life: float) -> float:
+    from .weighted_average import ewma_last as impl
+
+    return impl(values, half_life=half_life)
+
+
+def _first_float_with_key(
+    payload: Mapping[str, Any], keys: Sequence[str], *, positive: bool = False
+) -> tuple[float | None, str | None]:
+    from .weighted_average import first_float_with_key as impl
+
+    return impl(payload, keys, positive=positive)
+
+
+def _float_or_none(value: Any) -> float | None:
+    from .weighted_average import float_or_none as impl
+
+    return impl(value)
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    from .weighted_average import mapping as impl
+
+    return impl(value)
+
+
+def _mean(values: NDArray[np.float64]) -> float:
+    from .weighted_average import mean as impl
+
+    return impl(values)
+
+
+def _normalized_entropy(labels: Sequence[str]) -> float:
+    from .weighted_average import normalized_entropy as impl
+
+    return impl(labels)
+
+
+def _percentile(values: NDArray[np.float64], percentile: float) -> float:
+    from .weighted_average import percentile as impl
+
+    return impl(values, percentile)
+
+
+def _string(value: Any) -> str:
+    from .weighted_average import string as impl
+
+    return impl(value)
 
 
 def _horizon_ofi_features(values: NDArray[np.float64]) -> dict[str, Any]:
@@ -735,4 +805,59 @@ def _volume_score(values: NDArray[np.float64]) -> float:
     )
 
 
+# Public aliases used by split-module consumers.
+candidate_direction = _candidate_direction
+candidate_symbols = _candidate_symbols
+capacity_penalty_bps = _capacity_penalty_bps
+cluster_behavior = _cluster_behavior
+empty_cluster_behavior = _empty_cluster_behavior
+empty_horizon_features = _empty_horizon_features
+empty_macro_window_stress = _empty_macro_window_stress
+empty_pair_convergence_risk = _empty_pair_convergence_risk
+empty_regime_stress_veto = _empty_regime_stress_veto
+event_label = _event_label
+extract_microprice_bias_bps = _extract_microprice_bias_bps
+extract_ofi_pressure = _extract_ofi_pressure
+extract_price = _extract_price
+extract_regime_stress = _extract_regime_stress
+extract_spread_bps = _extract_spread_bps
+extract_volume = _extract_volume
+horizon_ofi_features = _horizon_ofi_features
+impact_capacity_lineage = _impact_capacity_lineage
+is_hpairs_candidate = _is_hpairs_candidate
+macro_window_stress_from_regime = _macro_window_stress_from_regime
+merged_horizon_features = _merged_horizon_features
+pair_convergence_risk = _pair_convergence_risk
+regime_stress_veto = _regime_stress_veto
+timestamp_key = _timestamp_key
+volume_score = _volume_score
+
+candidate_direction_split_export = _candidate_direction
+candidate_notional = _candidate_notional
+candidate_symbols_split_export = _candidate_symbols
+capacity_penalty_bps_split_export = _capacity_penalty_bps
+cluster_behavior_split_export = _cluster_behavior
+empty_cluster_behavior_split_export = _empty_cluster_behavior
+empty_horizon_features_split_export = _empty_horizon_features
+empty_macro_window_stress_split_export = _empty_macro_window_stress
+empty_pair_convergence_risk_split_export = _empty_pair_convergence_risk
+empty_regime_stress_veto_split_export = _empty_regime_stress_veto
+event_label_split_export = _event_label
+extract_microprice_bias_bps_split_export = _extract_microprice_bias_bps
+extract_ofi_pressure_split_export = _extract_ofi_pressure
+extract_price_split_export = _extract_price
+extract_quote_depth_imbalance = _extract_quote_depth_imbalance
+extract_regime_stress_split_export = _extract_regime_stress
+extract_spread_bps_split_export = _extract_spread_bps
+extract_volume_split_export = _extract_volume
+horizon_ofi_features_split_export = _horizon_ofi_features
+impact_capacity_lineage_split_export = _impact_capacity_lineage
+is_hpairs_candidate_split_export = _is_hpairs_candidate
+macro_window_stress_from_regime_split_export = _macro_window_stress_from_regime
+merged_horizon_features_split_export = _merged_horizon_features
+pair_convergence_payload = _pair_convergence_payload
+pair_convergence_risk_split_export = _pair_convergence_risk
+regime_stress_veto_split_export = _regime_stress_veto
+timestamp_key_split_export = _timestamp_key
+volume_score_split_export = _volume_score
 __all__ = [name for name in globals() if not name.startswith("__")]

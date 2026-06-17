@@ -1,119 +1,164 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import logging as __compat_logging__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.ceph_s3_client")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.whitepaper_workflow_ingestion_methods"
+import logging as _logging_for_module
+from .shared_context import (
+    asyncio,
+    hashlib,
+    hmac,
+    io,
+    json,
+    logging,
+    os,
+    re,
+    tempfile,
+    uuid,
+    dataclass,
+    datetime,
+    timezone,
+    Decimal,
+    HTTPConnection,
+    HTTPSConnection,
+    Path,
+    CalledProcessError,
+    run,
+    Any,
+    Mapping,
+    cast,
+    quote,
+    urljoin,
+    urlparse,
+    inngest,
+    case,
+    delete,
+    func,
+    select,
+    text,
+    Session,
+    VNextExperimentSpec,
+    WhitepaperAnalysisRun,
+    WhitepaperAnalysisStep,
+    WhitepaperArtifact,
+    WhitepaperClaim,
+    WhitepaperClaimRelation,
+    WhitepaperContradictionEvent,
+    WhitepaperCodexAgentRun,
+    WhitepaperContent,
+    WhitepaperDesignPullRequest,
+    WhitepaperDocument,
+    WhitepaperDocumentVersion,
+    WhitepaperEngineeringTrigger,
+    WhitepaperExperimentSpec,
+    WhitepaperRolloutTransition,
+    WhitepaperStrategyTemplate,
+    WhitepaperSynthesis,
+    WhitepaperViabilityVerdict,
+    coerce_json_payload,
+    compile_claim_payloads_to_whitepaper_experiments,
+    EngineeringGradeDecision,
+    ManualApprovalPayload,
+    GithubIssueEvent,
+    whitepaper_workflow_enabled,
+    whitepaper_inngest_enabled,
+    whitepaper_kafka_enabled,
+    whitepaper_semantic_indexing_enabled,
+    whitepaper_semantic_required,
+    whitepaper_requeue_comment_keyword,
+    marker_start,
+    marker_end,
+    parse_marker_block,
+    normalize_analysis_mode,
+    parse_marker_tags,
+    normalize_attachment_url,
+    github_issue_number_from_url,
+    build_whitepaper_run_id,
+    comment_requests_requeue,
+    extract_pdf_urls,
+    normalize_github_issue_event,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.whitepaper_workflow_persistence_methods"
+from .ceph_s3_client import CephS3Client, IssueKickoffResult
+from .whitepaper_workflow_service import (
+    WhitepaperWorkflowService,
+    WhitepaperKafkaIssueIngestor,
+    WhitepaperKafkaWorker,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
 
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.whitepaper_workflow_agent_methods"
-)
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.whitepaper_workflow_verdict_methods"
-)
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.whitepaper_workflow_rollout_methods"
-)
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.whitepaper_workflow_api_methods"
-)
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.whitepaper_workflow_service")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-logger = __compat_logging__.getLogger(__name__.removesuffix("_modules"))
-for __compat_loaded_module__ in globals().get("__compat_module_segments__", ()):
-    __compat_loaded_module__.__dict__["logger"] = logger
+logger = _logging_for_module.getLogger(__name__.removesuffix("_modules"))
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "asyncio",
+    "hashlib",
+    "hmac",
+    "io",
+    "json",
+    "logging",
+    "os",
+    "re",
+    "tempfile",
+    "uuid",
+    "dataclass",
+    "datetime",
+    "timezone",
+    "Decimal",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "Path",
+    "CalledProcessError",
+    "run",
+    "Any",
+    "Mapping",
+    "cast",
+    "quote",
+    "urljoin",
+    "urlparse",
+    "inngest",
+    "case",
+    "delete",
+    "func",
+    "select",
+    "text",
+    "Session",
+    "VNextExperimentSpec",
+    "WhitepaperAnalysisRun",
+    "WhitepaperAnalysisStep",
+    "WhitepaperArtifact",
+    "WhitepaperClaim",
+    "WhitepaperClaimRelation",
+    "WhitepaperContradictionEvent",
+    "WhitepaperCodexAgentRun",
+    "WhitepaperContent",
+    "WhitepaperDesignPullRequest",
+    "WhitepaperDocument",
+    "WhitepaperDocumentVersion",
+    "WhitepaperEngineeringTrigger",
+    "WhitepaperExperimentSpec",
+    "WhitepaperRolloutTransition",
+    "WhitepaperStrategyTemplate",
+    "WhitepaperSynthesis",
+    "WhitepaperViabilityVerdict",
+    "coerce_json_payload",
+    "compile_claim_payloads_to_whitepaper_experiments",
+    "logger",
+    "EngineeringGradeDecision",
+    "ManualApprovalPayload",
+    "GithubIssueEvent",
+    "whitepaper_workflow_enabled",
+    "whitepaper_inngest_enabled",
+    "whitepaper_kafka_enabled",
+    "whitepaper_semantic_indexing_enabled",
+    "whitepaper_semantic_required",
+    "whitepaper_requeue_comment_keyword",
+    "marker_start",
+    "marker_end",
+    "parse_marker_block",
+    "normalize_analysis_mode",
+    "parse_marker_tags",
+    "normalize_attachment_url",
+    "github_issue_number_from_url",
+    "build_whitepaper_run_id",
+    "comment_requests_requeue",
+    "extract_pdf_urls",
+    "normalize_github_issue_event",
+    "CephS3Client",
+    "IssueKickoffResult",
+    "WhitepaperWorkflowService",
+    "WhitepaperKafkaIssueIngestor",
+    "WhitepaperKafkaWorker",
 ]
-del __compat_module__

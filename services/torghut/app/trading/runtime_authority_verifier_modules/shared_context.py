@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Read-only H-PAIRS runtime authority proof verifier.
 
 This module deliberately only reads durable runtime-ledger buckets and turns them
@@ -188,6 +188,170 @@ class _DailyAccumulator:
         for blocker in blockers:
             if blocker not in self.blockers:
                 self.blockers.append(blocker)
+
+
+def _row_authority_blockers(
+    row: RuntimeAuthorityEvidenceRow,
+    payload: Mapping[str, object],
+) -> list[str]:
+    from .row_authority_blockers import row_authority_blockers as owned
+
+    return owned(row, payload)
+
+
+def _promotion_payload(row: RuntimeAuthorityEvidenceRow) -> dict[str, object]:
+    from .row_authority_blockers import promotion_payload as owned
+
+    return owned(row)
+
+
+def _explicit_costs_present(
+    row: RuntimeAuthorityEvidenceRow,
+    payload: Mapping[str, object],
+) -> bool:
+    from .row_authority_blockers import explicit_costs_present as owned
+
+    return owned(row, payload)
+
+
+def _daily_payload(item: _DailyAccumulator) -> dict[str, object]:
+    from .row_authority_blockers import daily_payload as owned
+
+    return owned(item)
+
+
+def _authority_targets(policy: RuntimeLedgerProofPolicy) -> dict[str, object]:
+    from .row_authority_blockers import authority_targets as owned
+
+    return owned(policy)
+
+
+def _authority_gaps(
+    aggregate: Mapping[str, object],
+    *,
+    policy: RuntimeLedgerProofPolicy,
+) -> dict[str, object]:
+    from .row_authority_blockers import authority_gaps as owned
+
+    return owned(aggregate, policy=policy)
+
+
+def _blocker_counts(
+    daily: Sequence[_DailyAccumulator],
+    *,
+    extra_blockers: Sequence[str],
+) -> dict[str, int]:
+    from .row_authority_blockers import blocker_counts as owned
+
+    return owned(daily, extra_blockers=extra_blockers)
+
+
+def _next_actions(blockers: Sequence[str]) -> list[str]:
+    from .row_authority_blockers import next_actions as owned
+
+    return owned(blockers)
+
+
+def _mean(values: Sequence[Decimal]) -> Decimal:
+    from .row_authority_blockers import mean as owned
+
+    return owned(values)
+
+
+def _median(values: Sequence[Decimal]) -> Decimal:
+    from .row_authority_blockers import median as owned
+
+    return owned(values)
+
+
+def _p10(values: Sequence[Decimal]) -> Decimal:
+    from .row_authority_blockers import p10 as owned
+
+    return owned(values)
+
+
+def _max_drawdown(values: Sequence[Decimal]) -> Decimal:
+    from .row_authority_blockers import max_drawdown as owned
+
+    return owned(values)
+
+
+def _ref_count(bucket: Mapping[str, object], *keys: str) -> int:
+    from .row_authority_blockers import ref_count as owned
+
+    return owned(bucket, *keys)
+
+
+def _source_offset_count(bucket: Mapping[str, object]) -> int:
+    from .row_authority_blockers import source_offset_count as owned
+
+    return owned(bucket)
+
+
+def _as_mapping(value: object) -> Mapping[str, object]:
+    from .row_authority_blockers import as_mapping as owned
+
+    return owned(value)
+
+
+def _as_sequence(value: object) -> Sequence[object]:
+    from .row_authority_blockers import as_sequence as owned
+
+    return owned(value)
+
+
+def _string_tuple(values: Sequence[object]) -> tuple[str, ...]:
+    from .row_authority_blockers import string_tuple as owned
+
+    return owned(values)
+
+
+def _text(value: object) -> str | None:
+    from .row_authority_blockers import text_value as owned
+
+    return owned(value)
+
+
+def _int(value: object) -> int:
+    from .row_authority_blockers import int_value as owned
+
+    return owned(value)
+
+
+def _decimal(value: object) -> Decimal:
+    from .row_authority_blockers import decimal_value as owned
+
+    return owned(value)
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    from .row_authority_blockers import optional_decimal as owned
+
+    return owned(value)
+
+
+def _required_datetime(value: object, *, field_name: str) -> datetime:
+    from .row_authority_blockers import required_datetime as owned
+
+    return owned(value, field_name=field_name)
+
+
+def _utc(value: datetime) -> datetime:
+    from .row_authority_blockers import utc as owned
+
+    return owned(value)
+
+
+def _isoformat(value: datetime) -> str:
+    from .row_authority_blockers import isoformat as owned
+
+    return owned(value)
+
+
+def _decimal_text(value: Decimal | None) -> str:
+    from .row_authority_blockers import decimal_text as owned
+
+    return owned(value)
 
 
 def load_runtime_authority_rows(
@@ -653,6 +817,15 @@ def _authority_blockers(
     for item in daily:
         blockers.extend(item.blockers or [])
     return list(dict.fromkeys(blockers))
+
+
+DailyAccumulator = _DailyAccumulator
+PROMOTION_GRADE_LEDGER_SCHEMAS = _PROMOTION_GRADE_LEDGER_SCHEMAS
+aggregate = _aggregate
+authority_blockers = _authority_blockers
+daily_rows = _daily_rows
+normalize_row = _normalize_row
+row_from_bucket = _row_from_bucket
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

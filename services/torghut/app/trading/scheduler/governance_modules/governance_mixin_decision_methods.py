@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading scheduler governance, autonomy, and safety workflows."""
 
 from __future__ import annotations
@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -33,33 +34,69 @@ from ...ingest import SignalBatch
 from ...models import SignalEnvelope
 from ...time_source import trading_now
 from ..pipeline import TradingPipeline
-from ..safety import (
-    _FRESH_TAIL_NO_SIGNAL_REASONS,
-    _coerce_recovery_reason_sequence,
-    _is_market_session_open,
-    _is_recoverable_emergency_stop_reason,
-    _latch_signal_continuity_alert_state,
-    _merge_emergency_stop_reasons,
-    _record_signal_continuity_recovery_cycle,
-    _signal_bootstrap_grace_active,
-    _signal_tail_is_fresh,
-    _split_emergency_stop_reasons,
-)
+from .. import safety as _safety_private_37
+
 from ..state import TradingState
 
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .shared_context import (
-    _TradingSchedulerGovernanceMixinFields,
-    _incident_payload_complete,
-    _int_from_mapping,
-    _parse_iso_datetime,
-    _resolve_autonomy_artifact_root,
     logger,
 )
-from .governance_mixin_lifecycle_methods import (
-    _TradingSchedulerGovernanceLifecycleMethods,
+from . import shared_context as _shared_context_private_53
+
+from . import (
+    governance_mixin_lifecycle_methods as _governance_mixin_lifecycle_methods_private_61,
 )
+
+_FRESH_TAIL_NO_SIGNAL_REASONS = getattr(
+    _safety_private_37, "_FRESH_TAIL_NO_SIGNAL_REASONS"
+)
+_coerce_recovery_reason_sequence = getattr(
+    _safety_private_37, "_coerce_recovery_reason_sequence"
+)
+_is_market_session_open = getattr(_safety_private_37, "_is_market_session_open")
+_is_recoverable_emergency_stop_reason = getattr(
+    _safety_private_37, "_is_recoverable_emergency_stop_reason"
+)
+_latch_signal_continuity_alert_state = getattr(
+    _safety_private_37, "_latch_signal_continuity_alert_state"
+)
+_merge_emergency_stop_reasons = getattr(
+    _safety_private_37, "_merge_emergency_stop_reasons"
+)
+_record_signal_continuity_recovery_cycle = getattr(
+    _safety_private_37, "_record_signal_continuity_recovery_cycle"
+)
+_signal_bootstrap_grace_active = getattr(
+    _safety_private_37, "_signal_bootstrap_grace_active"
+)
+_signal_tail_is_fresh = getattr(_safety_private_37, "_signal_tail_is_fresh")
+_split_emergency_stop_reasons = getattr(
+    _safety_private_37, "_split_emergency_stop_reasons"
+)
+_TradingSchedulerGovernanceMixinFields = getattr(
+    _shared_context_private_53, "_TradingSchedulerGovernanceMixinFields"
+)
+_incident_payload_complete = getattr(
+    _shared_context_private_53, "_incident_payload_complete"
+)
+_int_from_mapping = getattr(_shared_context_private_53, "_int_from_mapping")
+_parse_iso_datetime = getattr(_shared_context_private_53, "_parse_iso_datetime")
+_resolve_autonomy_artifact_root = getattr(
+    _shared_context_private_53, "_resolve_autonomy_artifact_root"
+)
+_TradingSchedulerGovernanceLifecycleMethods = getattr(
+    _governance_mixin_lifecycle_methods_private_61,
+    "_TradingSchedulerGovernanceLifecycleMethods",
+)
+
+
+def _governance_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("app.trading.scheduler.governance")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 class _TradingSchedulerGovernanceDecisionMethods:
@@ -416,7 +453,11 @@ class _TradingSchedulerGovernanceDecisionMethods:
         query_start = batch.query_start or start
         query_end = batch.query_end or now
         try:
-            self.state.last_autonomy_run_id = upsert_autonomy_no_signal_run(
+            persist_no_signal_run = _governance_root_export(
+                "upsert_autonomy_no_signal_run",
+                upsert_autonomy_no_signal_run,
+            )
+            self.state.last_autonomy_run_id = persist_no_signal_run(
                 session_factory=self._pipeline.session_factory,
                 query_start=query_start,
                 query_end=query_end,
@@ -608,7 +649,10 @@ class _TradingSchedulerGovernanceDecisionMethods:
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
         try:
-            return run_autonomous_lane(
+            lane_runner = _governance_root_export(
+                "run_autonomous_lane", run_autonomous_lane
+            )
+            return lane_runner(
                 signals_path=signals_path,
                 strategy_config_path=strategy_config_path,
                 gate_policy_path=gate_policy_path,

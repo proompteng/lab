@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 # fmt: off
 """Traceability helpers for doc 29 completion gates."""
 
@@ -55,38 +55,38 @@ from .runtime_matrix_path import (
     TRACE_STATUS_SATISFIED,
     TRACE_STATUS_STALE,
     US_EQUITIES_REGULAR_TIMEZONE,
-    _PromotionDecisionKey,
-    _RUNTIME_LEDGER_BUCKET_SCHEMAS,
-    _as_dict,
-    _as_list,
-    _as_text,
-    _candidate_hypothesis_manifests,
-    _doc_matrix_path,
-    _gate_policy_parameters,
-    _latest_completion_rows,
-    _latest_completion_rows_filtered,
-    _latest_empirical_rows,
-    _latest_hypothesis_windows,
-    _load_hypothesis_manifests_by_id,
-    _load_yaml_mapping,
-    _manifest_runtime_session_threshold,
-    _median_decimal,
-    _normalize_gate_definition,
-    _p10_decimal,
-    _policy_int,
-    _positive_hash_count,
-    _promotion_decision_blocked_reason,
-    _promotion_decision_key,
-    _promotion_decision_key_for_decision,
-    _promotion_decision_key_for_window,
-    _promotion_decision_keys_for_windows,
-    _runtime_ledger_bucket_promotion_payload,
-    _runtime_ledger_trading_day_key,
-    _runtime_matrix_path,
-    _safe_float,
-    _safe_int,
-    _utc,
-    _windows_with_allowed_promotion_decisions,
+    PromotionDecisionKey as _PromotionDecisionKey,
+    RUNTIME_LEDGER_BUCKET_SCHEMAS as _RUNTIME_LEDGER_BUCKET_SCHEMAS,
+    as_dict as _as_dict,
+    as_list as _as_list,
+    as_text as _as_text,
+    candidate_hypothesis_manifests as _candidate_hypothesis_manifests,
+    doc_matrix_path as _doc_matrix_path,
+    gate_policy_parameters as _gate_policy_parameters,
+    latest_completion_rows as _latest_completion_rows,
+    latest_completion_rows_filtered as _latest_completion_rows_filtered,
+    latest_empirical_rows as _latest_empirical_rows,
+    latest_hypothesis_windows as _latest_hypothesis_windows,
+    load_hypothesis_manifests_by_id as _load_hypothesis_manifests_by_id,
+    load_yaml_mapping as _load_yaml_mapping,
+    manifest_runtime_session_threshold as _manifest_runtime_session_threshold,
+    median_decimal as _median_decimal,
+    normalize_gate_definition as _normalize_gate_definition,
+    p10_decimal as _p10_decimal,
+    policy_int as _policy_int,
+    positive_hash_count as _positive_hash_count,
+    promotion_decision_blocked_reason as _promotion_decision_blocked_reason,
+    promotion_decision_key as _promotion_decision_key,
+    promotion_decision_key_for_decision as _promotion_decision_key_for_decision,
+    promotion_decision_key_for_window as _promotion_decision_key_for_window,
+    promotion_decision_keys_for_windows as _promotion_decision_keys_for_windows,
+    runtime_ledger_bucket_promotion_payload as _runtime_ledger_bucket_promotion_payload,
+    runtime_ledger_trading_day_key as _runtime_ledger_trading_day_key,
+    runtime_matrix_path as _runtime_matrix_path,
+    safe_float as _safe_float,
+    safe_int as _safe_int,
+    utc as _utc,
+    windows_with_allowed_promotion_decisions as _windows_with_allowed_promotion_decisions,
     build_completion_trace,
     load_doc29_completion_matrix,
     persist_completion_trace,
@@ -950,5 +950,10 @@ def _live_scale_gate_result(
         'candidate_id': canary_gate.get('candidate_id'),
     }
 
+
+runtime_ledger_bucket_matches_window = _runtime_ledger_bucket_matches_window
+runtime_ledger_bucket_refs_for_windows = _runtime_ledger_bucket_refs_for_windows
+runtime_ledger_bucket_summary = _runtime_ledger_bucket_summary
+runtime_ledger_daily_summary = _runtime_ledger_daily_summary
 
 __all__ = [name for name in globals() if not name.startswith("__")]

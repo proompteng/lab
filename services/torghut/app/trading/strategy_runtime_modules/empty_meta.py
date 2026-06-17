@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Strategy runtime scaffolding for deterministic plugin execution."""
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from ...models import Strategy
 from ...strategies.catalog import extract_catalog_metadata
@@ -36,9 +36,47 @@ from ..strategy_specs import (
 
 # ruff: noqa: F401,F403,F405,F811,F821
 
+if TYPE_CHECKING:
+    from .evaluate_microbar_cross_sectional import (
+        PluginEvaluationResult,
+        StrategyContext,
+    )
+
 
 def _empty_meta() -> dict[str, Any]:
     return {}
+
+
+def _decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+
+
+def _target_notional(params: dict[str, Any]) -> Decimal:
+    notional = _decimal(params.get("max_notional_per_trade"))
+    if notional is None or notional <= 0:
+        return Decimal("100")
+    return notional
+
+
+def _resolved_target_notional(
+    params: dict[str, Any],
+    *,
+    multiplier: Decimal | None = None,
+) -> Decimal:
+    base_notional = _target_notional(params)
+    if multiplier is None or multiplier <= 0:
+        return base_notional
+    resolved = base_notional * multiplier
+    if resolved <= 0:
+        return base_notional
+    return resolved.quantize(Decimal("0.0001"))
 
 
 def _generic_plugin_trace(
@@ -82,6 +120,11 @@ def _plugin_result_from_sleeve_result(
     required_features: tuple[str, ...],
     evaluation: SleeveSignalResult | SleeveSignalEvaluation | None,
 ) -> PluginEvaluationResult:
+    from .evaluate_microbar_cross_sectional import (
+        PluginEvaluationResult,
+        StrategyIntent,
+    )
+
     if evaluation is None:
         return PluginEvaluationResult(intent=None, trace=None)
     if isinstance(evaluation, SleeveSignalEvaluation):
@@ -296,5 +339,25 @@ def _microbar_required_features(params: dict[str, Any]) -> tuple[str, ...]:
         required.append(gate_feature)
     return tuple(dict.fromkeys(required))
 
+
+# Public aliases used by split-module consumers.
+decimal = _decimal
+empty_meta = _empty_meta
+generic_plugin_trace = _generic_plugin_trace
+microbar_entry_window_minutes = _microbar_entry_window_minutes
+microbar_exit_minute_after_open = _microbar_exit_minute_after_open
+microbar_minutes_elapsed = _microbar_minutes_elapsed
+microbar_observed_rank_universe_size = _microbar_observed_rank_universe_size
+microbar_pair_max_legs = _microbar_pair_max_legs
+microbar_pair_rank_thresholds = _microbar_pair_rank_thresholds
+microbar_pair_side_count = _microbar_pair_side_count
+microbar_rank_thresholds = _microbar_rank_thresholds
+microbar_rank_universe_size = _microbar_rank_universe_size
+microbar_required_features = _microbar_required_features
+microbar_runtime_position_qty = _microbar_runtime_position_qty
+microbar_universe_size = _microbar_universe_size
+plugin_result_from_sleeve_result = _plugin_result_from_sleeve_result
+resolved_target_notional = _resolved_target_notional
+target_notional = _target_notional
 
 __all__ = [name for name in globals() if not name.startswith("__")]

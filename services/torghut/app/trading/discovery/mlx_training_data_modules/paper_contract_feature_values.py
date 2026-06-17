@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Training-row and ranker helpers for the MLX autoresearch proposal model."""
 
 from __future__ import annotations
@@ -28,34 +28,36 @@ from .shared_context import (
     MlxRankedRowsPolicyResult,
     MlxRankerModel,
     MlxTrainingRow,
-    _MECHANISM_OVERLAY_FEATURE_NAMES,
-    _MECHANISM_OVERLAY_IDS,
-    _PAPER_CONTRACT_FEATURE_NAMES,
-    _TorchArrayBackend,
-    _artifact_present,
-    _average_claim_confidence,
-    _bool_feature,
-    _claim_type_count,
-    _daily_target_shortfall,
-    _float,
-    _hard_veto_count,
-    _import_array_backend,
-    _import_torch_array_backend,
-    _mapping,
-    _mapping_sequence,
-    _mechanism_overlay_ids,
-    _params,
-    _positive_or_default,
-    _requirement_present,
-    _sequence_length,
-    _sequence_strings,
-    _stable_hash,
-    _strategy_universe_size,
-    _strings,
-    _truthy_contract_key_count,
-    _truthy_feature,
-    _unique_string_count,
-    _unique_strings,
+    MECHANISM_OVERLAY_FEATURE_NAMES as _MECHANISM_OVERLAY_FEATURE_NAMES,
+    MECHANISM_OVERLAY_IDS as _MECHANISM_OVERLAY_IDS,
+    PAPER_CONTRACT_FEATURE_NAMES as _PAPER_CONTRACT_FEATURE_NAMES,
+    TorchArrayBackend as _TorchArrayBackend,
+    artifact_present as _artifact_present,
+    average_claim_confidence as _average_claim_confidence,
+    bool_feature as _bool_feature,
+    claim_type_count as _claim_type_count,
+    daily_target_shortfall as _daily_target_shortfall,
+    float_value as _float,
+    format_float as _format_float,
+    hard_veto_count as _hard_veto_count,
+    import_array_backend as _import_array_backend,
+    import_torch_array_backend as _import_torch_array_backend,
+    mapping as _mapping,
+    mapping_sequence as _mapping_sequence,
+    mean as _mean,
+    mechanism_overlay_ids as _mechanism_overlay_ids,
+    params as _params,
+    positive_or_default as _positive_or_default,
+    requirement_present as _requirement_present,
+    sequence_length as _sequence_length,
+    sequence_strings as _sequence_strings,
+    stable_hash as _stable_hash,
+    strategy_universe_size as _strategy_universe_size,
+    strings as _strings,
+    truthy_contract_key_count as _truthy_contract_key_count,
+    truthy_feature as _truthy_feature,
+    unique_string_count as _unique_string_count,
+    unique_strings as _unique_strings,
 )
 
 
@@ -630,10 +632,6 @@ def _historical_proof_penalty(
     )
 
 
-def _format_float(value: float) -> str:
-    return format(value, ".12g")
-
-
 def _family_code(family_template_id: str) -> float:
     families = {
         "breakout_reclaim_v2": 1.0,
@@ -649,12 +647,6 @@ def _family_code(family_template_id: str) -> float:
         "mean_reversion_exhaustion_short_v1": 11.0,
     }
     return families.get(family_template_id, 0.0)
-
-
-def _mean(values: Sequence[float]) -> float:
-    if not values:
-        return 0.0
-    return sum(values) / len(values)
 
 
 def _std(values: Sequence[float], *, mean: float) -> float:
@@ -673,4 +665,18 @@ def _scalar_float(value: Any) -> float:
     return float(value)
 
 
+# Public aliases used by split-module consumers.
+capital_rank_count_floor = _capital_rank_count_floor
+deployable_lower_bound_failed_gate_count = _deployable_lower_bound_failed_gate_count
+deployable_lower_bound_proof_penalty = _deployable_lower_bound_proof_penalty
+deployable_lower_bound_target_shortfall = _deployable_lower_bound_target_shortfall
+family_code = _family_code
+historical_proof_penalty = _historical_proof_penalty
+net_pnl_per_100k_filled_notional = _net_pnl_per_100k_filled_notional
+observed_replay_viability_penalty = _observed_replay_viability_penalty
+paper_contract_feature_values = _paper_contract_feature_values
+post_cost_efficiency_penalty = _post_cost_efficiency_penalty
+proof_target_shortfall = _proof_target_shortfall
+scalar_float = _scalar_float
+std = _std
 __all__ = [name for name in globals() if not name.startswith("__")]

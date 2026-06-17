@@ -145,11 +145,15 @@ def _signal_bootstrap_grace_active(
 
 
 FRESH_TAIL_NO_SIGNAL_REASONS = _FRESH_TAIL_NO_SIGNAL_REASONS
+coerce_recovery_reason_sequence = _coerce_recovery_reason_sequence
 is_market_session_open = _is_market_session_open
+is_recoverable_emergency_stop_reason = _is_recoverable_emergency_stop_reason
 latch_signal_continuity_alert_state = _latch_signal_continuity_alert_state
+merge_emergency_stop_reasons = _merge_emergency_stop_reasons
 record_signal_continuity_recovery_cycle = _record_signal_continuity_recovery_cycle
 signal_bootstrap_grace_active = _signal_bootstrap_grace_active
 signal_tail_is_fresh = _signal_tail_is_fresh
+split_emergency_stop_reasons = _split_emergency_stop_reasons
 
 
 __all__ = [
@@ -164,9 +168,13 @@ __all__ = [
     "_signal_tail_is_fresh",
     "_split_emergency_stop_reasons",
     "FRESH_TAIL_NO_SIGNAL_REASONS",
+    "coerce_recovery_reason_sequence",
     "is_market_session_open",
+    "is_recoverable_emergency_stop_reason",
     "latch_signal_continuity_alert_state",
+    "merge_emergency_stop_reasons",
     "record_signal_continuity_recovery_cycle",
     "signal_bootstrap_grace_active",
     "signal_tail_is_fresh",
+    "split_emergency_stop_reasons",
 ]

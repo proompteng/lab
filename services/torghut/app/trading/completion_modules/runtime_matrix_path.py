@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 # fmt: off
 """Traceability helpers for doc 29 completion gates."""
 
@@ -151,12 +151,17 @@ def _median_decimal(values: Sequence[Decimal]) -> Decimal:
         return sorted_values[middle]
     return (sorted_values[middle - 1] + sorted_values[middle]) / Decimal('2')
 
+median_decimal = _median_decimal
+
 def _p10_decimal(values: Sequence[Decimal]) -> Decimal:
     if not values:
         return Decimal('0')
     sorted_values = sorted(values)
     index = max(0, ((len(sorted_values) + 9) // 10) - 1)
     return sorted_values[index]
+
+runtime_ledger_trading_day_key = _runtime_ledger_trading_day_key
+p10_decimal = _p10_decimal
 
 def _gate_policy_parameters(
     gate_definition: Mapping[str, Any] | None,
@@ -634,6 +639,42 @@ def _runtime_ledger_bucket_promotion_payload(
         'lineage_hash_counts': bucket.lineage_hash_counts,
     }
     return {**payload, **canonical_fields}
+
+
+PromotionDecisionKey = _PromotionDecisionKey
+RUNTIME_LEDGER_BUCKET_SCHEMAS = _RUNTIME_LEDGER_BUCKET_SCHEMAS
+as_dict = _as_dict
+as_list = _as_list
+as_text = _as_text
+candidate_hypothesis_manifests = _candidate_hypothesis_manifests
+doc_matrix_path = _doc_matrix_path
+gate_policy_parameters = _gate_policy_parameters
+latest_completion_rows = _latest_completion_rows
+latest_completion_rows_filtered = _latest_completion_rows_filtered
+latest_empirical_rows = _latest_empirical_rows
+latest_hypothesis_windows = _latest_hypothesis_windows
+load_hypothesis_manifests_by_id = _load_hypothesis_manifests_by_id
+load_yaml_mapping = _load_yaml_mapping
+manifest_runtime_session_threshold = _manifest_runtime_session_threshold
+median_decimal = _median_decimal
+normalize_gate_definition = _normalize_gate_definition
+p10_decimal = _p10_decimal
+policy_int = _policy_int
+positive_hash_count = _positive_hash_count
+promotion_decision_blocked_reason = _promotion_decision_blocked_reason
+promotion_decision_key = _promotion_decision_key
+promotion_decision_key_for_decision = _promotion_decision_key_for_decision
+promotion_decision_key_for_window = _promotion_decision_key_for_window
+promotion_decision_keys_for_windows = _promotion_decision_keys_for_windows
+runtime_ledger_bucket_promotion_payload = _runtime_ledger_bucket_promotion_payload
+runtime_ledger_trading_day_key = _runtime_ledger_trading_day_key
+runtime_matrix_path = _runtime_matrix_path
+safe_float = _safe_float
+safe_int = _safe_int
+utc = _utc
+windows_with_allowed_promotion_decisions = (
+    _windows_with_allowed_promotion_decisions
+)
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

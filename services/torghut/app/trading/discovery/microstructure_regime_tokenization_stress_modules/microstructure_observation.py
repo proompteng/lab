@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only microstructure regime/tokenization replay stress.
 
 This module converts current 2025-2026 market-microstructure papers into
@@ -33,22 +33,22 @@ from .shared_context import (
     MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_PROOF_SEMANTICS_LABEL,
     MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_SCHEMA_VERSION,
     MicrostructureRegimeTokenizationStressSummary,
-    _BINNED_FIELD_TOKENS,
-    _DEPTH_FIELDS,
-    _EARLY_WARNING_LOOKAHEAD,
-    _EVENT_TYPE_FIELDS,
-    _LOBERT_LIFECYCLE_ACTIONS,
-    _MESSAGE_TIME_DELTA_FIELDS,
-    _MIN_EARLY_WARNING_ROWS,
-    _OFI_FIELDS,
-    _ORDER_ID_FIELDS,
-    _POST_MESSAGE_SNAPSHOT_PRICE_FIELDS,
-    _PRICE_FIELDS,
-    _RAW_EVENT_FIELDS,
-    _RETURN_BPS_FIELDS,
-    _SIDE_FIELDS,
-    _SIZE_FIELDS,
-    _SPREAD_FIELDS,
+    BINNED_FIELD_TOKENS as _BINNED_FIELD_TOKENS,
+    DEPTH_FIELDS as _DEPTH_FIELDS,
+    EARLY_WARNING_LOOKAHEAD as _EARLY_WARNING_LOOKAHEAD,
+    EVENT_TYPE_FIELDS as _EVENT_TYPE_FIELDS,
+    LOBERT_LIFECYCLE_ACTIONS as _LOBERT_LIFECYCLE_ACTIONS,
+    MESSAGE_TIME_DELTA_FIELDS as _MESSAGE_TIME_DELTA_FIELDS,
+    MIN_EARLY_WARNING_ROWS as _MIN_EARLY_WARNING_ROWS,
+    OFI_FIELDS as _OFI_FIELDS,
+    ORDER_ID_FIELDS as _ORDER_ID_FIELDS,
+    POST_MESSAGE_SNAPSHOT_PRICE_FIELDS as _POST_MESSAGE_SNAPSHOT_PRICE_FIELDS,
+    PRICE_FIELDS as _PRICE_FIELDS,
+    RAW_EVENT_FIELDS as _RAW_EVENT_FIELDS,
+    RETURN_BPS_FIELDS as _RETURN_BPS_FIELDS,
+    SIDE_FIELDS as _SIDE_FIELDS,
+    SIZE_FIELDS as _SIZE_FIELDS,
+    SPREAD_FIELDS as _SPREAD_FIELDS,
     build_microstructure_regime_tokenization_stress_schema_hash,
     extract_microstructure_regime_tokenization_stress,
     microstructure_regime_tokenization_stress_contract,
@@ -375,6 +375,20 @@ def _json_ready(value: Any) -> Any:
     return value
 
 
+# Public aliases used by split-module consumers.
+MicrostructureObservation = _MicrostructureObservation
+attach_computed_returns = _attach_computed_returns
+depth_proxy = _depth_proxy
+event_type = _event_type
+first_number = _first_number
+first_value = _first_value
+has_lobert_lifecycle_action = _has_lobert_lifecycle_action
+has_post_message_snapshot = _has_post_message_snapshot
+latent_regime_early_warning = _latent_regime_early_warning
+number_or_none = _number_or_none
+stable_float = _stable_float
+stable_hash = _stable_hash
+stylized_fact_gap = _stylized_fact_gap
 __all__ = [
     "MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_PRIMARY_SOURCES",
     "MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_PROOF_SEMANTICS_LABEL",

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from http.client import HTTPConnection, HTTPSConnection
@@ -38,21 +39,28 @@ from .shared_context import (
     LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN,
     SIMULATION_CURSOR_BASELINE,
     SignalBatch,
-    _ClickHouseSignalIngestorFields,
-    _coerce_count,
-    _simulation_fetch_window,
+    ClickHouseSignalIngestorFields as _ClickHouseSignalIngestorFields,
+    coerce_count as _coerce_count,
+    simulation_fetch_window as _simulation_fetch_window,
     logger,
 )
 from .clickhouse_signal_ingestor_core_methods import (
-    _ClickHouseSignalIngestorCoreMethods,
+    ClickHouseSignalIngestorCoreMethods as _ClickHouseSignalIngestorCoreMethods,
 )
 from .clickhouse_signal_ingestor_market_methods import (
-    _ClickHouseRequest,
-    _ClickHouseSignalIngestorMarketMethods,
-    _LatestSignalCacheLookup,
-    _column_names_from_rows,
-    _latest_signal_timestamp_from_rows,
+    ClickHouseRequest as _ClickHouseRequest,
+    ClickHouseSignalIngestorMarketMethods as _ClickHouseSignalIngestorMarketMethods,
+    LatestSignalCacheLookup as _LatestSignalCacheLookup,
+    column_names_from_rows as _column_names_from_rows,
+    latest_signal_timestamp_from_rows as _latest_signal_timestamp_from_rows,
 )
+
+
+def _ingest_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("app.trading.ingest")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 class _ClickHouseSignalIngestorPersistenceMethods:
@@ -96,7 +104,8 @@ class _ClickHouseSignalIngestorPersistenceMethods:
             if cursor_at.tzinfo is None:
                 cursor_at = cursor_at.replace(tzinfo=timezone.utc)
             if self.simulation_mode and cursor_at <= SIMULATION_CURSOR_BASELINE:
-                return trading_now(account_label=self.account_label), None, None
+                now_provider = _ingest_root_export("trading_now", trading_now)
+                return now_provider(account_label=self.account_label), None, None
             if self.simulation_mode:
                 normalized_cursor = normalize_simulation_cursor(cursor_at)
                 if normalized_cursor is not None and normalized_cursor != cursor_at:
@@ -104,7 +113,8 @@ class _ClickHouseSignalIngestorPersistenceMethods:
             return cursor_at, cursor_row.cursor_seq, cursor_row.cursor_symbol
 
         if self.simulation_mode:
-            return trading_now(account_label=self.account_label), None, None
+            now_provider = _ingest_root_export("trading_now", trading_now)
+            return now_provider(account_label=self.account_label), None, None
 
         lookback = timedelta(minutes=self.initial_lookback_minutes)
         return datetime.now(timezone.utc) - lookback, None, None
@@ -717,5 +727,44 @@ def _dedupe_columns(columns: list[str]) -> list[str]:
         seen.add(col)
     return selected
 
+
+# Public aliases used by split-module consumers.
+next_signal_cursor_state = _next_signal_cursor_state
+normalized_signal_symbols = _normalized_signal_symbols
+normalized_signal_timeframes = _normalized_signal_timeframes
+quote_literal = _quote_literal
+signal_scope_key = _signal_scope_key
+ClickHouseSignalIngestorPersistenceMethods = _ClickHouseSignalIngestorPersistenceMethods
+coerce_seq = _coerce_seq
+coerce_timeframe = _coerce_timeframe
+copy_extended_ta_fields = _copy_extended_ta_fields
+copy_row_value_if_missing = _copy_row_value_if_missing
+copy_row_values_if_missing = _copy_row_values_if_missing
+dedupe_columns = _dedupe_columns
+ensure_price_value = _ensure_price_value
+mark_non_authority_stale_fallback_signal = _mark_non_authority_stale_fallback_signal
+merge_dict_payload = _merge_dict_payload
+merge_flat_row_fallbacks = _merge_flat_row_fallbacks
+merge_imbalance_payload = _merge_imbalance_payload
+merge_macd_payload = _merge_macd_payload
+merge_microstructure_signal_payload = _merge_microstructure_signal_payload
+merge_signal_json_payload = _merge_signal_json_payload
+normalize_payload = _normalize_payload
+normalized_signal_sources = _normalized_signal_sources
+parse_ts = _parse_ts
+payload_from_flat_row = _payload_from_flat_row
+prefer_preferred_signal = _prefer_preferred_signal
+select_columns = _select_columns
+signal_identity = _signal_identity
+signal_matches_active_simulation_run = _signal_matches_active_simulation_run
+signal_payload_context_fingerprint = _signal_payload_context_fingerprint
+signal_payload_fingerprint = _signal_payload_fingerprint
+signal_preference_key = _signal_preference_key
+signal_provenance_completeness = _signal_provenance_completeness
+signal_provenance_key = _signal_provenance_key
+signal_simulation_context = _signal_simulation_context
+signal_sort_key = _signal_sort_key
+timeframe_from_iso_duration = _timeframe_from_iso_duration
+timeframes_to_iso_durations = _timeframes_to_iso_durations
 
 __all__ = [name for name in globals() if not name.startswith("__")]

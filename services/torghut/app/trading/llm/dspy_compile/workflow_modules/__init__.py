@@ -1,57 +1,96 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.resolve_promotion_gate_snapshot"
+from .shared_context import (
+    hashlib,
+    json,
+    re,
+    time,
+    datetime,
+    timezone,
+    HTTPConnection,
+    HTTPSConnection,
+    Path,
+    Any,
+    Literal,
+    Mapping,
+    Sequence,
+    cast,
+    quote,
+    urlencode,
+    unquote,
+    urlsplit,
+    select,
+    Session,
+    settings,
+    LLMDSPyWorkflowArtifact,
+    coerce_json_payload,
+    hash_payload,
+    DSPyArtifactBundle,
+    DSPyCompileResult,
+    DSPyEvalReport,
+    DSPyPromotionRecord,
+    DSPyWorkflowLane,
+    DSPyWorkflowExecutionMode,
+    resolve_default_dspy_universe_ref,
+    build_compile_result,
+    build_eval_report,
+    build_promotion_record,
+    bundle_artifacts,
+    write_artifact_bundle,
+    upsert_workflow_artifact_record,
+    build_dspy_agentrun_payload,
+    submit_agents_agentrun,
+    get_agents_agentrun,
+    wait_for_agents_agentrun_terminal_status,
+    normalize_string_parameter as _normalize_string_parameter,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .resolve_promotion_gate_snapshot import (
+    dataclass,
+    orchestrate_dspy_agentrun_workflow,
+)
 
-__compat_module__ = __compat_import_module__(f"{__name__}.load_eval_report_from_ref")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "hashlib",
+    "json",
+    "re",
+    "time",
+    "datetime",
+    "timezone",
+    "HTTPConnection",
+    "HTTPSConnection",
+    "Path",
+    "Any",
+    "Literal",
+    "Mapping",
+    "Sequence",
+    "cast",
+    "quote",
+    "urlencode",
+    "unquote",
+    "urlsplit",
+    "select",
+    "Session",
+    "settings",
+    "LLMDSPyWorkflowArtifact",
+    "coerce_json_payload",
+    "hash_payload",
+    "DSPyArtifactBundle",
+    "DSPyCompileResult",
+    "DSPyEvalReport",
+    "DSPyPromotionRecord",
+    "DSPyWorkflowLane",
+    "DSPyWorkflowExecutionMode",
+    "resolve_default_dspy_universe_ref",
+    "build_compile_result",
+    "build_eval_report",
+    "build_promotion_record",
+    "bundle_artifacts",
+    "write_artifact_bundle",
+    "upsert_workflow_artifact_record",
+    "build_dspy_agentrun_payload",
+    "submit_agents_agentrun",
+    "get_agents_agentrun",
+    "wait_for_agents_agentrun_terminal_status",
+    "dataclass",
+    "orchestrate_dspy_agentrun_workflow",
+    "_normalize_string_parameter",
 ]
-del __compat_module__

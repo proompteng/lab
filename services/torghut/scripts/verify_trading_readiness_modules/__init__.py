@@ -1,73 +1,52 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.paper_route_target_plan_summary"
+from .shared_context import (
+    argparse,
+    json,
+    Mapping,
+    Sequence,
+    datetime,
+    timezone,
+    Decimal,
+    InvalidOperation,
+    Path,
+    Any,
+    cast,
+    urlopen,
+    SCHEMA_VERSION,
+    ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION,
+    ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION,
+    NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION,
+    RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
+    TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION,
+    TIGERBEETLE_PARITY_STATUS_PASS,
+    DOC29_LIVE_SCALE_GATE,
+    REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .evaluate_trading_readiness import evaluate_trading_readiness
+from .main import main
 
-__compat_module__ = __compat_import_module__(f"{__name__}.add_tigerbeetle_parity_check")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.evaluate_trading_readiness")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.main")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "argparse",
+    "json",
+    "Mapping",
+    "Sequence",
+    "datetime",
+    "timezone",
+    "Decimal",
+    "InvalidOperation",
+    "Path",
+    "Any",
+    "cast",
+    "urlopen",
+    "SCHEMA_VERSION",
+    "ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION",
+    "ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION",
+    "NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION",
+    "RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION",
+    "TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION",
+    "TIGERBEETLE_PARITY_STATUS_PASS",
+    "DOC29_LIVE_SCALE_GATE",
+    "REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS",
+    "evaluate_trading_readiness",
+    "main",
 ]
-del __compat_module__

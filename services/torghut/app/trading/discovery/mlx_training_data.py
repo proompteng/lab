@@ -1,14 +1,84 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
+from app.trading.discovery.mlx_training_data_modules import (
+    hashlib,
+    importlib,
+    json,
+    dataclass,
+    UTC,
+    datetime,
+    Any,
+    Mapping,
+    Sequence,
+    cast,
+    CandidateSpec,
+    estimate_capital_budget,
+    CandidateEvidenceBundle,
+    deployable_lower_bound_missing_count,
+    deployable_lower_bound_net_pnl_per_day,
+    deployable_proof_failed_gate_count,
+    MLX_RANKER_SCHEMA_VERSION,
+    MlxTrainingRow,
+    MlxRankerModel,
+    MlxRankedCandidate,
+    MlxRankBucketLift,
+    MlxRankedRowsPolicyResult,
+    candidate_spec_capital_features,
+    capital_budget_penalty,
+    configured_daily_notional_capacity_penalty,
+    observed_capital_penalty,
+    build_mlx_training_rows,
+    train_mlx_ranker,
+    rank_training_rows,
+    compute_rank_bucket_lift,
+    rank_training_rows_with_lift_policy,
+    mlx_ranker_model_from_payload,
+)
+from app.trading.discovery.mlx_training_data_modules.paper_contract_feature_values import (
+    observed_replay_viability_penalty as _observed_replay_viability_penalty,
+)
+from app.trading.discovery.mlx_training_data_modules.shared_context import (
+    hard_veto_count as _hard_veto_count,
+    import_array_backend as _import_array_backend,
+    import_torch_array_backend as _import_torch_array_backend,
+    sequence_strings as _sequence_strings,
+)
 
-from importlib import import_module as _import_module
-import sys as _sys
-
-_module_name = __name__
-_parent_name, _, _module_attr = _module_name.rpartition(".")
-_impl = _import_module("app.trading.discovery.mlx_training_data_modules")
-globals().update(_impl.__dict__)
-_sys.modules[_module_name] = _impl
-_parent = _sys.modules.get(_parent_name)
-if _parent is not None:
-    setattr(_parent, _module_attr, _impl)
+__all__ = [
+    "hashlib",
+    "importlib",
+    "json",
+    "dataclass",
+    "UTC",
+    "datetime",
+    "Any",
+    "Mapping",
+    "Sequence",
+    "cast",
+    "CandidateSpec",
+    "estimate_capital_budget",
+    "CandidateEvidenceBundle",
+    "deployable_lower_bound_missing_count",
+    "deployable_lower_bound_net_pnl_per_day",
+    "deployable_proof_failed_gate_count",
+    "MLX_RANKER_SCHEMA_VERSION",
+    "MlxTrainingRow",
+    "MlxRankerModel",
+    "MlxRankedCandidate",
+    "MlxRankBucketLift",
+    "MlxRankedRowsPolicyResult",
+    "candidate_spec_capital_features",
+    "capital_budget_penalty",
+    "configured_daily_notional_capacity_penalty",
+    "observed_capital_penalty",
+    "build_mlx_training_rows",
+    "train_mlx_ranker",
+    "rank_training_rows",
+    "compute_rank_bucket_lift",
+    "rank_training_rows_with_lift_policy",
+    "mlx_ranker_model_from_payload",
+    "_hard_veto_count",
+    "_import_array_backend",
+    "_import_torch_array_backend",
+    "_observed_replay_viability_penalty",
+    "_sequence_strings",
+]

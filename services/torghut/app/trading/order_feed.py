@@ -6,8 +6,8 @@ from .order_feed_modules.shared_context import (
     ORDER_FEED_SOURCE_REVISION,
     NormalizationResult,
     NormalizedOrderEvent,
-    OrderFeedIngestor,
 )
+from .order_feed_modules.order_feed_ingestor import OrderFeedIngestor
 from .order_feed_modules.normalize_order_feed_record import (
     apply_order_event_to_execution,
     latest_order_event_for_execution,

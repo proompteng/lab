@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only queue-survival fill stress for replay candidate ranking.
 
 This module actualizes recent queue-position, fill-probability, and execution-delay
@@ -18,6 +18,18 @@ from typing import Any, cast
 from app.trading.models import SignalEnvelope
 
 # ruff: noqa: F401,F403,F405,F811,F821
+
+
+def _stable_float(value: float) -> str:
+    from .group_normalized_downside_reward_penalty_b import stable_float as impl
+
+    return impl(value)
+
+
+def _stable_hash(payload: Mapping[str, Any]) -> str:
+    from .group_normalized_downside_reward_penalty_b import stable_hash as impl
+
+    return impl(payload)
 
 
 QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION = "torghut.queue-survival-fill-stress.v5"
@@ -450,4 +462,42 @@ def build_queue_survival_fill_stress_schema_hash() -> str:
     return _stable_hash(queue_survival_fill_stress_contract())
 
 
+# Public aliases used by split-module consumers.
+ADD_TOKENS = _ADD_TOKENS
+ASK_SIZE_FIELDS = _ASK_SIZE_FIELDS
+BID_SIZE_FIELDS = _BID_SIZE_FIELDS
+CANCEL_TOKENS = _CANCEL_TOKENS
+EVENT_FIELDS = _EVENT_FIELDS
+FILL_FIELDS = _FILL_FIELDS
+FILL_TOKENS = _FILL_TOKENS
+FillBeforeMoveStats = _FillBeforeMoveStats
+ORDER_BOOK_IMBALANCE_FIELDS = _ORDER_BOOK_IMBALANCE_FIELDS
+PRICE_FIELDS = _PRICE_FIELDS
+QUEUE_POSITION_FIELDS = _QUEUE_POSITION_FIELDS
+QUEUE_RATIO_FIELDS = _QUEUE_RATIO_FIELDS
+QUEUE_REACTIVE_EVENT_KINDS = _QUEUE_REACTIVE_EVENT_KINDS
+REJECT_TOKENS = _REJECT_TOKENS
+SIDE_FIELDS = _SIDE_FIELDS
+SPREAD_FIELDS = _SPREAD_FIELDS
+STATUS_FIELDS = _STATUS_FIELDS
+VOLUME_FIELDS = _VOLUME_FIELDS
+
+ADD_TOKENS_split_export = _ADD_TOKENS
+ASK_SIZE_FIELDS_split_export = _ASK_SIZE_FIELDS
+BID_SIZE_FIELDS_split_export = _BID_SIZE_FIELDS
+CANCEL_TOKENS_split_export = _CANCEL_TOKENS
+EVENT_FIELDS_split_export = _EVENT_FIELDS
+FILL_FIELDS_split_export = _FILL_FIELDS
+FILL_TOKENS_split_export = _FILL_TOKENS
+FillBeforeMoveStats_split_export = _FillBeforeMoveStats
+ORDER_BOOK_IMBALANCE_FIELDS_split_export = _ORDER_BOOK_IMBALANCE_FIELDS
+PRICE_FIELDS_split_export = _PRICE_FIELDS
+QUEUE_POSITION_FIELDS_split_export = _QUEUE_POSITION_FIELDS
+QUEUE_RATIO_FIELDS_split_export = _QUEUE_RATIO_FIELDS
+QUEUE_REACTIVE_EVENT_KINDS_split_export = _QUEUE_REACTIVE_EVENT_KINDS
+REJECT_TOKENS_split_export = _REJECT_TOKENS
+SIDE_FIELDS_split_export = _SIDE_FIELDS
+SPREAD_FIELDS_split_export = _SPREAD_FIELDS
+STATUS_FIELDS_split_export = _STATUS_FIELDS
+VOLUME_FIELDS_split_export = _VOLUME_FIELDS
 __all__ = [name for name in globals() if not name.startswith("__")]

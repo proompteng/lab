@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only microstructure regime/tokenization replay stress.
 
 This module converts current 2025-2026 market-microstructure papers into
@@ -26,6 +26,18 @@ from typing import Any, cast
 from app.trading.models import SignalEnvelope
 
 # ruff: noqa: F401,F403,F405,F811,F821
+
+
+def _stable_float(value: float) -> str:
+    from .microstructure_observation import stable_float as impl
+
+    return impl(value)
+
+
+def _stable_hash(payload: Mapping[str, Any]) -> str:
+    from .microstructure_observation import stable_hash as impl
+
+    return impl(payload)
 
 
 MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_SCHEMA_VERSION = (
@@ -407,6 +419,20 @@ def extract_microstructure_regime_tokenization_stress(
 ) -> MicrostructureRegimeTokenizationStressSummary:
     """Extract deterministic event-stream/regime stress from replay rows."""
 
+    from .microstructure_observation import (
+        MicrostructureObservation as _MicrostructureObservation,
+        attach_computed_returns as _attach_computed_returns,
+        depth_proxy as _depth_proxy,
+        event_type as _event_type,
+        first_number as _first_number,
+        first_value as _first_value,
+        has_lobert_lifecycle_action as _has_lobert_lifecycle_action,
+        has_post_message_snapshot as _has_post_message_snapshot,
+        latent_regime_early_warning as _latent_regime_early_warning,
+        number_or_none as _number_or_none,
+        stylized_fact_gap as _stylized_fact_gap,
+    )
+
     ordered = tuple(
         sorted(records, key=lambda item: (item.event_ts, item.symbol, item.seq or 0))
     )
@@ -697,4 +723,21 @@ def extract_microstructure_regime_tokenization_stress(
     )
 
 
+# Public aliases used by split-module consumers.
+BINNED_FIELD_TOKENS = _BINNED_FIELD_TOKENS
+DEPTH_FIELDS = _DEPTH_FIELDS
+EARLY_WARNING_LOOKAHEAD = _EARLY_WARNING_LOOKAHEAD
+EVENT_TYPE_FIELDS = _EVENT_TYPE_FIELDS
+LOBERT_LIFECYCLE_ACTIONS = _LOBERT_LIFECYCLE_ACTIONS
+MESSAGE_TIME_DELTA_FIELDS = _MESSAGE_TIME_DELTA_FIELDS
+MIN_EARLY_WARNING_ROWS = _MIN_EARLY_WARNING_ROWS
+OFI_FIELDS = _OFI_FIELDS
+ORDER_ID_FIELDS = _ORDER_ID_FIELDS
+POST_MESSAGE_SNAPSHOT_PRICE_FIELDS = _POST_MESSAGE_SNAPSHOT_PRICE_FIELDS
+PRICE_FIELDS = _PRICE_FIELDS
+RAW_EVENT_FIELDS = _RAW_EVENT_FIELDS
+RETURN_BPS_FIELDS = _RETURN_BPS_FIELDS
+SIDE_FIELDS = _SIDE_FIELDS
+SIZE_FIELDS = _SIZE_FIELDS
+SPREAD_FIELDS = _SPREAD_FIELDS
 __all__ = [name for name in globals() if not name.startswith("__")]

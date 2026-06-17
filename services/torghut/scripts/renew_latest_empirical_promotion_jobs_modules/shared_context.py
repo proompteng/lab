@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Renew empirical promotion artifacts from the latest authoritative replay outputs."""
 
@@ -697,5 +697,32 @@ def _runtime_window_target_is_paper_route_collection(
         or bool(_as_text_list(target_metadata.get("paper_route_probe_symbols")))
     )
 
+
+# Public aliases used by split-module consumers.
+as_dict = _as_dict
+as_sequence = _as_sequence
+as_text = _as_text
+as_text_list = _as_text_list
+nonnegative_int = _nonnegative_int
+normalized_sim_backed_source_account_label = _normalized_sim_backed_source_account_label
+parse_args = _parse_args
+parse_dt = _parse_dt
+read_runtime_window_manifest = _read_runtime_window_manifest
+runtime_manifest_delay_depth_stress_report_ref = (
+    _runtime_manifest_delay_depth_stress_report_ref
+)
+runtime_manifest_entry_requirements = _runtime_manifest_entry_requirements
+runtime_manifest_requires_delay_depth_stress = (
+    _runtime_manifest_requires_delay_depth_stress
+)
+runtime_version_ref = _runtime_version_ref
+runtime_window_delay_depth_remediation = _runtime_window_delay_depth_remediation
+runtime_window_target_is_paper_route_collection = (
+    _runtime_window_target_is_paper_route_collection
+)
+runtime_window_target_plan_import_blocked_result = (
+    _runtime_window_target_plan_import_blocked_result
+)
+utc_iso = _utc_iso
 
 __all__ = [name for name in globals() if not name.startswith("__")]

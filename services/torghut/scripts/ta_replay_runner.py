@@ -1,16 +1,86 @@
 from __future__ import annotations
+from scripts.ta_replay_runner_modules import (
+    APPLY_CONFIRMATION_PHRASE,
+    CLICKHOUSE_TA_TTL_DAYS,
+    DEFAULT_KAFKA_RETENTION_TOPICS,
+    DERIVED_TA_TOPIC_ROLES,
+    FAILED_RUN_STATES,
+    MILLISECONDS_PER_DAY,
+    RAW_REPLAY_SOURCE_TOPIC_ROLES,
+    ReplayState,
+    SUPPORTED_NAMESPACE,
+    TA_CONFIGMAP,
+    TA_DEPLOYMENT,
+    _build_replay_feasibility,
+    _clickhouse_basic_auth,
+    _clickhouse_query,
+    _day_gap_query,
+    _handle_apply_mode,
+    _handle_plan_mode,
+    _handle_verify_mode,
+    _kafka_topic_config,
+    _kafka_topic_items_by_name,
+    _kafka_topic_ready_status,
+    _kubectl_binary,
+    _kubectl_get_kafka_topics_json,
+    _load_clickhouse_coverage,
+    _load_kafka_retention,
+    _load_state,
+    _parse_int_field,
+    _parse_kafka_retention_topic_overrides,
+    _parse_tsv_with_names,
+    _plan_command,
+    _print_plan_text,
+    _require_kubectl,
+    _require_supported_namespace,
+    _required_calendar_days_from_trading_days,
+    _topic_role_has_blocker,
+    _validate_apply_preconditions,
+    _validate_plan_args,
+    main,
+    parse_args,
+)
 
-from importlib import import_module as _import_module
-import sys as _sys
-
-_module_name = __name__
-_parent_name, _, _module_attr = _module_name.rpartition(".")
-_impl = _import_module("scripts.ta_replay_runner_modules")
-globals().update(_impl.__dict__)
-_sys.modules[_module_name] = _impl
-_parent = _sys.modules.get(_parent_name)
-if _parent is not None:
-    setattr(_parent, _module_attr, _impl)
-
+__all__ = [
+    "APPLY_CONFIRMATION_PHRASE",
+    "CLICKHOUSE_TA_TTL_DAYS",
+    "DEFAULT_KAFKA_RETENTION_TOPICS",
+    "DERIVED_TA_TOPIC_ROLES",
+    "FAILED_RUN_STATES",
+    "MILLISECONDS_PER_DAY",
+    "RAW_REPLAY_SOURCE_TOPIC_ROLES",
+    "ReplayState",
+    "SUPPORTED_NAMESPACE",
+    "TA_CONFIGMAP",
+    "TA_DEPLOYMENT",
+    "_build_replay_feasibility",
+    "_clickhouse_basic_auth",
+    "_clickhouse_query",
+    "_day_gap_query",
+    "_handle_apply_mode",
+    "_handle_plan_mode",
+    "_handle_verify_mode",
+    "_kafka_topic_config",
+    "_kafka_topic_items_by_name",
+    "_kafka_topic_ready_status",
+    "_kubectl_binary",
+    "_kubectl_get_kafka_topics_json",
+    "_load_clickhouse_coverage",
+    "_load_kafka_retention",
+    "_load_state",
+    "_parse_int_field",
+    "_parse_kafka_retention_topic_overrides",
+    "_parse_tsv_with_names",
+    "_plan_command",
+    "_print_plan_text",
+    "_require_kubectl",
+    "_require_supported_namespace",
+    "_required_calendar_days_from_trading_days",
+    "_topic_role_has_blocker",
+    "_validate_apply_preconditions",
+    "_validate_plan_args",
+    "main",
+    "parse_args",
+]
 if __name__ == "__main__":
-    raise SystemExit(_impl.main())
+    raise SystemExit(main())

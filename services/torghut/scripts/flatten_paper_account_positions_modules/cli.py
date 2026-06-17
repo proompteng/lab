@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from contextlib import nullcontext
 from typing import Any, cast
 
@@ -28,6 +29,13 @@ from .flatten_core import (
 from .lineage_execution import flatten_paper_account_positions
 
 
+def _facade_attr(name: str, fallback: Any) -> Any:
+    facade = sys.modules.get("scripts.flatten_paper_account_positions")
+    if facade is None:
+        return fallback
+    return getattr(facade, name, fallback)
+
+
 def main() -> int:
     args = _parse_args()
     max_gross_market_value = _decimal(
@@ -38,9 +46,23 @@ def main() -> int:
         args.limit_away_bps,
         default=DEFAULT_EXTENDED_HOURS_LIMIT_AWAY_BPS,
     )
-    client = TorghutAlpacaClient(paper=True, base_url=str(args.paper_base_url or ""))
-    firewall = OrderFirewall(client)
-    session_factory, session_engine, database_dsn_env = _session_factory_from_env(
+    client_factory = _facade_attr("TorghutAlpacaClient", TorghutAlpacaClient)
+    firewall_factory = _facade_attr("OrderFirewall", OrderFirewall)
+    session_factory_from_env = _facade_attr(
+        "_session_factory_from_env",
+        _session_factory_from_env,
+    )
+    snapshot_writer = _facade_attr(
+        "snapshot_account_and_positions",
+        snapshot_account_and_positions,
+    )
+    flatten_positions = _facade_attr(
+        "flatten_paper_account_positions",
+        flatten_paper_account_positions,
+    )
+    client = client_factory(paper=True, base_url=str(args.paper_base_url or ""))
+    firewall = firewall_factory(client)
+    session_factory, session_engine, database_dsn_env = session_factory_from_env(
         str(args.database_dsn_env or "DB_DSN")
     )
     try:
@@ -48,7 +70,7 @@ def main() -> int:
             session_factory() if args.persist_lineage else nullcontext(None)
         )
         with lineage_context as lineage_session:
-            payload = flatten_paper_account_positions(
+            payload = flatten_positions(
                 client=firewall,
                 account_label=str(args.account_label or ""),
                 expected_account_label=str(args.expected_account_label or ""),
@@ -70,7 +92,7 @@ def main() -> int:
                 and payload["account_label"] == payload["expected_account_label"]
             ):
                 with session_factory() as session:
-                    snapshot = snapshot_account_and_positions(
+                    snapshot = snapshot_writer(
                         session,
                         cast(Any, firewall),
                         str(args.account_label or ""),

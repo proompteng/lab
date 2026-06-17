@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Kafka-backed order-feed ingestion and persistence helpers."""
 
 from __future__ import annotations
@@ -52,6 +52,273 @@ EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION = "execution_raw_order_snapshot_backf
 EXECUTION_RAW_ORDER_SOURCE_TOPIC = "torghut.execution-raw-order.backfill.v1"
 
 EXECUTION_RAW_ORDER_SOURCE_PARTITION = 0
+
+
+def _coerce_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return None
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    text = _coerce_text(value)
+    if text is None:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _coerce_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_mapping(value: Any) -> Mapping[str, Any] | None:
+    if isinstance(value, Mapping):
+        return cast(Mapping[str, Any], value)
+    return None
+
+
+def _ensure_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _isoformat_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return _ensure_aware_utc(value).isoformat()
+
+
+def _decode_json_payload(raw: Any) -> dict[str, Any] | list[Any] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, (dict, list)):
+        return _normalize_decoded_payload(raw)
+    if isinstance(raw, bytes):
+        try:
+            return _decode_json_text_payload(raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            return None
+    if isinstance(raw, str):
+        return _decode_json_text_payload(raw)
+    return None
+
+
+def _decode_json_text_payload(raw_text: str) -> dict[str, Any] | list[Any] | None:
+    try:
+        decoded = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return None
+    return _normalize_decoded_payload(decoded)
+
+
+def _normalize_decoded_payload(raw: Any) -> dict[str, Any] | list[Any] | None:
+    if isinstance(raw, dict):
+        return cast(dict[str, Any], raw)
+    if isinstance(raw, list):
+        return cast(list[Any], raw)
+    return None
+
+
+def _extract_trade_update_payload(payload: Any) -> Mapping[str, Any] | None:
+    root = _as_mapping(payload)
+    if root is None:
+        return None
+    channel = _coerce_text(root.get("channel"))
+    inner_payload = _as_mapping(root.get("payload"))
+    if channel == "trade_updates" and inner_payload is not None:
+        return inner_payload
+    stream = _coerce_text(root.get("stream"))
+    data_payload = _as_mapping(root.get("data"))
+    if stream == "trade_updates" and data_payload is not None:
+        return data_payload
+    if _as_mapping(root.get("order")) is not None:
+        return root
+    return None
+
+
+def _kafka_consumer_group_id() -> str:
+    from .flatten_poll_records import (
+        kafka_consumer_group_id,
+    )
+
+    return kafka_consumer_group_id()
+
+
+def _latest_persisted_source_offsets(
+    session: Session,
+) -> dict[tuple[str, int], int]:
+    from .flatten_poll_records import (
+        latest_persisted_source_offsets,
+    )
+
+    return latest_persisted_source_offsets(session)
+
+
+def _consumer_commit_enabled() -> bool:
+    from .flatten_poll_records import (
+        consumer_commit_enabled,
+    )
+
+    return consumer_commit_enabled()
+
+
+def _commit_consumer(consumer: Any) -> bool:
+    from .flatten_poll_records import (
+        commit_consumer,
+    )
+
+    return commit_consumer(consumer)
+
+
+def _flatten_poll_records(polled: Any) -> list[Any]:
+    from .flatten_poll_records import (
+        flatten_poll_records,
+    )
+
+    return flatten_poll_records(polled)
+
+
+def normalize_order_feed_record(
+    record: Any, *, default_topic: str, default_account_label: str
+) -> NormalizationResult:
+    from .normalize_order_feed_record import (
+        normalize_order_feed_record as normalize_record,
+    )
+
+    return normalize_record(
+        record,
+        default_topic=default_topic,
+        default_account_label=default_account_label,
+    )
+
+
+def _event_with_default_account_label_if_in_scope(
+    *args: Any, **kwargs: Any
+) -> NormalizedOrderEvent | None:
+    from .normalize_order_feed_record import (
+        event_with_default_account_label_if_in_scope as event_with_default_account,
+    )
+
+    return event_with_default_account(*args, **kwargs)
+
+
+def persist_order_event(*args: Any, **kwargs: Any) -> tuple[ExecutionOrderEvent, bool]:
+    from .normalize_order_feed_record import persist_order_event as persist_event
+
+    return persist_event(*args, **kwargs)
+
+
+def apply_order_event_to_execution(*args: Any, **kwargs: Any) -> tuple[bool, bool]:
+    from .normalize_order_feed_record import (
+        apply_order_event_to_execution as apply_event,
+    )
+
+    return apply_event(*args, **kwargs)
+
+
+def _classify_source_window_drop(*args: Any, **kwargs: Any) -> None:
+    from .classify_source_window_drop import (
+        classify_source_window_drop as classify_drop,
+    )
+
+    classify_drop(*args, **kwargs)
+
+
+def _classify_source_window_event(*args: Any, **kwargs: Any) -> None:
+    from .classify_source_window_drop import (
+        classify_source_window_event as classify_event,
+    )
+
+    classify_event(*args, **kwargs)
+
+
+def _classify_source_window_unhandled_failure(*args: Any, **kwargs: Any) -> None:
+    from .classify_source_window_drop import (
+        classify_source_window_unhandled_failure as classify_failure,
+    )
+
+    classify_failure(*args, **kwargs)
+
+
+def _increment_drop_counter(*args: Any, **kwargs: Any) -> None:
+    from .classify_source_window_drop import (
+        increment_drop_counter as increment_drop,
+    )
+
+    increment_drop(*args, **kwargs)
+
+
+def _order_event_has_failed_unhandled_source_window(*args: Any, **kwargs: Any) -> bool:
+    from .resolve_execution_linkage_for_identity import (
+        order_event_has_failed_unhandled_source_window as has_failed_window,
+    )
+
+    return has_failed_window(*args, **kwargs)
+
+
+def _retry_failed_duplicate_order_event_application(*args: Any, **kwargs: Any) -> None:
+    from .resolve_execution_linkage_for_identity import (
+        retry_failed_duplicate_order_event_application as retry_duplicate,
+    )
+
+    retry_duplicate(*args, **kwargs)
+
+
+def _upsert_cursor_and_count(*args: Any, **kwargs: Any) -> bool:
+    from .flatten_poll_records import (
+        upsert_cursor_and_count as upsert_cursor,
+    )
+
+    return upsert_cursor(*args, **kwargs)
+
+
+def _update_trade_decision_from_execution(*args: Any, **kwargs: Any) -> None:
+    from .flatten_poll_records import (
+        update_trade_decision_from_execution as update_decision,
+    )
+
+    update_decision(*args, **kwargs)
+
+
+def _upsert_order_feed_consumer_cursor_from_source(*args: Any, **kwargs: Any) -> bool:
+    from .flatten_poll_records import (
+        upsert_order_feed_consumer_cursor_from_source as upsert_cursor_from_source,
+    )
+
+    return upsert_cursor_from_source(*args, **kwargs)
+
+
+def _order_feed_cursor_consumer_group() -> str:
+    from .flatten_poll_records import (
+        order_feed_cursor_consumer_group,
+    )
+
+    return order_feed_cursor_consumer_group()
 
 
 @dataclass(frozen=True)
@@ -144,545 +411,6 @@ class _ManualAssignmentHooks:
     seek: Callable[[Any, int], Any]
     seek_to_beginning: Callable[..., Any] | None
     seek_to_end: Callable[..., Any] | None
-
-
-class OrderFeedIngestor:
-    """Consumes order updates from Kafka and persists normalized event rows."""
-
-    def __init__(
-        self,
-        *,
-        consumer_factory: Callable[[], Any] | None = None,
-        default_account_label: str | None = None,
-    ) -> None:
-        self._consumer_factory = consumer_factory or self._build_consumer
-        provided_label = (
-            default_account_label.strip() if default_account_label is not None else ""
-        )
-        self._default_account_label = provided_label or settings.trading_account_label
-        self._consumer: Any | None = None
-        self._disabled_logged = False
-        self._manual_assignment_ready = False
-
-    def ingest_once(self, session: Session) -> dict[str, int]:
-        counters = self._new_counters()
-        if not self._preconditions_met():
-            return counters
-
-        consumer = self._ensure_consumer(session)
-        if consumer is None:
-            counters["consumer_errors_total"] += 1
-            return counters
-
-        records = self._poll_records(consumer=consumer, counters=counters)
-        if not records:
-            return counters
-
-        durable_any = False
-        commit_allowed = True
-        for record in records:
-            outcome = self._ingest_record(
-                session=session,
-                record=record,
-                counters=counters,
-            )
-            durable_any = outcome.durable or durable_any
-            commit_allowed = commit_allowed and outcome.commit_allowed
-            if not outcome.commit_allowed:
-                break
-
-        if durable_any:
-            self._reconcile_tigerbeetle_if_enabled(session)
-            session.commit()
-        if durable_any and commit_allowed:
-            if _consumer_commit_enabled():
-                if _commit_consumer(consumer):
-                    counters["consumer_commits_total"] += 1
-            else:
-                counters["consumer_commit_skipped_total"] += 1
-                logger.info(
-                    "Order-feed Kafka commit skipped: assignment_mode=%s db_cursor_authority=true",
-                    settings.trading_order_feed_assignment_mode,
-                )
-        return counters
-
-    def _reconcile_tigerbeetle_if_enabled(self, session: Session) -> None:
-        if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
-            return
-        try:
-            reconcile_tigerbeetle_transfers(session)
-        except Exception as exc:
-            if settings.tigerbeetle_reconcile_required:
-                raise
-            logger.warning(
-                "TigerBeetle reconciliation failed after order-feed ingest: %s", exc
-            )
-
-    @staticmethod
-    def _new_counters() -> dict[str, int]:
-        return {
-            "messages_total": 0,
-            "events_persisted_total": 0,
-            "duplicates_total": 0,
-            "out_of_order_total": 0,
-            "missing_fields_total": 0,
-            "classified_drops_total": 0,
-            "source_windows_total": 0,
-            "malformed_total": 0,
-            "missing_payload_total": 0,
-            "missing_identity_total": 0,
-            "out_of_scope_account_total": 0,
-            "unlinked_execution_total": 0,
-            "unlinked_decision_total": 0,
-            "failed_unhandled_total": 0,
-            "apply_updates_total": 0,
-            "consumer_errors_total": 0,
-            "consumer_commits_total": 0,
-            "consumer_commit_skipped_total": 0,
-            "cursor_updates_total": 0,
-        }
-
-    def _preconditions_met(self) -> bool:
-        if not settings.trading_order_feed_enabled:
-            return False
-        if settings.trading_order_feed_bootstrap_server_list:
-            return True
-        if not self._disabled_logged:
-            logger.info(
-                "Order-feed ingestion enabled but TRADING_ORDER_FEED_BOOTSTRAP_SERVERS is not set; skipping"
-            )
-            self._disabled_logged = True
-        return False
-
-    def _poll_records(self, *, consumer: Any, counters: dict[str, int]) -> list[Any]:
-        try:
-            polled = consumer.poll(
-                timeout_ms=settings.trading_order_feed_poll_ms,
-                max_records=settings.trading_order_feed_batch_size,
-            )
-        except Exception as exc:  # pragma: no cover - external Kafka failure
-            counters["consumer_errors_total"] += 1
-            logger.warning("Order-feed poll failed: %s", exc)
-            return []
-        return _flatten_poll_records(polled)
-
-    def _ingest_record(
-        self,
-        *,
-        session: Session,
-        record: Any,
-        counters: dict[str, int],
-    ) -> _IngestRecordOutcome:
-        counters["messages_total"] += 1
-        context = self._build_ingest_record_context(
-            session=session,
-            record=record,
-            counters=counters,
-        )
-        try:
-            if context.out_of_scope_account:
-                return self._classify_ingest_drop(
-                    session,
-                    record=record,
-                    counters=counters,
-                    context=context,
-                    drop_reason="out_of_scope_account",
-                )
-            if context.event is None:
-                return self._classify_ingest_drop(
-                    session,
-                    record=record,
-                    counters=counters,
-                    context=context,
-                    drop_reason=context.normalized.drop_reason,
-                    log_drop=True,
-                )
-            return self._persist_ingest_event(
-                session=session,
-                context=context,
-                counters=counters,
-            )
-        except Exception as exc:
-            return self._handle_ingest_exception(
-                source_window=context.source_window,
-                counters=counters,
-                exc=exc,
-            )
-
-    def _build_ingest_record_context(
-        self,
-        *,
-        session: Session,
-        record: Any,
-        counters: dict[str, int],
-    ) -> _IngestRecordContext:
-        normalized = normalize_order_feed_record(
-            record,
-            default_topic=settings.trading_order_feed_topic,
-            default_account_label=self._default_account_label,
-        )
-        source_identity = _record_source_identity(record, normalized)
-        alias = self._resolve_event_account_alias(session, normalized)
-        out_of_scope_account = _event_out_of_scope_for_default_account(
-            alias.event,
-            normalized=alias.normalized,
-            default_account_label=self._default_account_label,
-        )
-        source_window = self._create_ingest_source_window(
-            session=session,
-            record=record,
-            source_identity=source_identity,
-            event=alias.event,
-            out_of_scope_account=out_of_scope_account,
-        )
-        if source_window is not None:
-            counters["source_windows_total"] += 1
-            if alias.account_alias_payload is not None:
-                source_window.payload_json = {
-                    "account_label_alias": alias.account_alias_payload,
-                }
-        return _IngestRecordContext(
-            normalized=alias.normalized,
-            event=alias.event,
-            source_identity=source_identity,
-            source_window=source_window,
-            account_alias_payload=alias.account_alias_payload,
-            out_of_scope_account=out_of_scope_account,
-        )
-
-    def _resolve_event_account_alias(
-        self,
-        session: Session,
-        normalized: NormalizationResult,
-    ) -> _AccountAliasResolution:
-        event = normalized.event
-        if not _event_out_of_scope_for_default_account(
-            event,
-            normalized=normalized,
-            default_account_label=self._default_account_label,
-        ):
-            return _AccountAliasResolution(
-                normalized=normalized,
-                event=event,
-                account_alias_payload=None,
-            )
-        aliased_event = _event_with_default_account_label_if_in_scope(
-            session,
-            event,
-            default_account_label=self._default_account_label,
-        )
-        if aliased_event is None:
-            return _AccountAliasResolution(
-                normalized=normalized,
-                event=event,
-                account_alias_payload=None,
-            )
-        return _AccountAliasResolution(
-            normalized=NormalizationResult(
-                event=aliased_event,
-                drop_reason=None,
-                account_label_explicit=normalized.account_label_explicit,
-            ),
-            event=aliased_event,
-            account_alias_payload={
-                "source_account_label": event.alpaca_account_label,
-                "canonical_account_label": self._default_account_label,
-                "basis": "matched_order_identity",
-            },
-        )
-
-    def _create_ingest_source_window(
-        self,
-        *,
-        session: Session,
-        record: Any,
-        source_identity: _OrderFeedSourceIdentity,
-        event: NormalizedOrderEvent | None,
-        out_of_scope_account: bool,
-    ) -> OrderFeedSourceWindow | None:
-        return _create_order_feed_source_window(
-            session,
-            source_topic=source_identity.source_topic,
-            source_partition=source_identity.source_partition,
-            source_offset=source_identity.source_offset,
-            broker_high_watermark=_broker_high_watermark_from_record(record),
-            alpaca_account_label=self._source_window_account_label(
-                event,
-                out_of_scope_account=out_of_scope_account,
-            ),
-        )
-
-    def _source_window_account_label(
-        self,
-        event: NormalizedOrderEvent | None,
-        *,
-        out_of_scope_account: bool,
-    ) -> str:
-        if out_of_scope_account or event is None:
-            return self._default_account_label
-        return event.alpaca_account_label
-
-    def _classify_ingest_drop(
-        self,
-        session: Session,
-        *,
-        record: Any,
-        counters: dict[str, int],
-        context: _IngestRecordContext,
-        drop_reason: str | None,
-        log_drop: bool = False,
-    ) -> _IngestRecordOutcome:
-        counters["missing_fields_total"] += 1
-        if log_drop and drop_reason:
-            logger.debug("Dropped order-feed message reason=%s", drop_reason)
-        if context.source_window is None:
-            return _IngestRecordOutcome(durable=False)
-        _classify_source_window_drop(
-            context.source_window,
-            drop_reason,
-            record=record,
-            default_account_label=self._default_account_label,
-        )
-        _increment_drop_counter(counters, drop_reason)
-        if _upsert_drop_cursor(session, context):
-            counters["cursor_updates_total"] += 1
-        counters["classified_drops_total"] += 1
-        return _IngestRecordOutcome(durable=True)
-
-    def _persist_ingest_event(
-        self,
-        *,
-        session: Session,
-        context: _IngestRecordContext,
-        counters: dict[str, int],
-    ) -> _IngestRecordOutcome:
-        event = cast(NormalizedOrderEvent, context.event)
-        persisted, duplicate = persist_order_event(
-            session,
-            event,
-            source_window_id=(
-                context.source_window.id if context.source_window is not None else None
-            ),
-        )
-        if context.source_window is not None:
-            _classify_source_window_event(
-                context.source_window,
-                persisted=persisted,
-                duplicate=duplicate,
-                account_label_alias=context.account_alias_payload,
-            )
-        if duplicate:
-            return self._handle_duplicate_order_event(
-                session=session,
-                persisted=persisted,
-                event=event,
-                source_window=context.source_window,
-                counters=counters,
-            )
-        return self._handle_new_order_event(
-            session=session,
-            persisted=persisted,
-            event=event,
-            source_window=context.source_window,
-            counters=counters,
-        )
-
-    def _handle_duplicate_order_event(
-        self,
-        *,
-        session: Session,
-        persisted: ExecutionOrderEvent,
-        event: NormalizedOrderEvent,
-        source_window: OrderFeedSourceWindow | None,
-        counters: dict[str, int],
-    ) -> _IngestRecordOutcome:
-        if _order_event_has_failed_unhandled_source_window(session, persisted):
-            _retry_failed_duplicate_order_event_application(
-                session=session,
-                event=persisted,
-                counters=counters,
-                source_window=source_window,
-            )
-        cursor_updated = _upsert_cursor_and_count(
-            session=session,
-            event=event,
-            duplicate=True,
-            source_window=source_window,
-            counters=counters,
-        )
-        counters["duplicates_total"] += 1
-        return _IngestRecordOutcome(durable=cursor_updated)
-
-    def _handle_new_order_event(
-        self,
-        *,
-        session: Session,
-        persisted: ExecutionOrderEvent,
-        event: NormalizedOrderEvent,
-        source_window: OrderFeedSourceWindow | None,
-        counters: dict[str, int],
-    ) -> _IngestRecordOutcome:
-        counters["events_persisted_total"] += 1
-        if persisted.execution_id is None:
-            counters["unlinked_execution_total"] += 1
-        if persisted.trade_decision_id is None:
-            counters["unlinked_decision_total"] += 1
-        if persisted.execution_id is None:
-            _upsert_cursor_and_count(
-                session=session,
-                event=event,
-                duplicate=False,
-                source_window=source_window,
-                counters=counters,
-            )
-            return _IngestRecordOutcome(durable=True)
-        execution = session.get(Execution, persisted.execution_id)
-        if execution is None:
-            _upsert_cursor_and_count(
-                session=session,
-                event=event,
-                duplicate=False,
-                source_window=source_window,
-                counters=counters,
-            )
-            return _IngestRecordOutcome(durable=True)
-        return self._apply_execution_order_event(
-            session=session,
-            execution=execution,
-            persisted=persisted,
-            event=event,
-            source_window=source_window,
-            counters=counters,
-        )
-
-    def _apply_execution_order_event(
-        self,
-        *,
-        session: Session,
-        execution: Execution,
-        persisted: ExecutionOrderEvent,
-        event: NormalizedOrderEvent,
-        source_window: OrderFeedSourceWindow | None,
-        counters: dict[str, int],
-    ) -> _IngestRecordOutcome:
-        updated, out_of_order = apply_order_event_to_execution(execution, persisted)
-        if out_of_order:
-            counters["out_of_order_total"] += 1
-        if updated:
-            counters["apply_updates_total"] += 1
-            if execution.trade_decision_id is not None:
-                _update_trade_decision_from_execution(session, execution)
-            upsert_execution_tca_metric(session, execution)
-            session.add(execution)
-        _upsert_cursor_and_count(
-            session=session,
-            event=event,
-            duplicate=False,
-            source_window=source_window,
-            counters=counters,
-        )
-        return _IngestRecordOutcome(durable=True)
-
-    def _handle_ingest_exception(
-        self,
-        *,
-        source_window: OrderFeedSourceWindow | None,
-        counters: dict[str, int],
-        exc: Exception,
-    ) -> _IngestRecordOutcome:
-        counters["consumer_errors_total"] += 1
-        counters["failed_unhandled_total"] += 1
-        if source_window is None:
-            logger.warning(
-                "Order-feed record failed before durable source-window classification: %s",
-                exc,
-            )
-            return _IngestRecordOutcome(durable=False, commit_allowed=False)
-        _classify_source_window_unhandled_failure(source_window, exc)
-        logger.warning(
-            "Order-feed record failed after source-window classification; Kafka offset will not be committed: %s",
-            exc,
-        )
-        return _IngestRecordOutcome(durable=True, commit_allowed=False)
-
-    def close(self) -> None:
-        if self._consumer is None:
-            return
-        run_close = cast(
-            Callable[[], Any] | None, getattr(self._consumer, "close", None)
-        )
-        self._consumer = None
-        self._manual_assignment_ready = False
-        if run_close is None:
-            return
-        try:
-            run_close()
-        except Exception:  # pragma: no cover - defensive close
-            logger.debug("Order-feed consumer close failed", exc_info=True)
-
-    def _ensure_consumer(self, session: Session) -> Any | None:
-        if self._consumer is not None:
-            if self._manual_assignment_required() and not self._manual_assignment_ready:
-                self._assign_manual_partitions(session)
-            return self._consumer
-        try:
-            self._consumer = self._consumer_factory()
-            self._disabled_logged = False
-            if self._manual_assignment_required():
-                self._assign_manual_partitions(session)
-            return self._consumer
-        except Exception as exc:  # pragma: no cover - external Kafka config failure
-            logger.warning("Failed to initialize order-feed consumer: %s", exc)
-            self._consumer = None
-            self._manual_assignment_ready = False
-            return None
-
-    def _manual_assignment_required(self) -> bool:
-        return settings.trading_order_feed_assignment_mode == "manual"
-
-    def _assign_manual_partitions(self, session: Session) -> None:
-        consumer = self._consumer
-        if consumer is None:
-            return
-        hooks = _manual_assignment_hooks(consumer)
-        topic_partitions = _manual_topic_partitions(hooks)
-        hooks.assign(topic_partitions)
-        unpositioned = _position_manual_topic_partitions(
-            session,
-            topic_partitions=topic_partitions,
-            hooks=hooks,
-        )
-        _reset_manual_unpositioned_partitions(unpositioned, hooks=hooks)
-        self._manual_assignment_ready = True
-        _log_manual_assignment_ready(topic_partitions, unpositioned)
-
-    @staticmethod
-    def _build_consumer() -> Any:
-        try:
-            from kafka import KafkaConsumer  # type: ignore[import-not-found]
-        except Exception as exc:  # pragma: no cover - import guarded at runtime
-            raise RuntimeError(
-                "kafka-python dependency is required for order-feed ingestion"
-            ) from exc
-
-        manual_assignment = settings.trading_order_feed_assignment_mode == "manual"
-        topics = [] if manual_assignment else settings.trading_order_feed_topics
-        group_id = None if manual_assignment else _kafka_consumer_group_id()
-        return cast(
-            Any,
-            KafkaConsumer(
-                *topics,
-                bootstrap_servers=settings.trading_order_feed_bootstrap_server_list,
-                group_id=group_id,
-                client_id=settings.trading_order_feed_client_id,
-                enable_auto_commit=False,
-                auto_offset_reset=settings.trading_order_feed_auto_offset_reset,
-                consumer_timeout_ms=max(settings.trading_order_feed_poll_ms, 1000),
-                value_deserializer=None,
-                key_deserializer=None,
-                **settings.trading_order_feed_kafka_security_kwargs,
-            ),
-        )
 
 
 def _manual_assignment_hooks(consumer: Any) -> _ManualAssignmentHooks:
@@ -919,5 +647,54 @@ def _broker_high_watermark_from_record(record: Any) -> int | None:
             return value
     return None
 
+
+# Public aliases used by split-module consumers.
+classify_source_window_drop = _classify_source_window_drop
+classify_source_window_event = _classify_source_window_event
+classify_source_window_unhandled_failure = _classify_source_window_unhandled_failure
+commit_consumer = _commit_consumer
+consumer_commit_enabled = _consumer_commit_enabled
+event_with_default_account_label_if_in_scope = (
+    _event_with_default_account_label_if_in_scope
+)
+flatten_poll_records = _flatten_poll_records
+increment_drop_counter = _increment_drop_counter
+kafka_consumer_group_id = _kafka_consumer_group_id
+order_event_has_failed_unhandled_source_window = (
+    _order_event_has_failed_unhandled_source_window
+)
+retry_failed_duplicate_order_event_application = (
+    _retry_failed_duplicate_order_event_application
+)
+upsert_cursor_and_count = _upsert_cursor_and_count
+AccountAliasResolution = _AccountAliasResolution
+ExecutionLinkageResolution = _ExecutionLinkageResolution
+FILL_EVENT_TYPES = _FILL_EVENT_TYPES
+IngestRecordContext = _IngestRecordContext
+IngestRecordOutcome = _IngestRecordOutcome
+ManualAssignmentHooks = _ManualAssignmentHooks
+OrderFeedSourceIdentity = _OrderFeedSourceIdentity
+TradeDecisionLinkageResolution = _TradeDecisionLinkageResolution
+as_mapping = _as_mapping
+broker_high_watermark_from_record = _broker_high_watermark_from_record
+coerce_datetime = _coerce_datetime
+coerce_decimal = _coerce_decimal
+coerce_int = _coerce_int
+coerce_text = _coerce_text
+create_order_feed_source_window = _create_order_feed_source_window
+decode_json_payload = _decode_json_payload
+event_out_of_scope_for_default_account = _event_out_of_scope_for_default_account
+extract_trade_update_payload = _extract_trade_update_payload
+isoformat_datetime = _isoformat_datetime
+log_manual_assignment_ready = _log_manual_assignment_ready
+manual_assignment_hooks = _manual_assignment_hooks
+manual_topic_partitions = _manual_topic_partitions
+order_feed_cursor_consumer_group = _order_feed_cursor_consumer_group
+position_manual_topic_partitions = _position_manual_topic_partitions
+record_source_identity = _record_source_identity
+reset_manual_unpositioned_partitions = _reset_manual_unpositioned_partitions
+source_topic_from_record = _source_topic_from_record
+update_trade_decision_from_execution = _update_trade_decision_from_execution
+upsert_drop_cursor = _upsert_drop_cursor
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only vectorized scoring over manifest-verified replay tapes."""
 
 from __future__ import annotations
@@ -127,15 +127,15 @@ from .shared_context import (
 )
 from .fast_replay_preview_result import (
     FastReplayPreviewResult,
-    _SymbolTapeStats,
-    _build_clusterlob_feature_lane_by_symbol,
-    _build_symbol_stats,
+    SymbolTapeStats as _SymbolTapeStats,
+    build_clusterlob_feature_lane_by_symbol as _build_clusterlob_feature_lane_by_symbol,
+    build_symbol_stats as _build_symbol_stats,
     build_fast_replay_preview,
 )
 from .candidate_clusterlob_feature_lane import (
-    _candidate_clusterlob_feature_lane,
-    _clusterlob_feature_lane_manifest,
-    _clusterlob_feature_lane_score,
+    candidate_clusterlob_feature_lane as _candidate_clusterlob_feature_lane,
+    clusterlob_feature_lane_manifest as _clusterlob_feature_lane_manifest,
+    clusterlob_feature_lane_score as _clusterlob_feature_lane_score,
 )
 
 
@@ -148,6 +148,27 @@ def _score_candidate_spec(
     clusterlob_order_flow_features: Mapping[str, Any],
     replay_tape_manifest: ReplayTapeManifest,
 ) -> FastReplayPreviewRow:
+    from .extract_price import (
+        decimal_from_float as _decimal_from_float,
+        float_or_none as _float_or_none,
+        impact_liquidity_penalty_bps as _impact_liquidity_penalty_bps,
+        mapping as _mapping,
+        weighted_average as _weighted_average,
+    )
+    from .frontier_selection_blockers_for_row import (
+        bootstrap_lower_percentile_post_cost_utility_bps as _bootstrap_lower_percentile_post_cost_utility_bps,
+        candidate_direction as _candidate_direction,
+        candidate_frontier_hash as _candidate_frontier_hash,
+        candidate_lineage as _candidate_lineage,
+        candidate_notional as _candidate_notional,
+        candidate_symbols as _candidate_symbols,
+        conformal_tail_risk_penalty_bps as _conformal_tail_risk_penalty_bps,
+        exact_replay_frontier_key as _exact_replay_frontier_key,
+        lower_percentile_post_cost_utility_bps as _lower_percentile_post_cost_utility_bps,
+        post_cost_utility_distribution_bps as _post_cost_utility_distribution_bps,
+        square_root_impact_capacity_penalty_bps as _square_root_impact_capacity_penalty_bps,
+    )
+
     candidate_frontier_hash = _candidate_frontier_hash(spec)
     exact_replay_frontier_key = _exact_replay_frontier_key(
         replay_tape_manifest=replay_tape_manifest,
@@ -802,4 +823,8 @@ def _score_candidate_spec(
     )
 
 
+# Public aliases used by split-module consumers.
+score_candidate_spec = _score_candidate_spec
+
+score_candidate_spec_split_export = _score_candidate_spec
 __all__ = [name for name in globals() if not name.startswith("__")]

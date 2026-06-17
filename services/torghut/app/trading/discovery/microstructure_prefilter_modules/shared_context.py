@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Bounded H-PAIRS ClusterLOB/OFI candidate prefiltering.
 
 The scores in this module are discovery metadata only. They intentionally rank
@@ -269,6 +269,21 @@ def build_hpairs_microstructure_prefilter(
 def _build_symbol_microstructure_stats(
     rows: Sequence[SignalEnvelope],
 ) -> dict[str, _SymbolMicrostructureStats]:
+    from .horizon_ofi_features import (
+        cluster_behavior as _cluster_behavior,
+        event_label as _event_label,
+        extract_microprice_bias_bps as _extract_microprice_bias_bps,
+        extract_ofi_pressure as _extract_ofi_pressure,
+        extract_price as _extract_price,
+        extract_regime_stress as _extract_regime_stress,
+        extract_spread_bps as _extract_spread_bps,
+        extract_volume as _extract_volume,
+        horizon_ofi_features as _horizon_ofi_features,
+        regime_stress_veto as _regime_stress_veto,
+        timestamp_key as _timestamp_key,
+    )
+    from .weighted_average import percentile as _percentile
+
     rows_by_symbol: dict[str, list[SignalEnvelope]] = {}
     for row in rows:
         symbol = row.symbol.strip().upper()
@@ -401,6 +416,32 @@ def _score_spec(
     stats_by_symbol: Mapping[str, _SymbolMicrostructureStats],
     min_rows_per_candidate: int,
 ) -> MicrostructureCandidatePrefilterRow:
+    from .horizon_ofi_features import (
+        candidate_direction as _candidate_direction,
+        candidate_symbols as _candidate_symbols,
+        capacity_penalty_bps as _capacity_penalty_bps,
+        cluster_behavior as _cluster_behavior,
+        empty_cluster_behavior as _empty_cluster_behavior,
+        empty_horizon_features as _empty_horizon_features,
+        empty_macro_window_stress as _empty_macro_window_stress,
+        empty_pair_convergence_risk as _empty_pair_convergence_risk,
+        empty_regime_stress_veto as _empty_regime_stress_veto,
+        impact_capacity_lineage as _impact_capacity_lineage,
+        is_hpairs_candidate as _is_hpairs_candidate,
+        macro_window_stress_from_regime as _macro_window_stress_from_regime,
+        merged_horizon_features as _merged_horizon_features,
+        pair_convergence_risk as _pair_convergence_risk,
+        regime_stress_veto as _regime_stress_veto,
+        volume_score as _volume_score,
+    )
+    from .weighted_average import (
+        concat_arrays as _concat_arrays,
+        decimal as _decimal,
+        mean as _mean,
+        percentile as _percentile,
+        weighted_average as _weighted_average,
+    )
+
     requested_symbols = _candidate_symbols(spec)
     matched = [
         stat for symbol in requested_symbols if (stat := stats_by_symbol.get(symbol))
@@ -710,4 +751,22 @@ def _source_input_blockers(
     )
 
 
+# Public aliases used by split-module consumers.
+SymbolMicrostructureStats = _SymbolMicrostructureStats
+build_symbol_microstructure_stats = _build_symbol_microstructure_stats
+rank_key = _rank_key
+score_spec = _score_spec
+select_frontier_buckets = _select_frontier_buckets
+source_field_diagnostics = _source_field_diagnostics
+source_input_blockers = _source_input_blockers
+with_rank_and_bucket = _with_rank_and_bucket
+
+SymbolMicrostructureStats_split_export = _SymbolMicrostructureStats
+build_symbol_microstructure_stats_split_export = _build_symbol_microstructure_stats
+rank_key_split_export = _rank_key
+score_spec_split_export = _score_spec
+select_frontier_buckets_split_export = _select_frontier_buckets
+source_field_diagnostics_split_export = _source_field_diagnostics
+source_input_blockers_split_export = _source_input_blockers
+with_rank_and_bucket_split_export = _with_rank_and_bucket
 __all__ = [name for name in globals() if not name.startswith("__")]

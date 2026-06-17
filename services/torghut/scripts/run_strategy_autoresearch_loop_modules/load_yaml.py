@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Run an autoresearch-style outer loop for Torghut strategy discovery."""
 
@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
@@ -87,14 +88,6 @@ import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
 )
-from scripts.materialize_replay_tape import (
-    _DEFAULT_MAX_COVERAGE_SPREAD_BPS,
-    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
-    _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
-    _DEFAULT_MIN_QUOTE_VALID_RATIO,
-    _select_effective_window as _select_effective_replay_tape_window,
-)
-
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .shared_context import (
@@ -102,6 +95,10 @@ from .shared_context import (
     WorkItem,
     _CAPITAL_LIMIT_SAFETY_MULTIPLIER,
     _DEFAULT_CLICKHOUSE_HTTP_URL,
+    _DEFAULT_MAX_COVERAGE_SPREAD_BPS,
+    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
+    _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
+    _DEFAULT_MIN_QUOTE_VALID_RATIO,
     _REPO_ROOT,
     _apply_exact_replay_guidance_to_next_sweep,
     _apply_objective_capital_limits,
@@ -127,11 +124,19 @@ from .shared_context import (
     _promotion_readiness_payload,
     _runtime_missing_candidate_payload,
     _runtime_missing_frontier_payload,
+    _select_effective_replay_tape_window,
     _slug,
     _snapshot_symbols,
     _string,
     _work_item_candidate_id,
 )
+
+
+def _strategy_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("scripts.run_strategy_autoresearch_loop")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -357,8 +362,12 @@ def _maybe_materialize_run_replay_tape(
                 ),
             }
         )
+        select_effective_replay_tape_window = _strategy_root_export(
+            "_select_effective_replay_tape_window",
+            _select_effective_replay_tape_window,
+        )
         selected_start, selected_end, latest_window_receipt = (
-            _select_effective_replay_tape_window(
+            select_effective_replay_tape_window(
                 args=window_args,
                 symbols=snapshot_symbols,
                 requested_start_date=_iso_date(full_window_start_date),

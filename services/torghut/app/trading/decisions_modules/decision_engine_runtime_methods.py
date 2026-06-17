@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading decision engine based on TA signals."""
 
 from __future__ import annotations
@@ -56,44 +56,62 @@ from ..strategy_runtime import (
 
 from .shared_context import (
     DecisionRuntimeTelemetry,
-    _BUY_EXIT_ONLY_STRATEGY_TYPES,
-    _DecisionEngineFields,
-    _EXIT_ONLY_BUY_FLAT_REASON,
-    _EXIT_ONLY_SELL_FLAT_REASON,
-    _MICROBAR_PAIR_EXIT_RATIONALE,
-    _RUNTIME_TRADE_POLICY_SHARED_OWNER,
-    _RuntimeTradePolicySessionState,
-    _SAME_DIRECTION_REENTRY_REASON,
-    _SELL_EXIT_ONLY_STRATEGY_TYPES,
-    _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
-    _feature_vector_with_positions,
-    _feature_vector_with_runtime_position,
-    _merge_runtime_counter,
-    _merge_runtime_evaluations,
-    _runtime_position_side,
+    BUY_EXIT_ONLY_STRATEGY_TYPES as _BUY_EXIT_ONLY_STRATEGY_TYPES,
+    DecisionEngineFields as _DecisionEngineFields,
+    EXIT_ONLY_BUY_FLAT_REASON as _EXIT_ONLY_BUY_FLAT_REASON,
+    EXIT_ONLY_SELL_FLAT_REASON as _EXIT_ONLY_SELL_FLAT_REASON,
+    MICROBAR_PAIR_EXIT_RATIONALE as _MICROBAR_PAIR_EXIT_RATIONALE,
+    RUNTIME_TRADE_POLICY_SHARED_OWNER as _RUNTIME_TRADE_POLICY_SHARED_OWNER,
+    RuntimeTradePolicySessionState as _RuntimeTradePolicySessionState,
+    SAME_DIRECTION_REENTRY_REASON as _SAME_DIRECTION_REENTRY_REASON,
+    SELL_EXIT_ONLY_STRATEGY_TYPES as _SELL_EXIT_ONLY_STRATEGY_TYPES,
+    SHORT_ENTRY_BELOW_MIN_QTY_REASON as _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+    feature_vector_with_positions as _feature_vector_with_positions,
+    feature_vector_with_runtime_position as _feature_vector_with_runtime_position,
+    merge_runtime_counter as _merge_runtime_counter,
+    merge_runtime_evaluations as _merge_runtime_evaluations,
+    runtime_position_side as _runtime_position_side,
     logger,
 )
-from .decision_engine_core_methods import _DecisionEngineCoreMethods
-from .single_strategy_qty import (
-    _SingleStrategyCapacityAdjustment,
-    _SingleStrategyQtyContext,
-    _StrategyBudget,
-    _resolve_qty,
-    _resolve_single_strategy_qty_from_context,
-    _single_strategy_budget,
-    _single_strategy_capacity_adjustment,
-    _single_strategy_capacity_exhausted_result,
-    _single_strategy_capacity_reason,
-    _single_strategy_common_meta,
-    _single_strategy_exit_guard_result,
-    _single_strategy_min_qty_capacity_reason,
-    _single_strategy_min_qty_result,
-    _single_strategy_qty_context,
-    _single_strategy_requested_qty,
-    _single_strategy_short_entry_below_min_result,
-    _single_strategy_success_result,
-    _skip_non_executable_decision_qty,
+from .decision_engine_core_methods import (
+    DecisionEngineCoreMethods as _DecisionEngineCoreMethods,
 )
+from .single_strategy_qty import (
+    SingleStrategyCapacityAdjustment as _SingleStrategyCapacityAdjustment,
+    SingleStrategyQtyContext as _SingleStrategyQtyContext,
+    StrategyBudget as _StrategyBudget,
+    resolve_qty as _resolve_qty,
+    resolve_single_strategy_qty_from_context as _resolve_single_strategy_qty_from_context,
+    single_strategy_budget as _single_strategy_budget,
+    single_strategy_capacity_adjustment as _single_strategy_capacity_adjustment,
+    single_strategy_capacity_exhausted_result as _single_strategy_capacity_exhausted_result,
+    single_strategy_capacity_reason as _single_strategy_capacity_reason,
+    single_strategy_common_meta as _single_strategy_common_meta,
+    single_strategy_exit_guard_result as _single_strategy_exit_guard_result,
+    single_strategy_min_qty_capacity_reason as _single_strategy_min_qty_capacity_reason,
+    single_strategy_min_qty_result as _single_strategy_min_qty_result,
+    single_strategy_qty_context as _single_strategy_qty_context,
+    single_strategy_requested_qty as _single_strategy_requested_qty,
+    single_strategy_short_entry_below_min_result as _single_strategy_short_entry_below_min_result,
+    single_strategy_success_result as _single_strategy_success_result,
+    skip_non_executable_decision_qty as _skip_non_executable_decision_qty,
+)
+
+
+def _has_legacy_indicator_inputs(features: SignalFeatures) -> bool:
+    from .positions_for_strategy_action import (
+        has_legacy_indicator_inputs,
+    )
+
+    return has_legacy_indicator_inputs(features)
+
+
+def _resolve_legacy_action(features: SignalFeatures) -> Any:
+    from .positions_for_strategy_action import (
+        resolve_legacy_action as resolve_action,
+    )
+
+    return resolve_action(features)
 
 
 @dataclass(frozen=True)
@@ -642,5 +660,51 @@ def _snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
         "source": snapshot.source,
     }
 
+
+# Public aliases used by split-module consumers.
+build_params = _build_params
+BuildParamsRequest = _BuildParamsRequest
+DecisionEngineRuntimeMethods = _DecisionEngineRuntimeMethods
+LegacyDecisionInputs = _LegacyDecisionInputs
+LegacyMarketContext = _LegacyMarketContext
+LegacySizing = _LegacySizing
+SingleStrategyCapacityAdjustment = _SingleStrategyCapacityAdjustment
+SingleStrategyQtyContext = _SingleStrategyQtyContext
+StrategyBudget = _StrategyBudget
+base_decision_params = _base_decision_params
+build_params_request = _build_params_request
+forecast_decision_params = _forecast_decision_params
+has_explicit_regime_context = _has_explicit_regime_context
+legacy_decision_inputs = _legacy_decision_inputs
+legacy_runtime_metadata = _legacy_runtime_metadata
+legacy_strategy_decision = _legacy_strategy_decision
+log_skipped_legacy_decision = _log_skipped_legacy_decision
+market_decision_params = _market_decision_params
+regime_decision_params = _regime_decision_params
+resolve_decision_simulation_context = _resolve_decision_simulation_context
+resolve_execution_advice_payload = _resolve_execution_advice_payload
+resolve_execution_feature_payload = _resolve_execution_feature_payload
+resolve_fragility_snapshot_payload = _resolve_fragility_snapshot_payload
+resolve_microstructure_state_payload = _resolve_microstructure_state_payload
+resolve_qty = _resolve_qty
+resolve_regime_context = _resolve_regime_context
+resolve_single_strategy_qty_from_context = _resolve_single_strategy_qty_from_context
+single_strategy_budget = _single_strategy_budget
+single_strategy_capacity_adjustment = _single_strategy_capacity_adjustment
+single_strategy_capacity_exhausted_result = _single_strategy_capacity_exhausted_result
+single_strategy_capacity_reason = _single_strategy_capacity_reason
+single_strategy_common_meta = _single_strategy_common_meta
+single_strategy_exit_guard_result = _single_strategy_exit_guard_result
+single_strategy_min_qty_capacity_reason = _single_strategy_min_qty_capacity_reason
+single_strategy_min_qty_result = _single_strategy_min_qty_result
+single_strategy_qty_context = _single_strategy_qty_context
+single_strategy_requested_qty = _single_strategy_requested_qty
+single_strategy_short_entry_below_min_result = (
+    _single_strategy_short_entry_below_min_result
+)
+single_strategy_success_result = _single_strategy_success_result
+skip_non_executable_decision_qty = _skip_non_executable_decision_qty
+snapshot_payload = _snapshot_payload
+source_context_decision_params = _source_context_decision_params
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Evaluation report generation and governance gates for walk-forward runs."""
 
 from __future__ import annotations
@@ -18,6 +18,107 @@ from ..evaluation_trace import SweepCandidateResult
 from ..regime import RegimeLabel, classify_regime
 
 # ruff: noqa: F401,F403,F405,F811,F821
+
+
+def _resolve_price(decision: Any, item: WalkForwardDecision) -> Optional[Decimal]:
+    from .cover_short import (
+        resolve_price,
+    )
+
+    return resolve_price(decision, item)
+
+
+def _strategy_payload(strategy: Strategy) -> dict[str, object]:
+    from .cover_short import (
+        strategy_payload,
+    )
+
+    return strategy_payload(strategy)
+
+
+def _cost_model_payload(config: CostModelConfig) -> dict[str, str]:
+    from .cover_short import (
+        cost_model_payload,
+    )
+
+    return cost_model_payload(config)
+
+
+def _decimal(value: Any) -> Optional[Decimal]:
+    from .cover_short import (
+        decimal as decimal_value,
+    )
+
+    return decimal_value(value)
+
+
+def _collect_impact_assumptions(
+    decisions: list[WalkForwardDecision],
+    cost_model_config: CostModelConfig,
+) -> Any:
+    from .cover_short import (
+        collect_impact_assumptions,
+    )
+
+    return collect_impact_assumptions(decisions, cost_model_config)
+
+
+def _estimate_cost(
+    cost_model: TransactionCostModel, decision: Any, price: Decimal
+) -> Decimal:
+    from .cover_short import (
+        estimate_cost,
+    )
+
+    return estimate_cost(cost_model, decision, price)
+
+
+def _unrealized_pnl(*args: Any, **kwargs: Any) -> Decimal:
+    from .cover_short import (
+        unrealized_pnl,
+    )
+
+    return unrealized_pnl(*args, **kwargs)
+
+
+def _exposure_notional(*args: Any, **kwargs: Any) -> Decimal:
+    from .cover_short import (
+        exposure_notional,
+    )
+
+    return exposure_notional(*args, **kwargs)
+
+
+def _bps_from_cost(cost: Decimal, notional: Decimal) -> Decimal:
+    from .cover_short import (
+        bps_from_cost,
+    )
+
+    return bps_from_cost(cost, notional)
+
+
+def _decimal_mean(values: list[Decimal]) -> Decimal:
+    from .cover_short import (
+        decimal_mean,
+    )
+
+    return decimal_mean(values)
+
+
+def _decimal_std(values: list[Decimal], mean: Decimal) -> Decimal:
+    from .cover_short import (
+        decimal_std,
+    )
+
+    return decimal_std(values, mean)
+
+
+def _cover_short(*args: Any, **kwargs: Any) -> tuple[Decimal, int]:
+    from .cover_short import (
+        cover_short,
+    )
+
+    return cover_short(*args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -721,5 +822,18 @@ def _open_short(
     state.qty = new_qty
     return realized_pnl, trade_count
 
+
+# Public aliases used by split-module consumers.
+PositionState = _PositionState
+ResolvedImpactInputs = _ResolvedImpactInputs
+apply_fill = _apply_fill
+close_long = _close_long
+evaluate_gates = _evaluate_gates
+evaluate_metrics = _evaluate_metrics
+evaluate_multiple_testing = _evaluate_multiple_testing
+evaluate_robustness = _evaluate_robustness
+flatten_decisions = _flatten_decisions
+open_long = _open_long
+open_short = _open_short
 
 __all__ = [name for name in globals() if not name.startswith("__")]

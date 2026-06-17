@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Runtime execution ledger primitives for honest post-cost PnL proof."""
 
 from __future__ import annotations
@@ -13,6 +13,74 @@ from typing import cast
 from ..runtime_cost_authority import is_non_promotion_grade_runtime_cost_basis
 
 # ruff: noqa: F401,F403,F405,F811,F821
+
+
+def _row_helper_module() -> object:
+    from . import is_order_feed_lifecycle_only_row
+
+    return is_order_feed_lifecycle_only_row
+
+
+def _lifecycle_helper_module() -> object:
+    from . import order_lifecycle_blockers
+
+    return order_lifecycle_blockers
+
+
+def _utc(value: datetime) -> datetime:
+    return getattr(_row_helper_module(), "_utc")(value)
+
+
+def _group_key(row: _NormalizedFill, group_by: Sequence[str]) -> tuple[str | None, ...]:
+    return getattr(_row_helper_module(), "_group_key")(row, group_by)
+
+
+def _bucket_field(
+    name: str,
+    rows: Sequence[_NormalizedFill],
+    group_by: Sequence[str],
+    group_key: tuple[str | None, ...] | None,
+) -> str | None:
+    return getattr(_row_helper_module(), "_bucket_field")(
+        name, rows, group_by, group_key
+    )
+
+
+def _dedupe(items: Sequence[str]) -> list[str]:
+    return getattr(_row_helper_module(), "_dedupe")(items)
+
+
+def _row_requires_promotion_source_authority(row: _NormalizedFill) -> bool:
+    return getattr(
+        _lifecycle_helper_module(), "_row_requires_promotion_source_authority"
+    )(row)
+
+
+def _apply_fill_to_position(
+    *,
+    state: _PositionState,
+    fill: _NormalizedFill,
+    accumulator: _LedgerAccumulator,
+) -> None:
+    getattr(_lifecycle_helper_module(), "_apply_fill_to_position")(
+        state=state,
+        fill=fill,
+        accumulator=accumulator,
+    )
+
+
+def _order_lifecycle_blockers(*args: object, **kwargs: object) -> list[str]:
+    return getattr(_lifecycle_helper_module(), "_order_lifecycle_blockers")(
+        *args, **kwargs
+    )
+
+
+def _source_materialization_blockers(
+    lifecycle_rows: Sequence[_NormalizedFill],
+) -> list[str]:
+    return getattr(_lifecycle_helper_module(), "_source_materialization_blockers")(
+        lifecycle_rows
+    )
 
 
 POST_COST_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
@@ -343,6 +411,10 @@ def build_runtime_ledger_buckets(
     after costs. TCA shortfall/proxy fields are treated as blockers, not PnL.
     """
 
+    from .order_lifecycle_blockers import (
+        normalize_fill_row as _normalize_fill_row,
+    )
+
     normalized_rows = [
         _normalize_fill_row(row, row_index=index) for index, row in enumerate(rows)
     ]
@@ -640,5 +712,46 @@ def _carry_in_rows_before_bucket(
     applied_row_indexes.update(row.row_index for row in bucket_rows)
     return bucket_rows
 
+
+# Public aliases used by split-module consumers.
+BPS_MULTIPLIER = _BPS_MULTIPLIER
+BUY_SIDES = _BUY_SIDES
+CANCELLED_ORDER_EVENTS = _CANCELLED_ORDER_EVENTS
+DECISION_EVENTS = _DECISION_EVENTS
+DELTA_FILL_QUANTITY_BASES = _DELTA_FILL_QUANTITY_BASES
+DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS
+EXECUTION_RECONSTRUCTION_MARKERS = _EXECUTION_RECONSTRUCTION_MARKERS
+FILL_EVENTS = _FILL_EVENTS
+LIFECYCLE_EVENTS = _LIFECYCLE_EVENTS
+LedgerAccumulator = _LedgerAccumulator
+NON_PROMOTION_SOURCE_MARKERS = _NON_PROMOTION_SOURCE_MARKERS
+NON_RUNTIME_PNL_TCA_BASIS_ALIASES = _NON_RUNTIME_PNL_TCA_BASIS_ALIASES
+NormalizedFill = _NormalizedFill
+POST_COST_EXPECTANCY_SUPPRESSING_BLOCKERS = _POST_COST_EXPECTANCY_SUPPRESSING_BLOCKERS
+PROMOTION_GRADE_AUTHORITY_CLASSES = _PROMOTION_GRADE_AUTHORITY_CLASSES
+PROMOTION_GRADE_SOURCE_MATERIALIZATIONS = _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS
+PositionState = _PositionState
+REJECTED_ORDER_EVENTS = _REJECTED_ORDER_EVENTS
+SELL_SIDES = _SELL_SIDES
+SOURCE_DECISION_COLLECTION_MARKERS = _SOURCE_DECISION_COLLECTION_MARKERS
+SOURCE_REF_BLOCKER_AUTHORITY_CLASS_MISSING = _SOURCE_REF_BLOCKER_AUTHORITY_CLASS_MISSING
+SOURCE_REF_BLOCKER_EXECUTION_MISSING = _SOURCE_REF_BLOCKER_EXECUTION_MISSING
+SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING = (
+    _SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING
+)
+SOURCE_REF_BLOCKER_SOURCE_MATERIALIZATION_MISSING = (
+    _SOURCE_REF_BLOCKER_SOURCE_MATERIALIZATION_MISSING
+)
+SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING = _SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING
+SOURCE_REF_BLOCKER_SOURCE_WINDOW_MISSING = _SOURCE_REF_BLOCKER_SOURCE_WINDOW_MISSING
+SOURCE_REF_BLOCKER_TRADE_DECISION_MISSING = _SOURCE_REF_BLOCKER_TRADE_DECISION_MISSING
+SUBMITTED_ORDER_EVENTS = _SUBMITTED_ORDER_EVENTS
+TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER = (
+    _TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER
+)
+TIGERBEETLE_JOURNAL_SUCCESS_STATUSES = _TIGERBEETLE_JOURNAL_SUCCESS_STATUSES
+UNFILLED_ORDER_EVENTS = _UNFILLED_ORDER_EVENTS
+build_bucket = _build_bucket
+carry_in_rows_before_bucket = _carry_in_rows_before_bucket
 
 __all__ = [name for name in globals() if not name.startswith("__")]

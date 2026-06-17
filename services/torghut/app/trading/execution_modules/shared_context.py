@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Order execution and idempotency helpers."""
 
 from __future__ import annotations
@@ -206,5 +206,28 @@ def _target_plan_source_decision_needs_refresh(
 class _OrderExecutorFields:
     """Submit orders to a broker adapter with idempotency guards."""
 
+
+# Public aliases used by split-module consumers.
+BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE = (
+    _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+)
+COST_MODEL_HASH_KEYS = _COST_MODEL_HASH_KEYS
+COST_MODEL_PAYLOAD_KEYS = _COST_MODEL_PAYLOAD_KEYS
+EXECUTION_POLICY_HASH_KEYS = _EXECUTION_POLICY_HASH_KEYS
+LINEAGE_HASH_KEYS = _LINEAGE_HASH_KEYS
+LINEAGE_PAYLOAD_KEYS = _LINEAGE_PAYLOAD_KEYS
+OrderExecutorFields = _OrderExecutorFields
+RUNTIME_COST_AMOUNT_KEYS = _RUNTIME_COST_AMOUNT_KEYS
+RUNTIME_COST_BASIS_KEYS = _RUNTIME_COST_BASIS_KEYS
+RUNTIME_COST_PAYLOAD_KEYS = _RUNTIME_COST_PAYLOAD_KEYS
+SHORTING_METADATA_CACHE_TTL_SECONDS = _SHORTING_METADATA_CACHE_TTL_SECONDS
+TARGET_PLAN_SOURCE_DECISION_MODE = _TARGET_PLAN_SOURCE_DECISION_MODE
+TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS = _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS
+has_target_plan_source_decision = _has_target_plan_source_decision
+mapping_payload = _mapping_payload
+target_plan_ref_value = _target_plan_ref_value
+target_plan_source_decision_mode = _target_plan_source_decision_mode
+target_plan_source_decision_needs_refresh = _target_plan_source_decision_needs_refresh
+target_plan_source_metadata = _target_plan_source_metadata
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Run an autoresearch-style outer loop for Torghut strategy discovery."""
 
@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
@@ -188,6 +189,13 @@ from .write_portfolio_outputs import (
     _write_exact_replay_ledger_remediation,
     _write_portfolio_outputs,
 )
+
+
+def _strategy_loop_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("scripts.run_strategy_autoresearch_loop")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
@@ -479,7 +487,11 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 summary.get("exact_replay_ledger_remediation")
             )
             try:
-                frontier_payload = run_consistent_profitability_frontier(
+                frontier_runner = _strategy_loop_root_export(
+                    "run_consistent_profitability_frontier",
+                    run_consistent_profitability_frontier,
+                )
+                frontier_payload = frontier_runner(
                     _frontier_args(
                         args=frontier_base_args,
                         program=program,

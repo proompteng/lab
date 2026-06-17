@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Kafka-backed order-feed ingestion and persistence helpers."""
 
 from __future__ import annotations
@@ -42,28 +42,36 @@ from .shared_context import (
     NormalizationResult,
     NormalizedOrderEvent,
     ORDER_FEED_SOURCE_REVISION,
-    OrderFeedIngestor,
-    _AccountAliasResolution,
-    _ExecutionLinkageResolution,
-    _FILL_EVENT_TYPES,
-    _IngestRecordContext,
-    _IngestRecordOutcome,
-    _ManualAssignmentHooks,
-    _OrderFeedSourceIdentity,
-    _TradeDecisionLinkageResolution,
-    _broker_high_watermark_from_record,
-    _create_order_feed_source_window,
-    _event_out_of_scope_for_default_account,
-    _log_manual_assignment_ready,
-    _manual_assignment_hooks,
-    _manual_topic_partitions,
-    _position_manual_topic_partitions,
-    _record_source_identity,
-    _reset_manual_unpositioned_partitions,
-    _source_topic_from_record,
-    _upsert_drop_cursor,
+    AccountAliasResolution as _AccountAliasResolution,
+    ExecutionLinkageResolution as _ExecutionLinkageResolution,
+    FILL_EVENT_TYPES as _FILL_EVENT_TYPES,
+    IngestRecordContext as _IngestRecordContext,
+    IngestRecordOutcome as _IngestRecordOutcome,
+    ManualAssignmentHooks as _ManualAssignmentHooks,
+    OrderFeedSourceIdentity as _OrderFeedSourceIdentity,
+    TradeDecisionLinkageResolution as _TradeDecisionLinkageResolution,
+    broker_high_watermark_from_record as _broker_high_watermark_from_record,
+    as_mapping as _as_mapping,
+    coerce_datetime as _coerce_datetime,
+    coerce_int as _coerce_int,
+    coerce_text as _coerce_text,
+    create_order_feed_source_window as _create_order_feed_source_window,
+    decode_json_payload as _decode_json_payload,
+    event_out_of_scope_for_default_account as _event_out_of_scope_for_default_account,
+    extract_trade_update_payload as _extract_trade_update_payload,
+    isoformat_datetime as _isoformat_datetime,
+    log_manual_assignment_ready as _log_manual_assignment_ready,
+    manual_assignment_hooks as _manual_assignment_hooks,
+    manual_topic_partitions as _manual_topic_partitions,
+    position_manual_topic_partitions as _position_manual_topic_partitions,
+    record_source_identity as _record_source_identity,
+    reset_manual_unpositioned_partitions as _reset_manual_unpositioned_partitions,
+    source_topic_from_record as _source_topic_from_record,
+    upsert_drop_cursor as _upsert_drop_cursor,
     logger,
 )
+
+from .order_feed_ingestor import OrderFeedIngestor
 
 
 def _classify_source_window_drop(
@@ -629,5 +637,32 @@ def _source_window_event_status_reason(event: ExecutionOrderEvent) -> str:
         return "missing_execution_link"
     return "missing_trade_decision_link"
 
+
+# Public aliases used by split-module consumers.
+classify_source_window_drop = _classify_source_window_drop
+classify_source_window_event = _classify_source_window_event
+classify_source_window_unhandled_failure = _classify_source_window_unhandled_failure
+dedupe = _dedupe
+execution_correlation_identity_from_payload = (
+    _execution_correlation_identity_from_payload
+)
+increment_drop_counter = _increment_drop_counter
+lifecycle_payload = _lifecycle_payload
+mark_order_event_account_alias = _mark_order_event_account_alias
+missing_linkage_blockers = _missing_linkage_blockers
+order_event_account_label_alias = _order_event_account_label_alias
+order_event_client_identity = _order_event_client_identity
+order_event_evidence_payload = _order_event_evidence_payload
+order_event_execution_correlation_identity = _order_event_execution_correlation_identity
+order_event_linkage_blockers = _order_event_linkage_blockers
+order_identity_payload = _order_identity_payload
+raw_event_with_linkage_blockers = _raw_event_with_linkage_blockers
+raw_record_source_evidence_payload = _raw_record_source_evidence_payload
+source_window_event_status_reason = _source_window_event_status_reason
+source_window_failure_reason = _source_window_failure_reason
+source_window_source_identity_payload = _source_window_source_identity_payload
+source_window_source_identity_payload_for_values = (
+    _source_window_source_identity_payload_for_values
+)
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only vectorized scoring over manifest-verified replay tapes."""
 
 from __future__ import annotations
@@ -127,17 +127,37 @@ from .shared_context import (
 )
 from .fast_replay_preview_result import (
     FastReplayPreviewResult,
-    _SymbolTapeStats,
-    _build_clusterlob_feature_lane_by_symbol,
-    _build_symbol_stats,
+    SymbolTapeStats as _SymbolTapeStats,
+    build_clusterlob_feature_lane_by_symbol as _build_clusterlob_feature_lane_by_symbol,
+    build_symbol_stats as _build_symbol_stats,
     build_fast_replay_preview,
 )
 from .candidate_clusterlob_feature_lane import (
-    _candidate_clusterlob_feature_lane,
-    _clusterlob_feature_lane_manifest,
-    _clusterlob_feature_lane_score,
+    candidate_clusterlob_feature_lane as _candidate_clusterlob_feature_lane,
+    clusterlob_feature_lane_manifest as _clusterlob_feature_lane_manifest,
+    clusterlob_feature_lane_score as _clusterlob_feature_lane_score,
 )
-from .score_candidate_spec import _score_candidate_spec
+from .score_candidate_spec import score_candidate_spec as _score_candidate_spec
+
+
+def _float_or_none(value: Any) -> float | None:
+    from .extract_price import float_or_none as impl
+
+    return impl(value)
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    from .extract_price import mapping as impl
+
+    return impl(value)
+
+
+def _row_exact_replay_selection_blocked(row: FastReplayPreviewRow) -> bool:
+    from .frontier_selection_blockers_for_row import (
+        row_exact_replay_selection_blocked as impl,
+    )
+
+    return impl(row)
 
 
 def _preview_rank_key(
@@ -721,4 +741,138 @@ def _row_with_frontier_dedupe(
     )
 
 
+# Public aliases used by split-module consumers.
+adaptive_market_limit_allocation_rank_penalty_bps = (
+    _adaptive_market_limit_allocation_rank_penalty_bps
+)
+alpha_decay_predictability_rank_penalty_bps = (
+    _alpha_decay_predictability_rank_penalty_bps
+)
+bootstrap_robust_optimization_rank_penalty_bps = (
+    _bootstrap_robust_optimization_rank_penalty_bps
+)
+cost_aware_forecast_filter_rank_penalty_bps = (
+    _cost_aware_forecast_filter_rank_penalty_bps
+)
+counterfactual_regime_rank_penalty_bps = _counterfactual_regime_rank_penalty_bps
+execution_schedule_rank_penalty_bps = _execution_schedule_rank_penalty_bps
+feed_lag_liquidity_rank_penalty_bps = _feed_lag_liquidity_rank_penalty_bps
+frontier_dedupe_key = _frontier_dedupe_key
+hawkes_transient_impact_rank_penalty_bps = _hawkes_transient_impact_rank_penalty_bps
+institutional_mechanism_fidelity_rank_penalty_bps = (
+    _institutional_mechanism_fidelity_rank_penalty_bps
+)
+intraday_jump_burst_rank_penalty_bps = _intraday_jump_burst_rank_penalty_bps
+intraday_price_path_asymmetry_rank_penalty_bps = (
+    _intraday_price_path_asymmetry_rank_penalty_bps
+)
+lead_lag_cross_asset_rank_penalty_bps = _lead_lag_cross_asset_rank_penalty_bps
+lob_reality_gap_rank_penalty_bps = _lob_reality_gap_rank_penalty_bps
+mark_frontier_duplicates = _mark_frontier_duplicates
+metaorder_adverse_selection_rank_penalty_bps = (
+    _metaorder_adverse_selection_rank_penalty_bps
+)
+microstructure_regime_tokenization_rank_penalty_bps = (
+    _microstructure_regime_tokenization_rank_penalty_bps
+)
+nonlinear_impact_execution_rank_penalty_bps = (
+    _nonlinear_impact_execution_rank_penalty_bps
+)
+ofi_response_horizon_rank_penalty_bps = _ofi_response_horizon_rank_penalty_bps
+option_gamma_flow_rank_penalty_bps = _option_gamma_flow_rank_penalty_bps
+order_book_observability_rank_penalty_bps = _order_book_observability_rank_penalty_bps
+order_flow_entropy_regime_rank_penalty_bps = _order_flow_entropy_regime_rank_penalty_bps
+order_transition_rank_penalty_bps = _order_transition_rank_penalty_bps
+preview_rank_key = _preview_rank_key
+queue_survival_fill_rank_penalty_bps = _queue_survival_fill_rank_penalty_bps
+risk_adjusted_robust_rank_score = _risk_adjusted_robust_rank_score
+rough_flow_volatility_rank_penalty_bps = _rough_flow_volatility_rank_penalty_bps
+row_explicitly_non_hpairs = _row_explicitly_non_hpairs
+row_exploration_diversity_key = _row_exploration_diversity_key
+row_frontier_duplicate_filtered = _row_frontier_duplicate_filtered
+row_with_frontier_dedupe = _row_with_frontier_dedupe
+row_with_rank_and_selection = _row_with_rank_and_selection
+select_frontier_buckets = _select_frontier_buckets
+signal_adaptive_execution_resilience_rank_penalty_bps = (
+    _signal_adaptive_execution_resilience_rank_penalty_bps
+)
+stochastic_liquidity_resilience_rank_penalty_bps = (
+    _stochastic_liquidity_resilience_rank_penalty_bps
+)
+
+adaptive_market_limit_allocation_rank_penalty_bps_split_export = (
+    _adaptive_market_limit_allocation_rank_penalty_bps
+)
+alpha_decay_predictability_rank_penalty_bps_split_export = (
+    _alpha_decay_predictability_rank_penalty_bps
+)
+bootstrap_robust_optimization_rank_penalty_bps_split_export = (
+    _bootstrap_robust_optimization_rank_penalty_bps
+)
+cost_aware_forecast_filter_rank_penalty_bps_split_export = (
+    _cost_aware_forecast_filter_rank_penalty_bps
+)
+counterfactual_regime_rank_penalty_bps_split_export = (
+    _counterfactual_regime_rank_penalty_bps
+)
+execution_schedule_rank_penalty_bps_split_export = _execution_schedule_rank_penalty_bps
+feed_lag_liquidity_rank_penalty_bps_split_export = _feed_lag_liquidity_rank_penalty_bps
+frontier_dedupe_key_split_export = _frontier_dedupe_key
+hawkes_transient_impact_rank_penalty_bps_split_export = (
+    _hawkes_transient_impact_rank_penalty_bps
+)
+institutional_mechanism_fidelity_rank_penalty_bps_split_export = (
+    _institutional_mechanism_fidelity_rank_penalty_bps
+)
+intraday_jump_burst_rank_penalty_bps_split_export = (
+    _intraday_jump_burst_rank_penalty_bps
+)
+intraday_price_path_asymmetry_rank_penalty_bps_split_export = (
+    _intraday_price_path_asymmetry_rank_penalty_bps
+)
+lead_lag_cross_asset_rank_penalty_bps_split_export = (
+    _lead_lag_cross_asset_rank_penalty_bps
+)
+lob_reality_gap_rank_penalty_bps_split_export = _lob_reality_gap_rank_penalty_bps
+mark_frontier_duplicates_split_export = _mark_frontier_duplicates
+metaorder_adverse_selection_rank_penalty_bps_split_export = (
+    _metaorder_adverse_selection_rank_penalty_bps
+)
+microstructure_regime_tokenization_rank_penalty_bps_split_export = (
+    _microstructure_regime_tokenization_rank_penalty_bps
+)
+nonlinear_impact_execution_rank_penalty_bps_split_export = (
+    _nonlinear_impact_execution_rank_penalty_bps
+)
+ofi_response_horizon_rank_penalty_bps_split_export = (
+    _ofi_response_horizon_rank_penalty_bps
+)
+option_gamma_flow_rank_penalty_bps_split_export = _option_gamma_flow_rank_penalty_bps
+order_book_observability_rank_penalty_bps_split_export = (
+    _order_book_observability_rank_penalty_bps
+)
+order_flow_entropy_regime_rank_penalty_bps_split_export = (
+    _order_flow_entropy_regime_rank_penalty_bps
+)
+order_transition_rank_penalty_bps_split_export = _order_transition_rank_penalty_bps
+preview_rank_key_split_export = _preview_rank_key
+queue_survival_fill_rank_penalty_bps_split_export = (
+    _queue_survival_fill_rank_penalty_bps
+)
+risk_adjusted_robust_rank_score_split_export = _risk_adjusted_robust_rank_score
+rough_flow_volatility_rank_penalty_bps_split_export = (
+    _rough_flow_volatility_rank_penalty_bps
+)
+row_explicitly_non_hpairs_split_export = _row_explicitly_non_hpairs
+row_exploration_diversity_key_split_export = _row_exploration_diversity_key
+row_frontier_duplicate_filtered_split_export = _row_frontier_duplicate_filtered
+row_with_frontier_dedupe_split_export = _row_with_frontier_dedupe
+row_with_rank_and_selection_split_export = _row_with_rank_and_selection
+select_frontier_buckets_split_export = _select_frontier_buckets
+signal_adaptive_execution_resilience_rank_penalty_bps_split_export = (
+    _signal_adaptive_execution_resilience_rank_penalty_bps
+)
+stochastic_liquidity_resilience_rank_penalty_bps_split_export = (
+    _stochastic_liquidity_resilience_rank_penalty_bps
+)
 __all__ = [name for name in globals() if not name.startswith("__")]

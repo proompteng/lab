@@ -1,9 +1,10 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Hypothesis registry loading and runtime alpha-readiness compilation."""
 
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -469,6 +470,13 @@ def hypothesis_registry_requires_dependency_capability(
     return False
 
 
+def _hypotheses_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("app.trading.hypotheses")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
+
+
 def resolve_hypothesis_dependency_quorum(
     registry: HypothesisRegistryLoadResult,
 ) -> JangarDependencyQuorumStatus:
@@ -478,7 +486,15 @@ def resolve_hypothesis_dependency_quorum(
         registry,
         "jangar_dependency_quorum",
     ):
-        return load_jangar_dependency_quorum()
+        from .runtime_ledger_row_rank import (
+            load_jangar_dependency_quorum as default_load_jangar_dependency_quorum,
+        )
+
+        load_dependency_quorum = _hypotheses_root_export(
+            "load_jangar_dependency_quorum",
+            default_load_jangar_dependency_quorum,
+        )
+        return load_dependency_quorum()
     return JangarDependencyQuorumStatus(
         decision="allow",
         reasons=["torghut_dependency_quorum_not_required"],
@@ -693,5 +709,39 @@ def _extract_stage_trust(
         or quorum.get("stageTrust")
     )
 
+
+JANGAR_QUORUM_CACHE = _JANGAR_QUORUM_CACHE
+JANGAR_QUORUM_CACHE_LOCK = _JANGAR_QUORUM_CACHE_LOCK
+CAPITAL_STAGE_RANK = _CAPITAL_STAGE_RANK
+DEPENDENCY_REASONS = _DEPENDENCY_REASONS
+EDGE_OR_COST_REASONS = _EDGE_OR_COST_REASONS
+EVIDENCE_REFRESH_REASONS = _EVIDENCE_REFRESH_REASONS
+KNOWN_DEPENDENCY_CAPABILITIES = _KNOWN_DEPENDENCY_CAPABILITIES
+KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS = _KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS
+RUNTIME_LEDGER_PROVENANCE_REASONS = _RUNTIME_LEDGER_PROVENANCE_REASONS
+SAMPLE_REASONS = _SAMPLE_REASONS
+as_payload_dict = _as_payload_dict
+as_payload_dict_list = _as_payload_dict_list
+bounded_route_evidence_collection_readiness = (
+    _bounded_route_evidence_collection_readiness
+)
+candidate_blocker_class = _candidate_blocker_class
+candidate_blocker_rank = _candidate_blocker_rank
+coerce_decimal = _coerce_decimal
+decimal_to_string = _decimal_to_string
+empty_payload_dict = _empty_payload_dict
+empty_payload_dict_list = _empty_payload_dict_list
+extract_stage_trust = _extract_stage_trust
+first_matching_reason = _first_matching_reason
+is_dependency_required = _is_dependency_required
+normalize_dependency_capability = _normalize_dependency_capability
+optional_bool = _optional_bool
+optional_decimal = _optional_decimal
+optional_int = _optional_int
+parse_iso8601 = _parse_iso8601
+ranked_candidate_dossiers = _ranked_candidate_dossiers
+resolve_required_dependency_capabilities = _resolve_required_dependency_capabilities
+sequence = _sequence
+stable_string_list = _stable_string_list
 
 __all__ = [name for name in globals() if not name.startswith("__")]

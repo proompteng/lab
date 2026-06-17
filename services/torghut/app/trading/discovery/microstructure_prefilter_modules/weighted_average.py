@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Bounded H-PAIRS ClusterLOB/OFI candidate prefiltering.
 
 The scores in this module are discovery metadata only. They intentionally rank
@@ -35,45 +35,45 @@ from .shared_context import (
     HPAIRS_RUNTIME_STRATEGY_NAME,
     MicrostructureCandidatePrefilterRow,
     MicrostructurePrefilterResult,
-    _SymbolMicrostructureStats,
-    _build_symbol_microstructure_stats,
-    _rank_key,
-    _score_spec,
-    _select_frontier_buckets,
-    _source_field_diagnostics,
-    _source_input_blockers,
-    _with_rank_and_bucket,
+    SymbolMicrostructureStats_split_export as _SymbolMicrostructureStats,
+    build_symbol_microstructure_stats_split_export as _build_symbol_microstructure_stats,
+    rank_key_split_export as _rank_key,
+    score_spec_split_export as _score_spec,
+    select_frontier_buckets_split_export as _select_frontier_buckets,
+    source_field_diagnostics_split_export as _source_field_diagnostics,
+    source_input_blockers_split_export as _source_input_blockers,
+    with_rank_and_bucket_split_export as _with_rank_and_bucket,
     build_hpairs_microstructure_prefilter,
 )
 from .horizon_ofi_features import (
-    _candidate_direction,
-    _candidate_notional,
-    _candidate_symbols,
-    _capacity_penalty_bps,
-    _cluster_behavior,
-    _empty_cluster_behavior,
-    _empty_horizon_features,
-    _empty_macro_window_stress,
-    _empty_pair_convergence_risk,
-    _empty_regime_stress_veto,
-    _event_label,
-    _extract_microprice_bias_bps,
-    _extract_ofi_pressure,
-    _extract_price,
-    _extract_quote_depth_imbalance,
-    _extract_regime_stress,
-    _extract_spread_bps,
-    _extract_volume,
-    _horizon_ofi_features,
-    _impact_capacity_lineage,
-    _is_hpairs_candidate,
-    _macro_window_stress_from_regime,
-    _merged_horizon_features,
-    _pair_convergence_payload,
-    _pair_convergence_risk,
-    _regime_stress_veto,
-    _timestamp_key,
-    _volume_score,
+    candidate_direction_split_export as _candidate_direction,
+    candidate_notional as _candidate_notional,
+    candidate_symbols_split_export as _candidate_symbols,
+    capacity_penalty_bps_split_export as _capacity_penalty_bps,
+    cluster_behavior_split_export as _cluster_behavior,
+    empty_cluster_behavior_split_export as _empty_cluster_behavior,
+    empty_horizon_features_split_export as _empty_horizon_features,
+    empty_macro_window_stress_split_export as _empty_macro_window_stress,
+    empty_pair_convergence_risk_split_export as _empty_pair_convergence_risk,
+    empty_regime_stress_veto_split_export as _empty_regime_stress_veto,
+    event_label_split_export as _event_label,
+    extract_microprice_bias_bps_split_export as _extract_microprice_bias_bps,
+    extract_ofi_pressure_split_export as _extract_ofi_pressure,
+    extract_price_split_export as _extract_price,
+    extract_quote_depth_imbalance as _extract_quote_depth_imbalance,
+    extract_regime_stress_split_export as _extract_regime_stress,
+    extract_spread_bps_split_export as _extract_spread_bps,
+    extract_volume_split_export as _extract_volume,
+    horizon_ofi_features_split_export as _horizon_ofi_features,
+    impact_capacity_lineage_split_export as _impact_capacity_lineage,
+    is_hpairs_candidate_split_export as _is_hpairs_candidate,
+    macro_window_stress_from_regime_split_export as _macro_window_stress_from_regime,
+    merged_horizon_features_split_export as _merged_horizon_features,
+    pair_convergence_payload as _pair_convergence_payload,
+    pair_convergence_risk_split_export as _pair_convergence_risk,
+    regime_stress_veto_split_export as _regime_stress_veto,
+    timestamp_key_split_export as _timestamp_key,
+    volume_score_split_export as _volume_score,
 )
 
 
@@ -173,6 +173,19 @@ def _string(value: Any) -> str:
     return str(value or "").strip()
 
 
+# Public aliases used by split-module consumers.
+concat_arrays = _concat_arrays
+decimal = _decimal
+dominant_label = _dominant_label
+ewma_last = _ewma_last
+first_float_with_key = _first_float_with_key
+float_or_none = _float_or_none
+mapping = _mapping
+mean = _mean
+normalized_entropy = _normalized_entropy
+percentile = _percentile
+string = _string
+weighted_average = _weighted_average
 __all__ = [
     "HPAIRS_AUTHORITY_BLOCKERS",
     "HPAIRS_FAMILY_TEMPLATE_ID",

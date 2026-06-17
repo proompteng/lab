@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only vectorized scoring over manifest-verified replay tapes."""
 
 from __future__ import annotations
@@ -146,6 +146,12 @@ class FastReplayPreviewResult:
     )
 
     def to_manifest_payload(self) -> dict[str, Any]:
+        from .frontier_selection_blockers_for_row import (
+            discovery_stage_semantics as _discovery_stage_semantics,
+            runtime_ledger_lineage_handoff_manifest as _runtime_ledger_lineage_handoff_manifest,
+            selected_candidate_ids_by_bucket as _selected_candidate_ids_by_bucket,
+        )
+
         selected_candidate_ids_by_bucket = _selected_candidate_ids_by_bucket(self.rows)
         runtime_ledger_lineage_handoff = _runtime_ledger_lineage_handoff_manifest(
             self.rows
@@ -419,6 +425,21 @@ def build_fast_replay_preview(
     scheduler replay and runtime ledger proof remain required downstream.
     """
 
+    from .candidate_clusterlob_feature_lane import (
+        candidate_clusterlob_feature_lane as _candidate_clusterlob_feature_lane,
+        clusterlob_feature_lane_manifest as _clusterlob_feature_lane_manifest,
+    )
+    from .frontier_selection_blockers_for_row import (
+        candidate_symbols as _candidate_symbols,
+    )
+    from .preview_rank_key import (
+        mark_frontier_duplicates as _mark_frontier_duplicates,
+        preview_rank_key as _preview_rank_key,
+        row_with_rank_and_selection as _row_with_rank_and_selection,
+        select_frontier_buckets as _select_frontier_buckets,
+    )
+    from .score_candidate_spec import score_candidate_spec as _score_candidate_spec
+
     requested_exact_cap = (
         FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP
         if exact_replay_candidate_cap is None
@@ -534,6 +555,21 @@ def build_fast_replay_preview(
 
 
 def _build_symbol_stats(rows: Sequence[SignalEnvelope]) -> dict[str, _SymbolTapeStats]:
+    from .extract_price import (
+        extract_microprice_bias_bps as _extract_microprice_bias_bps,
+        extract_ofi_memory_regime_score as _extract_ofi_memory_regime_score,
+        extract_ofi_pressure as _extract_ofi_pressure,
+        extract_price as _extract_price,
+        extract_spread_bps as _extract_spread_bps,
+        extract_volume as _extract_volume,
+    )
+    from .frontier_selection_blockers_for_row import (
+        cluster_lob_activity_score as _cluster_lob_activity_score,
+        combined_ofi_decay_score as _combined_ofi_decay_score,
+        liquidity_regime_score as _liquidity_regime_score,
+        macro_stress_veto_score as _macro_stress_veto_score,
+    )
+
     rows_by_symbol: dict[str, list[SignalEnvelope]] = {}
     for row in rows:
         symbol = row.symbol.strip().upper()
@@ -637,4 +673,14 @@ def _build_clusterlob_feature_lane_by_symbol(
     }
 
 
+# Public aliases used by split-module consumers.
+SymbolTapeStats = _SymbolTapeStats
+build_clusterlob_feature_lane_by_symbol = _build_clusterlob_feature_lane_by_symbol
+build_symbol_stats = _build_symbol_stats
+
+SymbolTapeStats_split_export = _SymbolTapeStats
+build_clusterlob_feature_lane_by_symbol_split_export = (
+    _build_clusterlob_feature_lane_by_symbol
+)
+build_symbol_stats_split_export = _build_symbol_stats
 __all__ = [name for name in globals() if not name.startswith("__")]

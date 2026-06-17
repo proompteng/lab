@@ -1,81 +1,136 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.load_yaml")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.write_results_tsv")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.write_portfolio_outputs")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.run_strategy_autoresearch_loop"
+from .shared_context import (
+    argparse,
+    json,
+    os,
+    dataclass,
+    date,
+    Decimal,
+    InvalidOperation,
+    ROUND_DOWN,
+    Path,
+    Any,
+    Mapping,
+    cast,
+    yaml,
+    FamilyAutoresearchPlan,
+    ProposalModelPolicy,
+    StrategyAutoresearchProgram,
+    apply_program_objective,
+    build_mutated_sweep_config,
+    candidate_meets_objective,
+    load_strategy_autoresearch_program,
+    run_id,
+    stable_payload_hash,
+    write_autoresearch_notebooks,
+    CandidateEvidenceBundle,
+    evidence_bundle_from_frontier_candidate,
+    family_template_dir,
+    MlxCandidateDescriptor,
+    descriptor_from_candidate_payload,
+    descriptor_from_sweep_config,
+    write_mlx_notebook_exports,
+    ProposalDiagnostics,
+    ProposalScore,
+    ProposalSelectionEntry,
+    build_proposal_diagnostics,
+    rank_candidate_descriptors,
+    select_proposal_batch,
+    MlxSignalBundleStats,
+    MlxSnapshotManifest,
+    build_mlx_snapshot_manifest,
+    write_mlx_signal_bundle,
+    write_mlx_snapshot_manifest,
+    deployable_lower_bound_missing_count,
+    deployable_lower_bound_net_pnl_per_day,
+    deployable_proof_failed_gate_count,
+    blocked_research_candidate_promotion_readiness,
+    summary_promotion_readiness,
+    PortfolioCandidateSpec,
+    optimize_portfolio_candidate,
+    ProfitTargetOraclePolicy,
+    build_replay_ledger_ranking_report,
+    default_replay_ledger_ranking_policy,
+    apply_replay_ledger_remediation_guidance,
+    build_replay_ledger_remediation_report,
+    ReplayTapeManifest,
+    build_source_query_digest,
+    default_manifest_path,
+    materialize_signal_tape,
+    write_runtime_closure_bundle,
+    RuntimeClosureExecutionContext,
+    replay_mod,
+    run_consistent_profitability_frontier,
+    WorkItem,
+    LatestCompleteWindowRequirement,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .run_strategy_autoresearch_loop import run_strategy_autoresearch_loop
+from .main import main
 
-__compat_module__ = __compat_import_module__(f"{__name__}.main")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "argparse",
+    "json",
+    "os",
+    "dataclass",
+    "date",
+    "Decimal",
+    "InvalidOperation",
+    "ROUND_DOWN",
+    "Path",
+    "Any",
+    "Mapping",
+    "cast",
+    "yaml",
+    "FamilyAutoresearchPlan",
+    "ProposalModelPolicy",
+    "StrategyAutoresearchProgram",
+    "apply_program_objective",
+    "build_mutated_sweep_config",
+    "candidate_meets_objective",
+    "load_strategy_autoresearch_program",
+    "run_id",
+    "stable_payload_hash",
+    "write_autoresearch_notebooks",
+    "CandidateEvidenceBundle",
+    "evidence_bundle_from_frontier_candidate",
+    "family_template_dir",
+    "MlxCandidateDescriptor",
+    "descriptor_from_candidate_payload",
+    "descriptor_from_sweep_config",
+    "write_mlx_notebook_exports",
+    "ProposalDiagnostics",
+    "ProposalScore",
+    "ProposalSelectionEntry",
+    "build_proposal_diagnostics",
+    "rank_candidate_descriptors",
+    "select_proposal_batch",
+    "MlxSignalBundleStats",
+    "MlxSnapshotManifest",
+    "build_mlx_snapshot_manifest",
+    "write_mlx_signal_bundle",
+    "write_mlx_snapshot_manifest",
+    "deployable_lower_bound_missing_count",
+    "deployable_lower_bound_net_pnl_per_day",
+    "deployable_proof_failed_gate_count",
+    "blocked_research_candidate_promotion_readiness",
+    "summary_promotion_readiness",
+    "PortfolioCandidateSpec",
+    "optimize_portfolio_candidate",
+    "ProfitTargetOraclePolicy",
+    "build_replay_ledger_ranking_report",
+    "default_replay_ledger_ranking_policy",
+    "apply_replay_ledger_remediation_guidance",
+    "build_replay_ledger_remediation_report",
+    "ReplayTapeManifest",
+    "build_source_query_digest",
+    "default_manifest_path",
+    "materialize_signal_tape",
+    "write_runtime_closure_bundle",
+    "RuntimeClosureExecutionContext",
+    "replay_mod",
+    "run_consistent_profitability_frontier",
+    "WorkItem",
+    "LatestCompleteWindowRequirement",
+    "run_strategy_autoresearch_loop",
+    "main",
 ]
-del __compat_module__
