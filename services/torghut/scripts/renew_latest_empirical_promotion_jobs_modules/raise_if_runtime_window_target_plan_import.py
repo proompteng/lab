@@ -429,8 +429,11 @@ def _runtime_window_plan_targets(
         if str(item).strip()
     ]
     targets: list[RuntimeWindowImportTarget] = []
+    allow_empty_multi_ref = len(file_refs) + len(url_refs) > 1
     for ref in file_refs:
         plan = _read_runtime_window_target_plan(ref)
+        if allow_empty_multi_ref and _runtime_window_target_plan_has_no_targets(plan):
+            continue
         targets.extend(_runtime_window_targets_from_plan(plan=plan, ref=ref, args=args))
     timeout_seconds = float(
         getattr(args, "runtime_window_target_plan_url_timeout_seconds", 5.0) or 5.0
@@ -451,6 +454,8 @@ def _runtime_window_plan_targets(
             attempts=url_attempts,
             retry_backoff_seconds=retry_backoff_seconds,
         )
+        if allow_empty_multi_ref and _runtime_window_target_plan_has_no_targets(plan):
+            continue
         targets.extend(_runtime_window_targets_from_plan(plan=plan, ref=ref, args=args))
     return targets
 
@@ -467,6 +472,17 @@ def _runtime_window_target_plan_ref_count(args: argparse.Namespace) -> int:
         if str(item).strip()
     ]
     return len(file_refs) + len(url_refs)
+
+
+def _runtime_window_target_plan_has_no_targets(plan: Mapping[str, Any]) -> bool:
+    raw_targets = plan.get("targets")
+    if raw_targets is None:
+        return True
+    return (
+        isinstance(raw_targets, Sequence)
+        and not isinstance(raw_targets, (str, bytes, bytearray))
+        and len(raw_targets) == 0
+    )
 
 
 def _runtime_window_targets_from_plan(
