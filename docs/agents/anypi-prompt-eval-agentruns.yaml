@@ -5,6 +5,11 @@
 # - Five AgentRuns start together with unique branches.
 # - The batch covers at least three prompt variants and all required task classes.
 # - Runtime node selectors force both amd64 and arm64 runner coverage for the multi-arch Anypi image.
+#
+# PR-template compliance:
+# - All AgentRuns must produce valid PR bodies that pass validation (git diff --check).
+# - Validation commands must include service-specific checks (TSC, tests, lint, type-checks).
+# - Manifests must render without errors (kustomize build --enable-helm).
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -44,7 +49,13 @@ spec:
     head: codex/anypi-eval/minimal/torghut-diff-coverage-20260616d
     promptVariant: minimal
     validationCommands: |
+      git diff --check
+      cd services/torghut && uv sync --frozen --extra dev
+      cd services/torghut && uv run --frozen ruff format --check app tests scripts migrations
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.alpha.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.scripts.json
   secrets:
     - github-token
   workload:
@@ -96,7 +107,13 @@ spec:
     head: codex/anypi-eval/repair-loop/torghut-diff-coverage-20260616d
     promptVariant: repair-loop
     validationCommands: |
+      git diff --check
+      cd services/torghut && uv sync --frozen --extra dev
+      cd services/torghut && uv run --frozen ruff format --check app tests scripts migrations
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.alpha.json
+      cd services/torghut && uv run --frozen pyright --project pyrightconfig.scripts.json
   secrets:
     - github-token
   workload:
@@ -147,6 +164,7 @@ spec:
     head: codex/anypi-eval/finish-gated/runner-status-evidence-20260616d
     promptVariant: finish-gated
     validationCommands: |
+      git diff --check
       bun run --filter @proompteng/anypi tsc
       bun run --filter @proompteng/anypi test
       bun run --filter @proompteng/anypi lint
@@ -200,6 +218,7 @@ spec:
     head: codex/anypi-eval/strict-repo/runner-ci-watcher-20260616d
     promptVariant: strict-repo
     validationCommands: |
+      git diff --check
       bun run --filter @proompteng/anypi tsc
       bun run --filter @proompteng/anypi test
       bun run --filter @proompteng/anypi lint
@@ -253,7 +272,11 @@ spec:
     head: codex/anypi-eval/repair-loop/agents-docs-manifests-20260616d
     promptVariant: repair-loop
     validationCommands: |
+      git diff --check
       kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
+      bun run --filter @proompteng/anypi tsc
+      bun run --filter @proompteng/anypi test
+      bun run --filter @proompteng/anypi lint
   secrets:
     - github-token
   workload:

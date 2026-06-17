@@ -19,7 +19,13 @@ The provider is an Agents `exec` provider. The controller mounts `/workspace/run
 `GH_TOKEN/GITHUB_TOKEN`, then starts the Anypi binary directly. Anypi clones the repository, checks out the AgentRun head
 branch, invokes Pi through the TypeScript SDK, validates the result, commits, pushes, and opens or updates a PR.
 PR bodies are rendered from the target repository's `.github/PULL_REQUEST_TEMPLATE.md` when present, with every template
-section filled and validation commands copied from runner status.
+section filled using data from the runner status (prompt variant, session artifact, commit, PR URL) and validation commands
+copied from the runner status. The runner auto-checks the PR-template checklist items.
+
+For prompt-eval batches, validation commands must include:
+- `git diff --check` for trailing whitespace.
+- Service-specific checks (TSC, tests, lint, type-checks) for code quality.
+- Manifest validation (e.g., `kustomize build --enable-helm`) for infrastructure files.
 
 ## Pi SDK Configuration
 

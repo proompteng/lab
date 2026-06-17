@@ -98,17 +98,24 @@ export const renderPullRequestBody = (input: {
   piText: string
   template?: string
 }) => {
+  const implementationSummary = input.runSpec.implementation?.summary?.trim() || 'No summary provided'
+  const relatedIssues = input.runSpec.issueTitle?.trim() ? 'Related issue: ' + input.runSpec.issueTitle : 'None'
+  const testingCommands = validationSummary(input.status)
+
   const sections = new Map([
     [
       'summary',
       [
-        `- Generated for ${input.status.namespace ?? 'agents'}/${input.status.runName ?? 'unknown'}.`,
-        `- Prompt variant: \`${input.status.promptVariant}\` (\`${input.status.promptHash}\`).`,
-        `- Session artifact: \`${input.status.sessionFile ?? 'N/A'}\`.`,
+        `- **Task**: ${implementationSummary}`,
+        `- **AgentRun**: ${input.status.namespace ?? 'agents'}/${input.status.runName ?? 'unknown'}`,
+        `- **Prompt variant**: \`${input.status.promptVariant}\` (\`${input.status.promptHash}\`)`,
+        `- **Session artifact**: \`${input.status.sessionFile ?? 'N/A'}\``,
+        `- **Commit**: \`${input.status.commit ?? 'pending'}\``,
+        `- **PR**: ${input.status.pullRequest?.url ?? 'pending'}`,
       ].join('\n'),
     ],
-    ['related issues', 'None'],
-    ['testing', validationSummary(input.status)],
+    ['related issues', relatedIssues],
+    ['testing', testingCommands],
     ['screenshots (if applicable)', 'N/A'],
     ['breaking changes', 'None'],
     [

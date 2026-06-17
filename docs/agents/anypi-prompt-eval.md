@@ -71,6 +71,17 @@ failures. If no variant passes, leave `anypi-agent` on `minimal`, record the fai
 | mixed | five-run batch | `20260616c` | `#10922` before invalidation | Targeted Torghut validation passed before CI wait | Invalid measurement: all-checks probe before GitHub created checks was still treated as unavailable instead of pending/retryable | Not scored | Do not promote from this batch |
 | pending | five-run batch | `20260616d` | pending | pending | pending | pending | Scheduled with `registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66` |
 
+## Validation Requirements
+
+Prompt-eval AgentRuns must pass comprehensive validation before CI is scored:
+
+- **PR template compliance**: Run `git diff --check` to ensure no trailing whitespace in generated PRs.
+- **Service-specific checks**: Include TSC, tests, lint, and type-checks for TypeScript services.
+- **Manifest validation**: Run `kustomize build --enable-helm` for Argo CD manifests.
+- **No placeholders**: PR bodies must not contain `<!--`, `[ ]`, `TODO`, `TBD`, or `<...>`.
+
+Apply the batch manifests to schedule multiple runs concurrently and verify all validation commands pass locally before CI wait.
+
 ## Commands
 
 ```bash

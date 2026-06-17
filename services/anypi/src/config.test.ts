@@ -227,7 +227,7 @@ describe('Anypi prompt contract', () => {
 
     expect(body).toContain('## Summary')
     expect(body).toContain('## Testing')
-    expect(body).toContain('Prompt variant: `repair-loop` (`0123456789abcdef`)')
+    expect(body).toContain('**Prompt variant**: `repair-loop` (`0123456789abcdef`)')
     expect(body).toContain('bun run --filter @proompteng/anypi test')
     expect(body).toContain('- CI: passed: 2 passed/skipped, 0 pending, 0 failed/cancelled')
     expect(body).toContain('- [x] Testing section documents the exact validation performed.')
