@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 import { ensureCli, repoRoot, run } from '../shared/cli'
-import { buildAndPushDockerImage, type DockerCacheMode } from '../shared/docker'
+import { buildAndPushDockerImage, buildAndPushDockerImages, type DockerCacheMode } from '../shared/docker'
 import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
@@ -49,7 +49,7 @@ const parsePlatforms = (value: string | undefined): string[] | undefined => {
   return platforms.length > 0 ? platforms : undefined
 }
 
-const defaultPruneScopesForTarget = (target: string | undefined): string[] => [
+const defaultPruneScopesForTarget = (_target: string | undefined): string[] => [
   '@proompteng/agents',
   '@proompteng/agent-contracts',
   '@proompteng/otel',
@@ -207,6 +207,12 @@ const resolveBuildConfiguration = (options: BuildImageOptions = {}): BuildConfig
   }
 }
 
+const cacheRefForBatchTarget = (cacheRef: string, targetName: string, isSharedCacheRef: boolean): string => {
+  if (!isSharedCacheRef) return cacheRef
+  const separator = cacheRef.includes(':') ? '-' : ':'
+  return `${cacheRef}${separator}${targetName}`
+}
+
 export const buildImage = async (options: BuildImageOptions = {}) => {
   const config = resolveBuildConfiguration(options)
 
@@ -247,6 +253,63 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   }
 }
 
+export const buildImages = async (options: BuildImageOptions[]) => {
+  if (options.length === 0) return []
+
+  const configs = options.map((option) => resolveBuildConfiguration(option))
+  const usesPrunedContext = configs.every((config) => config.usePrune)
+  const usesExplicitContext = configs.every((config) => !config.usePrune)
+  if (!usesPrunedContext && !usesExplicitContext) {
+    throw new Error('Agents image batch builds must use either all pruned contexts or all explicit contexts')
+  }
+
+  let pruneCleanup: (() => void) | undefined
+
+  try {
+    const sharedPrunedContext = usesPrunedContext ? await createPrunedContext() : undefined
+    pruneCleanup = sharedPrunedContext?.cleanup
+    const hasSharedCacheRef = new Set(configs.map((config) => config.cacheRef)).size < configs.length
+
+    const targets = configs.map((config, index) => {
+      const context =
+        sharedPrunedContext?.dir ?? resolve(repoRoot, options[index].context ?? process.env.AGENTS_BUILD_CONTEXT ?? '.')
+      const targetName = config.target ?? `agents-image-${index}`
+      const codexAuthPathForDocker = existsSync(config.codexAuthPath) ? config.codexAuthPath : undefined
+      if (!codexAuthPathForDocker) {
+        console.warn(`Codex auth not found at ${config.codexAuthPath}; build will proceed without it.`)
+      }
+
+      return {
+        name: targetName,
+        registry: config.registry,
+        repository: config.repository,
+        tag: config.tag,
+        context,
+        dockerfile: config.dockerfile,
+        target: config.target,
+        buildArgs: config.buildArgs,
+        codexAuthPath: codexAuthPathForDocker,
+        cacheRef: cacheRefForBatchTarget(config.cacheRef, targetName, hasSharedCacheRef),
+        cacheMode: config.cacheMode,
+        platforms: config.platforms,
+      }
+    })
+
+    const result = await buildAndPushDockerImages({
+      cwd: repoRoot,
+      targets,
+    })
+
+    return result.targets.map((target, index) => ({
+      ...target,
+      version: configs[index].version,
+      commit: configs[index].commit,
+    }))
+  } finally {
+    pruneCleanup?.()
+  }
+}
+
 if (import.meta.main) {
   buildImage().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
@@ -256,6 +319,7 @@ if (import.meta.main) {
 
 export const __private = {
   buildArgsFromEnv,
+  cacheRefForBatchTarget,
   execGit,
   parsePlatforms,
   parsePruneScopes,

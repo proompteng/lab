@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import YAML from 'yaml'
-import { buildImage, type BuildImageOptions } from './build-image'
+import { buildImages, type BuildImageOptions } from './build-image'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
@@ -426,6 +426,8 @@ const updateValuesFile = (
   )
 }
 
+export const updateAgentsValuesFile = updateValuesFile
+
 const readRunnerImagePin = (valuesPath: string): ImagePin => {
   const values = YAML.parse(readFileSync(valuesPath, 'utf8')) ?? {}
   const runnerImage = values.runner?.image
@@ -536,9 +538,7 @@ const main = async () => {
   const runnerImageName = `${options.registry}/${options.runnerRepository}`
   const runnerImage = `${runnerImageName}:${options.tag}`
 
-  for (const imagePlan of buildAgentsServiceImagePlans(options)) {
-    await buildImage(imagePlan)
-  }
+  await buildImages(buildAgentsServiceImagePlans(options))
   const runnerPin = options.buildRunner ? undefined : readRunnerImagePin(options.valuesPath)
   if (options.buildRunner) {
     if (!options.codexAuthPath) {
