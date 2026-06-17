@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-# ruff: noqa: E402
 
 import sys
 from pathlib import Path
@@ -12,7 +11,7 @@ _SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(_SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SERVICE_ROOT))
 
-from app.trading.revenue_repair import (
+from app.trading.revenue_repair import (  # noqa: E402
     SCHEMA_VERSION,
     _bool,
     _build_repair_queue,

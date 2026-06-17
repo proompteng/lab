@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Rank exact replay ledger artifacts with runtime-ledger PnL semantics."""
 
 from __future__ import annotations
@@ -24,8 +23,6 @@ from app.trading.discovery.order_book_observability_stress import (
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.models import SignalEnvelope
 from app.trading.runtime_ledger import RuntimeLedgerBucket, build_runtime_ledger_buckets
-
-# ruff: noqa: F401
 
 
 EXACT_REPLAY_LEDGER_RANKING_SCHEMA_VERSION = "torghut.exact-replay-ledger-ranking.v1"
@@ -787,4 +784,78 @@ __all__ = (
     "full_window_bucket",
     "ledger_window",
     "runtime_rows_with_defaults",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "CLOSING_AUCTION_CLEARING_PRICE_FIELDS",
+    "CLOSING_AUCTION_FIELDS",
+    "CLOSING_AUCTION_PROJECTION_FIELDS",
+    "CLOSING_WINDOW_FIELDS",
+    "Decimal",
+    "EXACT_REPLAY_LEDGER_RANKING_SCHEMA_VERSION",
+    "EXACT_REPLAY_MICROSTRUCTURE_STRESS_SCHEMA_VERSION",
+    "EXECUTION_QUALITY_SCHEMA_VERSION",
+    "EXECUTION_QUALITY_SOURCE_PAPERS",
+    "EXECUTION_SHORTFALL_FIELDS",
+    "FILL_STATUS_FIELDS",
+    "InvalidOperation",
+    "Iterable",
+    "LIMIT_FILL_PROBABILITY_FIELDS",
+    "LIVE_PROMOTION_AUTHORITIES",
+    "Mapping",
+    "OPPORTUNITY_COST_FIELDS",
+    "ORDER_TYPE_FIELDS",
+    "PRICE_IMPROVEMENT_FIELDS",
+    "Path",
+    "ProfitTargetOraclePolicy",
+    "QUEUE_POSITION_FIELDS",
+    "ReplayLedgerCandidateRanking",
+    "ReplayLedgerRankingFailure",
+    "ReplayLedgerRankingPolicy",
+    "RuntimeLedgerBucket",
+    "Sequence",
+    "SignalEnvelope",
+    "TERMINAL_INVENTORY_PATH_FIELDS",
+    "_CLOSING_AUCTION_CLEARING_PRICE_FIELDS",
+    "_CLOSING_AUCTION_FIELDS",
+    "_CLOSING_AUCTION_PROJECTION_FIELDS",
+    "_CLOSING_WINDOW_FIELDS",
+    "_EXECUTION_QUALITY_SOURCE_PAPERS",
+    "_EXECUTION_SHORTFALL_FIELDS",
+    "_FILL_STATUS_FIELDS",
+    "_LIMIT_FILL_PROBABILITY_FIELDS",
+    "_LIVE_PROMOTION_AUTHORITIES",
+    "_OPPORTUNITY_COST_FIELDS",
+    "_ORDER_TYPE_FIELDS",
+    "_PRICE_IMPROVEMENT_FIELDS",
+    "_QUEUE_POSITION_FIELDS",
+    "_TERMINAL_INVENTORY_PATH_FIELDS",
+    "_full_window_bucket",
+    "_ledger_window",
+    "_payload_object",
+    "_runtime_rows_with_defaults",
+    "annotations",
+    "build_replay_ledger_ranking_report",
+    "build_runtime_ledger_buckets",
+    "cast",
+    "dataclass",
+    "date",
+    "datetime",
+    "default_replay_ledger_ranking_policy",
+    "extract_adaptive_market_limit_allocation_stress",
+    "extract_cluster_lob_features",
+    "extract_lob_reality_gap_stress",
+    "extract_order_book_observability_stress",
+    "full_window_bucket",
+    "json",
+    "ledger_window",
+    "rank_replay_ledger_files",
+    "rank_replay_ledger_payload",
+    "runtime_rows_with_defaults",
+    "time",
+    "timedelta",
+    "timezone",
 )

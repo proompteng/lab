@@ -1,77 +1,25 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Renew empirical promotion artifacts from the latest authoritative replay outputs."""
 
 from __future__ import annotations
 
-import argparse
 import json
-import os
-import subprocess
-import sys
-import time as wall_time
-import urllib.error
-import urllib.request
-from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
-from zoneinfo import ZoneInfo
 
-import psycopg
-import yaml
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from app.db import SessionLocal
-from app.models import AutoresearchEpoch, VNextEmpiricalJobRun
-from app.trading.empirical_jobs import (
-    EMPIRICAL_JOB_TYPES,
-    empirical_artifact_truthfulness_reasons,
-)
-from app.trading.empirical_manifest import (
-    normalize_empirical_promotion_manifest,
-    validate_empirical_promotion_manifest,
-)
 from app.trading.paper_route_target_plan import paper_route_target_plan_from_payload
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    DEFAULT_AUTORESEARCH_RUNTIME_WINDOW_STATUSES,
-    EXECUTION_ELIGIBLE_DECISION_STATUSES,
     HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
     MATERIALIZABLE_SOURCE_ROW_COUNT_KEYS,
-    OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT,
-    PAPER_ROUTE_REPLAY_ACCOUNT_LABEL,
-    PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
-    RUNTIME_WINDOW_TARGET_METADATA_KEYS,
-    RUNTIME_WINDOW_TARGET_PLAN_DEFERRED_REASONS,
     RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES,
-    RuntimeWindowImportTarget,
-    SIM_BACKED_PAPER_ROUTE_SOURCE_KINDS,
-    SIM_DB_DSN_ENV,
     SOURCE_COLLECTION_ONLY_PLAN_SOURCES,
-    US_EQUITIES_CLOSE,
-    US_EQUITIES_OPEN,
-    US_EQUITIES_TIMEZONE,
     as_dict as _as_dict,
     as_sequence as _as_sequence,
     as_text as _as_text,
     as_text_list as _as_text_list,
-    nonnegative_int as _nonnegative_int,
-    normalized_sim_backed_source_account_label as _normalized_sim_backed_source_account_label,
-    parse_args as _parse_args,
-    parse_dt as _parse_dt,
-    read_runtime_window_manifest as _read_runtime_window_manifest,
-    runtime_manifest_delay_depth_stress_report_ref as _runtime_manifest_delay_depth_stress_report_ref,
-    runtime_manifest_entry_requirements as _runtime_manifest_entry_requirements,
-    runtime_manifest_requires_delay_depth_stress as _runtime_manifest_requires_delay_depth_stress,
-    runtime_version_ref as _runtime_version_ref,
-    runtime_window_delay_depth_remediation as _runtime_window_delay_depth_remediation,
-    runtime_window_target_is_paper_route_collection as _runtime_window_target_is_paper_route_collection,
-    runtime_window_target_plan_import_blocked_result as _runtime_window_target_plan_import_blocked_result,
-    utc_iso as _utc_iso,
 )
 
 

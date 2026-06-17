@@ -6,139 +6,29 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import timezone
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 
 import numpy as np
-from numpy.typing import NDArray
 
-from app.trading.discovery.candidate_specs import CandidateSpec
-from app.trading.discovery.adaptive_signal_falsification_stress import (
-    extract_adaptive_signal_falsification_stress,
-)
-from app.trading.discovery.bootstrap_robust_optimization_stress import (
-    extract_bootstrap_robust_optimization_stress,
-)
-from app.trading.discovery.adaptive_market_limit_allocation_stress import (
-    extract_adaptive_market_limit_allocation_stress,
-)
-from app.trading.discovery.alpha_decay_predictability_stress import (
-    extract_alpha_decay_predictability_stress,
-)
-from app.trading.discovery.counterfactual_regime_replay_stress import (
-    extract_counterfactual_regime_replay_stress,
-)
-from app.trading.discovery.cost_aware_forecast_filter_stress import (
-    extract_cost_aware_forecast_filter_stress,
-)
-from app.trading.discovery.cluster_lob_features import (
-    HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
-    extract_cluster_lob_features,
-    extract_hawkes_excitation_summary,
-)
-from app.trading.discovery.execution_schedule_stress import (
-    extract_execution_schedule_stress,
-)
-from app.trading.discovery.feed_lag_liquidity_stress import (
-    extract_feed_lag_liquidity_stress,
-)
-from app.trading.discovery.hawkes_transient_impact_stress import (
-    extract_hawkes_transient_impact_stress,
-)
-from app.trading.discovery.intraday_jump_burst_stress import (
-    extract_intraday_jump_burst_stress,
-)
-from app.trading.discovery.intraday_price_path_asymmetry_stress import (
-    extract_intraday_price_path_asymmetry_stress,
-)
-from app.trading.discovery.institutional_mechanism_fidelity_stress import (
-    extract_institutional_mechanism_fidelity_stress,
-)
-from app.trading.discovery.lead_lag_cross_asset_stress import (
-    extract_lead_lag_cross_asset_stress,
-)
-from app.trading.discovery.metaorder_adverse_selection_stress import (
-    extract_metaorder_adverse_selection_stress,
-)
-from app.trading.discovery.lob_reality_gap_stress import (
-    extract_lob_reality_gap_stress,
-)
-from app.trading.discovery.microstructure_regime_tokenization_stress import (
-    extract_microstructure_regime_tokenization_stress,
-)
-from app.trading.discovery.microstructure_prefilter import (
-    HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
-    HPAIRS_PREFILTER_PROOF_SOURCE,
-    build_hpairs_microstructure_prefilter,
-)
-from app.trading.discovery.nonlinear_impact_execution_stress import (
-    extract_nonlinear_impact_execution_stress,
-)
-from app.trading.discovery.order_book_observability_stress import (
-    extract_order_book_observability_stress,
-)
-from app.trading.discovery.ofi_response_horizon_stress import (
-    extract_ofi_response_horizon_stress,
-)
-from app.trading.discovery.option_gamma_flow_stress import (
-    extract_option_gamma_flow_stress,
-)
-from app.trading.discovery.order_transition_stress import (
-    extract_order_transition_stress,
-)
-from app.trading.discovery.order_flow_entropy_regime_stress import (
-    extract_order_flow_entropy_regime_stress,
-)
-from app.trading.discovery.queue_survival_fill_stress import (
-    extract_queue_survival_fill_stress,
-)
-from app.trading.discovery.rough_flow_volatility_stress import (
-    extract_rough_flow_volatility_stress,
-)
-from app.trading.discovery.signal_adaptive_execution_resilience_stress import (
-    extract_signal_adaptive_execution_resilience_stress,
-)
-from app.trading.discovery.stochastic_liquidity_resilience_stress import (
-    extract_stochastic_liquidity_resilience_stress,
-)
-from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401
 
 from .shared_context import (
     FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
     FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
-    FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION,
     FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP,
-    FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS,
-    FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS,
-    FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION,
     FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION,
     FAST_REPLAY_PREVIEW_SCHEMA_VERSION,
     FAST_REPLAY_PROOF_SEMANTICS_LABEL,
-    FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION,
-    FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SOURCES,
     FAST_REPLAY_TARGET_NET_PNL_PER_DAY,
     FAST_REPLAY_WHITEPAPER_MECHANISMS,
     FastReplayPreviewRow,
 )
 from .fast_replay_preview_result import (
     FastReplayPreviewResult,
-    SymbolTapeStats_split_export as _SymbolTapeStats,
-    build_clusterlob_feature_lane_by_symbol_split_export as _build_clusterlob_feature_lane_by_symbol,
-    build_symbol_stats_split_export as _build_symbol_stats,
     build_fast_replay_preview,
-)
-from .candidate_clusterlob_feature_lane import (
-    candidate_clusterlob_feature_lane_split_export as _candidate_clusterlob_feature_lane,
-    clusterlob_feature_lane_manifest_split_export as _clusterlob_feature_lane_manifest,
-    clusterlob_feature_lane_score_split_export as _clusterlob_feature_lane_score,
-)
-from .score_candidate_spec import (
-    score_candidate_spec_split_export as _score_candidate_spec,
 )
 from .preview_rank_key import (
     adaptive_market_limit_allocation_rank_penalty_bps_split_export as _adaptive_market_limit_allocation_rank_penalty_bps,
@@ -146,16 +36,13 @@ from .preview_rank_key import (
     bootstrap_robust_optimization_rank_penalty_bps_split_export as _bootstrap_robust_optimization_rank_penalty_bps,
     cost_aware_forecast_filter_rank_penalty_bps_split_export as _cost_aware_forecast_filter_rank_penalty_bps,
     counterfactual_regime_rank_penalty_bps_split_export as _counterfactual_regime_rank_penalty_bps,
-    execution_schedule_rank_penalty_bps_split_export as _execution_schedule_rank_penalty_bps,
     feed_lag_liquidity_rank_penalty_bps_split_export as _feed_lag_liquidity_rank_penalty_bps,
-    frontier_dedupe_key_split_export as _frontier_dedupe_key,
     hawkes_transient_impact_rank_penalty_bps_split_export as _hawkes_transient_impact_rank_penalty_bps,
     institutional_mechanism_fidelity_rank_penalty_bps_split_export as _institutional_mechanism_fidelity_rank_penalty_bps,
     intraday_jump_burst_rank_penalty_bps_split_export as _intraday_jump_burst_rank_penalty_bps,
     intraday_price_path_asymmetry_rank_penalty_bps_split_export as _intraday_price_path_asymmetry_rank_penalty_bps,
     lead_lag_cross_asset_rank_penalty_bps_split_export as _lead_lag_cross_asset_rank_penalty_bps,
     lob_reality_gap_rank_penalty_bps_split_export as _lob_reality_gap_rank_penalty_bps,
-    mark_frontier_duplicates_split_export as _mark_frontier_duplicates,
     metaorder_adverse_selection_rank_penalty_bps_split_export as _metaorder_adverse_selection_rank_penalty_bps,
     microstructure_regime_tokenization_rank_penalty_bps_split_export as _microstructure_regime_tokenization_rank_penalty_bps,
     nonlinear_impact_execution_rank_penalty_bps_split_export as _nonlinear_impact_execution_rank_penalty_bps,
@@ -164,49 +51,13 @@ from .preview_rank_key import (
     order_book_observability_rank_penalty_bps_split_export as _order_book_observability_rank_penalty_bps,
     order_flow_entropy_regime_rank_penalty_bps_split_export as _order_flow_entropy_regime_rank_penalty_bps,
     order_transition_rank_penalty_bps_split_export as _order_transition_rank_penalty_bps,
-    preview_rank_key_split_export as _preview_rank_key,
     queue_survival_fill_rank_penalty_bps_split_export as _queue_survival_fill_rank_penalty_bps,
-    risk_adjusted_robust_rank_score_split_export as _risk_adjusted_robust_rank_score,
     rough_flow_volatility_rank_penalty_bps_split_export as _rough_flow_volatility_rank_penalty_bps,
-    row_explicitly_non_hpairs_split_export as _row_explicitly_non_hpairs,
-    row_exploration_diversity_key_split_export as _row_exploration_diversity_key,
-    row_frontier_duplicate_filtered_split_export as _row_frontier_duplicate_filtered,
-    row_with_frontier_dedupe_split_export as _row_with_frontier_dedupe,
-    row_with_rank_and_selection_split_export as _row_with_rank_and_selection,
-    select_frontier_buckets_split_export as _select_frontier_buckets,
     signal_adaptive_execution_resilience_rank_penalty_bps_split_export as _signal_adaptive_execution_resilience_rank_penalty_bps,
     stochastic_liquidity_resilience_rank_penalty_bps_split_export as _stochastic_liquidity_resilience_rank_penalty_bps,
 )
 from .frontier_selection_blockers_for_row import (
-    bootstrap_lower_percentile_post_cost_utility_bps_split_export as _bootstrap_lower_percentile_post_cost_utility_bps,
-    candidate_direction_split_export as _candidate_direction,
-    candidate_frontier_hash_split_export as _candidate_frontier_hash,
-    candidate_lineage_split_export as _candidate_lineage,
-    candidate_notional_split_export as _candidate_notional,
-    candidate_symbols_split_export as _candidate_symbols,
-    cluster_lob_activity_score_split_export as _cluster_lob_activity_score,
-    combined_ofi_decay_score_split_export as _combined_ofi_decay_score,
-    conformal_tail_risk_penalty_bps_split_export as _conformal_tail_risk_penalty_bps,
-    discovery_stage_metadata_split_export as _discovery_stage_metadata,
-    discovery_stage_semantics_split_export as _discovery_stage_semantics,
-    event_label as _event_label,
-    ewma_last as _ewma_last,
-    exact_replay_frontier_key_split_export as _exact_replay_frontier_key,
     exact_replay_selection_blockers_for_row_split_export as _exact_replay_selection_blockers_for_row,
-    extract_macro_stress as _extract_macro_stress,
-    frontier_selection_blockers_for_row_split_export as _frontier_selection_blockers_for_row,
-    liquidity_regime_score_split_export as _liquidity_regime_score,
-    lower_percentile_post_cost_utility_bps_split_export as _lower_percentile_post_cost_utility_bps,
-    macro_stress_veto_score_split_export as _macro_stress_veto_score,
-    normalized_entropy as _normalized_entropy,
-    ofi_decay_score as _ofi_decay_score,
-    post_cost_utility_distribution_bps_split_export as _post_cost_utility_distribution_bps,
-    row_exact_replay_selection_blocked_split_export as _row_exact_replay_selection_blocked,
-    row_runtime_ledger_lineage_handoff_split_export as _row_runtime_ledger_lineage_handoff,
-    runtime_ledger_lineage_handoff_manifest_split_export as _runtime_ledger_lineage_handoff_manifest,
-    runtime_ledger_required_artifacts as _runtime_ledger_required_artifacts,
-    selected_candidate_ids_by_bucket_split_export as _selected_candidate_ids_by_bucket,
-    square_root_impact_capacity_penalty_bps_split_export as _square_root_impact_capacity_penalty_bps,
 )
 
 

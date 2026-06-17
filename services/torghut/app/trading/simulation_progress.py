@@ -1,5 +1,4 @@
 """Durable simulation progress ledger hooks and snapshot helpers."""
-# pyright: reportUnusedFunction=false
 
 from __future__ import annotations
 
@@ -607,6 +606,12 @@ __all__ = [
     "COMPONENT_TA",
     "COMPONENT_TORGHUT",
     "SIMULATION_PROGRESS_COMPONENTS",
+    "_execution_after_insert",
+    "_execution_order_event_after_insert",
+    "_execution_tca_after_insert",
+    "_trade_cursor_after_insert",
+    "_trade_cursor_after_update",
+    "_trade_decision_after_insert",
     "active_simulation_runtime_context",
     "simulation_progress_context",
     "simulation_progress_snapshot",

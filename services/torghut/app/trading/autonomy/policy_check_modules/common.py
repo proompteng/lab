@@ -1,9 +1,7 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Shared imports, constants, and result payloads for policy checks."""
 
 from __future__ import annotations
 
-# ruff: noqa: F401
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -157,3 +155,54 @@ BenchmarkParityThresholds = _BenchmarkParityThresholds
 DeeplobBdlobThresholds = _DeeplobBdlobThresholds
 PROFITABILITY_STAGE_ORDER = _PROFITABILITY_STAGE_ORDER
 PROFITABILITY_STAGE_REQUIRED_CHECKS = _PROFITABILITY_STAGE_REQUIRED_CHECKS
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "ADVISOR_FALLBACK_SLO_CONTRACT_SCHEMA_VERSION",
+    "ADVISOR_FALLBACK_SLO_REQUIRED_REASONS",
+    "ADVISOR_FALLBACK_SLO_REQUIRED_SUMMARY_FIELDS",
+    "ADVISOR_FALLBACK_SLO_SCHEMA_VERSION",
+    "Any",
+    "BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION",
+    "BENCHMARK_PARITY_REQUIRED_FAMILIES",
+    "BENCHMARK_PARITY_REQUIRED_RUN_FIELDS",
+    "BENCHMARK_PARITY_REQUIRED_SCORECARDS",
+    "BENCHMARK_PARITY_REQUIRED_SCORECARD_FIELDS",
+    "BENCHMARK_PARITY_RUN_SCHEMA_VERSION",
+    "BENCHMARK_PARITY_SCHEMA_VERSION",
+    "BenchmarkParityThresholds",
+    "DEEPLOB_BDLOB_CONTRACT_SCHEMA_VERSION",
+    "DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS",
+    "DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS",
+    "DEEPLOB_BDLOB_SCHEMA_VERSION",
+    "DeeplobBdlobThresholds",
+    "FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION",
+    "FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS",
+    "FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS",
+    "FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION",
+    "NON_AUTHORITATIVE_PROVENANCE",
+    "PROFITABILITY_STAGE_ORDER",
+    "PROFITABILITY_STAGE_REQUIRED_CHECKS",
+    "Path",
+    "PromotionPrerequisiteResult",
+    "RollbackReadinessResult",
+    "Sequence",
+    "_BenchmarkParityThresholds",
+    "_DeeplobBdlobThresholds",
+    "_PROFITABILITY_STAGE_ORDER",
+    "_PROFITABILITY_STAGE_REQUIRED_CHECKS",
+    "annotations",
+    "cast",
+    "contract_from_artifact_payload",
+    "dataclass",
+    "datetime",
+    "hashlib",
+    "json",
+    "math",
+    "os",
+    "parse_evidence_contract",
+    "timedelta",
+    "timezone",
+    "urlparse",
+)

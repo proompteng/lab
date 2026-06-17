@@ -1,19 +1,12 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python
 """Verify Torghut trading readiness from a `/trading/status` payload."""
 
 from __future__ import annotations
 
-import argparse
-import json
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from pathlib import Path
-from typing import Any, cast
-from urllib.request import urlopen
+from decimal import Decimal
+from typing import Any
 
-# ruff: noqa: F401
 
 from . import shared_context as _shared_context
 from . import target_plan_helpers as _target_plan_helpers

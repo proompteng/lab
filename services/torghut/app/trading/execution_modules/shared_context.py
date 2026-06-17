@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Order execution and idempotency helpers."""
 
 from __future__ import annotations
@@ -42,8 +41,6 @@ from ..simulation import (
 )
 from ..time_source import trading_now
 from ..tca import upsert_execution_tca_metric
-
-# ruff: noqa: F401
 
 
 logger = logging.getLogger(__name__)
@@ -251,4 +248,87 @@ __all__ = (
     "target_plan_source_decision_mode",
     "target_plan_source_decision_needs_refresh",
     "target_plan_source_metadata",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE",
+    "COST_MODEL_HASH_KEYS",
+    "COST_MODEL_PAYLOAD_KEYS",
+    "Decimal",
+    "EXECUTION_POLICY_HASH_KEYS",
+    "Execution",
+    "ExecutionRequest",
+    "IntegrityError",
+    "LINEAGE_HASH_KEYS",
+    "LINEAGE_PAYLOAD_KEYS",
+    "LeanExecutionShadowEvent",
+    "Mapping",
+    "NamedTuple",
+    "Optional",
+    "OrderExecutorFields",
+    "RUNTIME_COST_AMOUNT_KEYS",
+    "RUNTIME_COST_BASIS_KEYS",
+    "RUNTIME_COST_PAYLOAD_KEYS",
+    "SHORTING_METADATA_CACHE_TTL_SECONDS",
+    "Sequence",
+    "Session",
+    "Strategy",
+    "StrategyDecision",
+    "TARGET_PLAN_SOURCE_DECISION_MODE",
+    "TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS",
+    "TradeDecision",
+    "_BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE",
+    "_COST_MODEL_HASH_KEYS",
+    "_COST_MODEL_PAYLOAD_KEYS",
+    "_EXECUTION_POLICY_HASH_KEYS",
+    "_LINEAGE_HASH_KEYS",
+    "_LINEAGE_PAYLOAD_KEYS",
+    "_OrderExecutorFields",
+    "_RUNTIME_COST_AMOUNT_KEYS",
+    "_RUNTIME_COST_BASIS_KEYS",
+    "_RUNTIME_COST_PAYLOAD_KEYS",
+    "_SHORTING_METADATA_CACHE_TTL_SECONDS",
+    "_TARGET_PLAN_SOURCE_DECISION_MODE",
+    "_TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS",
+    "_has_target_plan_source_decision",
+    "_mapping_payload",
+    "_target_plan_ref_value",
+    "_target_plan_source_decision_mode",
+    "_target_plan_source_decision_needs_refresh",
+    "_target_plan_source_metadata",
+    "annotations",
+    "cast",
+    "coerce_json_payload",
+    "datetime",
+    "decision_hash",
+    "has_target_plan_source_decision",
+    "hashlib",
+    "json",
+    "logger",
+    "logging",
+    "mapping_payload",
+    "min_qty_for_symbol",
+    "qty_has_valid_increment",
+    "qty_step_for_symbol",
+    "quantize_qty_for_symbol",
+    "resolve_event_persisted_at",
+    "resolve_order_route_metadata",
+    "resolve_quantity_resolution",
+    "resolve_simulation_context",
+    "select",
+    "settings",
+    "should_retry_order_error",
+    "simulation_context_enabled",
+    "sync_order_to_db",
+    "target_plan_ref_value",
+    "target_plan_source_decision_mode",
+    "target_plan_source_decision_needs_refresh",
+    "target_plan_source_metadata",
+    "time",
+    "timezone",
+    "trading_now",
+    "upsert_execution_tca_metric",
 )

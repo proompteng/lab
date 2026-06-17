@@ -3,107 +3,36 @@
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from pathlib import Path
-from threading import Lock
-from typing import Any, Literal, cast
-from urllib.request import Request, urlopen
+from typing import Any, cast
 
-import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-
-from ...config import settings
-from ..runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
-
-# ruff: noqa: F401
 
 from .shared_context import (
     CapitalStage,
-    DependencyQuorumDecision,
-    HypothesisEntryRequirements,
     HypothesisManifest,
     HypothesisRegistryLoadResult,
     HypothesisState,
     JangarDependencyQuorumStatus,
-    CAPITAL_STAGE_RANK as _CAPITAL_STAGE_RANK,
-    DEPENDENCY_REASONS as _DEPENDENCY_REASONS,
-    EDGE_OR_COST_REASONS as _EDGE_OR_COST_REASONS,
-    EVIDENCE_REFRESH_REASONS as _EVIDENCE_REFRESH_REASONS,
-    JANGAR_QUORUM_CACHE as _JANGAR_QUORUM_CACHE,
-    JANGAR_QUORUM_CACHE_LOCK as _JANGAR_QUORUM_CACHE_LOCK,
-    KNOWN_DEPENDENCY_CAPABILITIES as _KNOWN_DEPENDENCY_CAPABILITIES,
-    KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS as _KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS,
-    RUNTIME_LEDGER_PROVENANCE_REASONS as _RUNTIME_LEDGER_PROVENANCE_REASONS,
-    SAMPLE_REASONS as _SAMPLE_REASONS,
-    as_payload_dict as _as_payload_dict,
-    as_payload_dict_list as _as_payload_dict_list,
     bounded_route_evidence_collection_readiness as _bounded_route_evidence_collection_readiness,
-    candidate_blocker_class as _candidate_blocker_class,
-    candidate_blocker_rank as _candidate_blocker_rank,
-    coerce_decimal as _coerce_decimal,
     decimal_to_string as _decimal_to_string,
-    empty_payload_dict as _empty_payload_dict,
-    empty_payload_dict_list as _empty_payload_dict_list,
-    extract_stage_trust as _extract_stage_trust,
-    first_matching_reason as _first_matching_reason,
     is_dependency_required as _is_dependency_required,
-    normalize_dependency_capability as _normalize_dependency_capability,
-    optional_bool as _optional_bool,
-    optional_decimal as _optional_decimal,
     optional_int as _optional_int,
     parse_iso8601 as _parse_iso8601,
     ranked_candidate_dossiers as _ranked_candidate_dossiers,
     resolve_required_dependency_capabilities as _resolve_required_dependency_capabilities,
-    sequence as _sequence,
-    stable_string_list as _stable_string_list,
     hypothesis_registry_requires_dependency_capability,
     resolve_hypothesis_dependency_quorum,
 )
 from .extract_stage_renewal_bonds import (
-    DelayAdjustedDepthStressInputs as _DelayAdjustedDepthStressInputs,
-    NON_AUTHORITY_TCA_DECISION_MODES as _NON_AUTHORITY_TCA_DECISION_MODES,
-    NON_AUTHORITY_TCA_SOURCE_KINDS as _NON_AUTHORITY_TCA_SOURCE_KINDS,
-    RuntimeLedgerReadinessInputs as _RuntimeLedgerReadinessInputs,
-    TcaReadinessInputs as _TcaReadinessInputs,
-    extract_controller_ingestion_settlement as _extract_controller_ingestion_settlement,
-    extract_foreclosure_carry_rollout_witness as _extract_foreclosure_carry_rollout_witness,
-    extract_repair_slot_escrow as _extract_repair_slot_escrow,
-    extract_stage_debt_repair_admission as _extract_stage_debt_repair_admission,
-    extract_stage_renewal_bonds as _extract_stage_renewal_bonds,
-    extract_verify_trust_foreclosure_board as _extract_verify_trust_foreclosure_board,
-    latest_tca_timestamp as _latest_tca_timestamp,
     manifest_pair_contract_blockers as _manifest_pair_contract_blockers,
-    normalized_route_token as _normalized_route_token,
     resolve_delay_adjusted_depth_stress_inputs as _resolve_delay_adjusted_depth_stress_inputs,
     resolve_tca_readiness_inputs as _resolve_tca_readiness_inputs,
-    route_tca_adverse_slippage as _route_tca_adverse_slippage,
-    route_tca_authority_blockers as _route_tca_authority_blockers,
-    route_tca_bool as _route_tca_bool,
-    route_tca_diagnostic as _route_tca_diagnostic,
-    route_tca_target_blockers as _route_tca_target_blockers,
-    route_tca_text as _route_tca_text,
-    runtime_ledger_rows_for_hypothesis as _runtime_ledger_rows_for_hypothesis,
-    runtime_ledger_target_blockers as _runtime_ledger_target_blockers,
-    runtime_target_token as _runtime_target_token,
-    runtime_text as _runtime_text,
-    weighted_decimal_average as _weighted_decimal_average,
 )
 from .runtime_ledger_row_rank import (
-    dedupe_runtime_ledger_blockers as _dedupe_runtime_ledger_blockers,
-    fallback_quorum_from_legacy_status as _fallback_quorum_from_legacy_status,
-    hash_count as _hash_count,
-    load_manifest_payload as _load_manifest_payload,
     resolve_runtime_ledger_readiness_inputs as _resolve_runtime_ledger_readiness_inputs,
-    runtime_ledger_blockers as _runtime_ledger_blockers,
-    runtime_ledger_latest_row as _runtime_ledger_latest_row,
-    runtime_ledger_provenance_blockers as _runtime_ledger_provenance_blockers,
-    runtime_ledger_row_rank as _runtime_ledger_row_rank,
-    runtime_ledger_window_bound_blockers as _runtime_ledger_window_bound_blockers,
     load_hypothesis_registry,
     load_jangar_dependency_quorum,
     resolve_hypothesis_registry_path,

@@ -8,28 +8,19 @@ fills, write runtime ledgers, or carry promotion authority.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from math import exp, isfinite, log1p
-from typing import Any, cast
+from math import exp
+from typing import Any
 
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION,
-    QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES,
-    QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL,
-    QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION,
     QueueSurvivalFillStressSummary,
     ADD_TOKENS as _ADD_TOKENS,
     ASK_SIZE_FIELDS as _ASK_SIZE_FIELDS,
     BID_SIZE_FIELDS as _BID_SIZE_FIELDS,
     CANCEL_TOKENS as _CANCEL_TOKENS,
-    EVENT_FIELDS as _EVENT_FIELDS,
     FILL_FIELDS as _FILL_FIELDS,
     FILL_TOKENS as _FILL_TOKENS,
     FillBeforeMoveStats as _FillBeforeMoveStats,
@@ -39,12 +30,9 @@ from .shared_context import (
     QUEUE_RATIO_FIELDS as _QUEUE_RATIO_FIELDS,
     QUEUE_REACTIVE_EVENT_KINDS as _QUEUE_REACTIVE_EVENT_KINDS,
     REJECT_TOKENS as _REJECT_TOKENS,
-    SIDE_FIELDS as _SIDE_FIELDS,
     SPREAD_FIELDS as _SPREAD_FIELDS,
-    STATUS_FIELDS as _STATUS_FIELDS,
     VOLUME_FIELDS as _VOLUME_FIELDS,
     build_queue_survival_fill_stress_schema_hash,
-    queue_survival_fill_stress_contract,
 )
 
 

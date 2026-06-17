@@ -1,30 +1,21 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Renew empirical promotion artifacts from the latest authoritative replay outputs."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import subprocess
 import sys
-import time as wall_time
-import urllib.error
-import urllib.request
-from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import psycopg
-import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import SessionLocal
-from app.models import AutoresearchEpoch, VNextEmpiricalJobRun
+from app.models import VNextEmpiricalJobRun
 from app.trading.empirical_jobs import (
     EMPIRICAL_JOB_TYPES,
     empirical_artifact_truthfulness_reasons,
@@ -33,94 +24,30 @@ from app.trading.empirical_manifest import (
     normalize_empirical_promotion_manifest,
     validate_empirical_promotion_manifest,
 )
-from app.trading.paper_route_target_plan import paper_route_target_plan_from_payload
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    DEFAULT_AUTORESEARCH_RUNTIME_WINDOW_STATUSES,
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
-    HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
-    MATERIALIZABLE_SOURCE_ROW_COUNT_KEYS,
-    OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT,
-    PAPER_ROUTE_REPLAY_ACCOUNT_LABEL,
-    PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
-    RUNTIME_WINDOW_TARGET_METADATA_KEYS,
-    RUNTIME_WINDOW_TARGET_PLAN_DEFERRED_REASONS,
-    RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES,
     RuntimeWindowImportTarget,
-    SIM_BACKED_PAPER_ROUTE_SOURCE_KINDS,
-    SIM_DB_DSN_ENV,
-    SOURCE_COLLECTION_ONLY_PLAN_SOURCES,
     US_EQUITIES_CLOSE,
     US_EQUITIES_OPEN,
     US_EQUITIES_TIMEZONE,
     as_dict as _as_dict,
-    as_sequence as _as_sequence,
     as_text as _as_text,
     as_text_list as _as_text_list,
-    nonnegative_int as _nonnegative_int,
-    normalized_sim_backed_source_account_label as _normalized_sim_backed_source_account_label,
-    parse_args as _parse_args,
     parse_dt as _parse_dt,
-    read_runtime_window_manifest as _read_runtime_window_manifest,
-    runtime_manifest_delay_depth_stress_report_ref as _runtime_manifest_delay_depth_stress_report_ref,
-    runtime_manifest_entry_requirements as _runtime_manifest_entry_requirements,
-    runtime_manifest_requires_delay_depth_stress as _runtime_manifest_requires_delay_depth_stress,
-    runtime_version_ref as _runtime_version_ref,
-    runtime_window_delay_depth_remediation as _runtime_window_delay_depth_remediation,
-    runtime_window_target_is_paper_route_collection as _runtime_window_target_is_paper_route_collection,
-    runtime_window_target_plan_import_blocked_result as _runtime_window_target_plan_import_blocked_result,
-    utc_iso as _utc_iso,
 )
 from .parse_runtime_window_target_spec import (
-    extend_unique_text_items as _extend_unique_text_items,
-    hpairs_source_proof_census_attachment_blockers as _hpairs_source_proof_census_attachment_blockers,
-    hpairs_source_proof_census_status as _hpairs_source_proof_census_status,
-    latest_closed_runtime_window_target_plan_from_payload as _latest_closed_runtime_window_target_plan_from_payload,
     parse_runtime_window_target_spec as _parse_runtime_window_target_spec,
-    read_json_mapping as _read_json_mapping,
-    read_runtime_window_target_plan as _read_runtime_window_target_plan,
-    runtime_window_audit_target_blocker_matches as _runtime_window_audit_target_blocker_matches,
-    runtime_window_gate_allows_source_collection_merge as _runtime_window_gate_allows_source_collection_merge,
-    runtime_window_import_audit_blockers as _runtime_window_import_audit_blockers,
-    runtime_window_plan_target_items as _runtime_window_plan_target_items,
-    runtime_window_source_collection_target_allowed as _runtime_window_source_collection_target_allowed,
-    runtime_window_source_collection_target_has_materializable_lineage as _runtime_window_source_collection_target_has_materializable_lineage,
-    runtime_window_target_plan_from_payload as _runtime_window_target_plan_from_payload,
-    runtime_window_target_plan_is_source_collection_only as _runtime_window_target_plan_is_source_collection_only,
-    runtime_window_target_plan_positive_mapping_count as _runtime_window_target_plan_positive_mapping_count,
-    runtime_window_target_plan_source_collection_targets as _runtime_window_target_plan_source_collection_targets,
-    runtime_window_target_plan_target_key as _runtime_window_target_plan_target_key,
-    runtime_window_target_plan_target_truthy as _runtime_window_target_plan_target_truthy,
-    runtime_window_target_plan_with_import_audit_blockers as _runtime_window_target_plan_with_import_audit_blockers,
-    runtime_window_target_plan_with_live_gate_source_collection as _runtime_window_target_plan_with_live_gate_source_collection,
-    runtime_window_target_plan_without_paper_route_source_collection_only as _runtime_window_target_plan_without_paper_route_source_collection_only,
-    target_strategy_names as _target_strategy_names,
-    target_text as _target_text,
 )
 from .raise_if_runtime_window_target_plan_import import (
-    canonical_runtime_strategy_name as _canonical_runtime_strategy_name,
     latest_autoresearch_runtime_window_targets as _latest_autoresearch_runtime_window_targets,
-    looks_like_uuid_text as _looks_like_uuid_text,
-    raise_if_runtime_window_target_plan_import_blocked as _raise_if_runtime_window_target_plan_import_blocked,
-    read_runtime_window_target_plan_url as _read_runtime_window_target_plan_url,
-    read_runtime_window_target_plan_url_once as _read_runtime_window_target_plan_url_once,
     registry_runtime_window_targets as _registry_runtime_window_targets,
-    runtime_family_harnesses as _runtime_family_harnesses,
-    runtime_window_autoresearch_statuses as _runtime_window_autoresearch_statuses,
     runtime_window_plan_targets as _runtime_window_plan_targets,
     runtime_window_target_artifact_refs as _runtime_window_target_artifact_refs,
     runtime_window_target_identity as _runtime_window_target_identity,
     runtime_window_target_metadata as _runtime_window_target_metadata,
-    runtime_window_target_plan_has_targets as _runtime_window_target_plan_has_targets,
     runtime_window_target_plan_ref_count as _runtime_window_target_plan_ref_count,
-    runtime_window_target_plan_transient_empty_reason as _runtime_window_target_plan_transient_empty_reason,
-    runtime_window_target_plan_url_error_retryable as _runtime_window_target_plan_url_error_retryable,
-    runtime_window_targets_from_autoresearch_epochs as _runtime_window_targets_from_autoresearch_epochs,
-    runtime_window_targets_from_plan as _runtime_window_targets_from_plan,
-    strategy_lookup_names as _strategy_lookup_names,
-    strategy_name_from_strategy_id as _strategy_name_from_strategy_id,
 )
 
 

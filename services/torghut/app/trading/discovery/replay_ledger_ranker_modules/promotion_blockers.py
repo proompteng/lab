@@ -1,11 +1,8 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Rank exact replay ledger artifacts with runtime-ledger PnL semantics."""
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -21,18 +18,13 @@ from app.trading.discovery.lob_reality_gap_stress import (
 from app.trading.discovery.order_book_observability_stress import (
     extract_order_book_observability_stress,
 )
-from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.models import SignalEnvelope
-from app.trading.runtime_ledger import RuntimeLedgerBucket, build_runtime_ledger_buckets
+from app.trading.runtime_ledger import RuntimeLedgerBucket
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    EXACT_REPLAY_LEDGER_RANKING_SCHEMA_VERSION,
     EXACT_REPLAY_MICROSTRUCTURE_STRESS_SCHEMA_VERSION,
     EXECUTION_QUALITY_SCHEMA_VERSION,
-    ReplayLedgerCandidateRanking,
-    ReplayLedgerRankingFailure,
     ReplayLedgerRankingPolicy,
     CLOSING_AUCTION_CLEARING_PRICE_FIELDS as _CLOSING_AUCTION_CLEARING_PRICE_FIELDS,
     CLOSING_AUCTION_FIELDS as _CLOSING_AUCTION_FIELDS,
@@ -40,7 +32,6 @@ from .shared_context import (
     CLOSING_WINDOW_FIELDS as _CLOSING_WINDOW_FIELDS,
     EXECUTION_QUALITY_SOURCE_PAPERS as _EXECUTION_QUALITY_SOURCE_PAPERS,
     EXECUTION_SHORTFALL_FIELDS as _EXECUTION_SHORTFALL_FIELDS,
-    FILL_STATUS_FIELDS as _FILL_STATUS_FIELDS,
     LIMIT_FILL_PROBABILITY_FIELDS as _LIMIT_FILL_PROBABILITY_FIELDS,
     LIVE_PROMOTION_AUTHORITIES as _LIVE_PROMOTION_AUTHORITIES,
     OPPORTUNITY_COST_FIELDS as _OPPORTUNITY_COST_FIELDS,
@@ -48,13 +39,6 @@ from .shared_context import (
     PRICE_IMPROVEMENT_FIELDS as _PRICE_IMPROVEMENT_FIELDS,
     QUEUE_POSITION_FIELDS as _QUEUE_POSITION_FIELDS,
     TERMINAL_INVENTORY_PATH_FIELDS as _TERMINAL_INVENTORY_PATH_FIELDS,
-    full_window_bucket as _full_window_bucket,
-    ledger_window as _ledger_window,
-    runtime_rows_with_defaults as _runtime_rows_with_defaults,
-    build_replay_ledger_ranking_report,
-    default_replay_ledger_ranking_policy,
-    rank_replay_ledger_files,
-    rank_replay_ledger_payload,
 )
 
 

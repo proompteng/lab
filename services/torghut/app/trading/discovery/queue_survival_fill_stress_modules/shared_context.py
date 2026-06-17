@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only queue-survival fill stress for replay candidate ranking.
 
 This module actualizes recent queue-position, fill-probability, and execution-delay
@@ -16,8 +15,6 @@ from math import exp, isfinite, log1p
 from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
-
-# ruff: noqa: F401
 
 
 def _stable_float(value: float) -> str:
@@ -544,4 +541,84 @@ __all__ = (
     "SPREAD_FIELDS_split_export",
     "STATUS_FIELDS_split_export",
     "VOLUME_FIELDS_split_export",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "ADD_TOKENS",
+    "ADD_TOKENS_split_export",
+    "ASK_SIZE_FIELDS",
+    "ASK_SIZE_FIELDS_split_export",
+    "Any",
+    "BID_SIZE_FIELDS",
+    "BID_SIZE_FIELDS_split_export",
+    "CANCEL_TOKENS",
+    "CANCEL_TOKENS_split_export",
+    "EVENT_FIELDS",
+    "EVENT_FIELDS_split_export",
+    "FILL_FIELDS",
+    "FILL_FIELDS_split_export",
+    "FILL_TOKENS",
+    "FILL_TOKENS_split_export",
+    "FillBeforeMoveStats",
+    "FillBeforeMoveStats_split_export",
+    "Mapping",
+    "ORDER_BOOK_IMBALANCE_FIELDS",
+    "ORDER_BOOK_IMBALANCE_FIELDS_split_export",
+    "PRICE_FIELDS",
+    "PRICE_FIELDS_split_export",
+    "QUEUE_POSITION_FIELDS",
+    "QUEUE_POSITION_FIELDS_split_export",
+    "QUEUE_RATIO_FIELDS",
+    "QUEUE_RATIO_FIELDS_split_export",
+    "QUEUE_REACTIVE_EVENT_KINDS",
+    "QUEUE_REACTIVE_EVENT_KINDS_split_export",
+    "QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION",
+    "QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES",
+    "QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL",
+    "QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION",
+    "QueueSurvivalFillStressSummary",
+    "REJECT_TOKENS",
+    "REJECT_TOKENS_split_export",
+    "SIDE_FIELDS",
+    "SIDE_FIELDS_split_export",
+    "SPREAD_FIELDS",
+    "SPREAD_FIELDS_split_export",
+    "STATUS_FIELDS",
+    "STATUS_FIELDS_split_export",
+    "Sequence",
+    "SignalEnvelope",
+    "VOLUME_FIELDS",
+    "VOLUME_FIELDS_split_export",
+    "_ADD_TOKENS",
+    "_ASK_SIZE_FIELDS",
+    "_BID_SIZE_FIELDS",
+    "_CANCEL_TOKENS",
+    "_EVENT_FIELDS",
+    "_FILL_FIELDS",
+    "_FILL_TOKENS",
+    "_FillBeforeMoveStats",
+    "_ORDER_BOOK_IMBALANCE_FIELDS",
+    "_PRICE_FIELDS",
+    "_QUEUE_POSITION_FIELDS",
+    "_QUEUE_RATIO_FIELDS",
+    "_QUEUE_REACTIVE_EVENT_KINDS",
+    "_REJECT_TOKENS",
+    "_SIDE_FIELDS",
+    "_SPREAD_FIELDS",
+    "_STATUS_FIELDS",
+    "_VOLUME_FIELDS",
+    "_stable_float",
+    "_stable_hash",
+    "annotations",
+    "build_queue_survival_fill_stress_schema_hash",
+    "cast",
+    "dataclass",
+    "exp",
+    "hashlib",
+    "isfinite",
+    "json",
+    "log1p",
+    "queue_survival_fill_stress_contract",
 )

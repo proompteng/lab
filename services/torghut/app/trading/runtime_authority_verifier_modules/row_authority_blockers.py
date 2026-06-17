@@ -9,27 +9,20 @@ state, upload proof packets, or mutate cluster/database state.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from app.models import StrategyRuntimeLedgerBucket
 from app.trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
     is_non_promotion_grade_runtime_cost_basis,
 )
 from app.trading.runtime_ledger import (
-    EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
     POST_COST_PNL_BASIS,
 )
 from app.trading.runtime_ledger_proof_policy import (
-    DEFAULT_RUNTIME_LEDGER_PROOF_POLICY,
     RuntimeLedgerProofPolicy,
-    normalize_runtime_ledger_proof_mode,
 )
 from app.trading.runtime_ledger_source_authority import (
     EXECUTION_ECONOMICS_MISSING_BLOCKER,
@@ -42,18 +35,14 @@ from app.trading.runtime_ledger_source_authority import (
     RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER,
     RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
     RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
-    runtime_ledger_promotion_source_authority_blockers,
-    runtime_ledger_source_window_present,
 )
 
-# ruff: noqa: F401
 
 from .shared_context import (
     AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER,
     AUTHORITY_BUCKET_BLOCKERS_PRESENT,
     AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER,
     AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER,
-    AUTHORITY_COST_BASIS_BLOCKER,
     AUTHORITY_COST_MODEL_HASH_BLOCKER,
     AUTHORITY_EVIDENCE_MISSING_BLOCKER,
     AUTHORITY_EXPLICIT_COSTS_BLOCKER,
@@ -81,11 +70,6 @@ from .shared_context import (
     RuntimeAuthorityEvidenceRow,
     DailyAccumulator as _DailyAccumulator,
     PROMOTION_GRADE_LEDGER_SCHEMAS as _PROMOTION_GRADE_LEDGER_SCHEMAS,
-    aggregate as _aggregate,
-    authority_blockers as _authority_blockers,
-    daily_rows as _daily_rows,
-    normalize_row as _normalize_row,
-    row_from_bucket as _row_from_bucket,
     build_runtime_authority_report,
     load_runtime_authority_rows,
     runtime_authority_report_json,

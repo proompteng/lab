@@ -3,27 +3,15 @@
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import hmac
-import io
 import json
-import logging
 import os
-import re
-import tempfile
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
-from subprocess import CalledProcessError, run
 from typing import Any, Mapping, cast
-from urllib.parse import quote, urljoin, urlparse
 
-import inngest
-from sqlalchemy import case, delete, func, select, text
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ...models import (
@@ -34,97 +22,22 @@ from ...models import (
     WhitepaperClaim,
     WhitepaperClaimRelation,
     WhitepaperContradictionEvent,
-    WhitepaperCodexAgentRun,
-    WhitepaperContent,
     WhitepaperDesignPullRequest,
-    WhitepaperDocument,
-    WhitepaperDocumentVersion,
-    WhitepaperEngineeringTrigger,
     WhitepaperExperimentSpec,
-    WhitepaperRolloutTransition,
     WhitepaperStrategyTemplate,
-    WhitepaperSynthesis,
-    WhitepaperViabilityVerdict,
     coerce_json_payload,
 )
 from ...trading.discovery.whitepaper_candidate_compiler import (
     compile_claim_payloads_to_whitepaper_experiments,
 )
 
-# ruff: noqa: F401, F811
 
 from .shared_context import (
-    EngineeringGradeDecision,
-    GithubIssueEvent,
-    ManualApprovalPayload,
-    ELIGIBLE_AUTO_VERDICTS as _ELIGIBLE_AUTO_VERDICTS,
-    GITHUB_ISSUE_ACTIONS as _GITHUB_ISSUE_ACTIONS,
-    GITHUB_ISSUE_COMMENT_ACTIONS as _GITHUB_ISSUE_COMMENT_ACTIONS,
-    MAX_SEMANTIC_RELEVANT_DISTANCE as _MAX_SEMANTIC_RELEVANT_DISTANCE,
-    PASS_GATE_STATUSES as _PASS_GATE_STATUSES,
-    REJECT_VERDICTS as _REJECT_VERDICTS,
-    RETRYABLE_AGENTRUN_STATUSES as _RETRYABLE_AGENTRUN_STATUSES,
-    SEMANTIC_RELATIVE_DISTANCE_WINDOW as _SEMANTIC_RELATIVE_DISTANCE_WINDOW,
-    WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR as _WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
-    WHITEPAPER_CEPH_DEFAULT_SECRET_DIR as _WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
-    bool_env as _bool_env,
-    coerce_issue_number as _coerce_issue_number,
-    extract_github_event_metadata as _extract_github_event_metadata,
-    extract_github_issue_payload as _extract_github_issue_payload,
-    extract_sender_login as _extract_sender_login,
-    float_env as _float_env,
     http_request_bytes as _http_request_bytes,
     int_env as _int_env,
-    mounted_or_env_value as _mounted_or_env_value,
     normalize_identifier as _normalize_identifier,
-    read_text_file as _read_text_file,
-    sorted_unique as _sorted_unique,
     str_env as _str_env,
-    whitepaper_ceph_bucket_name as _whitepaper_ceph_bucket_name,
-    build_whitepaper_run_id,
-    comment_requests_requeue,
-    extract_pdf_urls,
-    github_issue_number_from_url,
-    logger,
-    marker_end,
-    marker_start,
     normalize_analysis_mode,
-    normalize_attachment_url,
-    normalize_github_issue_event,
-    parse_marker_block,
-    parse_marker_tags,
-    whitepaper_inngest_enabled,
-    whitepaper_kafka_enabled,
-    whitepaper_requeue_comment_keyword,
-    whitepaper_semantic_indexing_enabled,
-    whitepaper_semantic_required,
-    whitepaper_workflow_enabled,
-)
-from .ceph_s3_client import (
-    CephS3Client,
-    IssueKickoffResult,
-    IssueRunIdentity as _IssueRunIdentity,
-    PdfStorageOutcome as _PdfStorageOutcome,
-    WhitepaperWorkflowServiceFields as _WhitepaperWorkflowServiceFields,
-)
-from .whitepaper_workflow_ingestion_methods import (
-    WhitepaperWorkflowIngestionMethods as _WhitepaperWorkflowIngestionMethods,
-)
-from .whitepaper_workflow_persistence_methods import (
-    WhitepaperWorkflowPersistenceMethods as _WhitepaperWorkflowPersistenceMethods,
-)
-from .whitepaper_workflow_agent_methods import (
-    WhitepaperWorkflowAgentMethods as _WhitepaperWorkflowAgentMethods,
-)
-from .whitepaper_workflow_verdict_methods import (
-    EmbeddingRequestConfig as _EmbeddingRequestConfig,
-    EngineeringDecisionOutcome as _EngineeringDecisionOutcome,
-    EngineeringDecisionPolicy as _EngineeringDecisionPolicy,
-    EngineeringDecisionSignals as _EngineeringDecisionSignals,
-    WhitepaperWorkflowVerdictMethods as _WhitepaperWorkflowVerdictMethods,
-)
-from .whitepaper_workflow_rollout_methods import (
-    WhitepaperWorkflowRolloutMethods as _WhitepaperWorkflowRolloutMethods,
 )
 
 

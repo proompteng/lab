@@ -1,7 +1,5 @@
 """Extracted Torghut API route and support functions."""
 
-# pyright: reportUnusedImport=false
-# ruff: noqa: F401
 from __future__ import annotations
 
 from fastapi import APIRouter
@@ -45,7 +43,6 @@ from .common import (
     jsonable_encoder,
     load_quant_evidence_status,
     logger,
-    main_runtime_value,
     os,
     select,
     settings,

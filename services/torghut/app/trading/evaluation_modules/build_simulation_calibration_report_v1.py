@@ -1,54 +1,26 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Walk-forward evaluation harness for offline backtests."""
 
 from __future__ import annotations
 
-import hashlib
 import importlib
-import json
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from pathlib import Path
-from typing import Any, Iterable, Protocol, cast
+from typing import Any, cast
 
-from ...models import Strategy
-from ..decisions import DecisionEngine
 from ..evidence_contracts import (
     ArtifactProvenance,
     EvidenceMaturity,
     evidence_contract_payload,
 )
-from ..features import SignalFeatures, extract_signal_features
-from ..models import SignalEnvelope, StrategyDecision
 
-# ruff: noqa: F401
 
 from .signal_source import (
     FillPriceErrorBudgetReportV1,
-    FixtureSignalSource,
-    FoldResult,
-    ProfitabilityBenchmarkSliceV4,
     ProfitabilityBenchmarkV4,
     ProfitabilityEvidenceThresholdsV4,
     ProfitabilityEvidenceV4,
-    ProfitabilityEvidenceValidationResultV4,
     ShadowLiveDeviationReportV1,
-    SignalSource,
     SimulationCalibrationReportV1,
-    WalkForwardDecision,
-    WalkForwardFold,
-    WalkForwardResults,
-    decimal_str as _decimal_str,
-    empty_decisions as _empty_decisions,
-    fold_payload as _fold_payload,
-    fold_regime_payload as _fold_regime_payload,
-    build_profitability_evidence_v4,
-    execute_profitability_benchmark_v4,
-    generate_walk_forward_folds,
-    run_walk_forward,
-    validate_profitability_evidence_v4,
-    write_walk_forward_results,
 )
 
 

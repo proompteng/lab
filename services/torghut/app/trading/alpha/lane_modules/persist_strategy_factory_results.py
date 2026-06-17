@@ -1,16 +1,11 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Deterministic offline alpha discovery lane."""
 
 from __future__ import annotations
 
 import hashlib
-import json
-import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Mapping, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, cast
 
 import pandas as pd
 from sqlalchemy import delete, select
@@ -27,46 +22,11 @@ from ....models import (
     ResearchStressMetrics,
     ResearchValidationTest,
 )
-from ...discovery import (
-    build_sequential_trial_summary,
-    build_strategy_factory_evaluation,
-)
-from ..metrics import summarize_equity_curve, to_jsonable
-from ..search import SearchResult, candidate_to_jsonable, run_tsmom_grid_search
-from ..tsmom import TSMOMConfig, backtest_tsmom
-from ...reporting import (
-    PromotionEvidenceSummary,
-    build_promotion_recommendation,
-)
+from ..search import SearchResult
 
-# ruff: noqa: F401
 
 from .alpha_lane_result import (
-    AlphaLaneResult,
-    _ALPHA_LANE_SCHEMA_VERSION,
-    _STAGE_CANDIDATE_GENERATION,
-    _STAGE_EVALUATION,
-    _STAGE_RECOMMENDATION,
-    _StageManifestRecord,
-    _artifact_hashes,
-    _build_stage_lineage_payload,
-    _coalesce_alpha_inputs,
-    _coerce_jsonable,
-    _coerce_promotion_target,
-    _coerce_str,
     _decimal_or_none,
-    _evaluate_candidate,
-    _frame_signature,
-    _normalize_prices,
-    _persist_prices,
-    _read_policy_payload,
-    _readable_iteration_number,
-    _sha256_path,
-    _stable_hash,
-    _to_decimal,
-    _write_iteration_notes,
-    _write_json,
-    _write_stage_manifest,
 )
 
 

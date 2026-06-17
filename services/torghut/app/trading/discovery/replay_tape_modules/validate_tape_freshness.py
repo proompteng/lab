@@ -1,41 +1,21 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Manifest-verified replay tape artifacts for Torghut research replays."""
 
 from __future__ import annotations
 
-import gzip
-import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from decimal import Decimal, InvalidOperation
-from pathlib import Path
-from typing import Any, TextIO, cast
+from datetime import date, timezone
+from decimal import Decimal
+from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
-from app.trading.session_context import (
-    iter_regular_equities_session_dates,
-    regular_session_close_utc_for,
-    regular_session_open_utc_for,
-)
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    HPAIRS_CLUSTERLOB_FEATURE_VERSION,
-    HPAIRS_OFI_FEATURE_VERSION,
     HPAIRS_OFI_MEMORY_REGIME_SCHEMA_VERSION,
-    HPAIRS_REPLAY_TAPE_FEATURE_CONTRACT_SCHEMA_VERSION,
     HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
-    REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION,
-    REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
     REPLAY_TAPE_SCHEMA_VERSION,
-    ReplayTape,
-    ReplayTapeCoverageError,
     ReplayTapeManifest,
-    DATETIME_TAG as _DATETIME_TAG,
-    DECIMAL_TAG as _DECIMAL_TAG,
     bounded_decimal as _bounded_decimal,
     business_days as _business_days,
     coverage_status as _coverage_status,
@@ -43,9 +23,6 @@ from .shared_context import (
     decimal_text as _decimal_text,
     decode_value as _decode_value,
     encode_value as _encode_value,
-    empty_row_count_by_symbol_trading_day as _empty_row_count_by_symbol_trading_day,
-    empty_row_count_by_trading_day as _empty_row_count_by_trading_day,
-    empty_string_mapping as _empty_string_mapping,
     first_decimal_with_key as _first_decimal_with_key,
     first_text as _first_text,
     hpairs_capacity_notional_lineage as _hpairs_capacity_notional_lineage,
@@ -53,21 +30,13 @@ from .shared_context import (
     missing_symbol_trading_days as _missing_symbol_trading_days,
     normalize_symbols as _normalize_symbols,
     parse_datetime as _parse_datetime,
-    resolve_replay_feature_versions as _resolve_replay_feature_versions,
     signal_sort_key as _signal_sort_key,
     stress_tag_tuple as _stress_tag_tuple,
     string_mapping as _string_mapping,
     symbol_day_entry_in_window as _symbol_day_entry_in_window,
     tag_tuple as _tag_tuple,
     build_hpairs_replay_tape_feature_schema_hash,
-    build_replay_tape_cache_identity_diagnostics,
     build_replay_tape_cache_key,
-    build_source_query_digest,
-    default_manifest_path,
-    hpairs_replay_tape_feature_contract,
-    hpairs_replay_tape_feature_versions,
-    load_replay_tape,
-    materialize_signal_tape,
 )
 
 

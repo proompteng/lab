@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 from app.trading.discovery.evidence_bundles import (
     EVIDENCE_BUNDLE_SCHEMA_VERSION,
@@ -62,3 +61,12 @@ def _unmaterialized_runtime_handoff() -> dict[str, object]:
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "CandidateEvidenceBundle",
+    "EVIDENCE_BUNDLE_SCHEMA_VERSION",
+    "_promotion_quality_scorecard",
+    "_unmaterialized_runtime_handoff",
+    "evidence_bundle_blockers",
+    "evidence_bundle_from_frontier_candidate",
+)

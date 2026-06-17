@@ -1,71 +1,30 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Replay one trading session through Torghut's simple execution lane locally."""
 
 from __future__ import annotations
 
-import argparse
 import json
-import logging
 import subprocess
-import sys
 from collections import Counter
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import yaml
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-# ruff: noqa: F401
 
 from .shared_context import (
     ALLOWED_REJECT_REASONS,
-    Base,
-    BucketReplayIngestor,
-    ClickHouseSignalIngestor,
-    DEFAULT_CLICKHOUSE_NAMESPACE,
-    DEFAULT_CLICKHOUSE_POD,
-    DEFAULT_CLICKHOUSE_URL,
-    DEFAULT_END,
-    DEFAULT_OUTPUT_DIR,
-    DEFAULT_START,
-    DEFAULT_SYMBOLS,
-    DecisionEngine,
     ESSENTIAL_SIGNAL_COLUMNS,
     Execution,
-    LocalSimulationBroker,
-    OrderExecutor,
-    OrderFirewall,
-    REPO_ROOT,
-    Reconciler,
     ReplayArtifacts,
-    RiskEngine,
-    SCRIPT_DIR,
-    SERVICE_ROOT,
-    SignalBatch,
     SignalEnvelope,
     SimpleTradingPipeline,
-    SimulationExecutionAdapter,
-    Strategy,
-    StrategyConfig,
     TradeDecision,
-    TradingState,
-    UniverseResolver,
-    _compose_strategy_description,
-    _configure_replay_settings,
-    _fetch_signals_adaptive,
-    _fetch_signals_window,
-    _load_enabled_strategies,
-    _parse_timestamp,
-    _seed_strategies,
     config,
-    logger,
     main,
-    parse_args,
 )
 
 

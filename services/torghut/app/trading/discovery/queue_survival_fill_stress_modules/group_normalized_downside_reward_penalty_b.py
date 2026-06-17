@@ -11,59 +11,22 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from math import exp, isfinite, log1p
+from math import isfinite, log1p
 from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION,
-    QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES,
-    QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL,
-    QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION,
-    QueueSurvivalFillStressSummary,
     ADD_TOKENS_split_export as _ADD_TOKENS,
-    ASK_SIZE_FIELDS_split_export as _ASK_SIZE_FIELDS,
-    BID_SIZE_FIELDS_split_export as _BID_SIZE_FIELDS,
     CANCEL_TOKENS_split_export as _CANCEL_TOKENS,
     EVENT_FIELDS_split_export as _EVENT_FIELDS,
-    FILL_FIELDS_split_export as _FILL_FIELDS,
     FILL_TOKENS_split_export as _FILL_TOKENS,
-    FillBeforeMoveStats_split_export as _FillBeforeMoveStats,
-    ORDER_BOOK_IMBALANCE_FIELDS_split_export as _ORDER_BOOK_IMBALANCE_FIELDS,
     PRICE_FIELDS_split_export as _PRICE_FIELDS,
-    QUEUE_POSITION_FIELDS_split_export as _QUEUE_POSITION_FIELDS,
-    QUEUE_RATIO_FIELDS_split_export as _QUEUE_RATIO_FIELDS,
-    QUEUE_REACTIVE_EVENT_KINDS_split_export as _QUEUE_REACTIVE_EVENT_KINDS,
     REJECT_TOKENS_split_export as _REJECT_TOKENS,
     SIDE_FIELDS_split_export as _SIDE_FIELDS,
     SPREAD_FIELDS_split_export as _SPREAD_FIELDS,
     STATUS_FIELDS_split_export as _STATUS_FIELDS,
-    VOLUME_FIELDS_split_export as _VOLUME_FIELDS,
-    build_queue_survival_fill_stress_schema_hash,
-    queue_survival_fill_stress_contract,
-)
-from .extract_queue_survival_fill_stress import (
-    adverse_selection_after_touch_bps as _adverse_selection_after_touch_bps,
-    contrarian_reversal_support_score as _contrarian_reversal_support_score,
-    estimated_fill_probability as _estimated_fill_probability,
-    executable_side_depth as _executable_side_depth,
-    fill_before_opportunity_move_stats as _fill_before_opportunity_move_stats,
-    maker_fill_return_tradeoff_penalty_bps as _maker_fill_return_tradeoff_penalty_bps,
-    nonfill_opportunity_cost_bps as _nonfill_opportunity_cost_bps,
-    order_book_imbalance as _order_book_imbalance,
-    order_size_distribution_wasserstein_proxy as _order_size_distribution_wasserstein_proxy,
-    queue_ahead_ratio as _queue_ahead_ratio,
-    queue_reactive_event_mix_l1 as _queue_reactive_event_mix_l1,
-    randomized_priority_fill_gap_proxy_bps as _randomized_priority_fill_gap_proxy_bps,
-    state_dependent_fill_before_move_probability as _state_dependent_fill_before_move_probability,
-    state_dependent_fill_risk_penalty_bps as _state_dependent_fill_risk_penalty_bps,
-    state_dependent_order_flow_gap_score as _state_dependent_order_flow_gap_score,
-    time_priority_edge_concentration_score as _time_priority_edge_concentration_score,
-    extract_queue_survival_fill_stress,
 )
 
 

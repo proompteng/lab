@@ -1,7 +1,5 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Replay one trading session through Torghut's simple execution lane locally."""
-# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -21,8 +19,6 @@ import yaml
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-# ruff: noqa: F401, F821
-
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -33,33 +29,33 @@ REPO_ROOT = SERVICE_ROOT.parent.parent
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from app import config
+from app import config  # noqa: E402
 
-from app.models import Base, Execution, Strategy, TradeDecision
+from app.models import Base, Execution, Strategy, TradeDecision  # noqa: E402
 
-from app.strategies.catalog import StrategyConfig, _compose_strategy_description
+from app.strategies.catalog import StrategyConfig, _compose_strategy_description  # noqa: E402
 
-from app.trading.decisions import DecisionEngine
+from app.trading.decisions import DecisionEngine  # noqa: E402
 
-from app.trading.execution import OrderExecutor
+from app.trading.execution import OrderExecutor  # noqa: E402
 
-from app.trading.execution_adapters import SimulationExecutionAdapter
+from app.trading.execution_adapters import SimulationExecutionAdapter  # noqa: E402
 
-from app.trading.firewall import OrderFirewall
+from app.trading.firewall import OrderFirewall  # noqa: E402
 
-from app.trading.ingest import ClickHouseSignalIngestor, SignalBatch
+from app.trading.ingest import ClickHouseSignalIngestor, SignalBatch  # noqa: E402
 
-from app.trading.models import SignalEnvelope
+from app.trading.models import SignalEnvelope  # noqa: E402
 
-from app.trading.reconcile import Reconciler
+from app.trading.reconcile import Reconciler  # noqa: E402
 
-from app.trading.risk import RiskEngine
+from app.trading.risk import RiskEngine  # noqa: E402
 
-from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
+from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline  # noqa: E402
 
-from app.trading.scheduler.state import TradingState
+from app.trading.scheduler.state import TradingState  # noqa: E402
 
-from app.trading.universe import UniverseResolver
+from app.trading.universe import UniverseResolver  # noqa: E402
 
 DEFAULT_SYMBOLS = [
     "NVDA",
@@ -370,6 +366,13 @@ def main() -> int:
         all_signals.extend(signals)
         logger.info("Fetched %s signals for %s", len(signals), symbol)
 
+    from .fetch_rows_via_kubectl import (
+        _bucket_signals,
+        _build_artifacts,
+        _signal_sort_key,
+        _write_artifacts,
+    )
+
     all_signals.sort(key=_signal_sort_key)
     buckets = _bucket_signals(all_signals, bucket_seconds=args.bucket_seconds)
     logger.info(
@@ -634,6 +637,8 @@ def _fetch_signals_window(
 ) -> list[SignalEnvelope]:
     if clickhouse_transport == "http":
         return ingestor.fetch_signals_between(start, end, symbol=symbol)
+    from .fetch_rows_via_kubectl import _fetch_rows_via_kubectl
+
     rows = _fetch_rows_via_kubectl(
         symbol=symbol,
         start=start,
@@ -675,4 +680,71 @@ __all__ = (
     "LocalSimulationBroker",
     "parse_args",
     "main",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "ALLOWED_REJECT_REASONS",
+    "Any",
+    "Base",
+    "BucketReplayIngestor",
+    "ClickHouseSignalIngestor",
+    "Counter",
+    "DEFAULT_CLICKHOUSE_NAMESPACE",
+    "DEFAULT_CLICKHOUSE_POD",
+    "DEFAULT_CLICKHOUSE_URL",
+    "DEFAULT_END",
+    "DEFAULT_OUTPUT_DIR",
+    "DEFAULT_START",
+    "DEFAULT_SYMBOLS",
+    "Decimal",
+    "DecisionEngine",
+    "ESSENTIAL_SIGNAL_COLUMNS",
+    "Execution",
+    "LocalSimulationBroker",
+    "OrderExecutor",
+    "OrderFirewall",
+    "Path",
+    "REPO_ROOT",
+    "Reconciler",
+    "ReplayArtifacts",
+    "RiskEngine",
+    "SCRIPT_DIR",
+    "SERVICE_ROOT",
+    "Session",
+    "SignalBatch",
+    "SignalEnvelope",
+    "SimpleTradingPipeline",
+    "SimulationExecutionAdapter",
+    "Strategy",
+    "StrategyConfig",
+    "TradeDecision",
+    "TradingState",
+    "UniverseResolver",
+    "_compose_strategy_description",
+    "_configure_replay_settings",
+    "_fetch_signals_adaptive",
+    "_fetch_signals_window",
+    "_load_enabled_strategies",
+    "_parse_timestamp",
+    "_seed_strategies",
+    "annotations",
+    "argparse",
+    "config",
+    "create_engine",
+    "dataclass",
+    "datetime",
+    "json",
+    "logger",
+    "logging",
+    "main",
+    "parse_args",
+    "select",
+    "sessionmaker",
+    "subprocess",
+    "sys",
+    "timedelta",
+    "timezone",
+    "yaml",
 )

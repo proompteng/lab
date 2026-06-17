@@ -1,97 +1,34 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Executable alpha receipt projection for zero-notional repair planning."""
 
 from __future__ import annotations
 
-import hashlib
-import json
-from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, cast
+from typing import Any
 
 from ..runtime_ledger import POST_COST_PNL_BASIS
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    CAPITAL_REPLAY_BOARD_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOT_SCHEMA_VERSION,
-    GraduationState,
-    ALPHA_RUNTIME_REPAIR_REASONS as _ALPHA_RUNTIME_REPAIR_REASONS,
     ALPHA_RUNTIME_REPLAY_CLASS as _ALPHA_RUNTIME_REPLAY_CLASS,
-    BREADTH_HYPOTHESIS as _BREADTH_HYPOTHESIS,
-    CLOSED_SESSION_REPAIR_REASONS as _CLOSED_SESSION_REPAIR_REASONS,
-    DEFAULT_FRESHNESS_SECONDS as _DEFAULT_FRESHNESS_SECONDS,
-    EXECUTABLE_ALPHA_REPAIR_DESIGN_REF as _EXECUTABLE_ALPHA_REPAIR_DESIGN_REF,
-    EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET as _EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET,
-    EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF as _EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF,
-    EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET as _EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET,
-    FEATURE_OR_DRIFT_REPAIR_REASONS as _FEATURE_OR_DRIFT_REPAIR_REASONS,
     HARD_ALPHA_ECONOMIC_REASONS as _HARD_ALPHA_ECONOMIC_REASONS,
-    LIVE_AAPL_HYPOTHESIS as _LIVE_AAPL_HYPOTHESIS,
-    NO_DELTA_RELEASE_CONDITIONS as _NO_DELTA_RELEASE_CONDITIONS,
-    POST_COST_REPAIR_REASONS as _POST_COST_REPAIR_REASONS,
-    REPAIR_CLASS_RANK as _REPAIR_CLASS_RANK,
-    REPAIR_REASON_CLASSES as _REPAIR_REASON_CLASSES,
     RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS as _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS,
     RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS as _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS,
-    RUNTIME_LEDGER_PAPER_PROBATION_REASON as _RUNTIME_LEDGER_PAPER_PROBATION_REASON,
-    SIM_NVDA_HYPOTHESIS as _SIM_NVDA_HYPOTHESIS,
-    VALIDATION_COMMANDS_BY_CLASS as _VALIDATION_COMMANDS_BY_CLASS,
     ZERO_RUNTIME_EVIDENCE_REASONS as _ZERO_RUNTIME_EVIDENCE_REASONS,
-    executable_alpha_repair_receipt as _executable_alpha_repair_receipt,
-    expected_gate_delta as _expected_gate_delta,
-    find_by_symbol as _find_by_symbol,
-    first_with_state as _first_with_state,
     float_value as _float,
     int_value as _int,
     mapping as _mapping,
-    proof_window as _proof_window,
-    reason_list_from_target as _reason_list_from_target,
-    receipt_by_hypothesis as _receipt_by_hypothesis,
-    receipt_revenue_lane_rank as _receipt_revenue_lane_rank,
-    receipt_target_key as _receipt_target_key,
-    repair_class_for_target as _repair_class_for_target,
-    required_input_refs as _required_input_refs,
-    route_board_rows as _route_board_rows,
-    route_records as _route_records,
     sequence as _sequence,
     stable_hash as _stable_hash,
     string_list as _string_list,
-    targets_from_alpha_readiness as _targets_from_alpha_readiness,
     text as _text,
-    top_alpha_repair as _top_alpha_repair,
 )
 from .build_executable_alpha_repair_receipts import (
-    alpha_target_reason_codes as _alpha_target_reason_codes,
     before_refs as _before_refs,
-    before_routeable_candidate_count as _before_routeable_candidate_count,
-    build_executable_alpha_settlement_slot as _build_executable_alpha_settlement_slot,
     capital_blockers as _capital_blockers,
     empirical_blockers as _empirical_blockers,
     graduation_state as _graduation_state,
     market_context_blockers as _market_context_blockers,
-    no_delta_debt_from_settlement_slot as _no_delta_debt_from_settlement_slot,
-    parse_datetime as _parse_datetime,
-    primary_remaining_blocker as _primary_remaining_blocker,
     quant_blockers as _quant_blockers,
-    repair_receipt_reason_codes as _repair_receipt_reason_codes,
-    required_after_receipts as _required_after_receipts,
-    routeable_candidate_count_from_evidence as _routeable_candidate_count_from_evidence,
-    selected_repair_receipt as _selected_repair_receipt,
-    settlement_state as _settlement_state,
-    tca_guardrail_blockers as _tca_guardrail_blockers,
-    top_queue_item as _top_queue_item,
-    zero_notional as _zero_notional,
-    build_executable_alpha_repair_receipts,
-    build_executable_alpha_settlement_slots,
-    compact_executable_alpha_settlement_slots,
 )
 
 

@@ -1,52 +1,24 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Canonical evidence bundles for autoresearch candidates."""
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
-from typing import Any, Literal, Mapping, Sequence, cast
+from decimal import Decimal
+from typing import Any, Literal, Mapping, Sequence
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS,
-    ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS,
-    BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS,
-    CONFORMAL_COST_BUFFER_SCORECARD_KEYS,
     DELAY_ADJUSTED_DEPTH_STRESS_COST_BPS,
     DELAY_ADJUSTED_DEPTH_STRESS_GRID_MS,
     DELAY_ADJUSTED_DEPTH_STRESS_MS,
-    DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS,
-    EVIDENCE_BUNDLE_SCHEMA_VERSION,
-    FILL_SURVIVAL_SCORECARD_KEYS,
-    MARKET_IMPACT_SCORECARD_KEYS,
-    MARKET_IMPACT_STRESS_COST_BPS,
-    MIN_CONFORMAL_TAIL_RISK_SAMPLE_COUNT,
-    OFI_RESPONSE_HORIZON_SCORECARD_KEYS,
-    REPLAY_ACTIVITY_SCORECARD_KEYS,
-    RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS,
-    STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS,
-    VALID_COST_CALIBRATION_STATUSES,
-    artifact_refs_from_scorecard as _artifact_refs_from_scorecard,
     bool_value as _bool,
     decimal as _decimal,
     decimal_mapping_total as _decimal_mapping_total,
-    frontier_replay_config as _frontier_replay_config,
-    frontier_replay_params as _frontier_replay_params,
-    frontier_strategy_overrides as _frontier_strategy_overrides,
     int_value as _int,
-    int_mapping as _int_mapping,
     mapping as _mapping,
-    order_lifecycle_metrics as _order_lifecycle_metrics,
-    order_type_ablation_metrics as _order_type_ablation_metrics,
-    order_type_execution_metrics as _order_type_execution_metrics,
     runtime_ledger_lineage_handoff as _runtime_ledger_lineage_handoff,
     stable_hash as _stable_hash,
     string as _string,
-    string_list as _string_list,
 )
 
 

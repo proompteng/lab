@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python
 """Read-only H-PAIRS/TORGHUT_SIM source-proof census/readback CLI.
 
@@ -10,101 +9,13 @@ proof artifacts, promotion state, or database rows.
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
-from collections.abc import Mapping, Sequence, Set
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from pathlib import Path
-from typing import cast
+from collections.abc import Mapping, Sequence
+from decimal import Decimal
 
-from sqlalchemy import create_engine, or_, select
-from sqlalchemy.orm import Session, sessionmaker
-
-from app.models import (
-    Execution,
-    ExecutionOrderEvent,
-    ExecutionTCAMetric,
-    OrderFeedSourceWindow,
-    Strategy,
-    TradeDecision,
-)
-from app.trading.runtime_authority_verifier import (
-    AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER,
-    AUTHORITY_BUCKET_BLOCKERS_PRESENT,
-    AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER,
-    AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER,
-    AUTHORITY_EVIDENCE_MISSING_BLOCKER,
-    AUTHORITY_EXPLICIT_COSTS_BLOCKER,
-    AUTHORITY_FILLED_NOTIONAL_BLOCKER,
-    AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER,
-    AUTHORITY_MEAN_PNL_BLOCKER,
-    AUTHORITY_MEDIAN_PNL_BLOCKER,
-    AUTHORITY_OPEN_POSITIONS_BLOCKER,
-    AUTHORITY_P10_PNL_BLOCKER,
-    AUTHORITY_READ_ERROR_BLOCKER,
-    AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER,
-    AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER,
-    AUTHORITY_TRADING_DAYS_BLOCKER,
-    AUTHORITY_WORST_DAY_BLOCKER,
-    DEFAULT_HPAIRS_ACCOUNT_LABEL,
-    DEFAULT_HPAIRS_CANDIDATE_ID,
-    DEFAULT_HPAIRS_HYPOTHESIS_ID,
-    DEFAULT_HPAIRS_RUNTIME_STRATEGY,
-    build_runtime_authority_report,
-    load_runtime_authority_rows,
-)
-from app.trading.runtime_ledger_source_authority import (
-    EXECUTION_ECONOMICS_MISSING_BLOCKER,
-    ORDER_FEED_LIFECYCLE_MISSING_BLOCKER,
-    ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER,
-    RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER,
-    RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
-    RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER,
-    RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
-    RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER,
-    RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER,
-    RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER,
-    RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
-    RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
-)
-
-# ruff: noqa: F401
 
 from .shared_context import (
-    AUTHORITY_CANDIDATE_READY,
-    AUTHORITY_DISTRIBUTION_MISSING,
-    CANDIDATE_CONFIG_MISMATCH_BLOCKER,
     CensusIdentity,
     CensusSourceRows,
-    ECONOMICS_MISSING,
-    LADDER_BLOCKED,
-    LADDER_MISSING,
-    LADDER_PASS,
-    LIFECYCLE_MISSING,
-    NO_SOURCE_ACTIVITY,
-    OPEN_POSITIONS,
-    SCHEMA_VERSION,
-    SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER,
-    SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER,
-    SOURCE_REFS_MISSING,
-    SUBMITTED_ORDERS_MISSING_BLOCKER,
-    _DISTRIBUTION_BLOCKERS,
-    _ECONOMICS_BLOCKERS,
-    _LIFECYCLE_BLOCKERS,
-    _PRIMARY_LIFECYCLE_BLOCKERS,
-    _SOURCE_REF_BLOCKERS,
-    _authority_scope_rows,
-    _load_session_rows,
-    _source_account_label,
-    _sqlalchemy_dsn,
-    build_source_proof_census,
-    census_json,
-    load_dsn_rows,
-    load_fixture_rows,
-    parse_args,
 )
 
 

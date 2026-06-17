@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportAttributeAccessIssue=false
 
-from dataclasses import dataclass
 from datetime import datetime
+from dataclasses import dataclass
 from statistics import NormalDist
 from typing import Any
-
-import pandas as pd
 
 
 def _z_value(confidence_level: float) -> float:
@@ -18,7 +15,7 @@ def _z_value(confidence_level: float) -> float:
 
 
 def _series_bounds(
-    values: pd.Series,
+    values: Any,
     *,
     confidence_level: float,
 ) -> tuple[float | None, float | None, float | None]:
@@ -68,7 +65,7 @@ class SequentialTrialSummary:
 
 def build_sequential_trial_summary(
     *,
-    net_returns: pd.Series,
+    net_returns: Any,
     started_at: datetime,
     updated_at: datetime,
     confidence_level: float = 0.95,

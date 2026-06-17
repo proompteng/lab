@@ -1,6 +1,5 @@
 """Extracted Torghut API route and support functions."""
 
-# pyright: reportUnusedImport=false
 from __future__ import annotations
 
 from fastapi import APIRouter

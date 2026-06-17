@@ -1,24 +1,14 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Profit freshness frontier projection for zero-notional repair selection."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
-from hashlib import sha256
-import json
-from typing import Any, cast
+from datetime import datetime
+from decimal import Decimal
+from typing import Any
 
-from ..market_context_domains import (
-    active_market_context_mapping,
-    active_market_context_reasons,
-)
-
-# ruff: noqa: F401
 
 from .shared_context import (
-    PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION,
     ALPHA_FEATURE_REPLAY_PRIORITY_BONUS as _ALPHA_FEATURE_REPLAY_PRIORITY_BONUS,
     ALPHA_FEATURE_REPLAY_REASON_CODES as _ALPHA_FEATURE_REPLAY_REASON_CODES,
     ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS as _ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS,
@@ -31,45 +21,29 @@ from .shared_context import (
     DIMENSION_REPAIR_CLASSES as _DIMENSION_REPAIR_CLASSES,
     DIMENSION_REPAIR_COST as _DIMENSION_REPAIR_COST,
     DIMENSION_SUCCESS as _DIMENSION_SUCCESS,
-    FRESHNESS_SECONDS as _FRESHNESS_SECONDS,
     NONBLOCKING_JANGAR_RELIABILITY_REASONS as _NONBLOCKING_JANGAR_RELIABILITY_REASONS,
-    NONBLOCKING_QUANT_HEALTH_REASONS as _NONBLOCKING_QUANT_HEALTH_REASONS,
-    REPAIRABLE_DIMENSIONS as _REPAIRABLE_DIMENSIONS,
     REPAIR_COST_PENALTY as _REPAIR_COST_PENALTY,
-    ROUTEABILITY_ONLY_TCA_REASON_CODES as _ROUTEABILITY_ONLY_TCA_REASON_CODES,
-    ROUTEABILITY_ONLY_TCA_REASON_PREFIXES as _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES,
     ROUTEABILITY_TCA_REPAIR_ACTION as _ROUTEABILITY_TCA_REPAIR_ACTION,
     ROUTEABILITY_TCA_REPAIR_LOT_TYPES as _ROUTEABILITY_TCA_REPAIR_LOT_TYPES,
     ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS as _ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS,
     ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES as _ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES,
     ROUTE_SETTLED_ROW_STATES as _ROUTE_SETTLED_ROW_STATES,
-    bool_value as _bool,
     decimal as _decimal,
     decimal_text as _decimal_text,
     dimension as _dimension,
-    empirical_dimension as _empirical_dimension,
     float_value as _float,
-    hypothesis_dimension as _hypothesis_dimension,
-    hypothesis_ids_for_reasons as _hypothesis_ids_for_reasons,
-    hypothesis_items as _hypothesis_items,
-    hypothesis_summary as _hypothesis_summary,
     int_value as _int,
     mapping as _mapping,
-    market_dimension as _market_dimension,
-    market_domain_states as _market_domain_states,
     proof_dimension as _proof_dimension,
-    reason_total as _reason_total,
     route_rows as _route_rows,
     route_symbols as _route_symbols,
     routeability_only_tca_reason as _routeability_only_tca_reason,
     sequence as _sequence,
-    signal_dimension as _signal_dimension,
     stable_ref as _stable_ref,
     state_from_reasons as _state_from_reasons,
     strings as _strings,
     symbols as _symbols,
     text as _text,
-    timestamp as _timestamp,
     unique as _unique,
 )
 

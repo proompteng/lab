@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Deterministic offline alpha discovery lane."""
 
 from __future__ import annotations
@@ -7,39 +6,14 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Mapping, Sequence, cast
+from typing import Any, Literal, Mapping, Sequence, cast
 
 import pandas as pd
-from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
 
-from ....models import (
-    ResearchAttempt,
-    ResearchCandidate,
-    ResearchCostCalibration,
-    ResearchFoldMetrics,
-    ResearchPromotion,
-    ResearchRun,
-    ResearchSequentialTrial,
-    ResearchStressMetrics,
-    ResearchValidationTest,
-)
-from ...discovery import (
-    build_sequential_trial_summary,
-    build_strategy_factory_evaluation,
-)
-from ..metrics import summarize_equity_curve, to_jsonable
-from ..search import SearchResult, candidate_to_jsonable, run_tsmom_grid_search
-from ..tsmom import TSMOMConfig, backtest_tsmom
-from ...reporting import (
-    PromotionEvidenceSummary,
-    build_promotion_recommendation,
-)
-
-# ruff: noqa: F401
+from ..search import SearchResult
 
 
 @dataclass(frozen=True)

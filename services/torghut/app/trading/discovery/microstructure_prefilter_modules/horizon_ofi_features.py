@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Bounded H-PAIRS ClusterLOB/OFI candidate prefiltering.
 
 The scores in this module are discovery metadata only. They intentionally rank
@@ -8,12 +7,10 @@ or runtime-ledger authority.
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
-from math import exp, isfinite, log, sqrt
+from math import log, sqrt
 from typing import Any, cast
 
 import numpy as np
@@ -22,28 +19,12 @@ from numpy.typing import NDArray
 from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    HPAIRS_AUTHORITY_BLOCKERS,
     HPAIRS_FAMILY_TEMPLATE_ID,
     HPAIRS_HORIZONS,
-    HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
-    HPAIRS_PREFILTER_PROOF_SOURCE,
-    HPAIRS_PREFILTER_ROW_SCHEMA_VERSION,
-    HPAIRS_PREFILTER_SCHEMA_VERSION,
     HPAIRS_RUNTIME_STRATEGY_NAME,
-    MicrostructureCandidatePrefilterRow,
-    MicrostructurePrefilterResult,
     SymbolMicrostructureStats as _SymbolMicrostructureStats,
-    build_symbol_microstructure_stats as _build_symbol_microstructure_stats,
-    rank_key as _rank_key,
-    score_spec as _score_spec,
-    select_frontier_buckets as _select_frontier_buckets,
-    source_field_diagnostics as _source_field_diagnostics,
-    source_input_blockers as _source_input_blockers,
-    with_rank_and_bucket as _with_rank_and_bucket,
-    build_hpairs_microstructure_prefilter,
 )
 
 

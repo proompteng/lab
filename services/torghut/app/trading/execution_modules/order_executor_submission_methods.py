@@ -5,82 +5,30 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, NamedTuple, Optional, cast
+from typing import Any, NamedTuple, cast
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
 from ...models import (
-    Execution,
-    LeanExecutionShadowEvent,
-    Strategy,
-    TradeDecision,
     coerce_json_payload,
 )
 from ...config import settings
-from ...snapshots import sync_order_to_db
-from ..route_metadata import resolve_order_route_metadata
-from ..execution_policy import should_retry_order_error
-from ..models import ExecutionRequest, StrategyDecision, decision_hash
+from ..models import ExecutionRequest, StrategyDecision
 from ..quantity_rules import (
-    min_qty_for_symbol,
-    quantize_qty_for_symbol,
-    qty_has_valid_increment,
-    qty_step_for_symbol,
     resolve_quantity_resolution,
 )
-from ..simulation import (
-    resolve_event_persisted_at,
-    resolve_simulation_context,
-    simulation_context_enabled,
-)
-from ..time_source import trading_now
-from ..tca import upsert_execution_tca_metric
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE as _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    COST_MODEL_HASH_KEYS as _COST_MODEL_HASH_KEYS,
-    COST_MODEL_PAYLOAD_KEYS as _COST_MODEL_PAYLOAD_KEYS,
-    EXECUTION_POLICY_HASH_KEYS as _EXECUTION_POLICY_HASH_KEYS,
-    LINEAGE_HASH_KEYS as _LINEAGE_HASH_KEYS,
-    LINEAGE_PAYLOAD_KEYS as _LINEAGE_PAYLOAD_KEYS,
     OrderExecutorFields as _OrderExecutorFields,
-    RUNTIME_COST_AMOUNT_KEYS as _RUNTIME_COST_AMOUNT_KEYS,
-    RUNTIME_COST_BASIS_KEYS as _RUNTIME_COST_BASIS_KEYS,
-    RUNTIME_COST_PAYLOAD_KEYS as _RUNTIME_COST_PAYLOAD_KEYS,
     SHORTING_METADATA_CACHE_TTL_SECONDS as _SHORTING_METADATA_CACHE_TTL_SECONDS,
-    TARGET_PLAN_SOURCE_DECISION_MODE as _TARGET_PLAN_SOURCE_DECISION_MODE,
-    TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS as _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS,
-    has_target_plan_source_decision as _has_target_plan_source_decision,
-    mapping_payload as _mapping_payload,
-    target_plan_ref_value as _target_plan_ref_value,
-    target_plan_source_decision_mode as _target_plan_source_decision_mode,
-    target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
-    target_plan_source_metadata as _target_plan_source_metadata,
     logger,
 )
 from .order_executor_core_methods import (
     OrderExecutorCoreMethods as _OrderExecutorCoreMethods,
-)
-from .order_executor_core_support import (
-    PreparedOrderSubmission as _PreparedOrderSubmission,
-    ResolvedSellInventory as _ResolvedSellInventory,
-    SellInventoryReservations as _SellInventoryReservations,
-    execution_request_from_decision as _execution_request_from_decision,
-    merge_execution_audit as _merge_execution_audit,
-    open_sell_order_reserves_symbol as _open_sell_order_reserves_symbol,
-    order_payload_with_execution_metadata as _order_payload_with_execution_metadata,
-    sell_inventory_metadata_update as _sell_inventory_metadata_update,
-    sell_inventory_request_symbol as _sell_inventory_request_symbol,
-    submission_extra_params as _submission_extra_params,
 )
 
 

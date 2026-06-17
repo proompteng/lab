@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python
 """Verify Torghut trading readiness from a `/trading/status` payload."""
 
@@ -12,8 +11,6 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import urlopen
-
-# ruff: noqa: F401
 
 
 SCHEMA_VERSION = "torghut.trading-readiness-verification.v1"
@@ -447,4 +444,57 @@ __all__ = (
     "TIGERBEETLE_PARITY_STATUS_PASS",
     "DOC29_LIVE_SCALE_GATE",
     "REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS",
+)
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "DOC29_LIVE_SCALE_GATE",
+    "Decimal",
+    "InvalidOperation",
+    "Mapping",
+    "NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION",
+    "Path",
+    "REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS",
+    "ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION",
+    "ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION",
+    "RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION",
+    "SCHEMA_VERSION",
+    "Sequence",
+    "TIGERBEETLE_PARITY_STATUS_PASS",
+    "TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION",
+    "_MISSING_QUANT_REASONS",
+    "_QUOTE_FILLABILITY_REASON_TOKENS",
+    "_QUOTE_FILLABILITY_REPAIR_ACTIONS",
+    "_RUNTIME_LEDGER_TRADING_DAY_KEYS",
+    "_add_check",
+    "_append_unique_text",
+    "_bool",
+    "_decimal",
+    "_decimal_positive",
+    "_dimension_by_name",
+    "_dimension_is_required",
+    "_expected_floor_states",
+    "_health_gate_bool",
+    "_int",
+    "_load_json_object",
+    "_load_optional_json_object",
+    "_load_status_url",
+    "_mapping",
+    "_market_session_open",
+    "_paper_route_probe_summary",
+    "_paper_route_quote_fillability_summary",
+    "_quote_fillability_reason",
+    "_quote_fillability_repair_action",
+    "_sequence",
+    "_text",
+    "_text_list",
+    "annotations",
+    "argparse",
+    "cast",
+    "datetime",
+    "json",
+    "timezone",
+    "urlopen",
 )

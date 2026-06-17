@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -121,3 +120,34 @@ def _write_dspy_promotion_eval_snapshot(
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "Base",
+    "Decimal",
+    "LLMDSPyWorkflowArtifact",
+    "LLMDecisionReview",
+    "Path",
+    "Session",
+    "Strategy",
+    "TemporaryDirectory",
+    "TestCase",
+    "TradeDecision",
+    "_TestLLMDSPyWorkflowBase",
+    "_build_dspy_lane_overrides",
+    "_sanitize_idempotency_key",
+    "_write_dspy_promotion_eval_snapshot",
+    "build_compile_result",
+    "build_dspy_agentrun_payload",
+    "build_eval_report",
+    "build_promotion_record",
+    "create_engine",
+    "datetime",
+    "json",
+    "orchestrate_dspy_agentrun_workflow",
+    "patch",
+    "select",
+    "timedelta",
+    "timezone",
+    "upsert_workflow_artifact_record",
+    "write_artifact_bundle",
+)

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Evaluation report generation and governance gates for walk-forward runs."""
 
 from __future__ import annotations
@@ -16,8 +15,6 @@ from ..costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCo
 from ..evaluation import WalkForwardDecision, WalkForwardResults
 from ..evaluation_trace import SweepCandidateResult
 from ..regime import RegimeLabel, classify_regime
-
-# ruff: noqa: F401
 
 
 def _resolve_price(decision: Any, item: WalkForwardDecision) -> Optional[Decimal]:
@@ -862,4 +859,82 @@ __all__ = (
     "flatten_decisions",
     "open_long",
     "open_short",
+)
+
+
+# Explicit module exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "CostModelConfig",
+    "CostModelInputs",
+    "Decimal",
+    "EvaluationGateOutcome",
+    "EvaluationGatePolicy",
+    "EvaluationImpactAssumptions",
+    "EvaluationMetrics",
+    "EvaluationReport",
+    "EvaluationReportConfig",
+    "Literal",
+    "Mapping",
+    "MultipleTestingSummary",
+    "Optional",
+    "OrderIntent",
+    "Path",
+    "PositionState",
+    "PromotionEvidenceSummary",
+    "PromotionRecommendation",
+    "ROUND_FLOOR",
+    "RegimeLabel",
+    "ResolvedImpactInputs",
+    "RobustnessFoldMetrics",
+    "RobustnessReport",
+    "Strategy",
+    "SweepCandidateResult",
+    "TransactionCostModel",
+    "WalkForwardDecision",
+    "WalkForwardResults",
+    "_PositionState",
+    "_ResolvedImpactInputs",
+    "_apply_fill",
+    "_bps_from_cost",
+    "_close_long",
+    "_collect_impact_assumptions",
+    "_cost_model_payload",
+    "_cover_short",
+    "_decimal",
+    "_decimal_mean",
+    "_decimal_std",
+    "_estimate_cost",
+    "_evaluate_gates",
+    "_evaluate_metrics",
+    "_evaluate_multiple_testing",
+    "_evaluate_robustness",
+    "_exposure_notional",
+    "_flatten_decisions",
+    "_open_long",
+    "_open_short",
+    "_resolve_price",
+    "_strategy_payload",
+    "_unrealized_pnl",
+    "annotations",
+    "apply_fill",
+    "build_promotion_recommendation",
+    "cast",
+    "classify_regime",
+    "close_long",
+    "dataclass",
+    "datetime",
+    "evaluate_gates",
+    "evaluate_metrics",
+    "evaluate_multiple_testing",
+    "evaluate_robustness",
+    "field",
+    "flatten_decisions",
+    "generate_evaluation_report",
+    "hashlib",
+    "json",
+    "open_long",
+    "open_short",
+    "timezone",
+    "write_evaluation_report",
 )

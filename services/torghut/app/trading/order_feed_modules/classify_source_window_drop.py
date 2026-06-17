@@ -1,77 +1,27 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Kafka-backed order-feed ingestion and persistence helpers."""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import logging
-import uuid
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
-from typing import Any, Callable, Mapping, cast
+from datetime import datetime
+from typing import Any, Mapping, cast
 
-from sqlalchemy import exists, func, or_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
 
-from ...config import settings
 from ...models import (
-    Execution,
     ExecutionOrderEvent,
-    OrderFeedConsumerCursor,
     OrderFeedSourceWindow,
-    TradeDecision,
     coerce_json_payload,
 )
-from ..tca import upsert_execution_tca_metric
-from ..tigerbeetle_journal import TigerBeetleLedgerJournal
-from ..tigerbeetle_reconcile import reconcile_tigerbeetle_transfers
 
-# ruff: noqa: F401
 
 from .shared_context import (
-    EXECUTION_RAW_ORDER_SOURCE_PARTITION,
-    EXECUTION_RAW_ORDER_SOURCE_TOPIC,
-    EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
-    FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING,
-    FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA,
-    HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
-    NormalizationResult,
-    NormalizedOrderEvent,
-    ORDER_FEED_SOURCE_REVISION,
-    AccountAliasResolution as _AccountAliasResolution,
-    ExecutionLinkageResolution as _ExecutionLinkageResolution,
-    FILL_EVENT_TYPES as _FILL_EVENT_TYPES,
-    IngestRecordContext as _IngestRecordContext,
-    IngestRecordOutcome as _IngestRecordOutcome,
-    ManualAssignmentHooks as _ManualAssignmentHooks,
-    OrderFeedSourceIdentity as _OrderFeedSourceIdentity,
-    TradeDecisionLinkageResolution as _TradeDecisionLinkageResolution,
-    broker_high_watermark_from_record as _broker_high_watermark_from_record,
     as_mapping as _as_mapping,
     coerce_datetime as _coerce_datetime,
     coerce_int as _coerce_int,
     coerce_text as _coerce_text,
-    create_order_feed_source_window as _create_order_feed_source_window,
     decode_json_payload as _decode_json_payload,
-    event_out_of_scope_for_default_account as _event_out_of_scope_for_default_account,
     extract_trade_update_payload as _extract_trade_update_payload,
     isoformat_datetime as _isoformat_datetime,
-    log_manual_assignment_ready as _log_manual_assignment_ready,
-    manual_assignment_hooks as _manual_assignment_hooks,
-    manual_topic_partitions as _manual_topic_partitions,
-    position_manual_topic_partitions as _position_manual_topic_partitions,
-    record_source_identity as _record_source_identity,
-    reset_manual_unpositioned_partitions as _reset_manual_unpositioned_partitions,
-    source_topic_from_record as _source_topic_from_record,
-    upsert_drop_cursor as _upsert_drop_cursor,
-    logger,
 )
-
-from .order_feed_ingestor import OrderFeedIngestor
 
 
 def _classify_source_window_drop(

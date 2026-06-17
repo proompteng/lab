@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 from decimal import Decimal
 from pathlib import Path
@@ -58,3 +57,20 @@ class _TestWhitepaperCandidateCompilerBase(TestCase):
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "Decimal",
+    "Path",
+    "TemporaryDirectory",
+    "TestCase",
+    "_PORTFOLIO_TARGET_FAMILIES",
+    "_TestWhitepaperCandidateCompilerBase",
+    "_expected_candidate_count",
+    "_expected_portfolio_target_candidate_count",
+    "_profile_count_for_family",
+    "build_hypothesis_cards",
+    "candidate_specs_module",
+    "compile_claim_payloads_to_whitepaper_experiments",
+    "compile_whitepaper_candidate_specs",
+    "compiler_module",
+)

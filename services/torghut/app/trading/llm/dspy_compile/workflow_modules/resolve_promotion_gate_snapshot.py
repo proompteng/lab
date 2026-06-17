@@ -1,49 +1,29 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """DSPy compile/eval/promotion workflow helpers with Jangar-compatible contracts."""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import re
 import sys
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
-from typing import Any, Literal, Mapping, Sequence, cast
-from urllib.parse import quote, urlencode, unquote, urlsplit
+from typing import Any, Mapping, cast
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .....config import settings
-from .....models import LLMDSPyWorkflowArtifact, coerce_json_payload
-from ..hashing import hash_payload
 from ..schemas import (
-    DSPyArtifactBundle,
     DSPyCompileResult,
     DSPyEvalReport,
     DSPyPromotionRecord,
 )
 
-# ruff: noqa: F401
 
 from .shared_context import (
     DSPyWorkflowExecutionMode,
     DSPyWorkflowLane,
-    build_compile_result,
     build_dspy_agentrun_payload,
-    build_eval_report,
-    build_promotion_record,
-    bundle_artifacts,
-    get_agents_agentrun,
-    resolve_default_dspy_universe_ref,
     submit_agents_agentrun,
     upsert_workflow_artifact_record,
     wait_for_agents_agentrun_terminal_status,
-    write_artifact_bundle,
 )
 from . import shared_context as _shared_context_private_33
 

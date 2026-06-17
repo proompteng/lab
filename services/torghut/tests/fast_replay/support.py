@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 
 import ast
 from datetime import date, datetime, timedelta, timezone
@@ -143,3 +142,25 @@ class _TestFastReplayPreviewBase(TestCase):
 
 
 __all__: tuple[str, ...] = ()
+
+__all__: tuple[str, ...] = (
+    "CANDIDATE_SPEC_SCHEMA_VERSION",
+    "CandidateSpec",
+    "Decimal",
+    "FAST_REPLAY_PROOF_SEMANTICS_LABEL",
+    "Path",
+    "SignalEnvelope",
+    "TemporaryDirectory",
+    "TestCase",
+    "_TestFastReplayPreviewBase",
+    "ast",
+    "build_fast_replay_preview",
+    "build_source_query_digest",
+    "date",
+    "datetime",
+    "fast_replay",
+    "load_replay_tape",
+    "materialize_signal_tape",
+    "timedelta",
+    "timezone",
+)
