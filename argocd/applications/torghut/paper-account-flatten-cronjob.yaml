@@ -11,17 +11,19 @@ spec:
   timeZone: America/New_York
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 0
   startingDeadlineSeconds: 300
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 86400
+      ttlSecondsAfterFinished: 1800
       backoffLimit: 1
       activeDeadlineSeconds: 300
       template:
         spec:
           restartPolicy: OnFailure
           serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
           containers:
             - name: flatten-paper-account
               image: registry.ide-newton.ts.net/lab/torghut@sha256:f7e5a2039dd203c18226ee348e55eb599a6d9fecade2260d96f0ccac9b81d964
@@ -52,7 +54,6 @@ spec:
                       --allow-pending-clean-window-baseline-readback
                     )
                   fi
-                  echo "stage=flatten_paper_account started_at=$(date -Iseconds)"
                   /opt/venv/bin/python scripts/flatten_paper_account_positions.py \
                     --account-label TORGHUT_SIM \
                     --expected-account-label TORGHUT_SIM \
@@ -70,10 +71,7 @@ spec:
                     --persist-lineage \
                     --apply \
                     --json
-                  echo "stage=flatten_paper_account completed_at=$(date -Iseconds)"
               env:
-                - name: PYTHONUNBUFFERED
-                  value: "1"
                 - name: DB_DSN
                   valueFrom:
                     secretKeyRef:
