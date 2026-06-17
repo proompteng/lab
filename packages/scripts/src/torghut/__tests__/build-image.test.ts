@@ -64,4 +64,25 @@ describe('buildImage', () => {
 
     expect(captured?.cacheRef).toBeUndefined()
   })
+
+  it('defaults to amd64 and arm64 image platforms', async () => {
+    let captured: DockerBuildOptions | undefined
+
+    __private.setExecGit((args) => {
+      if (args[0] === 'describe') return 'v0.1.0'
+      if (args[0] === 'rev-parse') return '0123456789abcdef0123456789abcdef01234567'
+      throw new Error(`unexpected git command: ${args.join(' ')}`)
+    })
+    __private.setBuildAndPushDockerImage(async (options) => {
+      captured = options
+      return {
+        ...options,
+        image: `${options.registry}/${options.repository}:${options.tag}`,
+      }
+    })
+
+    await buildImage({ tag: '01234567' })
+
+    expect(captured?.platforms).toEqual(['linux/amd64', 'linux/arm64'])
+  })
 })

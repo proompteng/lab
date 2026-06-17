@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { __private, buildAndPushDockerImage, inspectImageDigest, resolveBuildAttestations } from '../docker'
+import {
+  __private,
+  assertImageSupportsPlatforms,
+  buildAndPushDockerImage,
+  inspectImageDigest,
+  inspectImagePlatforms,
+  resolveBuildAttestations,
+} from '../docker'
 
 const originalSpawn = Bun.spawn
 const originalWhich = Bun.which
@@ -70,6 +77,83 @@ describe('inspectImageDigest', () => {
 
     const digest = inspectImageDigest('registry.example/froussard:latest')
     expect(digest).toBe('registry.example/froussard@sha256:111')
+  })
+})
+
+describe('inspectImagePlatforms', () => {
+  it('returns schedulable platforms and ignores attestation manifests', () => {
+    Bun.which = ((binary: string) => (binary === 'docker' ? '/usr/bin/docker' : null)) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined.startsWith('docker buildx imagetools inspect')) {
+        return {
+          exitCode: 0,
+          stdout: Buffer.from(
+            JSON.stringify({
+              manifest: {
+                manifests: [
+                  {
+                    digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    platform: { os: 'linux', architecture: 'amd64' },
+                  },
+                  {
+                    digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                    platform: { os: 'unknown', architecture: 'unknown' },
+                  },
+                  {
+                    digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                    platform: { os: 'linux', architecture: 'arm64' },
+                  },
+                ],
+              },
+            }),
+          ),
+          stderr: new Uint8Array(),
+        } as ReturnType<typeof Bun.spawnSync>
+      }
+      return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+    }) as typeof Bun.spawnSync)
+
+    expect(inspectImagePlatforms('registry.example/lab/torghut:tag')).toEqual([
+      {
+        platform: 'linux/amd64',
+        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+      {
+        platform: 'linux/arm64',
+        digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      },
+    ])
+  })
+
+  it('fails when a required platform is missing', () => {
+    Bun.which = ((binary: string) => (binary === 'docker' ? '/usr/bin/docker' : null)) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined.startsWith('docker buildx imagetools inspect')) {
+        return {
+          exitCode: 0,
+          stdout: Buffer.from(
+            JSON.stringify({
+              manifest: {
+                manifests: [
+                  {
+                    digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                    platform: { os: 'linux', architecture: 'arm64' },
+                  },
+                ],
+              },
+            }),
+          ),
+          stderr: new Uint8Array(),
+        } as ReturnType<typeof Bun.spawnSync>
+      }
+      return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+    }) as typeof Bun.spawnSync)
+
+    expect(() =>
+      assertImageSupportsPlatforms('registry.example/lab/torghut:tag', ['linux/amd64', 'linux/arm64']),
+    ).toThrow('missing required platform(s): linux/amd64')
   })
 })
 

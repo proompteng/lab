@@ -48,7 +48,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
           .split(',')
           .map((p) => p.trim())
           .filter((p) => p.length > 0 && p.toLowerCase() !== 'none')
-      : ['linux/arm64'])
+      : ['linux/amd64', 'linux/arm64'])
 
   const version = execGitImpl(['describe', '--tags', '--always'])
   const commit = execGitImpl(['rev-parse', 'HEAD'])

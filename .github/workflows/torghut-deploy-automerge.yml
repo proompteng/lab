@@ -30,6 +30,8 @@ on:
       - 'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
       - 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
       - 'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml'
+      - 'argocd/applications/torghut-options/catalog/deployment.yaml'
+      - 'argocd/applications/torghut-options/enricher/deployment.yaml'
       - '.github/workflows/torghut-deploy-automerge.yml'
 
 permissions:
@@ -88,6 +90,8 @@ jobs:
             'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
             'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
             'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml'
+            'argocd/applications/torghut-options/catalog/deployment.yaml'
+            'argocd/applications/torghut-options/enricher/deployment.yaml'
           )
 
           contains() {

@@ -30,7 +30,7 @@ const buildTechnicalAnalysisImage = async () => {
   )
   const platforms = process.env.TORGHUT_TA_IMAGE_PLATFORMS?.split(',')
     .map((entry) => entry.trim())
-    .filter(Boolean) ?? ['linux/arm64']
+    .filter(Boolean) ?? ['linux/amd64', 'linux/arm64']
   const codexAuthPath = process.env.TORGHUT_TA_CODEX_AUTH_PATH
   const version = execGit(['describe', '--tags', '--always'])
   const commit = execGit(['rev-parse', 'HEAD'])

@@ -117,7 +117,11 @@ jobs:
                     .github/workflows/torghut-ci.yml \
                     .github/workflows/torghut-deploy-automerge.yml \
                     .github/workflows/torghut-post-deploy-verify.yml \
-                    .github/workflows/torghut-release.yml
+                    .github/workflows/torghut-release.yml \
+                    .github/workflows/torghut-ta-build-push.yaml \
+                    .github/workflows/torghut-ta-release.yml \
+                    .github/workflows/torghut-ws-build-push.yaml \
+                    .github/workflows/torghut-ws-release.yml
                 )"
                 if [ -n "${TORGHUT_CHANGES}" ]; then
                   echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Torghut build inputs changed:"
@@ -199,6 +203,29 @@ jobs:
 
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify promoted image platform contract
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.meta.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${IMAGE_NAME}@${IMAGE_DIGEST}"
+          MANIFEST_JSON="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE_REF}")"
+          for platform in linux/amd64 linux/arm64; do
+            platform_digest="$(
+              jq -r --arg platform "${platform}" \
+                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
+                <<< "${MANIFEST_JSON}" | head -n 1
+            )"
+            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Promoted image ${IMAGE_REF} is missing required platform ${platform}"
+              docker buildx imagetools inspect "${IMAGE_REF}"
+              exit 1
+            fi
+          done
+
       - name: Evaluate migration safety gate
         if: steps.meta.outputs.promote == 'true'
         id: migration
@@ -262,7 +289,9 @@ jobs:
             argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml \
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml \
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
-            argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml; then
+            argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml \
+            argocd/applications/torghut-options/catalog/deployment.yaml \
+            argocd/applications/torghut-options/enricher/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -306,6 +335,8 @@ jobs:
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml
+            argocd/applications/torghut-options/catalog/deployment.yaml
+            argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
             ## Summary
             Promote Torghut image into GitOps manifests.
@@ -314,6 +345,7 @@ jobs:
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
             - Migration change detected under `services/torghut/migrations/**`
+            - Manifests: core Torghut, simulation, jobs/workflows, options catalog, options enricher
             - Added `do-not-automerge`; manual DB migration approval required before merge
 
       - name: Create deploy pull request (auto-merge eligible)
@@ -352,6 +384,8 @@ jobs:
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml
+            argocd/applications/torghut-options/catalog/deployment.yaml
+            argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
             ## Summary
             Promote Torghut image into GitOps manifests.
@@ -359,6 +393,7 @@ jobs:
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
+            - Manifests: core Torghut, simulation, jobs/workflows, options catalog, options enricher
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

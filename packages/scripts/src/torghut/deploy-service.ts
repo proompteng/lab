@@ -7,7 +7,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { buildAndPushDockerImage, inspectImageDigest, inspectImageDigestForPlatform } from '../shared/docker'
+import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 import { buildImage } from './build-image'
 
 const manifestPath = resolve(repoRoot, 'argocd/applications/torghut/knative-service.yaml')
@@ -344,7 +344,7 @@ const buildWebsocketImage = async () => {
   )
   const platforms = process.env.TORGHUT_WS_IMAGE_PLATFORMS?.split(',')
     .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0 && entry.toLowerCase() !== 'none') ?? ['linux/arm64']
+    .filter((entry) => entry.length > 0 && entry.toLowerCase() !== 'none') ?? ['linux/amd64', 'linux/arm64']
   const codexAuthPath = process.env.TORGHUT_WS_CODEX_AUTH_PATH
 
   return buildAndPushDockerImage({
@@ -369,7 +369,7 @@ const buildTechnicalAnalysisImage = async () => {
   )
   const platforms = process.env.TORGHUT_TA_IMAGE_PLATFORMS?.split(',')
     .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0 && entry.toLowerCase() !== 'none') ?? ['linux/arm64']
+    .filter((entry) => entry.length > 0 && entry.toLowerCase() !== 'none') ?? ['linux/amd64', 'linux/arm64']
   const codexAuthPath = process.env.TORGHUT_TA_CODEX_AUTH_PATH
 
   return buildAndPushDockerImage({
@@ -594,18 +594,14 @@ const applyTechnicalAnalysisResources = async () => {
 const main = async () => {
   ensureTools()
 
-  const defaultPlatform = process.env.TORGHUT_IMAGE_PLATFORM ?? 'linux/arm64'
   const { image, version, commit } = await buildImage()
-  const digestRef = inspectImageDigestForPlatform(image, defaultPlatform) ?? inspectImageDigest(image)
+  const digestRef = inspectImageDigest(image)
 
   const websocketImage = await buildWebsocketImage()
-  const websocketPlatform = process.env.TORGHUT_WS_IMAGE_PLATFORM ?? defaultPlatform
-  const websocketDigestRef =
-    inspectImageDigestForPlatform(websocketImage.image, websocketPlatform) ?? inspectImageDigest(websocketImage.image)
+  const websocketDigestRef = inspectImageDigest(websocketImage.image)
 
   const taImage = await buildTechnicalAnalysisImage()
-  const taPlatform = process.env.TORGHUT_TA_IMAGE_PLATFORM ?? defaultPlatform
-  const taDigestRef = inspectImageDigestForPlatform(taImage.image, taPlatform) ?? inspectImageDigest(taImage.image)
+  const taDigestRef = inspectImageDigest(taImage.image)
 
   updateManifest(digestRef, version, commit)
   updateWebsocketDeployment(websocketDigestRef, version, commit)

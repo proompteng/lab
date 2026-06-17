@@ -14,7 +14,12 @@ on:
       - '.github/workflows/torghut-deploy-automerge.yml'
       - '.github/workflows/torghut-post-deploy-verify.yml'
       - '.github/workflows/torghut-release.yml'
+      - '.github/workflows/torghut-ta-build-push.yaml'
+      - '.github/workflows/torghut-ta-release.yml'
+      - '.github/workflows/torghut-ws-build-push.yaml'
+      - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
   pull_request:
     paths:
       - 'services/torghut/**'
@@ -27,7 +32,12 @@ on:
       - '.github/workflows/torghut-deploy-automerge.yml'
       - '.github/workflows/torghut-post-deploy-verify.yml'
       - '.github/workflows/torghut-release.yml'
+      - '.github/workflows/torghut-ta-build-push.yaml'
+      - '.github/workflows/torghut-ta-release.yml'
+      - '.github/workflows/torghut-ws-build-push.yaml'
+      - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
   workflow_dispatch:
 
 permissions:
@@ -113,10 +123,10 @@ jobs:
 
           service=false
           manifests=false
-          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|docker|git)\.ts$|\.github/workflows/torghut-(ci|deploy-automerge|post-deploy-verify|release)\.yml$|\.github/workflows/torghut-build-push\.yaml$)'; then
+          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|docker|git)\.ts$|\.github/workflows/torghut-(ci|deploy-automerge|post-deploy-verify|release|ta-release|ws-release)\.yml$|\.github/workflows/torghut-(build-push|ta-build-push|ws-build-push)\.yaml$)'; then
             service=true
           fi
-          if matches_any '^argocd/applications/torghut/'; then
+          if matches_any '^argocd/applications/(torghut|torghut-options)/'; then
             manifests=true
           fi
 
