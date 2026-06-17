@@ -3,6 +3,8 @@ kind: PodDisruptionBudget
 metadata:
   name: torghut-hyperliquid-feed
   namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   maxUnavailable: 1
   selector:

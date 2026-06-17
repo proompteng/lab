@@ -3,6 +3,8 @@ kind: ConfigMap
 metadata:
   name: torghut-hyperliquid-feed-config
   namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 data:
   HYPERLIQUID_NETWORK: "mainnet"
   HYPERLIQUID_INFO_URL: "https://api.hyperliquid.xyz/info"
