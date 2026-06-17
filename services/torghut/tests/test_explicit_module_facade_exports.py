@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 import sys
 import types
 
@@ -93,3 +94,14 @@ def test_old_facade_imports_are_normal_modules(module_name: str) -> None:
     assert type(module) is types.ModuleType
     assert not hasattr(module, "__compat_module_segments__")
     assert not hasattr(module, COMPAT_MODULE_CLASS_ATTR)
+
+
+def test_app_and_script_import_surfaces_do_not_ship_compatibility_stubs() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    stub_paths = sorted(
+        str(path.relative_to(service_root))
+        for tree_name in ("app", "scripts")
+        for path in (service_root / tree_name).rglob("*.pyi")
+    )
+
+    assert stub_paths == []

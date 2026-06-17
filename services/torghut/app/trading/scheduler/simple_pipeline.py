@@ -1,65 +1,28 @@
 """Simplified trading pipeline with a minimal direct-submit hot path."""
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
-# ruff: noqa: F401
 
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_DOWN
-from typing import Any, Literal, Optional, TypeAlias, cast
-from urllib.parse import urlsplit
-from uuid import UUID
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any, cast
 
-from sqlalchemy import desc, select  # pyright: ignore[reportUnknownVariableType]
 from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import (
-    Execution,
-    PositionSnapshot,
     Strategy,
-    TradeDecision,
-    coerce_json_payload,
 )
-from ...strategies.catalog import extract_catalog_metadata
-from ..autonomy import DriftThresholds, detect_drift
+from ..autonomy import detect_drift
 from ..empirical_jobs import build_empirical_jobs_status
-from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
-from ..firewall import OrderFirewallBlocked
+from ..feature_quality import evaluate_feature_batch_quality
 from ..ingest import SignalBatch
-from ..models import SignalEnvelope, StrategyDecision
+from ..models import SignalEnvelope
 from ..paper_route_target_plan import (
     fetch_paper_route_target_plan_url,
-    paper_route_target_plan_from_payload,
-    paper_route_target_plan_probe_symbols,
-    paper_route_target_plan_targets,
 )
-from ..prices import MarketSnapshot
-from ..quote_quality import (
-    QuoteQualityPolicy,
-    QuoteQualityStatus,
-    status as _status,
-    assess_signal_quote_quality,
-)
-from ..quantity_rules import quantize_qty_for_symbol, resolve_quantity_resolution
 from ..proof_floor import build_profitability_proof_floor_receipt
-from ..runtime_decision_authority import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-    normalize_source_decision_mode,
-    source_decision_mode_is_profit_proof_eligible,
-)
-from ..runtime_strategy_resolution import strategy_names_from_strategy_id
-from ..session_context import regular_session_open_utc_for
-from ..simple_risk import (
-    position_qty_for_symbol,
-    prepare_simple_decision,
-)
 from ..submission_council import (
     build_hypothesis_runtime_summary,
     build_submission_gate_market_context_status,
@@ -72,9 +35,9 @@ from ..live_submit_activation import (
 from ..tca import build_tca_gate_inputs
 from ..time_source import trading_now
 from .pipeline import TradingPipeline
-from .pipeline_helpers import (
-    extract_json_error_payload as _extract_json_error_payload,
-    price_snapshot_payload as _price_snapshot_payload,
+from .pipeline_modules.contexts import (
+    BatchSignalProcessingContext,
+    LiveSubmissionGateInputs,
 )
 from .paper_route_materialization import SimplePipelinePaperRouteMaterializationMixin
 from .paper_route_probe import SimplePipelinePaperRouteProbeMixin
@@ -84,36 +47,13 @@ from .submission_preparation import SimplePipelineSubmissionPreparationMixin
 from .target_plan_helpers import (
     PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS as _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
     SIGNAL_INGEST_UNAVAILABLE_REASONS as _SIGNAL_INGEST_UNAVAILABLE_REASONS,
-    TargetProbeQuantityResolution as _TargetProbeQuantityResolution,
-    bounded_paper_route_collection_entry_metadata as _bounded_paper_route_collection_entry_metadata,
-    bounded_sim_collection_blockers as _bounded_sim_collection_blockers,
-    bounded_sim_collection_metadata_from_decision as _bounded_sim_collection_metadata_from_decision,
     bounded_sim_collection_reserves_account as _bounded_sim_collection_reserves_account,
-    bounded_sim_collection_target_with_runtime_account_audit as _bounded_sim_collection_target_with_runtime_account_audit,
-    executable_bid_ask_present as _executable_bid_ask_present,
-    paper_route_probe_entry_metadata as _paper_route_probe_entry_metadata,
-    paper_route_probe_lineage_from_params as _paper_route_probe_lineage_from_params,
-    parse_target_datetime as _parse_target_datetime,
-    quote_snapshot_matches_symbol as _quote_snapshot_matches_symbol,
-    quote_snapshot_reference_price as _quote_snapshot_reference_price,
     safe_text as _safe_text,
-    safe_int as _safe_int,
     simple_drift_feature_thresholds as _simple_drift_feature_thresholds,
     simple_drift_thresholds as _simple_drift_thresholds,
-    strategy_signal_paper_entry_metadata as _strategy_signal_paper_entry_metadata,
-    target_active_in_window as _target_active_in_window,
-    target_metadata_quote_snapshot as _target_metadata_quote_snapshot,
-    target_notional_sizing_audit_from_params as _target_notional_sizing_audit_from_params,
-    target_pair_balance_state as _target_pair_balance_state,
-    target_probe_action as _target_probe_action,
     target_requires_bounded_sim_collection_gate as _target_requires_bounded_sim_collection_gate,
-    target_probe_symbol_actions as _target_probe_symbol_actions,
-    target_probe_symbol_notional_budget as _target_probe_symbol_notional_budget,
-    target_probe_symbol_quantities as _target_probe_symbol_quantities,
     target_probe_window as _target_probe_window,
-    target_runtime_account_matches as _target_runtime_account_matches,
     target_symbols as _target_symbols,
-    target_truthy as _target_truthy,
 )
 
 
@@ -531,18 +471,15 @@ class SimpleTradingPipeline(
     def _live_submission_gate(
         self,
         *,
-        session: Session | None = None,
-        hypothesis_summary: Mapping[str, Any] | None = None,
-        empirical_jobs_status: Mapping[str, Any] | None = None,
-        dspy_runtime_status: Mapping[str, Any] | None = None,
-        quant_health_status: Mapping[str, Any] | None = None,
+        inputs: LiveSubmissionGateInputs | None = None,
+        **legacy_inputs: Any,
     ) -> dict[str, object]:
-        gate = super()._live_submission_gate(
-            session=session,
-            hypothesis_summary=hypothesis_summary,
-            empirical_jobs_status=empirical_jobs_status,
-            dspy_runtime_status=dspy_runtime_status,
-            quant_health_status=quant_health_status,
+        if inputs is None and legacy_inputs:
+            inputs = LiveSubmissionGateInputs(**legacy_inputs)
+        inputs = inputs or LiveSubmissionGateInputs()
+        gate = TradingPipeline._live_submission_gate(
+            self,
+            inputs=inputs,
         )
         if settings.trading_mode != "live":
             return gate
@@ -678,25 +615,22 @@ class SimpleTradingPipeline(
     def _process_batch_signals(
         self,
         *,
-        session: Session,
-        batch: SignalBatch,
-        strategies: list[Strategy],
-        account_snapshot: Any,
-        account: dict[str, str],
-        positions: list[dict[str, Any]],
-        allowed_symbols: set[str],
+        context: BatchSignalProcessingContext | None = None,
+        **legacy_context: Any,
     ) -> None:
+        if context is None:
+            context = BatchSignalProcessingContext(**legacy_context)
         filtered_signals = self._quality_gate_signals(
-            signals=batch.signals,
-            strategies=strategies,
-            allowed_symbols=allowed_symbols,
+            signals=context.batch.signals,
+            strategies=context.strategies,
+            allowed_symbols=context.allowed_symbols,
         )
         for signal in filtered_signals:
             decisions = self._evaluate_signal_decisions(
                 signal,
-                strategies,
-                equity=account_snapshot.equity,
-                positions=positions,
+                context.strategies,
+                equity=context.account_snapshot.equity,
+                positions=context.positions,
             )
             if not decisions:
                 continue
@@ -704,20 +638,23 @@ class SimpleTradingPipeline(
                 self.state.metrics.decisions_total += 1
                 try:
                     submitted = self._handle_decision(
-                        session,
+                        context.session,
                         decision,
-                        strategies,
-                        account,
-                        positions,
-                        allowed_symbols,
+                        context.strategies,
+                        context.account,
+                        context.positions,
+                        context.allowed_symbols,
                     )
                     if submitted is not None:
                         self._apply_simple_projected_buying_power(
-                            account,
-                            positions,
+                            context.account,
+                            context.positions,
                             submitted,
                         )
-                        self._apply_simple_projected_position(positions, submitted)
+                        self._apply_simple_projected_position(
+                            context.positions,
+                            submitted,
+                        )
                 except Exception:
                     logger.exception(
                         "Simple decision handling failed strategy_id=%s symbol=%s timeframe=%s",

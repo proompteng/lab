@@ -293,6 +293,14 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
         }
 
     @staticmethod
+    def paper_route_quote_routeability_retry_metadata(
+        decision_row: TradeDecision,
+    ) -> dict[str, object] | None:
+        return SimplePipelineSubmissionQuoteRouteabilityMixin._paper_route_quote_routeability_retry_metadata(
+            decision_row
+        )
+
+    @staticmethod
     def _quote_routeability_retry_state(
         decision_row: TradeDecision,
     ) -> tuple[Mapping[str, Any], Mapping[str, Any], str] | None:
@@ -740,7 +748,9 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
                             simple_lane_precheck.get(key)
                         )
             return adjusted_audit
-        return target_notional_sizing
+        if target_notional_sizing is None:
+            return None
+        return dict(target_notional_sizing)
 
     def _finalize_prepared_submission(
         self,

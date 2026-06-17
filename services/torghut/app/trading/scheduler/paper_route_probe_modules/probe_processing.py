@@ -23,7 +23,9 @@ from ...session_context import regular_session_open_utc_for
 from ...simple_risk import (
     position_qty_for_symbol,
 )
-from ..submission_preparation import SimplePipelineSubmissionPreparationMixin
+from ..submission_preparation_modules.quote_routeability import (
+    SimplePipelineSubmissionQuoteRouteabilityMixin,
+)
 from ..target_plan_helpers_modules import (
     PAPER_ROUTE_PROBE_QTY_STEP as _PAPER_ROUTE_PROBE_QTY_STEP,
     PAPER_ROUTE_PROBE_REASONS as _PAPER_ROUTE_PROBE_REASONS,
@@ -151,7 +153,7 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
         allowed_kinds: frozenset[_PaperRouteRetryKind] = _PAPER_ROUTE_RETRY_KINDS,
     ) -> _PaperRouteRetryTransition | None:
         if "quote_routeability" in allowed_kinds:
-            quote_routeability_metadata = SimplePipelineSubmissionPreparationMixin._paper_route_quote_routeability_retry_metadata(
+            quote_routeability_metadata = SimplePipelineSubmissionQuoteRouteabilityMixin.paper_route_quote_routeability_retry_metadata(
                 decision_row
             )
             if quote_routeability_metadata is not None:

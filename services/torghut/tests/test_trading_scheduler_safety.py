@@ -12,8 +12,8 @@ from unittest.mock import patch
 from app import config
 from app.models import Strategy
 from app.strategies.catalog import StrategyConfig, _compose_strategy_description
-from app.trading.scheduler.simple_pipeline import (
-    SimpleTradingPipeline,
+from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
+from app.trading.scheduler.target_plan_helpers import (
     _target_pair_balance_state,
     _target_probe_symbol_actions,
 )

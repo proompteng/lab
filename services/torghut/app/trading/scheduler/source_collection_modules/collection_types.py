@@ -67,9 +67,14 @@ class SourceCollectionActiveWindowSummary(NamedTuple):
 
 
 class SourceCollectionQuantityResolution(Protocol):
-    qty: Decimal
-    audit: Mapping[str, Any]
-    price_params: Mapping[str, Any]
+    @property
+    def qty(self) -> Decimal: ...
+
+    @property
+    def audit(self) -> Mapping[str, Any]: ...
+
+    @property
+    def price_params(self) -> Mapping[str, Any]: ...
 
 
 class SourceCollectionRuntime(Protocol):
