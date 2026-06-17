@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Quant health and runtime-window health helpers."""
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ from .common import (
     TYPED_QUANT_HEALTH_PATH as _TYPED_QUANT_HEALTH_PATH,
     coerce_aware_datetime as _coerce_aware_datetime,
     compat_symbol as _compat_symbol,
-    normalize_reason_codes as _normalize_reason_codes,
     safe_attr_text as _safe_attr_text,
     safe_bool as _safe_bool,
     safe_int as _safe_int,
@@ -91,43 +89,6 @@ def _rollback_runtime_ledger_status_session(session: Session) -> None:
         rollback()
     except SQLAlchemyError:
         logger.warning("Failed to roll back runtime-ledger status session")
-
-
-def _sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
-    message = str(exc).lower()
-    return (
-        "statement timeout" in message
-        or "querycanceled" in message
-        or "query canceled" in message
-    )
-
-
-def _unavailable_certificate_evidence_rows(
-    *,
-    hypothesis_ids: Sequence[str],
-    reason_code: str,
-) -> list[dict[str, object]]:
-    return [
-        {
-            "hypothesis_id": hypothesis_id,
-            "metric_window": None,
-            "promotion_decision": None,
-            "runtime_ledger_bucket": None,
-            "reason_codes": [reason_code],
-            "read_model_unavailable": True,
-        }
-        for hypothesis_id in hypothesis_ids
-    ]
-
-
-def _certificate_evidence_reason_codes(row: Mapping[str, object]) -> list[str]:
-    return _normalize_reason_codes(
-        [
-            str(reason).strip()
-            for reason in cast(Sequence[object], row.get("reason_codes") or [])
-            if str(reason).strip()
-        ]
-    )
 
 
 def _empty_profit_promotion_table_counts(

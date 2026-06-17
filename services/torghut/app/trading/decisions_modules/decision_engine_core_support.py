@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from ...models import Strategy
 from ..models import SignalEnvelope, StrategyDecision
@@ -174,7 +174,9 @@ def _record_runtime_trade_policy_decision(*args: Any, **kwargs: Any) -> None:
     record_decision(*args, **kwargs)
 
 
-def _runtime_intent_exit_side(*args: Any, **kwargs: Any) -> str | None:
+def _runtime_intent_exit_side(
+    *args: Any, **kwargs: Any
+) -> Literal["long", "short"] | None:
     from .resolve_runtime_trade_policy import (
         runtime_intent_exit_side,
     )

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Extracted Torghut API route and support functions."""
 
 from __future__ import annotations
@@ -16,29 +15,10 @@ from .shared_context import (
     SessionLocal,
     TradingScheduler,
     SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-    build_capital_reentry_cohort_ledger_payload as _build_capital_reentry_cohort_ledger_payload,
     build_capital_replay_projection_payload as _build_capital_replay_projection_payload,
-    build_clock_settlement_payload as _build_clock_settlement_payload,
-    build_evidence_clock_payloads as _build_evidence_clock_payloads,
-    build_freshness_carry_ledger_payload as _build_freshness_carry_ledger_payload,
     build_jangar_contract_graduation_ref as _build_jangar_contract_graduation_ref,
-    build_jangar_execution_trust_admission_ref as _build_jangar_execution_trust_admission_ref,
-    build_jangar_material_verdict_ref as _build_jangar_material_verdict_ref,
-    build_profit_carry_passport_ledger_payload as _build_profit_carry_passport_ledger_payload,
-    build_profit_freshness_frontier_payload as _build_profit_freshness_frontier_payload,
-    build_profit_repair_settlement_ledger_payload as _build_profit_repair_settlement_ledger_payload,
     build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
-    build_renewal_bond_profit_escrow_payload as _build_renewal_bond_profit_escrow_payload,
-    build_repair_bid_settlement_payload as _build_repair_bid_settlement_payload,
-    build_repair_outcome_dividend_ledger_payload as _build_repair_outcome_dividend_ledger_payload,
-    build_repair_receipt_frontier_payload as _build_repair_receipt_frontier_payload,
-    build_route_evidence_clearinghouse_payload as _build_route_evidence_clearinghouse_payload,
-    build_route_image_proof_summary as _build_route_image_proof_summary,
     build_route_reacquisition_board_payload as _build_route_reacquisition_board_payload,
-    build_route_warrant_exchange_payload as _build_route_warrant_exchange_payload,
-    build_routeability_repair_acceptance_ledger_payload as _build_routeability_repair_acceptance_ledger_payload,
-    build_source_serving_repair_receipt_payload as _build_source_serving_repair_receipt_payload,
-    consumer_evidence_jangar_continuity_packet as _consumer_evidence_jangar_continuity_packet,
     build_capital_replay_projection,
     build_profit_signal_quorum,
     build_quality_adjusted_profit_frontier,
@@ -659,33 +639,26 @@ def _load_route_provenance_summary(session: Session) -> dict[str, object]:
 
 
 build_jangar_reliability_settlement_ref = _build_jangar_reliability_settlement_ref
+build_torghut_routeability_admission_ref = _build_torghut_routeability_admission_ref
 build_torghut_stage_clearance_packet_ref = _build_torghut_stage_clearance_packet_ref
+build_profit_signal_quorum_payload = _build_profit_signal_quorum_payload
+build_quality_adjusted_profit_frontier_payload = (
+    _build_quality_adjusted_profit_frontier_payload
+)
+build_autonomy_capital_replay_projection = _build_autonomy_capital_replay_projection
+simple_lane_reject_reason_totals = _simple_lane_reject_reason_totals
+build_rejected_signal_outcome_learning_payload = (
+    _build_rejected_signal_outcome_learning_payload
+)
+load_rejected_signal_outcome_learning_summary = (
+    _load_rejected_signal_outcome_learning_summary
+)
+load_route_provenance_summary = _load_route_provenance_summary
 
 
 __all__ = [
-    "_build_profitability_proof_floor_payload",
-    "_build_renewal_bond_profit_escrow_payload",
-    "_build_route_reacquisition_board_payload",
     "_build_jangar_contract_graduation_ref",
-    "_build_jangar_material_verdict_ref",
-    "_build_jangar_execution_trust_admission_ref",
-    "_consumer_evidence_jangar_continuity_packet",
     "_build_capital_replay_projection_payload",
-    "_build_profit_carry_passport_ledger_payload",
-    "_build_capital_reentry_cohort_ledger_payload",
-    "_build_profit_repair_settlement_ledger_payload",
-    "_build_profit_freshness_frontier_payload",
-    "_build_routeability_repair_acceptance_ledger_payload",
-    "_build_evidence_clock_payloads",
-    "_build_clock_settlement_payload",
-    "_build_route_image_proof_summary",
-    "_build_route_evidence_clearinghouse_payload",
-    "_build_repair_bid_settlement_payload",
-    "_build_route_warrant_exchange_payload",
-    "_build_source_serving_repair_receipt_payload",
-    "_build_freshness_carry_ledger_payload",
-    "_build_repair_receipt_frontier_payload",
-    "_build_repair_outcome_dividend_ledger_payload",
     "_build_jangar_reliability_settlement_ref",
     "_build_torghut_routeability_admission_ref",
     "_build_torghut_stage_clearance_packet_ref",
@@ -699,7 +672,15 @@ __all__ = [
     "_load_rejected_signal_outcome_learning_summary",
     "_load_route_provenance_summary",
     "build_jangar_reliability_settlement_ref",
+    "build_torghut_routeability_admission_ref",
     "build_torghut_stage_clearance_packet_ref",
+    "build_profit_signal_quorum_payload",
+    "build_quality_adjusted_profit_frontier_payload",
+    "build_autonomy_capital_replay_projection",
+    "simple_lane_reject_reason_totals",
+    "build_rejected_signal_outcome_learning_payload",
+    "load_rejected_signal_outcome_learning_summary",
+    "load_route_provenance_summary",
 ]
 
 capture_module_exports(globals(), __all__)
@@ -707,5 +688,13 @@ capture_module_exports(globals(), __all__)
 
 __all__ = (
     "build_jangar_reliability_settlement_ref",
+    "build_torghut_routeability_admission_ref",
     "build_torghut_stage_clearance_packet_ref",
+    "build_profit_signal_quorum_payload",
+    "build_quality_adjusted_profit_frontier_payload",
+    "build_autonomy_capital_replay_projection",
+    "simple_lane_reject_reason_totals",
+    "build_rejected_signal_outcome_learning_payload",
+    "load_rejected_signal_outcome_learning_summary",
+    "load_route_provenance_summary",
 )

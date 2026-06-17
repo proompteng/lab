@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """TigerBeetle reconciliation for Torghut ledger references."""
 
 from __future__ import annotations
@@ -258,6 +257,8 @@ def reconcile_tigerbeetle_transfers(
                 create_tigerbeetle_client,
             )
             tb_client = client or client_factory(settings_obj)
+            if tb_client is None:
+                raise RuntimeError("tigerbeetle_client_unavailable")
             looked_up = tb_client.lookup_transfers(
                 [int(ref.transfer_id) for ref in refs]
             )

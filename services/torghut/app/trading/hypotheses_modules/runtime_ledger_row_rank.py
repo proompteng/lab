@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Hypothesis registry loading and runtime alpha-readiness compilation."""
 
 from __future__ import annotations
@@ -28,6 +27,9 @@ from .shared_context import (
 from . import shared_context as _shared_context_private_26
 
 from . import extract_stage_renewal_bonds as _extract_stage_renewal_bonds_private_68
+from .extract_stage_renewal_bonds import (
+    RuntimeLedgerReadinessInputs as _RuntimeLedgerReadinessInputs,
+)
 
 _CAPITAL_STAGE_RANK = getattr(_shared_context_private_26, "_CAPITAL_STAGE_RANK")
 _DEPENDENCY_REASONS = getattr(_shared_context_private_26, "_DEPENDENCY_REASONS")
@@ -90,9 +92,6 @@ _NON_AUTHORITY_TCA_DECISION_MODES = getattr(
 )
 _NON_AUTHORITY_TCA_SOURCE_KINDS = getattr(
     _extract_stage_renewal_bonds_private_68, "_NON_AUTHORITY_TCA_SOURCE_KINDS"
-)
-_RuntimeLedgerReadinessInputs = getattr(
-    _extract_stage_renewal_bonds_private_68, "_RuntimeLedgerReadinessInputs"
 )
 _TcaReadinessInputs = getattr(
     _extract_stage_renewal_bonds_private_68, "_TcaReadinessInputs"

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only queue-survival fill stress for replay candidate ranking.
 
 This module actualizes recent queue-position, fill-probability, and execution-delay
@@ -65,7 +64,7 @@ def _group_normalized_downside_reward_penalty_bps(*args: Any, **kwargs: Any) -> 
 def _label_has_token(label: str, tokens: set[str] | frozenset[str]) -> bool:
     from .group_normalized_downside_reward_penalty_b import label_has_token as impl
 
-    return impl(label, tokens)
+    return impl(label, frozenset(tokens))
 
 
 def _log1p(value: float) -> float:

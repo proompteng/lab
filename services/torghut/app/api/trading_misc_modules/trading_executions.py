@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Extracted Torghut API route and support functions."""
 
 from __future__ import annotations
@@ -11,38 +10,11 @@ from .shared_context import (
     ExecutionTCAMetric,
     Query,
     Session,
-    build_consumer_evidence_receipt_projection as _build_consumer_evidence_receipt_projection,
-    build_trading_consumer_evidence_payload as _build_trading_consumer_evidence_payload,
-    consumer_evidence_dependency_quorum as _consumer_evidence_dependency_quorum,
-    consumer_evidence_summary_view as _consumer_evidence_summary_view,
-    revenue_repair_topline_fields as _revenue_repair_topline_fields,
-    capture_module_exports,
     datetime,
-    get_lean_backtest,
-    get_lean_shadow_parity,
     get_session,
     jsonable_encoder,
     router,
     select,
-    submit_lean_backtest,
-    trading_consumer_evidence,
-    trading_metrics,
-    trading_simulation_progress,
-)
-from .trading_autonomy import (
-    build_current_evidence_epoch as _build_current_evidence_epoch,
-    daily_runtime_ledger_portfolio_summary as _daily_runtime_ledger_portfolio_summary,
-    runtime_ledger_bucket_evidence_grade as _runtime_ledger_bucket_evidence_grade,
-    prometheus_metrics,
-    trading_autonomy,
-    trading_autonomy_evidence_continuity,
-    trading_completion_doc29,
-    trading_completion_doc29_gate,
-    trading_decisions,
-    trading_empirical_jobs,
-    trading_evidence_epoch_detail,
-    trading_evidence_epoch_latest,
-    trading_llm_evaluation,
 )
 
 
@@ -98,37 +70,6 @@ def trading_executions(
         for execution in executions
     ]
     return jsonable_encoder(payload)
-
-
-__all__ = [
-    "_consumer_evidence_dependency_quorum",
-    "_build_consumer_evidence_receipt_projection",
-    "_consumer_evidence_summary_view",
-    "_revenue_repair_topline_fields",
-    "_build_trading_consumer_evidence_payload",
-    "trading_consumer_evidence",
-    "trading_metrics",
-    "trading_simulation_progress",
-    "submit_lean_backtest",
-    "get_lean_backtest",
-    "get_lean_shadow_parity",
-    "trading_autonomy",
-    "_runtime_ledger_bucket_evidence_grade",
-    "_daily_runtime_ledger_portfolio_summary",
-    "_build_current_evidence_epoch",
-    "trading_evidence_epoch_latest",
-    "trading_evidence_epoch_detail",
-    "trading_empirical_jobs",
-    "trading_completion_doc29",
-    "trading_completion_doc29_gate",
-    "trading_autonomy_evidence_continuity",
-    "trading_llm_evaluation",
-    "prometheus_metrics",
-    "trading_decisions",
-    "trading_executions",
-]
-
-capture_module_exports(globals(), __all__)
 
 
 __all__ = ("trading_executions",)

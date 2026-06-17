@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 # fmt: off
 """Traceability helpers for doc 29 completion gates."""
 
@@ -596,6 +595,7 @@ def _evaluate_paper_gate(
     precondition_result = _paper_gate_precondition_result(empirical_gate, full_day_row)
     if precondition_result is not None:
         return precondition_result
+    assert full_day_row is not None
     full_day_ref = {'simulation_full_day_coverage': str(full_day_row.id)}
     refs = _trace_gate_refs_from_gate(empirical_gate, db_row_refs=full_day_ref)
     identity_result = _paper_gate_identity_result(empirical_gate, full_day_row)
@@ -912,8 +912,16 @@ runtime_ledger_bucket_matches_window = _runtime_ledger_bucket_matches_window
 runtime_ledger_bucket_refs_for_windows = _runtime_ledger_bucket_refs_for_windows
 runtime_ledger_bucket_summary = _runtime_ledger_bucket_summary
 runtime_ledger_daily_summary = _runtime_ledger_daily_summary
+evaluate_empirical_jobs_gate = _evaluate_empirical_jobs_gate
+evaluate_paper_gate = _evaluate_paper_gate
+evaluate_live_canary_gate = _evaluate_live_canary_gate
+evaluate_live_scale_gate = _evaluate_live_scale_gate
 
 __all__ = (
+    "evaluate_empirical_jobs_gate",
+    "evaluate_live_canary_gate",
+    "evaluate_live_scale_gate",
+    "evaluate_paper_gate",
     "runtime_ledger_bucket_matches_window",
     "runtime_ledger_bucket_refs_for_windows",
     "runtime_ledger_bucket_summary",
