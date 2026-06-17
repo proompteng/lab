@@ -56,7 +56,7 @@ describe('torghut build-push workflow', () => {
 
   it('publishes and contracts the core Torghut image as amd64 and arm64', () => {
     expect(workflow).toContain('TORGHUT_IMAGE_PLATFORMS: linux/amd64,linux/arm64')
-    expect(workflow).toContain('name: Set up Docker QEMU')
+    expect(workflow).not.toContain('docker/setup-qemu-action')
     expect(workflow).toContain('name: Verify multi-arch image manifest')
     expect(workflow).toContain('for platform in linux/amd64 linux/arm64; do')
     expect(workflow).toContain("--platforms 'linux/amd64,linux/arm64'")
@@ -69,7 +69,7 @@ describe('torghut build-push workflow', () => {
       expect(serviceWorkflow).toContain('push:')
       expect(serviceWorkflow).toContain("- 'services/dorvud/**'")
       expect(serviceWorkflow).toContain("github.event_name == 'push'")
-      expect(serviceWorkflow).toContain('name: Set up Docker QEMU')
+      expect(serviceWorkflow).not.toContain('docker/setup-qemu-action')
       expect(serviceWorkflow).toContain('platforms: linux/amd64,linux/arm64')
       expect(serviceWorkflow).toContain('name: Verify multi-arch image manifest')
       expect(serviceWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
