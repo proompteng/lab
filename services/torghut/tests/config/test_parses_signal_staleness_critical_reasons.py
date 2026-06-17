@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.config.support import (
     FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD,
     Path,

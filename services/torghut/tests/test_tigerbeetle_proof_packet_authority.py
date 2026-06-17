@@ -4,7 +4,7 @@ from decimal import Decimal
 from unittest import TestCase
 
 from scripts import assemble_runtime_ledger_proof_packet as packet
-from tests.test_assemble_runtime_ledger_proof_packet import (
+from tests.assemble_runtime_ledger_proof_packet.support import (
     _completion,
     _paper_route_evidence,
     _runtime_import,

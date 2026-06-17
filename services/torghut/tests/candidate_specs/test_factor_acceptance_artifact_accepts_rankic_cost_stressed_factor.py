@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.candidate_specs.support import (
     Decimal,
     _CHIP_UNIVERSE_SYMBOLS,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.fast_replay.support import (
     Decimal,
     FAST_REPLAY_PROOF_SEMANTICS_LABEL,

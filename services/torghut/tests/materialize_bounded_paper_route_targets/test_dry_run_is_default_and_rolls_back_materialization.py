@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.materialize_bounded_paper_route_targets.support import (
     Decimal,
     Namespace,

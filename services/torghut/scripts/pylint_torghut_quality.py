@@ -146,6 +146,11 @@ class TorghutQualityChecker(BaseChecker):
             "torghut-custom-module-class",
             "Used when a class extends ModuleType to build module facades.",
         ),
+        "C9015": (
+            "Dead test compatibility wrapper; delete the wrapper and run split tests directly",
+            "torghut-test-compat-wrapper",
+            "Used when a test module only disables collection and re-exports split tests.",
+        ),
     }
 
     def visit_module(self, node: nodes.Module) -> None:
@@ -158,6 +163,7 @@ class TorghutQualityChecker(BaseChecker):
             return
         self._check_text(node, text)
         self._check_ast(node, text)
+        self._check_test_wrapper(node, path, text)
 
     def _check_filename(self, module_node: nodes.Module, path: Path) -> None:
         if GENERATED_SPLIT_NAME_RE.match(path.name):
@@ -236,6 +242,17 @@ class TorghutQualityChecker(BaseChecker):
             args=(module,),
         )
 
+    def _check_test_wrapper(
+        self, module_node: nodes.Module, path: Path, text: str
+    ) -> None:
+        if not _is_dead_test_compat_wrapper(path, text):
+            return
+        self.add_message(
+            "torghut-test-compat-wrapper",
+            node=module_node,
+            line=1,
+        )
+
 
 def _read_text(path: Path) -> str | None:
     try:
@@ -267,6 +284,68 @@ def _contains_globals_call(node: ast.AST) -> bool:
         ):
             return True
     return False
+
+
+def _is_dead_test_compat_wrapper(path: Path, text: str) -> bool:
+    if not path.name.startswith("test_"):
+        return False
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+
+    saw_test_disabled = False
+    saw_import = False
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            continue
+        if isinstance(node, ast.Assign) and _is_test_false_assignment(node):
+            saw_test_disabled = True
+            continue
+        if _is_future_annotations_import(node):
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            saw_import = True
+            continue
+        return False
+    return (saw_test_disabled and saw_import) or _is_empty_suppression_only_test(text)
+
+
+def _is_future_annotations_import(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(alias.name == "annotations" for alias in node.names)
+    )
+
+
+def _is_empty_suppression_only_test(text: str) -> bool:
+    saw_ruff_noqa = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped == "from __future__ import annotations":
+            continue
+        if stripped.startswith("# ruff: noqa"):
+            saw_ruff_noqa = True
+            continue
+        return False
+    return saw_ruff_noqa
+
+
+def _is_test_false_assignment(node: ast.Assign) -> bool:
+    return (
+        len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "__test__"
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is False
+    )
 
 
 def register(linter: PyLinter) -> None:

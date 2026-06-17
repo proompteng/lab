@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.tigerbeetle_reconcile.support import (
     BLOCKER_CLIENT_UNAVAILABLE,
     BLOCKER_CODE_MISMATCH,

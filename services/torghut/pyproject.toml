@@ -114,7 +114,7 @@ pytest_add_cli_args_test_selection = [
   "tests/stateful",
   "tests/test_feature_contract_v3.py",
   "tests/local_intraday_tsmom_replay",
-  "tests/test_portfolio_sizing.py",
+  "tests/portfolio_sizing",
   "tests/test_quote_quality.py",
   "tests/test_session_context.py",
 ]

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.whitepaper_autoresearch_artifacts.support import (
     Decimal,
     HYPOTHESIS_CARD_SCHEMA_VERSION,

@@ -23,6 +23,7 @@ CUSTOM_RULES = (
     "torghut-dynamic-attribute-hook",
     "torghut-wildcard-import",
     "torghut-custom-module-class",
+    "torghut-test-compat-wrapper",
 )
 
 _DIFF_FILE_RE = re.compile(r"^\+\+\+ b/(.+)$")

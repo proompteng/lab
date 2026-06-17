@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.mlx_training_data.support import (
     CandidateSpec,
     Decimal,
