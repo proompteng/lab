@@ -70,8 +70,8 @@ class TestWhitepaperApi(TestCase):
         else:
             os.environ.pop("JANGAR_API_KEY", None)
 
-    @patch("app.main.whitepaper_workflow_enabled", return_value=True)
-    @patch("app.main.whitepaper_kafka_enabled", return_value=False)
+    @patch("app.api.whitepaper.whitepaper_workflow_enabled", return_value=True)
+    @patch("app.api.whitepaper.whitepaper_kafka_enabled", return_value=False)
     def test_whitepaper_status_endpoint(
         self,
         _mock_kafka_enabled: object,
@@ -84,7 +84,7 @@ class TestWhitepaperApi(TestCase):
         self.assertFalse(payload["kafka_enabled"])
 
     @patch(
-        "app.main.WHITEPAPER_WORKFLOW.ingest_github_issue_event",
+        "app.api.whitepaper.WHITEPAPER_WORKFLOW.ingest_github_issue_event",
         return_value=IssueKickoffResult(
             accepted=True,
             reason="queued",
@@ -103,7 +103,7 @@ class TestWhitepaperApi(TestCase):
         self.assertEqual(payload["run_id"], "wp-123")
 
     @patch(
-        "app.main.WHITEPAPER_WORKFLOW.dispatch_codex_agentrun",
+        "app.api.whitepaper.WHITEPAPER_WORKFLOW.dispatch_codex_agentrun",
         return_value={"agentrun_name": "agentrun-1", "status": "pending"},
     )
     def test_dispatch_agentrun_endpoint(self, _mock_dispatch: object) -> None:
@@ -113,7 +113,7 @@ class TestWhitepaperApi(TestCase):
         self.assertEqual(payload["agentrun_name"], "agentrun-1")
 
     @patch(
-        "app.main.WHITEPAPER_WORKFLOW.finalize_run",
+        "app.api.whitepaper.WHITEPAPER_WORKFLOW.finalize_run",
         return_value={"run_id": "wp-1", "status": "completed"},
     )
     def test_finalize_endpoint(self, _mock_finalize: object) -> None:
@@ -135,7 +135,7 @@ class TestWhitepaperApi(TestCase):
             )
 
     @patch(
-        "app.main.WHITEPAPER_WORKFLOW.finalize_run",
+        "app.api.whitepaper.WHITEPAPER_WORKFLOW.finalize_run",
         return_value={"run_id": "wp-1", "status": "completed"},
     )
     def test_control_endpoints_accept_valid_token(self, _mock_finalize: object) -> None:
@@ -150,7 +150,7 @@ class TestWhitepaperApi(TestCase):
             self.assertEqual(response.status_code, 200)
 
     @patch(
-        "app.main.WHITEPAPER_WORKFLOW.approve_for_engineering",
+        "app.api.whitepaper.WHITEPAPER_WORKFLOW.approve_for_engineering",
         return_value={
             "run_id": "wp-1",
             "status": "completed",
@@ -170,7 +170,9 @@ class TestWhitepaperApi(TestCase):
         payload = response.json()
         self.assertEqual(payload["engineering_trigger"]["decision"], "dispatched")
 
-    @patch("app.main.whitepaper_semantic_indexing_enabled", return_value=False)
+    @patch(
+        "app.api.whitepaper.whitepaper_semantic_indexing_enabled", return_value=False
+    )
     def test_semantic_search_rejected_when_disabled(
         self, _mock_semantic_enabled: object
     ) -> None:
@@ -180,9 +182,9 @@ class TestWhitepaperApi(TestCase):
             response.json()["detail"], "whitepaper_semantic_search_disabled"
         )
 
-    @patch("app.main.whitepaper_semantic_indexing_enabled", return_value=True)
+    @patch("app.api.whitepaper.whitepaper_semantic_indexing_enabled", return_value=True)
     @patch(
-        "app.main.WHITEPAPER_WORKFLOW.search_semantic",
+        "app.api.whitepaper.WHITEPAPER_WORKFLOW.search_semantic",
         return_value={
             "items": [
                 {

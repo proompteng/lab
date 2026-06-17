@@ -14,11 +14,9 @@ from .common import (
     JSONResponse,
     jsonable_encoder,
 )
-from .proxy import MainAttrProxy, capture_module_exports
+from . import readiness_helpers
+from .proxy import capture_module_exports
 
-_evaluate_trading_health_payload_bounded = MainAttrProxy(
-    "_evaluate_trading_health_payload_bounded"
-)
 router = APIRouter()
 
 
@@ -26,7 +24,7 @@ router = APIRouter()
 def trading_health() -> JSONResponse:
     """Trading loop health including dependency readiness."""
 
-    payload, status_code = _evaluate_trading_health_payload_bounded(
+    payload, status_code = readiness_helpers.evaluate_trading_health_payload_bounded(
         surface="trading_health",
     )
     return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))

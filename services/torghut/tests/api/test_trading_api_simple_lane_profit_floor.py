@@ -28,19 +28,19 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         try:
             with (
                 patch(
-                    "app.main._check_clickhouse",
+                    "app.api.health_checks.check_clickhouse_dependency",
                     side_effect=lambda: (
                         call_order.append("clickhouse") or {"ok": True, "detail": "ok"}
                     ),
                 ),
                 patch(
-                    "app.main._check_alpaca",
+                    "app.api.health_checks.check_alpaca_dependency",
                     side_effect=lambda: (
                         call_order.append("alpaca") or {"ok": True, "detail": "ok"}
                     ),
                 ),
                 patch(
-                    "app.main._check_postgres",
+                    "app.api.health_checks.check_postgres_dependency",
                     side_effect=lambda _session: (
                         call_order.append("postgres") or {"ok": True, "detail": "ok"}
                     ),
@@ -852,9 +852,18 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             app.state.trading_scheduler = scheduler
 
             with (
-                patch("app.main._check_alpaca", return_value={"ok": True}),
-                patch("app.main._check_clickhouse", return_value={"ok": True}),
-                patch("app.main._check_postgres", return_value={"ok": True}),
+                patch(
+                    "app.api.health_checks.check_alpaca_dependency",
+                    return_value={"ok": True},
+                ),
+                patch(
+                    "app.api.health_checks.check_clickhouse_dependency",
+                    return_value={"ok": True},
+                ),
+                patch(
+                    "app.api.health_checks.check_postgres_dependency",
+                    return_value={"ok": True},
+                ),
                 patch(
                     "app.main._check_account_scope_invariants_bounded",
                     return_value={

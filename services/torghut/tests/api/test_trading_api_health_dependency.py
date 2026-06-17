@@ -18,14 +18,28 @@ from tests.api.trading_api_support import (
 
 
 class TestTradingApiHealthDependency(TradingApiTestCaseBase):
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -73,14 +87,28 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_mode = original_mode
             settings.trading_universe_source = original_source
 
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -139,14 +167,28 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
                 original_require_non_empty
             )
 
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -205,15 +247,32 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_mode = original_mode
             settings.trading_universe_source = original_source
 
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -276,15 +335,32 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_mode = original_mode
             settings.trading_universe_source = original_source
 
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -345,15 +421,31 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
                 original_require_non_empty
             )
 
-    @patch("app.main.load_quant_evidence_status")
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers_modules.evaluate_trading_health_payload.load_quant_evidence_status"
+    )
+    @patch(
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -415,7 +507,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_universe_source = original_source
 
     @patch(
-        "app.main._build_live_submission_gate_payload",
+        "app.api.readiness_helpers_modules.evaluate_trading_health_payload._build_live_submission_gate_payload",
         return_value={
             "allowed": True,
             "reason": "ready",
@@ -423,16 +515,34 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             "capital_stage": "live",
         },
     )
-    @patch("app.main._empirical_jobs_status")
-    @patch("app.main.load_quant_evidence_status")
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers_modules.evaluate_trading_health_payload._empirical_jobs_status"
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.evaluate_trading_health_payload.load_quant_evidence_status"
+    )
+    @patch(
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -481,7 +591,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             app.state.trading_scheduler = scheduler
 
             with patch(
-                "app.main._build_profitability_proof_floor_payload",
+                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._build_profitability_proof_floor_payload",
                 return_value={
                     "route_state": "live_micro_candidate",
                     "capital_state": "live_allowed",
@@ -506,7 +616,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             )
 
     @patch(
-        "app.main._evaluate_database_contract",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -518,9 +628,22 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             "account_scope_errors": [],
         },
     )
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
     def test_readyz_reuses_dependency_checks_within_cache_ttl(
         self,
         _mock_alpaca: object,
@@ -561,7 +684,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
 
     @patch(
-        "app.main._evaluate_database_contract",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -573,9 +696,22 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             "account_scope_errors": [],
         },
     )
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
     def test_readyz_refreshes_dependency_checks_after_cache_ttl(
         self,
         _mock_alpaca: object,
@@ -619,14 +755,24 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
             settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
 
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": False, "detail": "down"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": False, "detail": "down"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -660,15 +806,28 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
 
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -717,15 +876,28 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
 
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.main.check_schema_current",
+        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],

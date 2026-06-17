@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Extracted Torghut API route and support functions."""
 
 # ruff: noqa: F401,F403,F405,F811,F821
@@ -13,6 +13,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
+from .. import common as common_api
 from ..common import (
     BLOCKER_RECONCILIATION_STALE,
     BUILD_ARGO_HEALTH,
@@ -88,30 +89,6 @@ from ..common import (
     WhitepaperKafkaWorker,
     WhitepaperRolloutTransition,
     WhitepaperWorkflowService,
-    _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
-    _ALPACA_HEALTH_CACHE_LOCK,
-    _ALPACA_HEALTH_STATE,
-    _OPTIONS_CATALOG_FRESHNESS_CACHE,
-    _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
-    _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
-    _READINESS_PROMOTION_AUTHORITY_KEYS,
-    _RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
-    _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-    _TRADING_DEPENDENCY_HEALTH_CACHE,
-    _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
-    _TRADING_HEALTH_SURFACE_EVALUATIONS,
-    _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
-    _TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
-    _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
-    _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
-    _TRADING_STATUS_READ_BUDGET_SECONDS,
-    _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
-    _paper_route_target_plan_success_cache,
-    _retryable_tca_recompute_error,
-    _shared_mapping_items,
-    _shared_paper_route_target_plan_from_payload,
     active_simulation_runtime_context,
     assert_runtime_gate_policy_contract,
     asynccontextmanager,
@@ -223,9 +200,79 @@ from ..common import (
     whitepaper_workflow_enabled,
 )
 
+from ...bootstrap import evaluate_scheduler_status as _evaluate_scheduler_status
+from .. import health_checks as health_checks_api
 from ..common import main_runtime_value
 
 from ..proxy import capture_module_exports
+
+_COMMON_PRIVATE_EXPORTS = common_api.__dict__
+_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _COMMON_PRIVATE_EXPORTS[
+    "_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS"
+]
+_ALPACA_HEALTH_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS["_ALPACA_HEALTH_CACHE_LOCK"]
+_ALPACA_HEALTH_STATE = _COMMON_PRIVATE_EXPORTS["_ALPACA_HEALTH_STATE"]
+_OPTIONS_CATALOG_FRESHNESS_CACHE = _COMMON_PRIVATE_EXPORTS[
+    "_OPTIONS_CATALOG_FRESHNESS_CACHE"
+]
+_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
+    "_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK"
+]
+_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = _COMMON_PRIVATE_EXPORTS[
+    "_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL"
+]
+_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = _COMMON_PRIVATE_EXPORTS[
+    "_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS"
+]
+_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
+    "_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK"
+]
+_READINESS_PROMOTION_AUTHORITY_KEYS = _COMMON_PRIVATE_EXPORTS[
+    "_READINESS_PROMOTION_AUTHORITY_KEYS"
+]
+_RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _COMMON_PRIVATE_EXPORTS[
+    "_RETRYABLE_TCA_RECOMPUTE_SQLSTATES"
+]
+_SIMPLE_LANE_ALLOWED_REJECT_REASONS = _COMMON_PRIVATE_EXPORTS[
+    "_SIMPLE_LANE_ALLOWED_REJECT_REASONS"
+]
+_TRADING_DEPENDENCY_HEALTH_CACHE = _COMMON_PRIVATE_EXPORTS[
+    "_TRADING_DEPENDENCY_HEALTH_CACHE"
+]
+_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
+    "_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK"
+]
+_TRADING_HEALTH_SURFACE_EVALUATIONS = _COMMON_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_EVALUATIONS"
+]
+_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _COMMON_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR"
+]
+_TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _COMMON_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_EVALUATION_LOCK"
+]
+_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _COMMON_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE"
+]
+_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _COMMON_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS"
+]
+_TRADING_STATUS_READ_BUDGET_SECONDS = _COMMON_PRIVATE_EXPORTS[
+    "_TRADING_STATUS_READ_BUDGET_SECONDS"
+]
+_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _COMMON_PRIVATE_EXPORTS[
+    "_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS"
+]
+_paper_route_target_plan_success_cache = _COMMON_PRIVATE_EXPORTS[
+    "_paper_route_target_plan_success_cache"
+]
+_retryable_tca_recompute_error = _COMMON_PRIVATE_EXPORTS[
+    "_retryable_tca_recompute_error"
+]
+_shared_mapping_items = _COMMON_PRIVATE_EXPORTS["_shared_mapping_items"]
+_shared_paper_route_target_plan_from_payload = _COMMON_PRIVATE_EXPORTS[
+    "_shared_paper_route_target_plan_from_payload"
+]
 
 
 def _readiness_dependency_cache_key(include_database_contract: bool) -> str:
@@ -249,22 +296,26 @@ def _readiness_dependency_checks(
     include_database_contract: bool,
 ) -> tuple[dict[str, object], datetime]:
     if settings.trading_enabled:
-        clickhouse_status = _check_clickhouse()
-        alpaca_status = _check_alpaca()
+        clickhouse_status = health_checks_api.check_clickhouse_dependency()
+        alpaca_status = health_checks_api.check_alpaca_dependency()
     else:
         clickhouse_status = {"ok": True, "detail": "skipped (trading disabled)"}
         alpaca_status = {"ok": True, "detail": "skipped (trading disabled)"}
-    postgres_status = _check_postgres(session)
+    postgres_status = health_checks_api.check_postgres_dependency(session)
 
     dependencies: dict[str, object] = {
         "postgres": postgres_status,
         "clickhouse": clickhouse_status,
         "alpaca": alpaca_status,
-        "tigerbeetle": _build_tigerbeetle_ledger_status(session),
+        "tigerbeetle": health_checks_api.build_tigerbeetle_ledger_status(session),
     }
 
     if include_database_contract:
-        database_contract = _evaluate_database_contract(session)
+        from . import refresh_universe_state_for_readiness as database_contract_api
+
+        database_contract = database_contract_api.__dict__[
+            "_evaluate_database_contract"
+        ](session)
         lineage_errors = cast(
             list[str],
             database_contract.get("schema_graph_lineage_errors", []),
@@ -574,7 +625,11 @@ def _evaluate_core_readiness_payload(
             allow_stale_dependency_cache=allow_stale_dependency_cache,
         )
     dependencies = dict(dependencies)
-    dependencies["universe"] = _evaluate_universe_dependency(scheduler)
+    from . import evaluate_trading_health_payload as trading_health_payload_api
+
+    dependencies["universe"] = trading_health_payload_api.__dict__[
+        "_evaluate_universe_dependency"
+    ](scheduler)
     cache_age_seconds = (now - checked_at).total_seconds() if checked_at else 0.0
     cache_age_seconds = 0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
     cache_stale = (
