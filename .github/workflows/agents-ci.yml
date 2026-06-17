@@ -319,6 +319,7 @@ jobs:
 
       - name: Build and preload local Agents images into kind
         if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
+        timeout-minutes: 45
         run: |
           set -euxo pipefail
 
@@ -427,24 +428,21 @@ jobs:
             return 1
           }
 
-          run_step() {
-            local label="$1"
-            shift
-            echo "::group::${label}"
-            "$@"
-            echo "::endgroup::"
-          }
-
           PREP_TIMEOUT_MINUTES=25
           echo "Pruning Agents image build context to ${PRUNE_DIR}"
-          run_step "Prune turbo context" timeout "${PREP_TIMEOUT_MINUTES}m" bunx turbo prune \
+          IMAGE="agents-ci-prune-context"
+          if run_with_progress "Turbo prune context" "${PREP_TIMEOUT_MINUTES}" bunx turbo prune \
             --scope=@proompteng/agents \
             --scope=@proompteng/agent-contracts \
             --scope=@proompteng/codex \
             --scope=@proompteng/otel \
             --scope=@proompteng/temporal-bun-sdk \
             --docker \
-            --out-dir="${PRUNE_DIR}"
+            --out-dir="${PRUNE_DIR}"; then
+            echo "Pruned Agents Docker build context to ${PRUNE_DIR}."
+          else
+            run_step_failure "Failed to prune Agents Docker build context" "$?"
+          fi
           cp "${WORKSPACE}/tsconfig.base.json" "${PRUNE_DIR}/tsconfig.base.json"
           # The runner Dockerfile is intentionally usable from the full repo root for release builds.
           # The kind integration job builds it from the pruned context, so materialize the same root
