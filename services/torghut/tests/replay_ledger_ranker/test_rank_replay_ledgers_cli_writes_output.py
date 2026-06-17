@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.replay_ledger_ranker.support import (
     Path,
     _payload,

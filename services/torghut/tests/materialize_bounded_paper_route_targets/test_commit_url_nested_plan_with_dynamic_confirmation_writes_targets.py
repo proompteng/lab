@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.materialize_bounded_paper_route_targets.support import (
     HPAIRS_DYNAMIC_SELECTED_PLAN_SOURCE_CONFIRMATION,
     _count_decisions,

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import scripts.run_pylint_torghut_quality_diff_gate as diff_gate
 from scripts.run_pylint_torghut_quality_diff_gate import (
+    CUSTOM_RULES,
     PylintMessage,
     filter_messages,
     parse_changed_lines,
@@ -28,6 +29,10 @@ def test_parse_changed_lines_tracks_new_hunk_lines() -> None:
     changed_lines = parse_changed_lines(diff_text)
 
     assert changed_lines == {"app/example.py": {5, 6, 14, 15, 16}}
+
+
+def test_default_diff_gate_rules_include_dead_test_wrapper_rule() -> None:
+    assert "torghut-test-compat-wrapper" in CUSTOM_RULES
 
 
 def test_filter_messages_keeps_only_changed_line_violations() -> None:

@@ -7,6 +7,8 @@ from typing import NamedTuple
 from pylint.lint import Run
 from pylint.reporters.text import TextReporter
 
+from scripts import pylint_torghut_quality as quality
+
 PLUGIN_ENABLES = ",".join(
     (
         "torghut-generated-split-filename",
@@ -23,6 +25,7 @@ PLUGIN_ENABLES = ",".join(
         "torghut-dynamic-all",
         "torghut-wildcard-import",
         "torghut-custom-module-class",
+        "torghut-test-compat-wrapper",
     )
 )
 
@@ -120,6 +123,86 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
     output = result.output
     missing = sorted(symbol for symbol in expected_symbols if symbol not in output)
     assert not missing, output
+
+
+def test_torghut_pylint_quality_plugin_rejects_test_compat_wrappers(
+    tmp_path: Path,
+) -> None:
+    wrapper_path = tmp_path / "test_old_wrapper.py"
+    wrapper_path.write_text(
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "",
+                "__test__ = False",
+                "from tests.real_split.test_case import TestCase",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    empty_path = tmp_path / "test_empty_wrapper.py"
+    empty_path.write_text(
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "",
+                "# ruff: noqa: F401,F403,F405",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    wrapper_result = _run_quality_pylint(wrapper_path)
+    empty_result = _run_quality_pylint(empty_path)
+
+    assert wrapper_result.returncode != 0
+    assert "torghut-test-compat-wrapper" in wrapper_result.output
+    assert empty_result.returncode != 0
+    assert "torghut-test-compat-wrapper" in empty_result.output
+
+
+def test_torghut_pylint_quality_test_wrapper_helper_rejects_only_dead_wrappers(
+    tmp_path: Path,
+) -> None:
+    is_dead_wrapper = getattr(quality, "_is_dead_test_compat_wrapper")
+
+    assert not is_dead_wrapper(tmp_path / "test_invalid.py", "def broken(:\n")
+    assert is_dead_wrapper(
+        tmp_path / "test_docstring_wrapper.py",
+        "\n".join(
+            (
+                '"""compatibility wrapper."""',
+                "from __future__ import annotations",
+                "__test__ = False",
+                "from tests.real_split.test_case import TestCase",
+                "",
+            )
+        ),
+    )
+    assert not is_dead_wrapper(
+        tmp_path / "test_real_module.py",
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "__test__ = False",
+                "VALUE = 1",
+                "",
+            )
+        ),
+    )
+    assert not is_dead_wrapper(
+        tmp_path / "test_nonempty_suppression.py",
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "# ruff: noqa: F401",
+                "VALUE = 1",
+                "",
+            )
+        ),
+    )
 
 
 class PylintResult(NamedTuple):

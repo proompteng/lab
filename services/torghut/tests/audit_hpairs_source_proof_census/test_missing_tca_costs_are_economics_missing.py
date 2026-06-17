@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.audit_hpairs_source_proof_census.support import (
     AUTHORITY_EXPLICIT_COSTS_BLOCKER,
     AUTHORITY_OPEN_POSITIONS_BLOCKER,

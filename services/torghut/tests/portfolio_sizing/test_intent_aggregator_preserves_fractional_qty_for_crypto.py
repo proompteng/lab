@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.portfolio_sizing.support import (
     ALLOCATOR_CLIP_CORRELATION_CAPACITY,
     ALLOCATOR_CLIP_STRATEGY_BUDGET,

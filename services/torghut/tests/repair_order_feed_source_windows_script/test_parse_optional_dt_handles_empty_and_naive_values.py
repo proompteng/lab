@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.repair_order_feed_source_windows_script.support import (
     _FakeSession,
     _FakeSessionFactory,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.completion_trace.support import (
     DOC29_EMPIRICAL_JOBS_GATE,
     DOC29_EMPIRICAL_MANIFEST_GATE,

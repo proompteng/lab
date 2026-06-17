@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 from tests.live_config_manifest_contract.support import (
     Decimal,
     Mapping,
