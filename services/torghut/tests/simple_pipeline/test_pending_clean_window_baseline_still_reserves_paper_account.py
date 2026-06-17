@@ -9,6 +9,7 @@ from tests.simple_pipeline.support import (
     _bounded_hpairs_target,
     _bounded_sim_collection_blockers,
     _target_active_in_window,
+    _target_probe_window,
     _target_runtime_account_matches,
     datetime,
     settings,
@@ -81,7 +82,7 @@ def test_target_runtime_account_and_window_helpers_cover_identity_edges() -> Non
     )
 
 
-def test_scheduler_fetches_canonical_proofs_url_even_on_current_service(
+def test_scheduler_uses_local_gate_for_canonical_proofs_url_on_current_service(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("K_SERVICE", "torghut")
@@ -90,8 +91,55 @@ def test_scheduler_fetches_canonical_proofs_url_even_on_current_service(
     assert SimpleTradingPipeline._paper_route_target_plan_url_points_to_current_service(
         "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
     )
-    assert not SimpleTradingPipeline._paper_route_target_plan_url_points_to_current_service(
+    assert SimpleTradingPipeline._paper_route_target_plan_url_points_to_current_service(
         "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
+    )
+
+
+def test_next_session_source_collection_target_overrides_historical_source_window(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc)
+    target = _bounded_hpairs_target(
+        source_kind="runtime_ledger_source_collection_candidate",
+        source_collection_authorized=True,
+        source_collection_authorization_scope="source_window_evidence_collection_only",
+        paper_route_probe_next_session_max_notional="100",
+        bounded_evidence_collection_max_notional="100",
+        paper_route_probe_window_start="2026-05-13T17:00:00+00:00",
+        paper_route_probe_window_end="2026-05-13T17:30:00+00:00",
+    )
+    strategy = Strategy(
+        name="microbar-cross-sectional-pairs-v1",
+        description="metadata fixture",
+        enabled=True,
+        base_timeframe="1Sec",
+        universe_type="static",
+        universe_symbols=["AAPL", "AMZN"],
+    )
+    pipeline = object.__new__(SimpleTradingPipeline)
+    pipeline.account_label = "PA3SX7FYNUTF"
+    monkeypatch.setattr(
+        "app.trading.scheduler.simple_pipeline.trading_now",
+        lambda account_label=None: now,
+    )
+
+    normalized = pipeline._paper_route_target_with_local_probe_contract(
+        target,
+        strategies=[strategy],
+    )
+
+    assert normalized["paper_route_probe_source_window_start"] == (
+        "2026-05-13T17:00:00+00:00"
+    )
+    assert normalized["paper_route_probe_source_window_end"] == (
+        "2026-05-13T17:30:00+00:00"
+    )
+    assert normalized["paper_route_probe_window_overrode_source_window"] is True
+    assert normalized["paper_route_probe_window_defaulted"] is True
+    assert _target_probe_window(normalized) == (
+        datetime(2026, 6, 17, 13, 30, tzinfo=timezone.utc),
+        datetime(2026, 6, 17, 20, 0, tzinfo=timezone.utc),
     )
 
 

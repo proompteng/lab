@@ -72,7 +72,7 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
     def _paper_route_target_plan_url_points_to_current_service(url: str) -> bool:
         parsed = urlsplit(url)
         path = (parsed.path or "").rstrip("/")
-        if path != "/trading/paper-route-target-plan":
+        if path not in {"/trading/paper-route-target-plan", "/trading/proofs"}:
             return False
         hostname = (parsed.hostname or "").strip().lower()
         service_name = os.getenv("K_SERVICE", "").strip().lower()
@@ -457,14 +457,30 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
         elif raw_symbols and "paper_route_probe_symbols" not in normalized:
             normalized["paper_route_probe_symbols"] = sorted(raw_symbols)
 
-        if (
-            _target_has_bounded_source_collection_authorization(normalized)
-            and _target_probe_window(normalized) is None
-            and _target_missing_explicit_probe_window(normalized)
-        ):
+        if _target_has_bounded_source_collection_authorization(normalized):
             now = self._trading_now().astimezone(timezone.utc)
+        else:
+            now = None
+        if now is not None and self._paper_route_target_uses_current_session_window(
+            normalized,
+            now=now,
+        ):
+            source_window = _target_probe_window(normalized)
             window_start = regular_session_open_utc_for(now)
             window_end = window_start + timedelta(minutes=_REGULAR_SESSION_MINUTES)
+            if source_window is not None:
+                normalized.setdefault(
+                    "paper_route_probe_source_window_start",
+                    source_window[0].isoformat(),
+                )
+                normalized.setdefault(
+                    "paper_route_probe_source_window_end",
+                    source_window[1].isoformat(),
+                )
+                normalized.setdefault(
+                    "paper_route_probe_window_overrode_source_window",
+                    True,
+                )
             normalized["paper_route_probe_window_start"] = window_start.isoformat()
             normalized["paper_route_probe_window_end"] = window_end.isoformat()
             normalized.setdefault("paper_route_probe_window_defaulted", True)
@@ -483,6 +499,27 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
                 )
             )
         return normalized
+
+    @staticmethod
+    def _paper_route_target_uses_current_session_window(
+        target: Mapping[str, Any],
+        *,
+        now: datetime,
+    ) -> bool:
+        if _target_missing_explicit_probe_window(target):
+            return True
+        scope = _safe_text(target.get("bounded_evidence_collection_scope"))
+        next_session_cap = _optional_decimal(
+            target.get("paper_route_probe_next_session_max_notional")
+        )
+        if scope != "paper_route_probe_next_session_only" and next_session_cap is None:
+            return False
+        source_window = _target_probe_window(target)
+        if source_window is None:
+            return True
+        window_start = regular_session_open_utc_for(now)
+        window_end = window_start + timedelta(minutes=_REGULAR_SESSION_MINUTES)
+        return source_window != (window_start, window_end)
 
     @staticmethod
     def _paper_route_target_source_decision_metadata(
