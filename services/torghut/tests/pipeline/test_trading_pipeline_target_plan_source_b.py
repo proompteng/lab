@@ -24,10 +24,318 @@ from tests.pipeline.trading_pipeline_base import (
     patch,
     select,
     timezone,
+    uuid4,
 )
 
 
 class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
+    def test_live_bounded_paper_route_probe_bypasses_only_collection_blockers(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_mode": config.settings.trading_mode,
+            "trading_simple_submit_enabled": (
+                config.settings.trading_simple_submit_enabled
+            ),
+            "trading_simple_paper_route_probe_enabled": (
+                config.settings.trading_simple_paper_route_probe_enabled
+            ),
+        }
+        config.settings.trading_mode = "live"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        try:
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            strategy_id = str(uuid4())
+            decision = StrategyDecision(
+                strategy_id=strategy_id,
+                symbol="AAPL",
+                event_ts=datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                rationale="bounded-paper-route-probe",
+                params={
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "profit_proof_eligible": True,
+                    "paper_route_probe": {
+                        "source_decision_mode": "bounded_paper_route_collection",
+                        "profit_proof_eligible": True,
+                    },
+                },
+            )
+            gate = {
+                "allowed": False,
+                "blocked_reasons": [
+                    "alpha_readiness_not_promotion_eligible",
+                    "runtime_ledger_source_collection_pending",
+                    "runtime_ledger_profit_target_source_collection_pending",
+                ],
+            }
+
+            self.assertTrue(
+                pipeline._bounded_live_paper_route_probe_submission_allowed(
+                    decision,
+                    gate,
+                )
+            )
+            self.assertFalse(
+                pipeline._bounded_live_paper_route_probe_submission_allowed(
+                    decision,
+                    {
+                        **gate,
+                        "blocked_reasons": [
+                            *cast(list[str], gate["blocked_reasons"]),
+                            "empirical_jobs_not_ready",
+                        ],
+                    },
+                )
+            )
+            self.assertFalse(
+                pipeline._bounded_live_paper_route_probe_submission_allowed(
+                    decision,
+                    {**gate, "blocked_reasons": []},
+                )
+            )
+        finally:
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_enabled = original[
+                "trading_simple_paper_route_probe_enabled"
+            ]
+
+    def test_live_gate_records_expired_activation_on_simple_lane(self) -> None:
+        from app import config
+
+        original = {
+            "trading_mode": config.settings.trading_mode,
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_simple_submit_enabled": (
+                config.settings.trading_simple_submit_enabled
+            ),
+            "trading_live_submit_activation_expires_at": (
+                config.settings.trading_live_submit_activation_expires_at
+            ),
+        }
+        config.settings.trading_mode = "live"
+        config.settings.trading_enabled = True
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_live_submit_activation_expires_at = (
+            "2000-01-01T00:00:00Z"
+        )
+        try:
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            live_gate_owner = next(
+                cls
+                for cls in SimpleTradingPipeline.__mro__[1:]
+                if "_live_submission_gate" in cls.__dict__
+            )
+
+            with patch.object(
+                live_gate_owner,
+                "_live_submission_gate",
+                return_value={"allowed": True, "blocked_reasons": []},
+            ):
+                gate = pipeline._live_submission_gate()
+        finally:
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_live_submit_activation_expires_at = original[
+                "trading_live_submit_activation_expires_at"
+            ]
+
+        self.assertFalse(gate["allowed"])
+        simple_lane = cast(dict[str, Any], gate["simple_lane"])
+        self.assertEqual(
+            simple_lane["blocked_reasons"],
+            ["live_submit_activation_expired"],
+        )
+
+    def test_live_bounded_paper_route_probe_passes_collection_only_proof_floor(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_simple_submit_enabled": (
+                config.settings.trading_simple_submit_enabled
+            ),
+            "trading_simple_paper_route_probe_enabled": (
+                config.settings.trading_simple_paper_route_probe_enabled
+            ),
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        try:
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            strategy_id = str(uuid4())
+            decision = StrategyDecision(
+                strategy_id=strategy_id,
+                symbol="AAPL",
+                event_ts=datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                rationale="bounded-paper-route-probe",
+                params={
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "profit_proof_eligible": True,
+                    "paper_route_probe": {
+                        "mode": "bounded_paper_route_collection",
+                        "source_decision_mode": "bounded_paper_route_collection",
+                        "profit_proof_eligible": True,
+                    },
+                },
+            )
+            gate = {
+                "allowed": False,
+                "blocked_reasons": [
+                    "alpha_readiness_not_promotion_eligible",
+                    "runtime_ledger_source_collection_pending",
+                    "runtime_ledger_profit_target_source_collection_pending",
+                ],
+            }
+            proof_floor = {
+                "route_state": "repair_only",
+                "capital_state": "zero_notional",
+                "max_notional": "0",
+                "blocking_reasons": ["runtime_ledger_source_collection_pending"],
+            }
+
+            with self.session_local() as session:
+                row = TradeDecision(
+                    strategy_id=decision.strategy_id,
+                    alpaca_account_label="paper",
+                    symbol=decision.symbol,
+                    timeframe=decision.timeframe,
+                    decision_json=decision.model_dump(mode="json"),
+                    status="planned",
+                )
+                session.add(row)
+                session.commit()
+
+                with (
+                    patch.object(pipeline, "_live_submission_gate", return_value=gate),
+                    patch.object(
+                        SimpleTradingPipeline,
+                        "_profitability_proof_floor",
+                        return_value=proof_floor,
+                    ),
+                ):
+                    self.assertTrue(
+                        pipeline._is_trading_submission_allowed(
+                            session=session,
+                            decision=decision,
+                            decision_row=row,
+                        )
+                    )
+
+            proof_floor = {
+                **proof_floor,
+                "blocking_reasons": ["empirical_jobs_not_ready"],
+            }
+            with self.session_local() as session:
+                row = TradeDecision(
+                    strategy_id=decision.strategy_id,
+                    alpaca_account_label="paper",
+                    symbol=decision.symbol,
+                    timeframe=decision.timeframe,
+                    decision_json=decision.model_dump(mode="json"),
+                    status="planned",
+                )
+                session.add(row)
+                session.commit()
+
+                with (
+                    patch.object(
+                        pipeline,
+                        "_live_submission_gate",
+                        return_value={
+                            **gate,
+                            "blocked_reasons": [
+                                *cast(list[str], gate["blocked_reasons"]),
+                                "empirical_jobs_not_ready",
+                            ],
+                        },
+                    ),
+                    patch.object(
+                        SimpleTradingPipeline,
+                        "_profitability_proof_floor",
+                        return_value=proof_floor,
+                    ),
+                ):
+                    self.assertFalse(
+                        pipeline._is_trading_submission_allowed(
+                            session=session,
+                            decision=decision,
+                            decision_row=row,
+                        )
+                    )
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_enabled = original[
+                "trading_simple_paper_route_probe_enabled"
+            ]
+
     def test_process_paper_route_target_source_decisions_records_submit_failure(
         self,
     ) -> None:

@@ -7,19 +7,17 @@ spec:
   schedule: "23 8,21 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 2
   startingDeadlineSeconds: 900
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 1800
+      ttlSecondsAfterFinished: 86400
       backoffLimit: 2
       activeDeadlineSeconds: 900
       template:
         spec:
           restartPolicy: OnFailure
           serviceAccountName: torghut-runtime
-          nodeSelector:
-            kubernetes.io/arch: arm64
           containers:
             - name: renew
               image: registry.ide-newton.ts.net/lab/torghut@sha256:d195eac0bf91918d64589f1b9e251e3ec46ad20d5697e14a0aec17268ab5df20
@@ -44,8 +42,10 @@ spec:
                   PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json
                   HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT=/tmp/torghut-empirical-renewal/hpairs-source-proof-census.json
                   mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")" "$(dirname "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}")"
+                  echo "stage=empirical_promotion_renewal started_at=$(date -Iseconds)"
                   WINDOW_END="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                   WINDOW_START="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)"
+                  echo "stage=reconcile_cross_dsn_order_feed_links started_at=$(date -Iseconds) window_start=${WINDOW_START} window_end=${WINDOW_END}"
                   /opt/venv/bin/python scripts/reconcile_cross_dsn_order_feed_links.py \
                     --event-dsn-env DB_DSN \
                     --canonical-dsn-env SIM_DB_DSN \
@@ -131,7 +131,10 @@ spec:
                     --artifact-prefix 'runtime-ledger-proof-packets/{run_id}' \
                     --require-artifact-upload \
                     --allow-blocked-exit-zero
+                  echo "stage=empirical_promotion_renewal completed_at=$(date -Iseconds)"
               env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
                 - name: DB_DSN
                   valueFrom:
                     secretKeyRef:

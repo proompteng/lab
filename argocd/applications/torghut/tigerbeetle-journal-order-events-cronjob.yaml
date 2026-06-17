@@ -10,19 +10,17 @@ spec:
   schedule: "*/6 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 2
   startingDeadlineSeconds: 300
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 1800
+      ttlSecondsAfterFinished: 86400
       backoffLimit: 0
       activeDeadlineSeconds: 900
       template:
         spec:
           restartPolicy: Never
           serviceAccountName: torghut-runtime
-          nodeSelector:
-            kubernetes.io/arch: arm64
           securityContext:
             runAsNonRoot: true
             runAsUser: 999
@@ -104,19 +102,17 @@ spec:
   schedule: "21,51 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
-  failedJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 2
   startingDeadlineSeconds: 300
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 1800
+      ttlSecondsAfterFinished: 86400
       backoffLimit: 0
       activeDeadlineSeconds: 900
       template:
         spec:
           restartPolicy: Never
           serviceAccountName: torghut-runtime
-          nodeSelector:
-            kubernetes.io/arch: arm64
           securityContext:
             runAsNonRoot: true
             runAsUser: 999

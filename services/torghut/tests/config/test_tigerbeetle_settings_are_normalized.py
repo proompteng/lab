@@ -789,6 +789,7 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY=0.8,
             TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS=50.0,
             TRADING_SIMPLE_SUBMIT_ENABLED=True,
+            TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT="2026-06-17T20:05:00Z",
             TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED=True,
             TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED=True,
             TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL=15.0,
@@ -802,6 +803,10 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         self.assertEqual(settings.trading_simple_max_gross_exposure_pct_equity, 0.8)
         self.assertEqual(settings.trading_simple_buying_power_reserve_bps, 50.0)
         self.assertTrue(settings.trading_simple_submit_enabled)
+        self.assertEqual(
+            settings.trading_live_submit_activation_expires_at,
+            "2026-06-17T20:05:00Z",
+        )
         self.assertTrue(settings.trading_simple_order_feed_telemetry_enabled)
         self.assertTrue(settings.trading_simple_paper_route_probe_enabled)
         self.assertEqual(settings.trading_simple_paper_route_probe_max_notional, 15.0)

@@ -102,6 +102,10 @@ from .submission_council_modules.runtime_summary import (
     _runtime_ledger_merge_count_maps,
     _runtime_ledger_unique_sequence,
 )
+from .live_submit_activation import (
+    live_submit_activation_blocker,
+    live_submit_activation_status,
+)
 
 
 @dataclass(frozen=True)
@@ -675,6 +679,9 @@ def _append_toggle_and_readiness_blockers(
         blocked_reasons.append(f"dependency_quorum_{context.dependencies.decision}")
     if context.quant.required and not context.quant.ready:
         blocked_reasons.extend(context.quant.blocking_reasons or [context.quant.reason])
+    activation_blocker = live_submit_activation_blocker(now=context.now)
+    if activation_blocker is not None:
+        blocked_reasons.append(activation_blocker)
 
 
 def _append_alpha_readiness_blockers(
@@ -791,6 +798,10 @@ def _select_live_submission_certificate(
 
 
 def _primary_live_submission_blocked_reason(blocked_reasons: Sequence[str]) -> str:
+    if "live_submit_activation_expired" in blocked_reasons:
+        return "live_submit_activation_expired"
+    if "live_submit_activation_expiry_invalid" in blocked_reasons:
+        return "live_submit_activation_expiry_invalid"
     if "alpha_readiness_not_promotion_eligible" in blocked_reasons:
         return "alpha_readiness_not_promotion_eligible"
     if blocked_reasons:
@@ -903,6 +914,7 @@ def _common_submission_payload(context: _SubmissionGateContext) -> dict[str, obj
         "quant_evidence": context.quant.evidence,
         "quant_health_ref": _quant_health_ref(context),
         "market_context_ref": context.market_context_ref,
+        "live_submit_activation": live_submit_activation_status(now=context.now),
         **_runtime_ledger_payload(context.runtime_inputs.runtime_ledger),
         "profit_lease_projection": context.profit_lease_projection,
     }

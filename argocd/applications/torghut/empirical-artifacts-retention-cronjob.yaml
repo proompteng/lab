@@ -7,10 +7,10 @@ spec:
   schedule: "17 4 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
-  failedJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 2
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 1800
+      ttlSecondsAfterFinished: 86400
       template:
         spec:
           restartPolicy: OnFailure

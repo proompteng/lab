@@ -10,19 +10,17 @@ spec:
   schedule: "13,43 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
-  failedJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 2
   startingDeadlineSeconds: 300
   jobTemplate:
     spec:
-      ttlSecondsAfterFinished: 1800
+      ttlSecondsAfterFinished: 86400
       backoffLimit: 1
       activeDeadlineSeconds: 900
       template:
         spec:
           restartPolicy: Never
           serviceAccountName: torghut-runtime
-          nodeSelector:
-            kubernetes.io/arch: arm64
           containers:
             - name: repair-source-windows
               image: registry.ide-newton.ts.net/lab/torghut@sha256:d195eac0bf91918d64589f1b9e251e3ec46ad20d5697e14a0aec17268ab5df20

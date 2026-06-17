@@ -127,17 +127,23 @@ spec:
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
-              value: "false"
+              value: "true"
+            - name: TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT
+              value: "2026-06-17T20:05:00Z"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
-              value: "25000"
+              value: "100"
+            - name: TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER
+              value: "100"
+            - name: TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL
+              value: "250"
             - name: TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY
               value: "0.25"
             - name: TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY
-              value: "1.0"
+              value: "0.05"
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
@@ -268,9 +274,9 @@ spec:
             - name: POSTHOG_ENABLED
               value: "false"
             - name: WHITEPAPER_WORKFLOW_ENABLED
-              value: "true"
+              value: "false"
             - name: WHITEPAPER_KAFKA_ENABLED
-              value: "true"
+              value: "false"
             - name: WHITEPAPER_KAFKA_BOOTSTRAP_SERVERS
               value: kafka-kafka-bootstrap.kafka:9092
             - name: WHITEPAPER_KAFKA_TOPIC
@@ -320,7 +326,7 @@ spec:
             - name: WHITEPAPER_CEPH_SECRET_DIR
               value: /etc/torghut/whitepapers-secret
             - name: WHITEPAPER_AGENTRUN_AUTO_DISPATCH
-              value: "true"
+              value: "false"
             - name: WHITEPAPER_AGENTRUN_NAMESPACE
               value: agents
             - name: WHITEPAPER_AGENT_NAME
@@ -364,7 +370,7 @@ spec:
             - name: WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID
               value: torghut-whitepaper-synthesis-index-v1
             - name: WHITEPAPER_SEMANTIC_INDEXING_ENABLED
-              value: "true"
+              value: "false"
             - name: WHITEPAPER_SEMANTIC_REQUIRED
               value: "false"
             - name: WHITEPAPER_EMBEDDING_API_BASE_URL

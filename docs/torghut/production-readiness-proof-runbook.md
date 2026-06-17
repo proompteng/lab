@@ -113,6 +113,41 @@ Required outcome:
 
 Persist the captured readiness payload as `session-ready.json`.
 
+### 5. Proof CronJob recovery
+
+If the readiness gate is blocked by stale empirical, order-feed source-window, execution TCA, or zero-notional drift
+receipts, rerun only the GitOps-owned CronJob templates and capture logs before deleting anything. Use lowercase
+timestamps because Kubernetes Job names must be RFC 1123 compliant.
+
+```bash
+stamp="$(date -u +%Y%m%d%H%M%S)"
+out="/tmp/torghut-proof-rerun-${stamp}"
+mkdir -p "${out}"
+
+for cron in \
+  torghut-empirical-promotion-renewal \
+  torghut-order-feed-source-window-repair \
+  torghut-execution-tca-refresh \
+  torghut-zero-notional-drift-repair; do
+  job="${cron}-manual-${stamp}"
+  kubectl create job -n torghut --from="cronjob/${cron}" "${job}"
+  kubectl wait -n torghut --for=condition=complete --timeout=20m "job/${job}"
+  kubectl get job -n torghut "${job}" -o yaml > "${out}/${job}.yaml"
+  kubectl logs -n torghut -l "job-name=${job}" --all-containers --timestamps --tail=-1 > "${out}/${job}.log"
+done
+```
+
+After the rerun, capture:
+
+```bash
+curl -fsS http://torghut.torghut.svc.cluster.local/trading/status > "${out}/status.json"
+curl -fsS http://torghut.torghut.svc.cluster.local/trading/empirical-jobs > "${out}/empirical-jobs.json"
+curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair > "${out}/revenue-repair.json"
+```
+
+Do not submit or fabricate an Alpaca order from this runbook. Broker execution evidence must come from Torghut’s normal
+scheduler or bounded paper-route probe path.
+
 ## Bundle assembly
 
 Once all lanes pass, assemble the canonical proof bundle:

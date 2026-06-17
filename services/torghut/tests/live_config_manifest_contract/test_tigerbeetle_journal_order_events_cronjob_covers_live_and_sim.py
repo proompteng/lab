@@ -101,8 +101,8 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
             self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
             self.assertEqual(spec.get("successfulJobsHistoryLimit"), 2)
-            self.assertEqual(spec.get("failedJobsHistoryLimit"), 0)
-            self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 1800)
+            self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
+            self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
             self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
             self.assertEqual(job_spec.get("backoffLimit"), 0)
             template = cast(
@@ -112,10 +112,7 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             pod_spec = cast(Mapping[str, object], template.get("spec", {}))
             self.assertEqual(pod_spec.get("restartPolicy"), "Never")
             self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-            self.assertEqual(
-                pod_spec.get("nodeSelector"),
-                {"kubernetes.io/arch": "arm64"},
-            )
+            self.assertNotIn("nodeSelector", pod_spec)
             self.assertEqual(container.get("command"), ["/bin/bash", "-lc"])
             self.assertIn(
                 "registry.ide-newton.ts.net/lab/torghut@sha256:",
@@ -737,16 +734,22 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             str(env.get("TRADING_STATIC_SYMBOLS", "")).split(","),
             context="live static universe",
         )
-        self.assertFalse(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertEqual(
+            env.get("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT"),
+            "2026-06-17T20:05:00Z",
+        )
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
         self.assertEqual(
             env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
             _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
         )
+        self.assertEqual(env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER"), "100")
+        self.assertEqual(env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL"), "250")
         self.assertEqual(env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
         self.assertEqual(
             env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "1.0",
+            "0.05",
         )
         self.assertTrue(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
         self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "iex")

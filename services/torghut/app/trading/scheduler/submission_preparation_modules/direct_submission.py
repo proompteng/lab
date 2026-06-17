@@ -12,6 +12,7 @@ from ...simple_risk import (
     position_qty_for_symbol,
 )
 from ..target_plan_helpers import (
+    bounded_paper_route_collection_entry_metadata,
     bounded_sim_collection_metadata_from_decision,
     optional_decimal,
     paper_route_probe_entry_metadata,
@@ -32,6 +33,23 @@ from .shared import (
 )
 from .quote_sizing import SimplePipelineSubmissionQuoteSizingMixin
 from .quote_routeability import SimplePipelineSubmissionQuoteRouteabilityMixin
+
+
+_LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS = frozenset(
+    {
+        "alpha_readiness_not_promotion_eligible",
+        "bounded_paper_route_evidence_collection_only",
+        "hypothesis_window_evidence_missing",
+        "live_runtime_ledger_required",
+        "paper_probation_evidence_collection_only",
+        "paper_route_runtime_ledger_import_pending",
+        "promotion_certificate_missing",
+        "runtime_ledger_profit_target_source_collection_pending",
+        "runtime_ledger_source_collection_only",
+        "runtime_ledger_source_collection_pending",
+        "runtime_ledger_source_window_evidence_pending",
+    }
+)
 
 
 class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
@@ -171,6 +189,11 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         if settings.trading_mode == "live":
             live_submission_gate = self._live_submission_gate(session=request.session)
             if not bool(live_submission_gate.get("allowed", False)):
+                if self._bounded_live_paper_route_probe_submission_allowed(
+                    request.decision,
+                    live_submission_gate,
+                ):
+                    return True
                 self._block_decision_submission(
                     session=request.session,
                     decision=request.decision,
@@ -184,6 +207,36 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
                 )
                 return False
         return True
+
+    def _bounded_live_paper_route_probe_submission_allowed(
+        self,
+        decision: StrategyDecision,
+        live_submission_gate: Mapping[str, Any],
+    ) -> bool:
+        if not self._bounded_live_paper_route_probe_decision_applies(decision):
+            return False
+        blocked_reasons = {
+            str(reason).strip()
+            for reason in cast(
+                list[object],
+                live_submission_gate.get("blocked_reasons") or [],
+            )
+            if str(reason).strip()
+        }
+        if not blocked_reasons:
+            return False
+        return blocked_reasons.issubset(_LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS)
+
+    def _bounded_live_paper_route_probe_profit_floor_allowed(
+        self,
+        decision: StrategyDecision,
+        proof_floor_block_reason: str,
+    ) -> bool:
+        return (
+            self._bounded_live_paper_route_probe_decision_applies(decision)
+            and proof_floor_block_reason
+            in _LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS
+        )
 
     def _profitability_floor_submission_allowed(
         self,
@@ -202,7 +255,11 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         if not settings.trading_simple_submit_enabled and collection_metadata is None:
             self._block_simple_submit_disabled(request, proof_floor_block_reason)
             return False
-        if self._paper_route_probe_applies(decision, collection_metadata):
+        if self._paper_route_probe_applies(
+            decision, collection_metadata
+        ) or self._bounded_live_paper_route_probe_profit_floor_allowed(
+            decision, proof_floor_block_reason
+        ):
             return True
         self._block_decision_submission(
             session=session,
@@ -328,6 +385,22 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             self._paper_route_probe_exit_metadata(decision) is not None
             or paper_route_probe_entry_metadata(decision.params) is not None
             or collection_metadata is not None
+        )
+
+    def _bounded_live_paper_route_probe_decision_applies(
+        self,
+        decision: StrategyDecision,
+    ) -> bool:
+        return (
+            settings.trading_mode == "live"
+            and settings.trading_simple_submit_enabled
+            and settings.trading_simple_paper_route_probe_enabled
+            and (
+                self._paper_route_probe_exit_metadata(decision) is not None
+                or paper_route_probe_entry_metadata(decision.params) is not None
+                or bounded_paper_route_collection_entry_metadata(decision.params)
+                is not None
+            )
         )
 
     def _execution_client_for_symbol(
