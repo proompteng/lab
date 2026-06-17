@@ -308,6 +308,7 @@ def build_doc29_completion_status(
     if all_satisfied:
         final_promotion_blockers.append('completion_trace_not_runtime_ledger_authority')
     promotion_authority = {
+        **capital_blocked_authority(blockers=final_promotion_blockers).as_target_fields(),
         'evidence_collection_ok': (
             str(gate_status_map.get(DOC29_LIVE_CANARY_GATE, {}).get('status'))
             == TRACE_STATUS_SATISFIED
@@ -320,7 +321,6 @@ def build_doc29_completion_status(
             str(gate_status_map.get(DOC29_PAPER_GATE, {}).get('status'))
             == TRACE_STATUS_SATISFIED
         ),
-        **capital_blocked_authority(blockers=final_promotion_blockers).as_target_fields(),
         'completion_trace_all_satisfied': all_satisfied,
         'authority_source': 'completion_trace_status_only',
     }

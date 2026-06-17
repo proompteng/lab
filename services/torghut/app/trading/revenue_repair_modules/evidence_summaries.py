@@ -192,6 +192,9 @@ def _summarize_runtime_window_import_target(
         "promotion_stage": target_promotion_stage(target).value,
         "capital_promotion_allowed": target_capital_promotion_allowed(target),
         "promotion_blockers": promotion_blockers,
+        "promotion_allowed": _bool(target.get("promotion_allowed")),
+        "final_promotion_allowed": _bool(target.get("final_promotion_allowed")),
+        "final_promotion_authorized": _bool(target.get("final_promotion_authorized")),
         "legacy_promotion_allowed": _bool(target.get("promotion_allowed")),
         "legacy_final_promotion_allowed": _bool(target.get("final_promotion_allowed")),
         "legacy_final_promotion_authorized": _bool(
