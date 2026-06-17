@@ -215,4 +215,67 @@ describe('agents controller agent-run reconciler', () => {
       }),
     )
   })
+
+  it('returns terminal preserved AgentRuns without normal reconcile logging or runtime reconciliation', async () => {
+    const setStatus = vi.fn(async () => undefined)
+    const reconcileWorkflowRun = vi.fn()
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      delete: vi.fn(async () => ({})),
+    }
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const reconciler = createAgentRunReconciler(createBaseDependencies({ setStatus, reconcileWorkflowRun }))
+
+    try {
+      await reconciler.reconcileAgentRun(
+        kube as never,
+        {
+          metadata: {
+            name: 'old-workflow-run',
+            namespace: 'agents',
+            generation: 1,
+            finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+          },
+          spec: {
+            agentRef: { name: 'codex-agent' },
+            runtime: { type: 'workflow' },
+            ttlSecondsAfterFinished: 0,
+            parameters: {},
+          },
+          status: {
+            observedGeneration: 1,
+            phase: 'Succeeded',
+            finishedAt: '2026-05-18T13:08:00.000Z',
+            runtimeRef: {
+              type: 'workflow',
+              name: 'old-workflow-run-workflow',
+              namespace: 'agents',
+            },
+          },
+        },
+        'agents',
+        [],
+        [],
+        {
+          perNamespace: 10,
+          perAgent: 10,
+          cluster: 10,
+          repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+        },
+        { total: 0, perAgent: new Map(), perRepository: new Map() },
+        0,
+      )
+    } finally {
+      infoSpy.mockRestore()
+    }
+
+    expect(kube.patch).not.toHaveBeenCalled()
+    expect(kube.delete).not.toHaveBeenCalled()
+    expect(setStatus).not.toHaveBeenCalled()
+    expect(reconcileWorkflowRun).not.toHaveBeenCalled()
+    expect(infoSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('reconcile_started'),
+      expect.objectContaining({ runName: 'old-workflow-run' }),
+    )
+  })
 })

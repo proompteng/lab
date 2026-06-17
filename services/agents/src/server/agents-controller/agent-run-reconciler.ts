@@ -341,11 +341,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       })
     }
 
-    logAgentsControllerInfo('reconcile_started', {
-      ...logContext,
-      decision: 'start',
-      phase,
-    })
     const runtimeCleanupContext = {
       kube,
       namespace,
@@ -418,7 +413,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           }
         }
       }
+      return
     }
+
+    logAgentsControllerInfo('reconcile_started', {
+      ...logContext,
+      decision: 'start',
+      phase,
+    })
 
     const runtimeRef = parseRuntimeRef(status.runtimeRef)
     const shouldSubmit =

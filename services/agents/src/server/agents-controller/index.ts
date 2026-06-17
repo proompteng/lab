@@ -17,7 +17,7 @@ import {
 import { parseNamespaceScopeEnv } from '../namespace-scope'
 import { asRecord, asString, readNested } from '../primitives'
 import { createKubernetesClient, RESOURCE_MAP } from '../kube-types'
-import { shouldApplyStatus } from '../status-utils'
+import { buildResourceFingerprint, shouldApplyStatus } from '../status-utils'
 import { resolveAgentCommsSubscriberConfig } from '../integrations-config'
 import { createAgentRunReconciler } from './agent-run-reconciler'
 import {
@@ -627,6 +627,19 @@ const resetControllerRateState = () => {
   resetControllerRateStateMaps(runtimeMutableState.controllerRateState)
 }
 
+const shouldDependencyEventTriggerFullReconcile = (
+  map: Map<string, Record<string, unknown>>,
+  eventType: string | undefined,
+  resource: Record<string, unknown>,
+) => {
+  const name = asString(readNested(resource, ['metadata', 'name']))
+  if (!name) return false
+  if (eventType === 'DELETED') return true
+  const existing = map.get(name)
+  if (!existing) return true
+  return buildResourceFingerprint(existing) !== buildResourceFingerprint(resource)
+}
+
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
   logAgentsControllerDebug('namespace_task_enqueued', { namespace })
   const current = runtimeMutableState.namespaceQueues.get(namespace) ?? Promise.resolve()
@@ -1118,43 +1131,49 @@ const startNamespaceWatches = async (
   const handleAgentEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
+    const shouldReconcile = shouldDependencyEventTriggerFullReconcile(nsState.agents, event.type, resource)
     updateStateMap(nsState.agents, event.type, resource)
-    void enqueueFull()
+    if (shouldReconcile) void enqueueFull()
   }
 
   const handleProviderEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
+    const shouldReconcile = shouldDependencyEventTriggerFullReconcile(nsState.providers, event.type, resource)
     updateStateMap(nsState.providers, event.type, resource)
-    void enqueueFull()
+    if (shouldReconcile) void enqueueFull()
   }
 
   const handleSpecEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
+    const shouldReconcile = shouldDependencyEventTriggerFullReconcile(nsState.specs, event.type, resource)
     updateStateMap(nsState.specs, event.type, resource)
-    void enqueueFull()
+    if (shouldReconcile) void enqueueFull()
   }
 
   const handleSourceEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
+    const shouldReconcile = shouldDependencyEventTriggerFullReconcile(nsState.sources, event.type, resource)
     updateStateMap(nsState.sources, event.type, resource)
-    void enqueueFull()
+    if (shouldReconcile) void enqueueFull()
   }
 
   const handleVcsProviderEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
+    const shouldReconcile = shouldDependencyEventTriggerFullReconcile(nsState.vcsProviders, event.type, resource)
     updateStateMap(nsState.vcsProviders, event.type, resource)
-    void enqueueFull()
+    if (shouldReconcile) void enqueueFull()
   }
 
   const handleMemoryEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
+    const shouldReconcile = shouldDependencyEventTriggerFullReconcile(nsState.memories, event.type, resource)
     updateStateMap(nsState.memories, event.type, resource)
-    void enqueueFull()
+    if (shouldReconcile) void enqueueFull()
   }
 
   const handleJobEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
@@ -1457,6 +1476,7 @@ export const __test = {
   resolveVcsPrRateLimits,
   resolveJobImage,
   resolveVcsContext,
+  shouldDependencyEventTriggerFullReconcile,
   getAgentRunUntouchedReasons,
   resyncAgentRunsForNamespace,
   startNamespaceWatches,

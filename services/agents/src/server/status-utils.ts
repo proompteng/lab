@@ -52,6 +52,8 @@ export const normalizeStatusForCompare = (status: Record<string, unknown> | null
   const record = asRecord(status) ?? {}
   const next: Record<string, unknown> = { ...record }
   delete next.updatedAt
+  delete next.lastCheckedAt
+  delete next.lastValidatedAt
   const normalizedConditions = normalizeConditionsForCompare(record.conditions)
   if (normalizedConditions) {
     next.conditions = normalizedConditions
