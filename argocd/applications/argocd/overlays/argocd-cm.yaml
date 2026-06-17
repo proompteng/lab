@@ -14,6 +14,56 @@ data:
     hs.status = "Healthy"
     hs.message = "SealedSecret health is ignored; decryption is handled by the sealed-secrets controller."
     return hs
+  resource.customizations.health.batch_CronJob: |
+    hs = {}
+    local metadata = obj.metadata or {}
+    local labels = metadata.labels or {}
+    local spec = obj.spec or {}
+    local status = obj.status or {}
+    local active = status.active or {}
+
+    if spec.suspend == true then
+      hs.status = "Suspended"
+      hs.message = "CronJob is suspended."
+      return hs
+    end
+
+    if metadata.namespace == "torghut" and labels["app.kubernetes.io/name"] == "torghut" then
+      if #active > 0 then
+        hs.status = "Progressing"
+        hs.message = "Torghut CronJob has active run(s); runtime rollout checks remain authoritative."
+        return hs
+      end
+
+      hs.status = "Healthy"
+      hs.message = "Torghut CronJob schedule is reconciled; scheduled job results are monitored outside Argo app health."
+      return hs
+    end
+
+    if #active > 0 then
+      hs.status = "Progressing"
+      hs.message = "CronJob has active run(s)."
+      return hs
+    end
+
+    if status.lastScheduleTime ~= nil and status.lastSuccessfulTime == nil then
+      hs.status = "Degraded"
+      hs.message = "CronJob has not completed its last execution successfully."
+      return hs
+    end
+
+    local lastRunFailed = status.lastScheduleTime ~= nil and
+      status.lastSuccessfulTime ~= nil and
+      status.lastScheduleTime > status.lastSuccessfulTime
+    if lastRunFailed then
+      hs.status = "Degraded"
+      hs.message = "CronJob has not completed its last execution successfully."
+      return hs
+    end
+
+    hs.status = "Healthy"
+    hs.message = "CronJob is healthy."
+    return hs
   resource.customizations.health.flink.apache.org_FlinkDeployment: |
     hs = {}
     local spec = obj.spec or {}
