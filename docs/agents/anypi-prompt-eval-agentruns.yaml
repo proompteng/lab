@@ -9,11 +9,11 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-torghut-minimal-20260616f
+  name: anypi-eval-torghut-minimal-20260617a
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: '20260616f'
+    anypi.proompteng.ai/eval-batch: '20260617a'
     anypi.proompteng.ai/prompt-variant: minimal
     anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
@@ -38,14 +38,14 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/minimal/torghut-diff-coverage-20260616f
+    head: codex/anypi-eval/minimal/torghut-diff-coverage-20260617a
     promptVariant: minimal
     validationCommands: |
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
+    image: registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990
     resources:
       requests:
         cpu: '2'
@@ -58,11 +58,11 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-torghut-repair-20260616f
+  name: anypi-eval-torghut-repair-20260617a
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: '20260616f'
+    anypi.proompteng.ai/eval-batch: '20260617a'
     anypi.proompteng.ai/prompt-variant: repair-loop
     anypi.proompteng.ai/task: torghut-diff-coverage
 spec:
@@ -87,14 +87,14 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/repair-loop/torghut-diff-coverage-20260616f
+    head: codex/anypi-eval/repair-loop/torghut-diff-coverage-20260617a
     promptVariant: repair-loop
     validationCommands: |
       cd services/torghut && uv run --frozen pytest tests/test_check_diff_coverage.py -q
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
+    image: registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990
     resources:
       requests:
         cpu: '2'
@@ -107,11 +107,11 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-runner-finish-20260616f
+  name: anypi-eval-runner-finish-20260617a
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: '20260616f'
+    anypi.proompteng.ai/eval-batch: '20260617a'
     anypi.proompteng.ai/prompt-variant: finish-gated
     anypi.proompteng.ai/task: anypi-status-evidence
 spec:
@@ -135,7 +135,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/finish-gated/runner-status-evidence-20260616f
+    head: codex/anypi-eval/finish-gated/runner-status-evidence-20260617a
     promptVariant: finish-gated
     validationCommands: |
       bun run --filter @proompteng/anypi tsc
@@ -144,7 +144,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
+    image: registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990
     resources:
       requests:
         cpu: '2'
@@ -157,11 +157,11 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-runner-strict-20260616f
+  name: anypi-eval-runner-strict-20260617a
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: '20260616f'
+    anypi.proompteng.ai/eval-batch: '20260617a'
     anypi.proompteng.ai/prompt-variant: strict-repo
     anypi.proompteng.ai/task: anypi-ci-watcher
 spec:
@@ -185,7 +185,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/strict-repo/runner-ci-watcher-20260616f
+    head: codex/anypi-eval/strict-repo/runner-ci-watcher-20260617a
     promptVariant: strict-repo
     validationCommands: |
       bun run --filter @proompteng/anypi tsc
@@ -194,7 +194,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
+    image: registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990
     resources:
       requests:
         cpu: '2'
@@ -207,11 +207,11 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: anypi-eval-agents-repair-20260616f
+  name: anypi-eval-agents-repair-20260617a
   namespace: agents
   labels:
     app.kubernetes.io/part-of: anypi-prompt-eval
-    anypi.proompteng.ai/eval-batch: '20260616f'
+    anypi.proompteng.ai/eval-batch: '20260617a'
     anypi.proompteng.ai/prompt-variant: repair-loop
     anypi.proompteng.ai/task: agents-docs-manifests
 spec:
@@ -235,14 +235,14 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/anypi-eval/repair-loop/agents-docs-manifests-20260616f
+    head: codex/anypi-eval/repair-loop/agents-docs-manifests-20260617a
     promptVariant: repair-loop
     validationCommands: |
       kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
+    image: registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990
     resources:
       requests:
         cpu: '2'

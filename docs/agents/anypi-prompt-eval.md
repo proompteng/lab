@@ -139,9 +139,14 @@ The corrected batch produced four green PRs and one runner-harness failure:
   `git status --short` output. That failure is a runner bug, not a valid prompt score.
 
 Promotion decision after `20260616g`: promote `repair-loop` to the default `anypi-agent` prompt variant. It is the only
-variant with multiple green corrected runs across different task classes and zero policy violations. The rollout is not
-complete until a new Anypi image containing the runner no-progress fix is published, the Agents GitOps app reconciles,
-and a final default-provider Torghut AgentRun reaches a green PR.
+variant with multiple green corrected runs across different task classes and zero policy violations.
+
+Published rollout image after the no-progress fix:
+`registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990`.
+The index contains `linux/amd64` manifest
+`sha256:0f60eb4d9af0a8d7d692e50d6565bfdc16016b2023aae03b4b6700992eba6d76` and `linux/arm64` manifest
+`sha256:075019d2b839b71d288d66306d2c495480481dc57f589b2449f3ed35f5bec4fb`. The rollout is not complete until
+the Agents GitOps app reconciles and a final default-provider Torghut AgentRun reaches a green PR.
 
 Guardrail added after `20260616g`: validation-repair progress snapshots now include a hash of actual unstaged, staged,
 and untracked content. A repair that reformats the same dirty path no longer fails just because the path-level status
