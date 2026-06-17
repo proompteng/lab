@@ -139,6 +139,13 @@ describe('classifyAgentsImageMode', () => {
 })
 
 describe('agents-ci workflow local Agents image build', () => {
+  it('keeps integration validation on a hosted runner while cluster architecture is mixed', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    expect(workflow).toContain('integration:\n    runs-on: ubuntu-latest')
+    expect(workflow).not.toContain('integration:\n    runs-on: arc-arm64')
+  })
+
   it('uses the mirrored Bun base image for local CI rebuilds', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
