@@ -20,7 +20,7 @@ spec:
           serviceAccountName: torghut-runtime
           containers:
             - name: renew
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:271deba72f7be0eb0325a98bfd46ff6b10ac40e5ba7b470d4674c602cc6d65bb
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:e55e8a36363e2dbc1ab68c3a3b88c957142f2185668d9dbdba55c094b01fed46
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
@@ -163,9 +163,9 @@ spec:
                 - name: SIM_DB_DSN
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:271deba72f7be0eb0325a98bfd46ff6b10ac40e5ba7b470d4674c602cc6d65bb
+                  value: sha256:e55e8a36363e2dbc1ab68c3a3b88c957142f2185668d9dbdba55c094b01fed46
                 - name: TORGHUT_COMMIT
-                  value: 8c32674b34b17f46f7be2d3eeb8b2616a9c8fb37
+                  value: 37ba75719d89d93b73f7af3b5033ea24e61ad0f9
                 - name: TORGHUT_EMPIRICAL_CEPH_BUCKET
                   valueFrom:
                     configMapKeyRef:
