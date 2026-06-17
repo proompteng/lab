@@ -618,6 +618,87 @@ class TestAdaptivePolicyDerivation(_TestAdaptiveExecutionPolicyDerivationBase):
         self.assertEqual(result["dry_run"], True)
         self.assertEqual(result["account_label"], "paper")
 
+    def test_refresh_execution_tca_metrics_skips_inactive_stale_rows(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "strategy_id": str(strategy.id),
+                    "symbol": "AAPL",
+                    "action": "buy",
+                    "qty": "1",
+                    "params": {"price": "100"},
+                },
+                rationale="test",
+                status="submitted",
+                decision_hash="hash-inactive-tca",
+            )
+            session.add(decision)
+            session.flush()
+            old_activity_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            recent_refresh_side_effect_at = datetime(2026, 1, 20, tzinfo=timezone.utc)
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_order_id="order-inactive-tca",
+                client_order_id="client-inactive-tca",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                alpaca_account_label="paper",
+                execution_expected_adapter="alpaca",
+                execution_actual_adapter="alpaca",
+                created_at=old_activity_at,
+                updated_at=recent_refresh_side_effect_at,
+                last_update_at=old_activity_at,
+                order_feed_last_event_ts=old_activity_at,
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    side="buy",
+                    arrival_price=Decimal("101"),
+                    avg_fill_price=Decimal("100"),
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("1"),
+                    slippage_bps=Decimal("-99.00990099"),
+                    shortfall_notional=Decimal("-1"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=old_activity_at,
+                )
+            )
+            session.commit()
+
+            result = refresh_execution_tca_metrics(
+                session,
+                account_label="paper",
+                stale_before=datetime(2026, 2, 1, tzinfo=timezone.utc),
+                execution_activity_after=datetime(2026, 1, 15, tzinfo=timezone.utc),
+                limit=10,
+            )
+
+        self.assertEqual(result["selected"], 0)
+        self.assertEqual(result["refreshed"], 0)
+        self.assertEqual(
+            result["execution_activity_after"],
+            "2026-01-15T00:00:00+00:00",
+        )
+
     def test_upsert_tca_preserves_execution_account_without_decision_link(self) -> None:
         with self.session_local() as session:
             execution = Execution(
