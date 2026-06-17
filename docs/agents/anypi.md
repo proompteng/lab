@@ -9,7 +9,7 @@ Flamingo model.
 - Agent: `anypi-agent`
 - Binary: `/usr/local/bin/anypi-runner`
 - Runtime type: `job`
-- Required workload image: `registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66`
+- Required workload image: `registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d`
 - Default model endpoint: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Default model: `qwen3-coder-flamingo`
 - Supported workload image platforms: `linux/amd64`, `linux/arm64`
@@ -38,6 +38,8 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
   `/workspace/.agent/status.json`.
 - `ANYPI_MODEL_READY_TIMEOUT_SECONDS=1800` makes the runner wait for `GET /v1/models` before starting Pi, which avoids
   empty runs while Flamingo is cold-loading the model.
+- `ANYPI_PI_PROMPT_TIMEOUT_SECONDS=1800` bounds each Pi SDK prompt attempt. A stuck model/tool loop fails the run and
+  records the timeout in status instead of burning the whole Kubernetes Job deadline.
 - `ANYPI_VALIDATION_POLICY=append` combines inferred service checks, run-provided checks, and provider checks. The runner
   refuses to continue when the only validation command is `git diff --check`.
 - `ANYPI_VALIDATION_REPAIR_ATTEMPTS=2` gives Pi two bounded repair passes when a runner-side validation command fails.
@@ -49,17 +51,18 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 
 ## Prompt Contract
 
-The system prompt is a measured runner artifact, not a fixed Agent default. The default provider starts with `minimal`;
-`anypi-eval-agent` runs comparative variants through `ANYPI_PROMPT_VARIANT={{parameters.promptVariant}}`. The Kubernetes
-`Agent` placeholder exists only because the Agents controller requires a `defaults.systemPrompt` field before it will
-materialize a run.
+The system prompt is a measured runner artifact, not an Agent-owned prose blob. The default provider uses
+`repair-loop`, selected from prompt-evaluation evidence because it reached green PRs across Torghut and Agents manifest
+tasks without policy violations. `anypi-eval-agent` runs comparative variants through
+`ANYPI_PROMPT_VARIANT={{parameters.promptVariant}}`. The Kubernetes `Agent` placeholder exists only because the Agents
+controller requires a `defaults.systemPrompt` field before it will materialize a run.
 
 Prompt variants are intentionally small and repo-focused. They do not mention Anypi, yolo mode, Kubernetes, Flamingo, or
 the Pi SDK. Runtime details stay in runner config and logs, not in the model's behavioral contract. Root `AGENTS.md` is
 injected as repository context.
 
-Status evidence is written to `/workspace/.agent/status.json`: `promptVariant`, `promptHash`, `validationPlan`,
-`validations`, `ci`, `ciAttempts`, `sessionFiles`, `commit`, and `pullRequest`.
+Status evidence is written to `/workspace/.agent/status.json`: `promptVariant`, `promptHash`, `piPromptTimeoutSeconds`,
+`validationPlan`, `validations`, `ci`, `ciAttempts`, `sessionFiles`, `commit`, and `pullRequest`.
 
 ## AgentRun Example
 
@@ -102,7 +105,7 @@ spec:
   secrets:
     - github-token
   workload:
-    image: registry.ide-newton.ts.net/lab/anypi:fc4a51679@sha256:3dd2c28b9426f0530f2661fbb2b30bc96ff43f54bef74c02f5fce5ba9ecf3a66
+    image: registry.ide-newton.ts.net/lab/anypi:1e8ff6b7c@sha256:1e6282c45e5e454a69ebfc77fea1cbba2b7e42fe49dc073a722b85c91a7b2c4d
     resources:
       requests:
         cpu: '2'

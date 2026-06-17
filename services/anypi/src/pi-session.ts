@@ -64,6 +64,32 @@ const createResourceLoader = async (worktree: string, systemPrompt: string): Pro
   }
 }
 
+const runPromptWithTimeout = async (
+  session: Awaited<ReturnType<typeof createAgentSession>>['session'],
+  prompt: string,
+  timeoutSeconds: number,
+) => {
+  let timedOut = false
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const promptPromise = session.prompt(prompt).catch((error: unknown) => {
+    if (timedOut) return
+    throw error
+  })
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true
+      session.dispose()
+      reject(new Error(`Pi prompt exceeded ${timeoutSeconds}s timeout`))
+    }, timeoutSeconds * 1000)
+  })
+
+  try {
+    await Promise.race([promptPromise, timeoutPromise])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
 export const runPiAgent = async (
   config: AnypiConfig,
   prompt: string,
@@ -127,7 +153,7 @@ export const runPiAgent = async (
 
   try {
     try {
-      await session.prompt(prompt)
+      await runPromptWithTimeout(session, prompt, config.piPromptTimeoutSeconds)
     } catch (error) {
       if (!text.trim() || !isBenignAssistantContinuationError(error)) throw error
       await log(`pi stopped after assistant final response: ${(error as Error).message}`)

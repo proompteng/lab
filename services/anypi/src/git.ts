@@ -1,9 +1,17 @@
+import { createHash } from 'node:crypto'
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import { runCommand, runShell } from './command'
 import type { AnypiConfig } from './config'
-import type { AgentRunSpecPayload, CiCheck, CiWaitResult, CommandResult, PullRequestResult } from './types'
+import type {
+  AgentRunSpecPayload,
+  CiCheck,
+  CiWaitResult,
+  CommandResult,
+  PullRequestResult,
+  ValidationResult,
+} from './types'
 
 export type GitContext = {
   repository: string
@@ -176,6 +184,122 @@ export const prepareRepository = async (
 
 export const gitStatusShort = async (worktree: string, env?: Record<string, string | undefined>) =>
   (await runCommand('git', ['status', '--short'], { cwd: worktree, env })).stdout.trim()
+
+export const gitWorktreeContentHash = async (worktree: string, env?: Record<string, string | undefined>) => {
+  const hash = createHash('sha256')
+  const commands = [
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    ['diff', '--no-ext-diff', '--binary'],
+    ['diff', '--cached', '--no-ext-diff', '--binary'],
+  ]
+  for (const args of commands) {
+    const result = await runCommand('git', args, { cwd: worktree, env, allowFailure: true })
+    hash.update(`git ${args.join(' ')}\0${result.exitCode}\0${result.stdout}\0${result.stderr}\0`)
+  }
+
+  const untracked = await runCommand('git', ['ls-files', '--others', '--exclude-standard', '-z'], {
+    cwd: worktree,
+    env,
+    allowFailure: true,
+  })
+  for (const path of untracked.stdout.split('\0').filter(Boolean).sort()) {
+    const result = await runCommand('git', ['hash-object', '--no-filters', path], {
+      cwd: worktree,
+      env,
+      allowFailure: true,
+    })
+    hash.update(`untracked\0${path}\0${result.exitCode}\0${result.stdout}\0${result.stderr}\0`)
+  }
+
+  return hash.digest('hex')
+}
+
+const splitLines = (value: string) =>
+  value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+export const listChangedFiles = async (git: GitContext) => {
+  const status = await runCommand('git', ['status', '--porcelain', '--untracked-files=all'], {
+    cwd: git.worktree,
+    env: git.env,
+    allowFailure: true,
+  })
+  const commands = [
+    ['diff', '--name-only'],
+    ['diff', '--cached', '--name-only'],
+    ['diff', '--name-only', `origin/${git.baseBranch}...HEAD`],
+  ]
+  const files: string[] = []
+  if (status.exitCode === 0) {
+    files.push(
+      ...splitLines(status.stdout).map((line) => {
+        const path = line.slice(3)
+        return path.includes(' -> ') ? (path.split(' -> ').at(-1) ?? path) : path
+      }),
+    )
+  }
+  for (const args of commands) {
+    const result = await runCommand('git', args, {
+      cwd: git.worktree,
+      env: git.env,
+      allowFailure: true,
+    })
+    if (result.exitCode === 0) files.push(...splitLines(result.stdout))
+  }
+  return [...new Set(files)].sort()
+}
+
+const restrictedLockfiles = new Set(['bun.lock', 'bun.lockb', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'])
+const restrictedGeneratedSegments = new Set(['dist', 'build', '_generated'])
+
+export const classifyRestrictedChangedFile = (path: string) => {
+  const segments = path.split('/').filter(Boolean)
+  const basename = segments.at(-1) ?? path
+  if (restrictedLockfiles.has(basename)) return 'lockfile'
+  if (segments.some((segment) => restrictedGeneratedSegments.has(segment))) return 'generated-artifact'
+  return null
+}
+
+const envFlagValue = (value: string | undefined) => {
+  if (!value) return false
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
+const allowsRestrictedFileChanges = (runSpec: AgentRunSpecPayload) =>
+  envFlagValue(runSpec.parameters?.allowRestrictedFileChanges) ||
+  envFlagValue(runSpec.parameters?.allowGeneratedArtifactChanges) ||
+  envFlagValue(runSpec.parameters?.allowLockfileChanges)
+
+export const validateChangedFilePolicy = async (
+  git: GitContext,
+  runSpec: AgentRunSpecPayload,
+): Promise<ValidationResult | null> => {
+  if (allowsRestrictedFileChanges(runSpec)) return null
+  const started = Date.now()
+  const restricted = (await listChangedFiles(git))
+    .map((path) => ({ path, reason: classifyRestrictedChangedFile(path) }))
+    .filter((entry): entry is { path: string; reason: string } => Boolean(entry.reason))
+
+  if (restricted.length === 0) return null
+
+  return {
+    command: 'anypi-policy',
+    args: ['restricted-files'],
+    cwd: git.worktree,
+    exitCode: 1,
+    stdout: [
+      'Anypi changed generated artifacts or lockfiles without an explicit allow parameter.',
+      'Revert these files or set allowRestrictedFileChanges=true only when the task explicitly requires it.',
+      '',
+      ...restricted.map((entry) => `- ${entry.path} (${entry.reason})`),
+    ].join('\n'),
+    stderr: '',
+    durationMs: Date.now() - started,
+    ok: false,
+  }
+}
 
 export const countCommitsAhead = async (git: GitContext) => {
   const result = await runShell(`git rev-list --count "origin/${git.baseBranch}..HEAD"`, {

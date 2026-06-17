@@ -1,9 +1,16 @@
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+
 import { describe, expect, test } from 'vitest'
 
 import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
 import {
   isNoChecksReportedResult,
   isNoRequiredChecksResult,
+  classifyRestrictedChangedFile,
+  validateChangedFilePolicy,
   parseCiChecks,
   parseCiChecksResult,
   parsePullRequestList,
@@ -26,7 +33,13 @@ import {
   resolveAttemptSessionDir,
   resolveEffectiveSystemPrompt,
 } from './pi-session'
-import { buildCommitMessage, buildPullRequestTitle, normalizeConventionalSummary, renderPullRequestBody } from './run'
+import {
+  buildCommitMessage,
+  buildPullRequestTitle,
+  hasWorktreeProgress,
+  normalizeConventionalSummary,
+  renderPullRequestBody,
+} from './run'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -35,6 +48,7 @@ describe('Anypi config', () => {
     expect(config.model).toBe('qwen3-coder-flamingo')
     expect(config.baseUrl).toBe('http://flamingo.flamingo.svc.cluster.local/v1')
     expect(config.modelReadyTimeoutSeconds).toBe(1800)
+    expect(config.piPromptTimeoutSeconds).toBe(1800)
     expect(config.promptVariant).toBe('minimal')
     expect(config.allowSystemPromptOverride).toBe(false)
     expect(config.thinkingLevel).toBe('off')
@@ -71,9 +85,16 @@ describe('Anypi config', () => {
   test('normalizes prompt variants and validation policy from env', () => {
     expect(resolvePromptVariant('strict-repo')).toBe('strict-repo')
     expect(resolvePromptVariant('unknown')).toBe('minimal')
-    expect(resolveConfig({ ANYPI_PROMPT_VARIANT: 'repair-loop', ANYPI_VALIDATION_POLICY: 'override' })).toMatchObject({
+    expect(
+      resolveConfig({
+        ANYPI_PROMPT_VARIANT: 'repair-loop',
+        ANYPI_VALIDATION_POLICY: 'override',
+        ANYPI_PI_PROMPT_TIMEOUT_SECONDS: '900',
+      }),
+    ).toMatchObject({
       promptVariant: 'repair-loop',
       validationPolicy: 'override',
+      piPromptTimeoutSeconds: 900,
     })
   })
 
@@ -107,6 +128,7 @@ describe('Anypi prompt contract', () => {
       '/workspace/lab',
     )
     expect(prompt).toContain('Use repository instructions and existing patterns')
+    expect(prompt).toContain('Do not edit generated files or lockfiles')
     expect(prompt).toContain('Refactor code and add tests.')
     expect(prompt).toContain('Leave the final changes in the worktree')
     expect(prompt).not.toMatch(/Anypi|YOLO|Kubernetes|Pi SDK|shell, read, edit, write/)
@@ -116,6 +138,7 @@ describe('Anypi prompt contract', () => {
     const prompt = buildSystemPrompt('minimal')
     expect(prompt).toContain('Act as a coding agent inside an existing repository')
     expect(prompt).toContain('Run the checks required for touched files')
+    expect(prompt).toContain('Do not edit generated files or lockfiles')
     expect(prompt).not.toMatch(/Anypi|YOLO|Kubernetes|Pi SDK|provider|Flamingo/)
     expect(hashSystemPrompt('minimal')).toMatch(/^[a-f0-9]{16}$/)
   })
@@ -159,6 +182,7 @@ describe('Anypi prompt contract', () => {
         namespace: 'agents',
         model: 'qwen3-coder-flamingo',
         providerModel: 'flamingo/qwen3-coder-flamingo',
+        piPromptTimeoutSeconds: 1800,
         promptVariant: 'repair-loop',
         promptHash: '0123456789abcdef',
         tools: ['bash', 'edit'],
@@ -296,6 +320,61 @@ describe('Anypi prompt contract', () => {
     })
   })
 
+  test('rejects generated artifact and lockfile drift before commit', async () => {
+    expect(classifyRestrictedChangedFile('bun.lock')).toBe('lockfile')
+    expect(classifyRestrictedChangedFile('services/anypi/dist/index.js')).toBe('generated-artifact')
+    expect(classifyRestrictedChangedFile('services/anypi/src/run.ts')).toBeNull()
+
+    const worktree = await mkdtemp(join(tmpdir(), 'anypi-policy-'))
+    execFileSync('git', ['init', '-b', 'main'], { cwd: worktree })
+    execFileSync('git', ['config', 'user.email', 'anypi@example.invalid'], { cwd: worktree })
+    execFileSync('git', ['config', 'user.name', 'Anypi Test'], { cwd: worktree })
+    await writeFile(join(worktree, 'README.md'), 'ok\n', 'utf8')
+    execFileSync('git', ['add', 'README.md'], { cwd: worktree })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: worktree })
+    await writeFile(join(worktree, 'bun.lock'), 'lock drift\n', 'utf8')
+
+    const failure = await validateChangedFilePolicy(
+      {
+        repository: 'proompteng/lab',
+        baseBranch: 'main',
+        headBranch: 'codex/anypi-policy',
+        cloneUrl: 'https://github.com/proompteng/lab.git',
+        webUrl: 'https://github.com/proompteng/lab',
+        worktree,
+        env: {},
+        writeEnabled: true,
+        pullRequestsEnabled: true,
+      },
+      {},
+    )
+
+    expect(failure).toMatchObject({
+      command: 'anypi-policy',
+      args: ['restricted-files'],
+      exitCode: 1,
+      ok: false,
+    })
+    expect(failure?.stdout).toContain('bun.lock (lockfile)')
+
+    await expect(
+      validateChangedFilePolicy(
+        {
+          repository: 'proompteng/lab',
+          baseBranch: 'main',
+          headBranch: 'codex/anypi-policy',
+          cloneUrl: 'https://github.com/proompteng/lab.git',
+          webUrl: 'https://github.com/proompteng/lab',
+          worktree,
+          env: {},
+          writeEnabled: true,
+          pullRequestsEnabled: true,
+        },
+        { parameters: { allowLockfileChanges: 'true' } },
+      ),
+    ).resolves.toBeNull()
+  })
+
   test('rejects unsupported GitHub check command output instead of treating it as no checks', () => {
     expect(
       isNoChecksReportedResult({
@@ -377,5 +456,32 @@ describe('Anypi prompt contract', () => {
     expect(prompt).toContain('Repair attempt: 1 of 2')
     expect(prompt).toContain('requires a real implementation')
     expect(prompt).toContain('leave the final changes in the worktree')
+  })
+
+  test('detects whether a repair attempt changed worktree progress', () => {
+    expect(
+      hasWorktreeProgress(
+        { status: ' M services/anypi/src/run.ts', commitsAhead: 0, contentHash: 'a' },
+        { status: ' M services/anypi/src/run.ts\n M services/anypi/src/config.ts', commitsAhead: 0, contentHash: 'b' },
+      ),
+    ).toBe(true)
+    expect(
+      hasWorktreeProgress(
+        { status: ' M foo.ts', commitsAhead: 0, contentHash: 'before' },
+        { status: ' M foo.ts', commitsAhead: 0, contentHash: 'after' },
+      ),
+    ).toBe(true)
+    expect(
+      hasWorktreeProgress(
+        { status: '', commitsAhead: 0, contentHash: 'a' },
+        { status: '', commitsAhead: 1, contentHash: 'a' },
+      ),
+    ).toBe(true)
+    expect(
+      hasWorktreeProgress(
+        { status: ' M foo.ts', commitsAhead: 1, contentHash: 'same' },
+        { status: ' M foo.ts', commitsAhead: 1, contentHash: 'same' },
+      ),
+    ).toBe(false)
   })
 })

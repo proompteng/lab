@@ -17,10 +17,12 @@ import {
   countCommitsAhead,
   createOrUpdatePullRequest,
   gitStatusShort,
+  gitWorktreeContentHash,
   prepareRepository,
   pushBranch,
   resolveGitContext,
   runValidationCommands,
+  validateChangedFilePolicy,
   waitForPullRequestChecks,
   type GitContext,
 } from './git'
@@ -163,6 +165,7 @@ const baseStatus = (
   worktree: config.worktree,
   model: config.model,
   providerModel: `${config.provider}/${config.model}`,
+  piPromptTimeoutSeconds: config.piPromptTimeoutSeconds,
   promptVariant: config.promptVariant,
   promptHash: hashSystemPrompt(config.promptVariant),
   tools: [],
@@ -178,6 +181,23 @@ const mergeTools = (left: string[], right: string[]) => [...new Set([...left, ..
 
 const failedValidation = (results: ValidationResult[]) => results.find((result) => !result.ok)
 
+export type WorktreeProgressSnapshot = {
+  status: string
+  commitsAhead: number
+  contentHash: string
+}
+
+export const hasWorktreeProgress = (before: WorktreeProgressSnapshot, after: WorktreeProgressSnapshot) =>
+  before.status !== after.status ||
+  before.commitsAhead !== after.commitsAhead ||
+  before.contentHash !== after.contentHash
+
+const getWorktreeProgress = async (git: GitContext | null, worktree: string): Promise<WorktreeProgressSnapshot> => ({
+  status: await gitStatusShort(worktree, git?.env),
+  commitsAhead: git ? await countCommitsAhead(git) : 0,
+  contentHash: git ? await gitWorktreeContentHash(worktree, git.env) : '',
+})
+
 const formatValidationError = (result: ValidationResult) =>
   `validation failed (${result.exitCode}): ${[result.command, ...result.args].join(' ')}`
 
@@ -192,6 +212,25 @@ const formatCiRepairSummary = (ci: CiWaitResult) => {
     .slice(0, 30)
     .join('\n')
   return `${ci.status}: ${ci.summary}${checks ? `\n${checks}` : ''}`
+}
+
+const runValidationPass = async (
+  commands: string[],
+  git: GitContext | null,
+  runSpec: AgentRunSpecPayload,
+  worktree: string,
+  log: (message: string) => Promise<void>,
+) => {
+  const rawResults = await runValidationCommands(commands, git, worktree, log)
+  const results = rawResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+  if (!failedValidation(results) && git) {
+    const policyFailure = await validateChangedFilePolicy(git, runSpec)
+    if (policyFailure) {
+      await log(policyFailure.stdout)
+      results.push(policyFailure)
+    }
+  }
+  return results
 }
 
 const waitForModelEndpoint = async (config: AnypiConfig, log: (message: string) => Promise<void>) => {
@@ -289,8 +328,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     const validationCommands = status.validationPlan.commands
     let validationResults: ValidationResult[] = []
     for (let attempt = 0; attempt <= config.validationRepairAttempts; attempt += 1) {
-      const rawResults = await runValidationCommands(validationCommands, git, config.worktree, logger.info)
-      validationResults = rawResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+      validationResults = await runValidationPass(validationCommands, git, runSpec, config.worktree, logger.info)
       status.validationAttempts = attempt + 1
       status.validations = validationResults
       await writeStatus(config.statusPath, status)
@@ -302,6 +340,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       await logger.error(
         `${formatValidationError(failed)}; starting validation repair ${attempt + 1}/${config.validationRepairAttempts}`,
       )
+      const beforeRepair = await getWorktreeProgress(git, config.worktree)
       const repairPrompt = buildValidationRepairPrompt({
         attempt: attempt + 1,
         maxAttempts: config.validationRepairAttempts,
@@ -319,6 +358,12 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
         sessionFiles.push(repairResult.sessionFile)
         status.sessionFile = repairResult.sessionFile
         status.sessionFiles = sessionFiles
+      }
+      const afterRepair = await getWorktreeProgress(git, config.worktree)
+      if (!hasWorktreeProgress(beforeRepair, afterRepair)) {
+        throw new Error(
+          `${formatValidationError(failed)}; validation repair ${attempt + 1} produced no worktree changes`,
+        )
       }
     }
 
@@ -370,8 +415,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
           await recordPiResult(repairResult, `CI repair ${attempt + 1}`)
           status.agentAttempts += 1
 
-          const rawResults = await runValidationCommands(validationCommands, git, config.worktree, logger.info)
-          validationResults = rawResults.map((result): ValidationResult => ({ ...result, ok: result.exitCode === 0 }))
+          validationResults = await runValidationPass(validationCommands, git, runSpec, config.worktree, logger.info)
           status.validationAttempts += 1
           status.validations = validationResults
           await writeStatus(config.statusPath, status)

@@ -135,6 +135,7 @@ Task rules:
 - Add or update tests when behavior changes.
 - Run the checks required for the files you touched.
 - Fix validation failures before stopping.
+- Do not edit generated files or lockfiles unless the task explicitly requires it.
 - Do not commit, push, merge, delete branches, or fake results.
 - Leave the final changes in the worktree.
 
@@ -215,6 +216,7 @@ Rules:
 - Keep the solution focused, production-quality, and no broader than the task.
 - Add or update tests for changed behavior.
 - Run the checks required for touched files; fix failures and rerun them.
+- Do not edit generated files or lockfiles unless the task explicitly requires it.
 - Do not hard-code for tests, remove tests to pass, fake results, or claim success with failing checks.
 - Do not commit, push, merge, or change branches.
 - Keep the final response concise: changed files and validation only.`,
@@ -226,6 +228,7 @@ Rules:
 - Add or update tests for changed behavior.
 - Run the checks required for touched files; fix failures and rerun them.
 - Continue until the implementation, tests, and validation are complete.
+- Do not edit generated files or lockfiles unless the task explicitly requires it.
 - Do not hard-code for tests, remove tests to pass, fake results, or claim success with failing checks.
 - Do not commit, push, merge, or change branches.
 - Keep the final response concise: changed files and validation only.`,
@@ -238,6 +241,7 @@ Rules:
 - Run the checks required for touched files; fix failures and rerun them.
 - When a check fails, use the command output as evidence, fix the root cause, and rerun the failing check.
 - Continue until the implementation, tests, and validation are complete.
+- Do not edit generated files or lockfiles unless the task explicitly requires it.
 - Do not hard-code for tests, remove tests to pass, fake results, or claim success with failing checks.
 - Do not commit, push, merge, or change branches.
 - Keep the final response concise: changed files and validation only.`,
@@ -251,6 +255,7 @@ Rules:
 - Run the checks required for touched files; fix failures and rerun them.
 - When a check fails, use the command output as evidence, fix the root cause, and rerun the failing check.
 - Continue until the implementation, tests, and validation are complete.
+- Do not edit generated files or lockfiles unless the task explicitly requires it.
 - Do not hard-code for tests, remove tests to pass, fake results, or claim success with failing checks.
 - Do not delete coverage, weaken assertions, skip mandatory checks, or make unrelated refactors.
 - Do not commit, push, merge, or change branches.

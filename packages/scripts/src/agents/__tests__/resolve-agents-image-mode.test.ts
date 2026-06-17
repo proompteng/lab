@@ -139,6 +139,13 @@ describe('classifyAgentsImageMode', () => {
 })
 
 describe('agents-ci workflow local Agents image build', () => {
+  it('keeps integration validation on a hosted runner while cluster architecture is mixed', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    expect(workflow).toContain('integration:\n    runs-on: ubuntu-latest')
+    expect(workflow).not.toContain('integration:\n    runs-on: arc-arm64')
+  })
+
   it('uses the mirrored Bun base image for local CI rebuilds', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
@@ -150,6 +157,24 @@ describe('agents-ci workflow local Agents image build', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
     expect(workflow).toContain('git diff --name-only "${BASE_SHA}...${HEAD_SHA}"')
+  })
+
+  it('builds local kind smoke images when the published registry is unreachable', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    expect(workflow).toContain('PUBLISHED_AGENTS_REGISTRY_HOST="registry.ide-newton.ts.net"')
+    expect(workflow).toContain('getent hosts "${PUBLISHED_AGENTS_REGISTRY_HOST}"')
+    expect(workflow).toContain('registry-unreachable:${PUBLISHED_AGENTS_REGISTRY_HOST}')
+    expect(workflow).toContain('AGENTS_IMAGE_MODE="build-local-image"')
+  })
+
+  it('bounds and emits progress for hosted local image prep', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    expect(workflow).toContain('timeout-minutes: 45')
+    expect(workflow).toContain('run_with_progress "Turbo prune context"')
+    expect(workflow).toContain('PREP_TIMEOUT_MINUTES=25')
+    expect(workflow).not.toContain('run_step "Prune turbo context"')
   })
 
   it('installs kubectl without sudo so ARC runners cannot hang on password prompts', () => {

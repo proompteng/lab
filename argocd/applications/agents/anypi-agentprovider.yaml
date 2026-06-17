@@ -12,7 +12,8 @@ spec:
     ANYPI_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
     ANYPI_API_KEY: flamingo-local
     ANYPI_MODEL_READY_TIMEOUT_SECONDS: "1800"
-    ANYPI_PROMPT_VARIANT: minimal
+    ANYPI_PI_PROMPT_TIMEOUT_SECONDS: "1800"
+    ANYPI_PROMPT_VARIANT: repair-loop
     ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE: "false"
     ANYPI_THINKING_LEVEL: "off"
     ANYPI_TOOLS: all
