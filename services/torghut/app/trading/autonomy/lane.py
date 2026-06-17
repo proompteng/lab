@@ -2277,8 +2277,12 @@ def run_autonomous_lane(
     profitability_run_context: dict[str, Any] = {}
     walk_results_path = backtest_dir / "walkforward-results.json"
 
-    def _write_profitability_manifest() -> None:
+    def _missing_profitability_manifest_writer() -> None:
         raise RuntimeError("profitability_manifest_writer_not_initialized")
+
+    _write_profitability_manifest: Callable[[], None] = (
+        _missing_profitability_manifest_writer
+    )
 
     actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
 
@@ -2618,402 +2622,391 @@ def run_autonomous_lane(
         _write_janus_and_benchmark_artifacts(baseline_report)
         _write_router_contract_artifacts()
 
-    def _run_profitability_validation_phase() -> None:
-        def _artifact_ref(path: Path) -> str:
-            if output_dir.is_absolute():
-                return str(path)
-            return str(path.relative_to(output_dir))
+    def _artifact_ref(path: Path) -> str:
+        if output_dir.is_absolute():
+            return str(path)
+        return str(path.relative_to(output_dir))
 
-        def _write_profitability_evidence_artifacts() -> tuple[
-            Any,
-            dict[str, Any],
-            dict[str, object],
-        ]:
-            nonlocal profitability_validation
+    def _write_profitability_evidence_artifacts() -> tuple[
+        Any,
+        dict[str, Any],
+        dict[str, object],
+    ]:
+        nonlocal profitability_validation
 
-            profitability_evidence = build_profitability_evidence_v4(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                baseline_id=baseline_candidate_id,
-                candidate_report_payload=report.to_payload(),
-                benchmark=benchmark,
-                confidence_values=_collect_confidence_values(walk_decisions),
-                reproducibility_hashes={
-                    "signals": _sha256_path(signals_path),
-                    "strategy_config": _sha256_path(strategy_config_path),
-                    "gate_policy": _sha256_path(gate_policy_path),
-                    "walkforward_results": _sha256_path(walk_results_path),
-                    "foundation_router_parity": _sha256_path(
-                        foundation_router_parity_path
-                    ),
-                    "deeplob_bdlob_contract": _sha256_path(deeplob_bdlob_report_path),
-                    "advisor_fallback_slo": _sha256_path(
-                        advisor_fallback_slo_report_path
-                    ),
-                    "hmm_state_posterior": _sha256_path(hmm_state_posterior_path),
-                    "expert_router_registry": _sha256_path(expert_router_registry_path),
-                    "candidate_report": _sha256_path(evaluation_report_path),
-                    "baseline_report": _sha256_path(baseline_report_path),
-                    "janus_event_car": _sha256_path(janus_event_car_path),
-                    "janus_hgrm_reward": _sha256_path(janus_hgrm_reward_path),
-                },
-                artifact_refs=[
-                    str(evaluation_report_path),
-                    str(baseline_report_path),
-                    str(walk_results_path),
-                    str(hmm_state_posterior_path),
-                    str(expert_router_registry_path),
-                    str(deeplob_bdlob_report_path),
-                    str(advisor_fallback_slo_report_path),
-                    str(signals_path),
-                    str(strategy_config_path),
-                    str(gate_policy_path),
-                ],
-                generated_at=now,
-            )
-            evidence_payload = profitability_evidence.to_payload()
-            evidence_payload["janus_q"] = janus_q_summary
-            profitability_evidence_path.write_text(
-                json.dumps(evidence_payload, indent=2), encoding="utf-8"
-            )
-            profitability_validation = validate_profitability_evidence_v4(
-                profitability_evidence,
-                thresholds=ProfitabilityEvidenceThresholdsV4.from_payload(
-                    _profitability_threshold_payload(gate_policy_payload)
-                ),
-                checked_at=now,
-            )
-            profitability_validation_path.write_text(
-                json.dumps(profitability_validation.to_payload(), indent=2),
-                encoding="utf-8",
-            )
-            return (
-                profitability_evidence,
-                evidence_payload,
-                _load_tca_gate_inputs(factory),
-            )
+        profitability_evidence = build_profitability_evidence_v4(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            baseline_id=baseline_candidate_id,
+            candidate_report_payload=report.to_payload(),
+            benchmark=benchmark,
+            confidence_values=_collect_confidence_values(walk_decisions),
+            reproducibility_hashes={
+                "signals": _sha256_path(signals_path),
+                "strategy_config": _sha256_path(strategy_config_path),
+                "gate_policy": _sha256_path(gate_policy_path),
+                "walkforward_results": _sha256_path(walk_results_path),
+                "foundation_router_parity": _sha256_path(foundation_router_parity_path),
+                "deeplob_bdlob_contract": _sha256_path(deeplob_bdlob_report_path),
+                "advisor_fallback_slo": _sha256_path(advisor_fallback_slo_report_path),
+                "hmm_state_posterior": _sha256_path(hmm_state_posterior_path),
+                "expert_router_registry": _sha256_path(expert_router_registry_path),
+                "candidate_report": _sha256_path(evaluation_report_path),
+                "baseline_report": _sha256_path(baseline_report_path),
+                "janus_event_car": _sha256_path(janus_event_car_path),
+                "janus_hgrm_reward": _sha256_path(janus_hgrm_reward_path),
+            },
+            artifact_refs=[
+                str(evaluation_report_path),
+                str(baseline_report_path),
+                str(walk_results_path),
+                str(hmm_state_posterior_path),
+                str(expert_router_registry_path),
+                str(deeplob_bdlob_report_path),
+                str(advisor_fallback_slo_report_path),
+                str(signals_path),
+                str(strategy_config_path),
+                str(gate_policy_path),
+            ],
+            generated_at=now,
+        )
+        evidence_payload = profitability_evidence.to_payload()
+        evidence_payload["janus_q"] = janus_q_summary
+        profitability_evidence_path.write_text(
+            json.dumps(evidence_payload, indent=2), encoding="utf-8"
+        )
+        profitability_validation = validate_profitability_evidence_v4(
+            profitability_evidence,
+            thresholds=ProfitabilityEvidenceThresholdsV4.from_payload(
+                _profitability_threshold_payload(gate_policy_payload)
+            ),
+            checked_at=now,
+        )
+        profitability_validation_path.write_text(
+            json.dumps(profitability_validation.to_payload(), indent=2),
+            encoding="utf-8",
+        )
+        return (
+            profitability_evidence,
+            evidence_payload,
+            _load_tca_gate_inputs(factory),
+        )
 
-        def _write_simulation_and_contamination_artifacts(
-            profitability_evidence: Any,
-            tca_gate_inputs: dict[str, object],
-        ) -> None:
-            nonlocal contamination_registry_payload
-            nonlocal shadow_live_deviation_report_payload
-            nonlocal simulation_calibration_report_payload
+    def _write_simulation_and_contamination_artifacts(
+        profitability_evidence: Any,
+        tca_gate_inputs: dict[str, object],
+    ) -> None:
+        nonlocal contamination_registry_payload
+        nonlocal shadow_live_deviation_report_payload
+        nonlocal simulation_calibration_report_payload
 
-            simulation_calibration_report = build_simulation_calibration_report_v1(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                profitability_evidence=profitability_evidence,
-                tca_metrics=tca_gate_inputs,
-                min_order_count=_coerce_int(
-                    gate_policy_payload.get(
-                        "promotion_simulation_calibration_min_order_count",
-                        1,
-                    ),
-                    default=1,
+        simulation_calibration_report = build_simulation_calibration_report_v1(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            profitability_evidence=profitability_evidence,
+            tca_metrics=tca_gate_inputs,
+            min_order_count=_coerce_int(
+                gate_policy_payload.get(
+                    "promotion_simulation_calibration_min_order_count",
+                    1,
                 ),
-                min_expected_shortfall_coverage=_decimal_or_zero(
-                    gate_policy_payload.get(
-                        "promotion_simulation_calibration_min_expected_shortfall_coverage",
-                        "0.50",
-                    )
-                ),
-                max_avg_calibration_error_bps=_decimal_or_zero(
-                    gate_policy_payload.get(
-                        "promotion_simulation_calibration_max_avg_calibration_error_bps",
-                        "25",
-                    )
-                ),
-                generated_at=now,
-            )
-            simulation_calibration_report_payload = (
-                simulation_calibration_report.to_payload()
-            )
-            simulation_calibration_report_path.write_text(
-                json.dumps(simulation_calibration_report_payload, indent=2),
-                encoding="utf-8",
-            )
-            shadow_live_deviation_report = build_shadow_live_deviation_report_v1(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                profitability_evidence=profitability_evidence,
-                tca_metrics=tca_gate_inputs,
-                min_order_count=_coerce_int(
-                    gate_policy_payload.get(
-                        "promotion_shadow_live_deviation_min_order_count",
-                        1,
-                    ),
-                    default=1,
-                ),
-                max_avg_abs_slippage_bps=_decimal_or_zero(
-                    gate_policy_payload.get(
-                        "promotion_shadow_live_deviation_max_avg_abs_slippage_bps",
-                        "20",
-                    )
-                ),
-                max_avg_abs_divergence_bps=_decimal_or_zero(
-                    gate_policy_payload.get(
-                        "promotion_shadow_live_deviation_max_avg_abs_divergence_bps",
-                        "15",
-                    )
-                ),
-                generated_at=now,
-            )
-            shadow_live_deviation_report_payload = (
-                shadow_live_deviation_report.to_payload()
-            )
-            shadow_live_deviation_report_path.write_text(
-                json.dumps(shadow_live_deviation_report_payload, indent=2),
-                encoding="utf-8",
-            )
-            contamination_registry_payload = _build_contamination_registry_payload(
-                output_dir=output_dir,
-                run_id=run_id,
-                candidate_id=candidate_id,
-                now=now,
-                artifact_refs=[
-                    signals_path,
-                    strategy_config_path,
-                    gate_policy_path,
-                    walk_results_path,
-                    evaluation_report_path,
-                    baseline_report_path,
-                    profitability_evidence_path,
-                    profitability_validation_path,
-                    simulation_calibration_report_path,
-                    shadow_live_deviation_report_path,
-                    profitability_benchmark_path,
-                    benchmark_parity_path,
-                    foundation_router_parity_path,
-                    deeplob_bdlob_report_path,
-                    hmm_state_posterior_path,
-                    expert_router_registry_path,
-                ],
-            )
-            contamination_registry_path.write_text(
-                json.dumps(contamination_registry_payload, indent=2),
-                encoding="utf-8",
-            )
-
-        def _write_recalibration_request(
-            profitability_evidence_payload: dict[str, Any],
-        ) -> dict[str, Any]:
-            confidence_calibration, uncertainty_action, recalibration_run_id = (
-                _resolve_confidence_calibration(
-                    profitability_evidence_payload=profitability_evidence_payload,
-                    run_id=run_id,
-                    recalibration_report_path=recalibration_report_path,
+                default=1,
+            ),
+            min_expected_shortfall_coverage=_decimal_or_zero(
+                gate_policy_payload.get(
+                    "promotion_simulation_calibration_min_expected_shortfall_coverage",
+                    "0.50",
                 )
-            )
-            recalibration_report_path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": "recalibration_report_v1",
-                        "run_id": run_id,
-                        "candidate_id": candidate_id,
-                        "requested_at": now.isoformat(),
-                        "status": "queued" if recalibration_run_id else "not_required",
-                        "recalibration_run_id": recalibration_run_id,
-                        "uncertainty_gate_action": uncertainty_action,
-                        "coverage_error": confidence_calibration.get("coverage_error"),
-                        "shift_score": confidence_calibration.get("shift_score"),
-                        "artifact_refs": sorted(
-                            {
-                                str(profitability_evidence_path),
-                                str(profitability_validation_path),
-                            }
-                        ),
-                    },
-                    indent=2,
+            ),
+            max_avg_calibration_error_bps=_decimal_or_zero(
+                gate_policy_payload.get(
+                    "promotion_simulation_calibration_max_avg_calibration_error_bps",
+                    "25",
+                )
+            ),
+            generated_at=now,
+        )
+        simulation_calibration_report_payload = (
+            simulation_calibration_report.to_payload()
+        )
+        simulation_calibration_report_path.write_text(
+            json.dumps(simulation_calibration_report_payload, indent=2),
+            encoding="utf-8",
+        )
+        shadow_live_deviation_report = build_shadow_live_deviation_report_v1(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            profitability_evidence=profitability_evidence,
+            tca_metrics=tca_gate_inputs,
+            min_order_count=_coerce_int(
+                gate_policy_payload.get(
+                    "promotion_shadow_live_deviation_min_order_count",
+                    1,
                 ),
-                encoding="utf-8",
-            )
-            return confidence_calibration
+                default=1,
+            ),
+            max_avg_abs_slippage_bps=_decimal_or_zero(
+                gate_policy_payload.get(
+                    "promotion_shadow_live_deviation_max_avg_abs_slippage_bps",
+                    "20",
+                )
+            ),
+            max_avg_abs_divergence_bps=_decimal_or_zero(
+                gate_policy_payload.get(
+                    "promotion_shadow_live_deviation_max_avg_abs_divergence_bps",
+                    "15",
+                )
+            ),
+            generated_at=now,
+        )
+        shadow_live_deviation_report_payload = shadow_live_deviation_report.to_payload()
+        shadow_live_deviation_report_path.write_text(
+            json.dumps(shadow_live_deviation_report_payload, indent=2),
+            encoding="utf-8",
+        )
+        contamination_registry_payload = _build_contamination_registry_payload(
+            output_dir=output_dir,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            now=now,
+            artifact_refs=[
+                signals_path,
+                strategy_config_path,
+                gate_policy_path,
+                walk_results_path,
+                evaluation_report_path,
+                baseline_report_path,
+                profitability_evidence_path,
+                profitability_validation_path,
+                simulation_calibration_report_path,
+                shadow_live_deviation_report_path,
+                profitability_benchmark_path,
+                benchmark_parity_path,
+                foundation_router_parity_path,
+                deeplob_bdlob_report_path,
+                hmm_state_posterior_path,
+                expert_router_registry_path,
+            ],
+        )
+        contamination_registry_path.write_text(
+            json.dumps(contamination_registry_payload, indent=2),
+            encoding="utf-8",
+        )
 
-        def _evaluate_gate_report(
-            profitability_evidence_payload: dict[str, Any],
-            tca_gate_inputs: dict[str, object],
-        ) -> None:
-            nonlocal candidate_alpha_readiness_payload
-            nonlocal candidate_dependency_quorum_payload, candidate_state_payload
-            nonlocal fold_evidence, gate_report, stress_evidence, stress_metrics_count
-
-            metrics_payload = report.metrics.to_payload()
-            gate_policy = GatePolicyMatrix.from_path(gate_policy_path)
-            profitability_evidence_payload["validation"] = (
-                profitability_validation.to_payload()
-            )
-            (
-                fragility_state,
-                fragility_score,
-                stability_mode_active,
-                fragility_inputs_valid,
-            ) = _resolve_gate_fragility_inputs(
-                metrics_payload=metrics_payload, decisions=walk_decisions
-            )
-            _write_recalibration_request(profitability_evidence_payload)
-            (
-                candidate_alpha_readiness_payload,
-                candidate_dependency_quorum_payload,
-            ) = _build_candidate_alpha_readiness_payload(
-                runtime_strategies=runtime_strategies,
-            )
-            candidate_state_payload = _build_candidate_state_payload(
-                candidate_id=candidate_id,
+    def _write_recalibration_request(
+        profitability_evidence_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        confidence_calibration, uncertainty_action, recalibration_run_id = (
+            _resolve_confidence_calibration(
+                profitability_evidence_payload=profitability_evidence_payload,
                 run_id=run_id,
-                promotion_target=promotion_target,
-                approval_token=approval_token,
-                runtime_strategies=runtime_strategies,
-                now=now,
-                code_version=code_version,
-                runbook_validated=_is_runbook_valid(strategy_configmap_path),
-                dependency_quorum_payload=candidate_dependency_quorum_payload,
-                alpha_readiness_payload=candidate_alpha_readiness_payload,
+                recalibration_report_path=recalibration_report_path,
             )
-            candidate_state_readiness = _candidate_state_readiness_payload(
-                candidate_state_payload
-            )
-            gate_report = evaluate_gate_matrix(
-                GateInputs(
-                    feature_schema_version=gate_policy.required_feature_schema_version,
-                    required_feature_null_rate=_required_feature_null_rate(signals),
-                    staleness_ms_p95=_resolve_gate_staleness_ms_p95(
-                        signals=ordered_signals,
-                    ),
-                    symbol_coverage=len({signal.symbol for signal in signals}),
-                    metrics=metrics_payload,
-                    robustness=report.robustness.to_payload(),
-                    tca_metrics=tca_gate_inputs,
-                    llm_metrics=_resolve_gate_llm_metrics(
-                        session_factory=factory,
-                        now=now,
-                    ),
-                    forecast_metrics=_resolve_gate_forecast_metrics(
-                        signals=ordered_signals
-                    ),
-                    profitability_evidence=profitability_evidence_payload,
-                    fragility_state=fragility_state,
-                    fragility_score=fragility_score,
-                    stability_mode_active=stability_mode_active,
-                    fragility_inputs_valid=fragility_inputs_valid,
-                    operational_ready=not bool(
-                        candidate_state_payload.get("paused", False)
-                    ),
-                    runbook_validated=bool(
-                        _coerce_evidence_bool(
-                            candidate_state_payload.get("runbookValidated")
-                        )
-                    ),
-                    kill_switch_dry_run_passed=bool(
-                        _coerce_evidence_bool(
-                            candidate_state_readiness.get("killSwitchDryRunPassed")
-                        )
-                    ),
-                    rollback_dry_run_passed=bool(
-                        _coerce_evidence_bool(
-                            candidate_state_readiness.get("gitopsRevertDryRunPassed")
-                        )
-                        and _coerce_evidence_bool(
-                            candidate_state_readiness.get("strategyDisableDryRunPassed")
-                        )
-                    ),
-                    approval_token=approval_token,
-                ),
-                policy=gate_policy,
-                promotion_target=promotion_target,
-                code_version=code_version,
-                evaluated_at=now,
-            )
-            fold_evidence = [
+        )
+        recalibration_report_path.write_text(
+            json.dumps(
                 {
-                    "fold_name": fold.fold_name,
-                    "decision_count": fold.decision_count,
-                    "trade_count": fold.trade_count,
-                    "net_pnl": str(fold.net_pnl),
-                    "max_drawdown": str(fold.max_drawdown),
-                    "cost_bps": str(fold.cost_bps),
-                    "regime_label": fold.regime.label(),
-                }
-                for fold in report.robustness.folds
-            ]
-            stress_evidence = [
-                _build_stress_bundle(report, stress_case)
-                for stress_case in _STRESS_METRICS_CASES
-            ]
-            stress_metrics_count = len(stress_evidence)
+                    "schema_version": "recalibration_report_v1",
+                    "run_id": run_id,
+                    "candidate_id": candidate_id,
+                    "requested_at": now.isoformat(),
+                    "status": "queued" if recalibration_run_id else "not_required",
+                    "recalibration_run_id": recalibration_run_id,
+                    "uncertainty_gate_action": uncertainty_action,
+                    "coverage_error": confidence_calibration.get("coverage_error"),
+                    "shift_score": confidence_calibration.get("shift_score"),
+                    "artifact_refs": sorted(
+                        {
+                            str(profitability_evidence_path),
+                            str(profitability_validation_path),
+                        }
+                    ),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return confidence_calibration
 
-        def _write_metric_artifact_refs() -> None:
-            nonlocal advisor_fallback_slo_artifact_ref, benchmark_parity_artifact_ref
-            nonlocal contamination_registry_artifact_ref, deeplob_bdlob_artifact_ref
-            nonlocal expert_router_registry_artifact_ref, fold_metrics_artifact_ref
-            nonlocal foundation_router_parity_artifact_ref, gate_report_payload
-            nonlocal hmm_state_posterior_artifact_ref
-            nonlocal shadow_live_deviation_artifact_ref
-            nonlocal simulation_calibration_artifact_ref, stress_metrics_artifact_ref
+    def _evaluate_gate_report(
+        profitability_evidence_payload: dict[str, Any],
+        tca_gate_inputs: dict[str, object],
+    ) -> None:
+        nonlocal candidate_alpha_readiness_payload
+        nonlocal candidate_dependency_quorum_payload, candidate_state_payload
+        nonlocal fold_evidence, gate_report, stress_evidence, stress_metrics_count
 
-            stress_metrics_path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": "stress-metrics-v1",
-                        "run_id": run_id,
-                        "generated_at": now.isoformat(),
-                        "count": stress_metrics_count,
-                        "items": stress_evidence,
-                        "artifact_authority": evidence_contract_payload(
-                            provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
-                            maturity=EvidenceMaturity.UNCALIBRATED,
-                            calibration_summary={"status": "pending_calibration"},
-                        ),
-                    },
-                    indent=2,
+        gate_policy = GatePolicyMatrix.from_path(gate_policy_path)
+        profitability_evidence_payload["validation"] = (
+            profitability_validation.to_payload()
+        )
+        (
+            fragility_state,
+            fragility_score,
+            stability_mode_active,
+            fragility_inputs_valid,
+        ) = _resolve_gate_fragility_inputs(
+            metrics_payload=report.metrics.to_payload(), decisions=walk_decisions
+        )
+        _write_recalibration_request(profitability_evidence_payload)
+        (
+            candidate_alpha_readiness_payload,
+            candidate_dependency_quorum_payload,
+        ) = _build_candidate_alpha_readiness_payload(
+            runtime_strategies=runtime_strategies,
+        )
+        candidate_state_payload = _build_candidate_state_payload(
+            candidate_id=candidate_id,
+            run_id=run_id,
+            promotion_target=promotion_target,
+            approval_token=approval_token,
+            runtime_strategies=runtime_strategies,
+            now=now,
+            code_version=code_version,
+            runbook_validated=_is_runbook_valid(strategy_configmap_path),
+            dependency_quorum_payload=candidate_dependency_quorum_payload,
+            alpha_readiness_payload=candidate_alpha_readiness_payload,
+        )
+        candidate_state_readiness = _candidate_state_readiness_payload(
+            candidate_state_payload
+        )
+        gate_report = evaluate_gate_matrix(
+            GateInputs(
+                feature_schema_version=gate_policy.required_feature_schema_version,
+                required_feature_null_rate=_required_feature_null_rate(signals),
+                staleness_ms_p95=_resolve_gate_staleness_ms_p95(
+                    signals=ordered_signals,
                 ),
-                encoding="utf-8",
-            )
-            fold_metrics_path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": "fold-metrics-v1",
-                        "run_id": run_id,
-                        "generated_at": now.isoformat(),
-                        "count": len(fold_evidence),
-                        "items": fold_evidence,
-                        "artifact_authority": evidence_contract_payload(
-                            provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
-                            maturity=EvidenceMaturity.UNCALIBRATED,
-                            calibration_summary={"status": "pending_calibration"},
-                        ),
-                    },
-                    indent=2,
+                symbol_coverage=len({signal.symbol for signal in signals}),
+                metrics=report.metrics.to_payload(),
+                robustness=report.robustness.to_payload(),
+                tca_metrics=tca_gate_inputs,
+                llm_metrics=_resolve_gate_llm_metrics(
+                    session_factory=factory,
+                    now=now,
                 ),
-                encoding="utf-8",
-            )
-            stress_metrics_artifact_ref = _artifact_ref(stress_metrics_path)
-            fold_metrics_artifact_ref = _artifact_ref(fold_metrics_path)
-            simulation_calibration_artifact_ref = _artifact_ref(
-                simulation_calibration_report_path
-            )
-            shadow_live_deviation_artifact_ref = _artifact_ref(
-                shadow_live_deviation_report_path
-            )
-            benchmark_parity_artifact_ref = _artifact_ref(benchmark_parity_path)
-            foundation_router_parity_artifact_ref = _artifact_ref(
-                foundation_router_parity_path
-            )
-            deeplob_bdlob_artifact_ref = _artifact_ref(deeplob_bdlob_report_path)
-            advisor_fallback_slo_artifact_ref = _artifact_ref(
-                advisor_fallback_slo_report_path
-            )
-            contamination_registry_artifact_ref = _artifact_ref(
-                contamination_registry_path
-            )
-            hmm_state_posterior_artifact_ref = _artifact_ref(hmm_state_posterior_path)
-            expert_router_registry_artifact_ref = _artifact_ref(
-                expert_router_registry_path
-            )
-            gate_report_payload = gate_report.to_payload()
-            gate_report_payload["run_id"] = run_id
+                forecast_metrics=_resolve_gate_forecast_metrics(
+                    signals=ordered_signals
+                ),
+                profitability_evidence=profitability_evidence_payload,
+                fragility_state=fragility_state,
+                fragility_score=fragility_score,
+                stability_mode_active=stability_mode_active,
+                fragility_inputs_valid=fragility_inputs_valid,
+                operational_ready=not bool(
+                    candidate_state_payload.get("paused", False)
+                ),
+                runbook_validated=bool(
+                    _coerce_evidence_bool(
+                        candidate_state_payload.get("runbookValidated")
+                    )
+                ),
+                kill_switch_dry_run_passed=bool(
+                    _coerce_evidence_bool(
+                        candidate_state_readiness.get("killSwitchDryRunPassed")
+                    )
+                ),
+                rollback_dry_run_passed=bool(
+                    _coerce_evidence_bool(
+                        candidate_state_readiness.get("gitopsRevertDryRunPassed")
+                    )
+                    and _coerce_evidence_bool(
+                        candidate_state_readiness.get("strategyDisableDryRunPassed")
+                    )
+                ),
+                approval_token=approval_token,
+            ),
+            policy=gate_policy,
+            promotion_target=promotion_target,
+            code_version=code_version,
+            evaluated_at=now,
+        )
+        fold_evidence = [
+            {
+                "fold_name": fold.fold_name,
+                "decision_count": fold.decision_count,
+                "trade_count": fold.trade_count,
+                "net_pnl": str(fold.net_pnl),
+                "max_drawdown": str(fold.max_drawdown),
+                "cost_bps": str(fold.cost_bps),
+                "regime_label": fold.regime.label(),
+            }
+            for fold in report.robustness.folds
+        ]
+        stress_evidence = [
+            _build_stress_bundle(report, stress_case)
+            for stress_case in _STRESS_METRICS_CASES
+        ]
+        stress_metrics_count = len(stress_evidence)
 
+    def _write_metric_artifact_refs() -> None:
+        nonlocal advisor_fallback_slo_artifact_ref, benchmark_parity_artifact_ref
+        nonlocal contamination_registry_artifact_ref, deeplob_bdlob_artifact_ref
+        nonlocal expert_router_registry_artifact_ref, fold_metrics_artifact_ref
+        nonlocal foundation_router_parity_artifact_ref, gate_report_payload
+        nonlocal hmm_state_posterior_artifact_ref
+        nonlocal shadow_live_deviation_artifact_ref
+        nonlocal simulation_calibration_artifact_ref, stress_metrics_artifact_ref
+
+        stress_metrics_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "stress-metrics-v1",
+                    "run_id": run_id,
+                    "generated_at": now.isoformat(),
+                    "count": stress_metrics_count,
+                    "items": stress_evidence,
+                    "artifact_authority": evidence_contract_payload(
+                        provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+                        maturity=EvidenceMaturity.UNCALIBRATED,
+                        calibration_summary={"status": "pending_calibration"},
+                    ),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        fold_metrics_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "fold-metrics-v1",
+                    "run_id": run_id,
+                    "generated_at": now.isoformat(),
+                    "count": len(fold_evidence),
+                    "items": fold_evidence,
+                    "artifact_authority": evidence_contract_payload(
+                        provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+                        maturity=EvidenceMaturity.UNCALIBRATED,
+                        calibration_summary={"status": "pending_calibration"},
+                    ),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        stress_metrics_artifact_ref = _artifact_ref(stress_metrics_path)
+        fold_metrics_artifact_ref = _artifact_ref(fold_metrics_path)
+        simulation_calibration_artifact_ref = _artifact_ref(
+            simulation_calibration_report_path
+        )
+        shadow_live_deviation_artifact_ref = _artifact_ref(
+            shadow_live_deviation_report_path
+        )
+        benchmark_parity_artifact_ref = _artifact_ref(benchmark_parity_path)
+        foundation_router_parity_artifact_ref = _artifact_ref(
+            foundation_router_parity_path
+        )
+        deeplob_bdlob_artifact_ref = _artifact_ref(deeplob_bdlob_report_path)
+        advisor_fallback_slo_artifact_ref = _artifact_ref(
+            advisor_fallback_slo_report_path
+        )
+        contamination_registry_artifact_ref = _artifact_ref(contamination_registry_path)
+        hmm_state_posterior_artifact_ref = _artifact_ref(hmm_state_posterior_path)
+        expert_router_registry_artifact_ref = _artifact_ref(expert_router_registry_path)
+        gate_report_payload = gate_report.to_payload()
+        gate_report_payload["run_id"] = run_id
+
+    def _run_profitability_validation_phase() -> None:
         profitability_evidence, evidence_payload, tca_gate_inputs = (
             _write_profitability_evidence_artifacts()
         )
@@ -3483,312 +3476,305 @@ def run_autonomous_lane(
             "priority_id": str(resolved_governance_priority_id or ""),
         }
 
-    def _run_promotion_recommendation_phase() -> None:
-        nonlocal _write_profitability_manifest
+    def _write_current_profitability_manifest() -> None:
+        profitability_manifest_payload = _build_profitability_stage_manifest(
+            output_dir=output_dir,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            strategy_family=strategy_family,
+            llm_artifact_ref=None,
+            router_artifact_ref=router_artifact_ref,
+            run_context=profitability_run_context,
+            research_manifest_path=manifest_paths.get(_STAGE_CANDIDATE_GENERATION),
+            candidate_spec_path=candidate_spec_path,
+            evaluation_report_path=evaluation_report_path,
+            walkforward_results_path=walk_results_path,
+            baseline_evaluation_report_path=baseline_report_path,
+            gate_report_payload=gate_report_payload,
+            gate_report_path=gate_report_path,
+            profitability_benchmark_path=profitability_benchmark_path,
+            contamination_registry_path=contamination_registry_path,
+            profitability_evidence_path=profitability_evidence_path,
+            profitability_validation_path=profitability_validation_path,
+            simulation_calibration_report_path=simulation_calibration_report_path,
+            shadow_live_deviation_report_path=shadow_live_deviation_report_path,
+            hmm_state_posterior_path=hmm_state_posterior_path,
+            expert_router_registry_path=expert_router_registry_path,
+            benchmark_parity_path=benchmark_parity_path,
+            foundation_router_parity_path=foundation_router_parity_path,
+            deeplob_bdlob_report_path=deeplob_bdlob_report_path,
+            advisor_fallback_slo_report_path=advisor_fallback_slo_report_path,
+            janus_event_car_path=janus_event_car_path,
+            janus_hgrm_reward_path=janus_hgrm_reward_path,
+            recalibration_report_path=recalibration_report_path,
+            rollback_check=rollback_check,
+            drift_gate_check=drift_gate_check,
+            patch_path=patch_path,
+            now=now,
+        )
+        profitability_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        profitability_manifest_path.write_text(
+            json.dumps(profitability_manifest_payload, indent=2),
+            encoding="utf-8",
+        )
 
-        def _write_profitability_manifest() -> None:
-            profitability_manifest_payload = _build_profitability_stage_manifest(
-                output_dir=output_dir,
-                run_id=run_id,
-                candidate_id=candidate_id,
-                strategy_family=strategy_family,
-                llm_artifact_ref=None,
-                router_artifact_ref=router_artifact_ref,
-                run_context=profitability_run_context,
-                research_manifest_path=manifest_paths.get(_STAGE_CANDIDATE_GENERATION),
-                candidate_spec_path=candidate_spec_path,
-                evaluation_report_path=evaluation_report_path,
-                walkforward_results_path=walk_results_path,
-                baseline_evaluation_report_path=baseline_report_path,
-                gate_report_payload=gate_report_payload,
-                gate_report_path=gate_report_path,
-                profitability_benchmark_path=profitability_benchmark_path,
-                contamination_registry_path=contamination_registry_path,
-                profitability_evidence_path=profitability_evidence_path,
-                profitability_validation_path=profitability_validation_path,
-                simulation_calibration_report_path=simulation_calibration_report_path,
-                shadow_live_deviation_report_path=shadow_live_deviation_report_path,
-                hmm_state_posterior_path=hmm_state_posterior_path,
-                expert_router_registry_path=expert_router_registry_path,
-                benchmark_parity_path=benchmark_parity_path,
-                foundation_router_parity_path=foundation_router_parity_path,
-                deeplob_bdlob_report_path=deeplob_bdlob_report_path,
-                advisor_fallback_slo_report_path=advisor_fallback_slo_report_path,
-                janus_event_car_path=janus_event_car_path,
-                janus_hgrm_reward_path=janus_hgrm_reward_path,
-                recalibration_report_path=recalibration_report_path,
-                rollback_check=rollback_check,
-                drift_gate_check=drift_gate_check,
-                patch_path=patch_path,
-                now=now,
-            )
-            profitability_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            profitability_manifest_path.write_text(
-                json.dumps(profitability_manifest_payload, indent=2),
-                encoding="utf-8",
-            )
+    _write_profitability_manifest = _write_current_profitability_manifest
 
-        def _build_promotion_policy_payload() -> dict[str, Any]:
-            promotion_policy_payload = dict(raw_gate_policy)
-            promotion_policy_payload[
-                "promotion_require_profitability_stage_manifest"
-            ] = True
-            promotion_policy_payload[
-                "promotion_require_truthful_evidence_contracts"
-            ] = True
-            require_jangar_dependency_quorum = (
-                hypothesis_registry_requires_dependency_capability(
-                    load_hypothesis_registry(),
-                    "jangar_dependency_quorum",
-                )
+    def _build_promotion_policy_payload() -> dict[str, Any]:
+        promotion_policy_payload = dict(raw_gate_policy)
+        promotion_policy_payload["promotion_require_profitability_stage_manifest"] = (
+            True
+        )
+        promotion_policy_payload["promotion_require_truthful_evidence_contracts"] = True
+        require_jangar_dependency_quorum = (
+            hypothesis_registry_requires_dependency_capability(
+                load_hypothesis_registry(),
+                "jangar_dependency_quorum",
             )
-            promotion_policy_payload["promotion_require_jangar_dependency_quorum"] = (
-                require_jangar_dependency_quorum
-            )
-            if require_jangar_dependency_quorum:
-                promotion_policy_payload.setdefault(
-                    "promotion_jangar_dependency_quorum_required_targets",
-                    ["paper", "live"],
-                )
-            else:
-                promotion_policy_payload.pop(
-                    "promotion_jangar_dependency_quorum_required_targets",
-                    None,
-                )
-            promotion_policy_payload["promotion_require_alpha_readiness_contract"] = (
-                True
-            )
+        )
+        promotion_policy_payload["promotion_require_jangar_dependency_quorum"] = (
+            require_jangar_dependency_quorum
+        )
+        if require_jangar_dependency_quorum:
             promotion_policy_payload.setdefault(
-                "promotion_alpha_readiness_required_targets",
+                "promotion_jangar_dependency_quorum_required_targets",
                 ["paper", "live"],
             )
-            promotion_policy_payload.setdefault(
-                "promotion_alpha_readiness_require_registry_match",
-                True,
+        else:
+            promotion_policy_payload.pop(
+                "promotion_jangar_dependency_quorum_required_targets",
+                None,
             )
-            promotion_policy_payload.setdefault(
-                "promotion_require_simulation_calibration",
-                True,
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_simulation_calibration_required_artifacts",
-                ["gates/simulation-calibration-report-v1.json"],
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_simulation_calibration_required_targets",
-                ["paper", "live"],
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_simulation_calibration_min_order_count",
-                1,
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_simulation_calibration_min_expected_shortfall_coverage",
-                "0.50",
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_simulation_calibration_max_avg_calibration_error_bps",
-                "25",
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_require_shadow_live_deviation",
-                True,
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_shadow_live_deviation_required_artifacts",
-                ["gates/shadow-live-deviation-report-v1.json"],
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_shadow_live_deviation_required_targets",
-                ["paper", "live"],
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_shadow_live_deviation_min_order_count",
-                1,
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_shadow_live_deviation_max_avg_abs_slippage_bps",
-                "20",
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_shadow_live_deviation_max_avg_abs_divergence_bps",
-                "15",
-            )
-            promotion_policy_payload.setdefault(
-                "promotion_profitability_stage_manifest_artifact",
-                _PROFITABILITY_STAGE_MANIFEST_PATH,
-            )
-            return promotion_policy_payload
+        promotion_policy_payload["promotion_require_alpha_readiness_contract"] = True
+        promotion_policy_payload.setdefault(
+            "promotion_alpha_readiness_required_targets",
+            ["paper", "live"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_alpha_readiness_require_registry_match",
+            True,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_require_simulation_calibration",
+            True,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_required_artifacts",
+            ["gates/simulation-calibration-report-v1.json"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_required_targets",
+            ["paper", "live"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_min_order_count",
+            1,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_min_expected_shortfall_coverage",
+            "0.50",
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_max_avg_calibration_error_bps",
+            "25",
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_require_shadow_live_deviation",
+            True,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_required_artifacts",
+            ["gates/shadow-live-deviation-report-v1.json"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_required_targets",
+            ["paper", "live"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_min_order_count",
+            1,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_max_avg_abs_slippage_bps",
+            "20",
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_max_avg_abs_divergence_bps",
+            "15",
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_profitability_stage_manifest_artifact",
+            _PROFITABILITY_STAGE_MANIFEST_PATH,
+        )
+        return promotion_policy_payload
 
-        def _evaluate_promotion_prerequisites(
-            promotion_policy_payload: dict[str, Any],
-        ) -> None:
-            nonlocal promotion_check
+    def _evaluate_promotion_prerequisites(
+        promotion_policy_payload: dict[str, Any],
+    ) -> None:
+        nonlocal promotion_check
 
-            promotion_check = evaluate_promotion_prerequisites(
-                policy_payload=promotion_policy_payload,
-                gate_report_payload=gate_report_payload,
-                candidate_state_payload=candidate_state_payload,
+        promotion_check = evaluate_promotion_prerequisites(
+            policy_payload=promotion_policy_payload,
+            gate_report_payload=gate_report_payload,
+            candidate_state_payload=candidate_state_payload,
+            promotion_target=promotion_target,
+            artifact_root=output_dir,
+            now=now,
+        )
+        promotion_check_path.write_text(
+            json.dumps(promotion_check.to_payload(), indent=2), encoding="utf-8"
+        )
+
+    def _record_promotion_recommendation() -> None:
+        nonlocal fold_metrics_count, patch_path, promotion_allowed
+        nonlocal promotion_reasons, promotion_recommendation
+        nonlocal recommendation_trace_id, recommended_mode
+
+        fold_metrics_count = len(walk_results.folds)
+        promotion_recommendation = build_promotion_recommendation(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            requested_mode=promotion_target,
+            recommended_mode=gate_report.recommended_mode,
+            gate_allowed=(
+                gate_report.promotion_allowed and bool(drift_gate_check["allowed"])
+            ),
+            prerequisite_allowed=promotion_check.allowed and strategy_factory_allowed,
+            rollback_ready=rollback_check.ready,
+            fold_metrics_count=fold_metrics_count,
+            stress_metrics_count=stress_metrics_count,
+            rationale=_build_promotion_rationale(
+                gate_report=gate_report,
+                promotion_check_reasons=promotion_check.reasons,
+                rollback_check_reasons=rollback_check.reasons,
                 promotion_target=promotion_target,
-                artifact_root=output_dir,
-                now=now,
-            )
-            promotion_check_path.write_text(
-                json.dumps(promotion_check.to_payload(), indent=2), encoding="utf-8"
-            )
-
-        def _record_promotion_recommendation() -> None:
-            nonlocal fold_metrics_count, patch_path, promotion_allowed
-            nonlocal promotion_reasons, promotion_recommendation
-            nonlocal recommendation_trace_id, recommended_mode
-
-            fold_metrics_count = len(walk_results.folds)
-            promotion_recommendation = build_promotion_recommendation(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                requested_mode=promotion_target,
-                recommended_mode=gate_report.recommended_mode,
-                gate_allowed=(
-                    gate_report.promotion_allowed and bool(drift_gate_check["allowed"])
-                ),
-                prerequisite_allowed=promotion_check.allowed
-                and strategy_factory_allowed,
-                rollback_ready=rollback_check.ready,
-                fold_metrics_count=fold_metrics_count,
-                stress_metrics_count=stress_metrics_count,
-                rationale=_build_promotion_rationale(
-                    gate_report=gate_report,
-                    promotion_check_reasons=promotion_check.reasons,
-                    rollback_check_reasons=rollback_check.reasons,
-                    promotion_target=promotion_target,
-                    additional_reasons=strategy_factory_reasons,
-                ),
-                reasons=[
-                    *gate_report.reasons,
-                    *promotion_check.reasons,
-                    *strategy_factory_reasons,
-                    *rollback_check.reasons,
-                    *[
-                        str(item)
-                        for item in drift_gate_check.get("reasons", [])
-                        if str(item).strip()
-                    ],
+                additional_reasons=strategy_factory_reasons,
+            ),
+            reasons=[
+                *gate_report.reasons,
+                *promotion_check.reasons,
+                *strategy_factory_reasons,
+                *rollback_check.reasons,
+                *[
+                    str(item)
+                    for item in drift_gate_check.get("reasons", [])
+                    if str(item).strip()
                 ],
+            ],
+        )
+        promotion_allowed = promotion_recommendation.eligible
+        if patch_path is None and promotion_allowed:
+            patch_path = _resolve_paper_patch_path(
+                gate_report=gate_report,
+                strategy_configmap_path=strategy_configmap_path,
+                runtime_strategies=runtime_strategies,
+                candidate_id=candidate_id,
+                promotion_target=promotion_target,
+                paper_dir=paper_dir,
             )
-            promotion_allowed = promotion_recommendation.eligible
-            if patch_path is None and promotion_allowed:
-                patch_path = _resolve_paper_patch_path(
-                    gate_report=gate_report,
-                    strategy_configmap_path=strategy_configmap_path,
-                    runtime_strategies=runtime_strategies,
-                    candidate_id=candidate_id,
-                    promotion_target=promotion_target,
-                    paper_dir=paper_dir,
-                )
-            promotion_reasons = promotion_recommendation.reasons
-            recommended_mode = promotion_recommendation.recommended_mode
-            recommendation_trace_id = promotion_recommendation.trace_id
-            research_spec["promotion_recommendation"] = (
-                promotion_recommendation.to_payload()
-            )
-            research_spec["promotion_evidence_requirements"] = {
-                "fold_metrics_count": len(fold_evidence),
-                "stress_case_count": len(stress_evidence),
-                "deeplob_bdlob_contract_required": True,
-                "advisor_fallback_slo_required": True,
-                "strategy_factory_required": strategy_factory_bridge is not None,
-                "rationale_required": True,
-                "rationale_reason_codes": promotion_reasons,
-            }
-            candidate_spec_path.write_text(
-                json.dumps(research_spec, indent=2), encoding="utf-8"
-            )
+        promotion_reasons = promotion_recommendation.reasons
+        recommended_mode = promotion_recommendation.recommended_mode
+        recommendation_trace_id = promotion_recommendation.trace_id
+        research_spec["promotion_recommendation"] = (
+            promotion_recommendation.to_payload()
+        )
+        research_spec["promotion_evidence_requirements"] = {
+            "fold_metrics_count": len(fold_evidence),
+            "stress_case_count": len(stress_evidence),
+            "deeplob_bdlob_contract_required": True,
+            "advisor_fallback_slo_required": True,
+            "strategy_factory_required": strategy_factory_bridge is not None,
+            "rationale_required": True,
+            "rationale_reason_codes": promotion_reasons,
+        }
+        candidate_spec_path.write_text(
+            json.dumps(research_spec, indent=2), encoding="utf-8"
+        )
 
-        def _promotion_gate_artifact_refs() -> list[str]:
-            return sorted(
-                {
-                    str(promotion_check_path),
-                    str(rollback_check_path),
-                    str(gate_report_path),
-                    str(benchmark_parity_path),
-                    str(deeplob_bdlob_report_path),
-                    str(advisor_fallback_slo_report_path),
-                    str(contamination_registry_path),
-                    str(profitability_benchmark_path),
-                    str(profitability_evidence_path),
-                    str(profitability_validation_path),
-                    str(simulation_calibration_report_path),
-                    str(shadow_live_deviation_report_path),
-                    str(fold_metrics_path),
-                    str(stress_metrics_path),
-                    str(hmm_state_posterior_path),
-                    str(expert_router_registry_path),
-                    str(janus_event_car_path),
-                    str(janus_hgrm_reward_path),
-                    *[
-                        str(item)
-                        for item in drift_gate_check.get("artifact_refs", [])
-                        if str(item).strip()
+    def _promotion_gate_artifact_refs() -> list[str]:
+        return sorted(
+            {
+                str(promotion_check_path),
+                str(rollback_check_path),
+                str(gate_report_path),
+                str(benchmark_parity_path),
+                str(deeplob_bdlob_report_path),
+                str(advisor_fallback_slo_report_path),
+                str(contamination_registry_path),
+                str(profitability_benchmark_path),
+                str(profitability_evidence_path),
+                str(profitability_validation_path),
+                str(simulation_calibration_report_path),
+                str(shadow_live_deviation_report_path),
+                str(fold_metrics_path),
+                str(stress_metrics_path),
+                str(hmm_state_posterior_path),
+                str(expert_router_registry_path),
+                str(janus_event_car_path),
+                str(janus_hgrm_reward_path),
+                *[
+                    str(item)
+                    for item in drift_gate_check.get("artifact_refs", [])
+                    if str(item).strip()
+                ],
+                str(recalibration_report_path),
+                *strategy_factory_artifact_refs,
+            }
+        )
+
+    def _write_promotion_gate_payload() -> None:
+        promotion_gate_payload: dict[str, Any] = {
+            "allowed": promotion_allowed,
+            "recommended_mode": recommended_mode,
+            "reasons": promotion_reasons,
+            "checks": {
+                "gate_matrix": {
+                    "allowed": gate_report.promotion_allowed,
+                    "reasons": gate_report.reasons,
+                    "artifact_refs": [
+                        str(gate_report_path),
+                        str(benchmark_parity_path),
+                        str(deeplob_bdlob_report_path),
+                        str(advisor_fallback_slo_report_path),
+                        str(profitability_evidence_path),
+                        str(profitability_validation_path),
+                        str(simulation_calibration_report_path),
+                        str(shadow_live_deviation_report_path),
+                        str(stress_metrics_path),
+                        str(hmm_state_posterior_path),
+                        str(expert_router_registry_path),
+                        str(fold_metrics_path),
+                        str(janus_event_car_path),
+                        str(janus_hgrm_reward_path),
+                        str(recalibration_report_path),
+                        *strategy_factory_artifact_refs,
                     ],
-                    str(recalibration_report_path),
-                    *strategy_factory_artifact_refs,
-                }
-            )
-
-        def _write_promotion_gate_payload() -> None:
-            promotion_gate_payload: dict[str, Any] = {
-                "allowed": promotion_allowed,
-                "recommended_mode": recommended_mode,
-                "reasons": promotion_reasons,
-                "checks": {
-                    "gate_matrix": {
-                        "allowed": gate_report.promotion_allowed,
-                        "reasons": gate_report.reasons,
-                        "artifact_refs": [
-                            str(gate_report_path),
-                            str(benchmark_parity_path),
-                            str(deeplob_bdlob_report_path),
-                            str(advisor_fallback_slo_report_path),
-                            str(profitability_evidence_path),
-                            str(profitability_validation_path),
-                            str(simulation_calibration_report_path),
-                            str(shadow_live_deviation_report_path),
-                            str(stress_metrics_path),
-                            str(hmm_state_posterior_path),
-                            str(expert_router_registry_path),
-                            str(fold_metrics_path),
-                            str(janus_event_car_path),
-                            str(janus_hgrm_reward_path),
-                            str(recalibration_report_path),
-                            *strategy_factory_artifact_refs,
-                        ],
-                    },
-                    "promotion_prerequisites": promotion_check.to_payload(),
-                    "rollback_readiness": rollback_check.to_payload(),
-                    "profitability_validation": profitability_validation.to_payload(),
-                    "janus_q": janus_q_summary,
-                    "drift_governance": drift_gate_check,
-                    "evidence_requirements": (
-                        promotion_recommendation.evidence.to_payload()
-                    ),
                 },
-                "recommendation": promotion_recommendation.to_payload(),
-                "artifact_refs": _promotion_gate_artifact_refs(),
-            }
-            if strategy_factory_bridge is not None:
-                promotion_gate_checks = cast(
-                    dict[str, Any], promotion_gate_payload["checks"]
-                )
-                promotion_gate_checks["strategy_factory"] = dict(
-                    strategy_factory_summary
-                )
-            promotion_gate_path.write_text(
-                json.dumps(promotion_gate_payload, indent=2), encoding="utf-8"
+                "promotion_prerequisites": promotion_check.to_payload(),
+                "rollback_readiness": rollback_check.to_payload(),
+                "profitability_validation": profitability_validation.to_payload(),
+                "janus_q": janus_q_summary,
+                "drift_governance": drift_gate_check,
+                "evidence_requirements": (
+                    promotion_recommendation.evidence.to_payload()
+                ),
+            },
+            "recommendation": promotion_recommendation.to_payload(),
+            "artifact_refs": _promotion_gate_artifact_refs(),
+        }
+        if strategy_factory_bridge is not None:
+            promotion_gate_checks = cast(
+                dict[str, Any], promotion_gate_payload["checks"]
             )
-            gate_report_payload["promotion_recommendation"] = (
-                promotion_recommendation.to_payload()
-            )
+            promotion_gate_checks["strategy_factory"] = dict(strategy_factory_summary)
+        promotion_gate_path.write_text(
+            json.dumps(promotion_gate_payload, indent=2), encoding="utf-8"
+        )
+        gate_report_payload["promotion_recommendation"] = (
+            promotion_recommendation.to_payload()
+        )
 
+    def _run_promotion_recommendation_phase() -> None:
         _write_profitability_manifest()
         _evaluate_promotion_prerequisites(_build_promotion_policy_payload())
         _record_promotion_recommendation()
