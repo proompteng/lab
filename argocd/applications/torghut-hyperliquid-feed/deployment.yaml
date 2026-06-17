@@ -16,6 +16,8 @@ spec:
       app: torghut-hyperliquid-feed
   template:
     metadata:
+      annotations:
+        proompteng.ai/config-revision: hyperliquid-canary-20260617a
       labels:
         app: torghut-hyperliquid-feed
     spec:
