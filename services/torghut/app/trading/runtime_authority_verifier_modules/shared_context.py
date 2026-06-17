@@ -46,7 +46,7 @@ from app.trading.runtime_ledger_source_authority import (
     runtime_ledger_source_window_present,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 
 DEFAULT_HPAIRS_HYPOTHESIS_ID = "H-PAIRS-01"

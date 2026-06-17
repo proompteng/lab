@@ -35,7 +35,7 @@ from app.trading.empirical_manifest import (
 )
 from app.trading.paper_route_target_plan import paper_route_target_plan_from_payload
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 from .shared_context import (
     DEFAULT_AUTORESEARCH_RUNTIME_WINDOW_STATUSES,

@@ -19,7 +19,7 @@ from app.trading.discovery.objectives import (
     deployable_proof_failed_gate_count,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 from .shared_context import (
     MLX_RANKER_SCHEMA_VERSION,

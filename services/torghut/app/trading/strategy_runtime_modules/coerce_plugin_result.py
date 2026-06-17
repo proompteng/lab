@@ -34,7 +34,7 @@ from ..strategy_specs import (
     strategy_type_supports_spec_v2,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 from .empty_meta import (
     decimal as _decimal,

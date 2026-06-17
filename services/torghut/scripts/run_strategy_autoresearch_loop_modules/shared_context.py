@@ -89,7 +89,7 @@ from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 
 def _find_repo_root(path: Path) -> Path:

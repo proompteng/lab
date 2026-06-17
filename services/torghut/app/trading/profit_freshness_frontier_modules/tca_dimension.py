@@ -15,7 +15,7 @@ from ..market_context_domains import (
     active_market_context_reasons,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 from .shared_context import (
     PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION,

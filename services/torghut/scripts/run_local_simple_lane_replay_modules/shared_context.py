@@ -21,7 +21,7 @@ import yaml
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-# ruff: noqa: F401,F403,F405,F821,F821,F821
+# ruff: noqa: F401,F821,F821,F821
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent

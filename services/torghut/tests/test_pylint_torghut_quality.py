@@ -21,6 +21,7 @@ PLUGIN_ENABLES = ",".join(
         "torghut-file-pyright-suppression",
         "torghut-type-ignore",
         "torghut-file-ruff-noqa",
+        "torghut-wildcard-ruff-noqa",
         "torghut-blanket-pylint-disable",
         "torghut-dynamic-attribute-hook",
         "torghut-dynamic-all",
@@ -65,6 +66,7 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
     dynamic_exports = "__all__ = [name for name in " + "globals() if name]"
     type_suppression = "# type:" + " ignore[assignment]"
     private_usage_suppression = "# pyright: " + "report" + "PrivateUsage" + "=false"
+    wildcard_ruff_suppression = "# ruff: noqa: F401,F" + "403"
     compat_class = "class " + "Compat" + "Module:"
     compat_registry = "__compat_" + "par" + "t_modules__ = []"
     module_path = tmp_path / ("par" + "t_01_generated.py")
@@ -79,7 +81,7 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
                 "",
                 "# pyright: reportUnknownMemberType=false",
                 private_usage_suppression,
-                "# ruff: noqa: F401,F403",
+                wildcard_ruff_suppression,
                 "# pylint: disable=too-many-lines",
                 f"answer = 1  {type_suppression}",
                 "",
@@ -118,6 +120,7 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
         "torghut-file-pyright-suppression",
         "torghut-type-ignore",
         "torghut-file-ruff-noqa",
+        "torghut-wildcard-ruff-noqa",
         "torghut-blanket-pylint-disable",
         "torghut-dynamic-attribute-hook",
         "torghut-dynamic-all",
@@ -132,6 +135,7 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
 def test_torghut_pylint_quality_plugin_rejects_test_compat_wrappers(
     tmp_path: Path,
 ) -> None:
+    wildcard_ruff_suppression = "# ruff: noqa: F401,F" + "403,F" + "405"
     wrapper_path = tmp_path / "test_old_wrapper.py"
     wrapper_path.write_text(
         "\n".join(
@@ -151,7 +155,7 @@ def test_torghut_pylint_quality_plugin_rejects_test_compat_wrappers(
             (
                 "from __future__ import annotations",
                 "",
-                "# ruff: noqa: F401,F403,F405",
+                wildcard_ruff_suppression,
                 "",
             )
         ),

@@ -25,7 +25,7 @@ from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.models import SignalEnvelope
 from app.trading.runtime_ledger import RuntimeLedgerBucket, build_runtime_ledger_buckets
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 
 EXACT_REPLAY_LEDGER_RANKING_SCHEMA_VERSION = "torghut.exact-replay-ledger-ranking.v1"

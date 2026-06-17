@@ -21,7 +21,7 @@ import yaml
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-# ruff: noqa: F401,F403,F405,F821,F821,F821
+# ruff: noqa: F401,F821,F821,F821
 
 from .shared_context import (
     ALLOWED_REJECT_REASONS,

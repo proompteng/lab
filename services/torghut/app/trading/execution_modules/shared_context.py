@@ -43,7 +43,7 @@ from ..simulation import (
 from ..time_source import trading_now
 from ..tca import upsert_execution_tca_metric
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 
 logger = logging.getLogger(__name__)
