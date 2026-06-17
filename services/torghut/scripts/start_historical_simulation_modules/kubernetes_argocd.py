@@ -676,13 +676,6 @@ def _simulation_runtime_argocd_ignore_differences(
             "jqPathExpressions": [SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_JQ],
         },
         {
-            "group": "",
-            "kind": "ConfigMap",
-            "namespace": resources.namespace,
-            "name": resources.ta_configmap,
-            "jsonPointers": ["/data"],
-        },
-        {
             "group": "flink.apache.org",
             "kind": "FlinkDeployment",
             "namespace": resources.namespace,

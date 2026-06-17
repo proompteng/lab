@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Safely materialize bounded H-PAIRS paper-route targets into TORGHUT_SIM."""
+"""On-demand operator CLI for bounded H-PAIRS paper-route targets in TORGHUT_SIM."""
 
 from __future__ import annotations
 

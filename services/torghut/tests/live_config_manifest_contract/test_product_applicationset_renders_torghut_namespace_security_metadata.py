@@ -15,6 +15,7 @@ from tests.live_config_manifest_contract.support import (
     _load_yaml_mapping,
     _load_yaml_mappings,
     _params,
+    _repo_root,
     _strategy_decimal,
     cast,
 )
@@ -507,142 +508,44 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         )
         self.assertEqual(seccomp_profile.get("type"), "Unconfined")
 
-    def test_bounded_paper_route_target_materialization_cronjob_is_sim_only(
+    def test_bounded_paper_route_target_materialization_is_on_demand_operator_tool(
         self,
     ) -> None:
-        spec, container = _load_cronjob_container(
-            "argocd/applications/torghut/"
-            "bounded-paper-route-target-materialization-cronjob.yaml"
+        repo_root = _repo_root()
+        kustomization = _load_yaml_mapping(
+            "argocd/applications/torghut/kustomization.yaml"
         )
-
-        self.assertEqual(spec.get("schedule"), "*/5 9-15 * * 1-5")
-        self.assertEqual(spec.get("timeZone"), "America/New_York")
-        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
-        job_spec = cast(
-            Mapping[str, object],
-            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
-        )
-        template = cast(
-            Mapping[str, object],
-            cast(Mapping[str, object], job_spec.get("template", {})),
-        )
-        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
-        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-        self.assertEqual(
-            pod_spec.get("nodeSelector"),
-            {"kubernetes.io/arch": "arm64"},
-        )
-        resources = cast(Mapping[str, object], container.get("resources", {}))
-        self.assertEqual(
-            resources,
-            {
-                "requests": {
-                    "cpu": "100m",
-                    "memory": "256Mi",
-                    "ephemeral-storage": "128Mi",
-                },
-                "limits": {
-                    "cpu": "500m",
-                    "memory": "512Mi",
-                    "ephemeral-storage": "512Mi",
-                },
-            },
-        )
-        self.assertIn(
-            "registry.ide-newton.ts.net/lab/torghut@sha256:",
-            str(container.get("image")),
-        )
-
-        env = {
-            item.get("name"): item
-            for item in cast(list[Mapping[str, object]], container.get("env", []))
-        }
-        self.assertEqual(
-            env["SIM_DB_DSN"].get("value"),
-            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
-            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
-        )
-        self.assertEqual(env["PYTHONUNBUFFERED"].get("value"), "1")
-        for name, key in {
-            "TORGHUT_SIM_DB_HOST": "host",
-            "TORGHUT_SIM_DB_PORT": "port",
-            "TORGHUT_SIM_DB_USER": "username",
-            "TORGHUT_SIM_DB_PASSWORD": "password",
-        }.items():
-            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
-            self.assertEqual(
-                value_from.get("secretKeyRef"),
-                {"name": "torghut-db-app", "key": key},
-            )
-
-        args = "\n".join(str(item) for item in container.get("args", []))
-        self.assertIn("scripts/materialize_bounded_paper_route_targets.py", args)
-        self.assertIn("--help | grep -q -- '--allow-dynamic-target-plan'", args)
-        self.assertIn(
-            "old_image_missing_dynamic_target_plan_guard",
-            args,
-        )
-        self.assertIn(
-            "--help | grep -q -- '--skip-unless-active-target-window'",
-            args,
-        )
-        self.assertIn(
-            "old_image_missing_target_window_guard",
-            args,
-        )
-        self.assertIn(
-            "--plan-url "
-            "'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20'",
-            args,
-        )
-        self.assertIn("--plan-url-timeout-seconds 45", args)
-        self.assertIn("--plan-url-attempts 3", args)
-        self.assertIn("--database-dsn-env SIM_DB_DSN", args)
-        self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn(
-            f"--max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}", args
-        )
-        self.assertIn("--commit", args)
-        self.assertIn("--allow-dynamic-target-plan", args)
-        self.assertIn("--skip-unless-active-target-window", args)
-        self.assertIn("--confirm-account-label TORGHUT_SIM", args)
-        self.assertIn("--confirm-dsn-env SIM_DB_DSN", args)
-        self.assertIn("--confirm-hypothesis-id H-PAIRS-01", args)
-        self.assertIn(
-            "--confirm-runtime-strategy-name microbar-cross-sectional-pairs-v1",
-            args,
-        )
-        self.assertIn(
-            "--confirm-selected-plan-source "
-            "trading_proofs,"
-            "live_submission_gate.runtime_ledger_paper_probation_import_plan,"
-            "runtime_ledger_paper_probation_import_plan,"
-            "next_paper_route_runtime_window_targets,"
-            "next_clean_paper_route_runtime_window_targets_after_discard",
-            args,
-        )
+        resources = kustomization.get("resources")
+        self.assertIsInstance(resources, list)
         self.assertNotIn(
-            "latest_closed_paper_route_runtime_window_targets",
-            args,
+            "bounded-paper-route-target-materialization-cronjob.yaml",
+            resources,
         )
-        self.assertIn("--confirm-target-count-min 1", args)
+        deleted_manifest_path = (
+            repo_root
+            / "argocd/applications/torghut"
+            / "bounded-paper-route-target-materialization-cronjob.yaml"
+        )
+        self.assertFalse(deleted_manifest_path.exists())
+
+        cli_path = (
+            repo_root
+            / "services/torghut/scripts"
+            / "materialize_bounded_paper_route_targets.py"
+        )
+        core_path = (
+            repo_root
+            / "services/torghut/scripts/materialize_bounded_paper_route_targets_modules"
+            / "target_materialization_core.py"
+        )
+        cli_source = cli_path.read_text(encoding="utf-8")
+        core_source = core_path.read_text(encoding="utf-8")
+        self.assertIn("On-demand operator CLI", cli_source)
+        self.assertIn("On-demand operator CLI", core_source)
         self.assertIn(
-            f"--confirm-max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}",
-            args,
+            'OPERATOR_CONFIRMATION = "MATERIALIZE_BOUNDED_TORGHUT_SIM_PAPER_ROUTE_TARGETS"',
+            core_source,
         )
-        self.assertIn(
-            "--operator-confirmation MATERIALIZE_BOUNDED_TORGHUT_SIM_PAPER_ROUTE_TARGETS",
-            args,
-        )
-        self.assertNotIn("--confirm-candidate-id", args)
-        self.assertNotIn("--confirm-target-plan-ref", args)
-        self.assertNotIn("--promotion-allowed", args)
-        self.assertNotIn("--final-promotion-allowed", args)
-        self.assertNotIn("--capital-promotion-allowed", args)
-        self.assertNotIn("--final-authority-ok", args)
-        self.assertNotIn("PA3SX7FYNUTF", args)
 
     def test_hpairs_bounded_paper_collection_notional_contract_is_aligned(
         self,
@@ -651,11 +554,6 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         sim_env = _load_knative_env(
             "argocd/applications/torghut/knative-service-sim.yaml"
         )
-        _, materializer_container = _load_cronjob_container(
-            "argocd/applications/torghut/"
-            "bounded-paper-route-target-materialization-cronjob.yaml"
-        )
-        args = "\n".join(str(item) for item in materializer_container.get("args", []))
         strategies = {
             str(strategy.get("name")): strategy
             for strategy in _load_torghut_strategy_catalog()
@@ -683,13 +581,6 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
             "1.0",
-        )
-        self.assertIn(
-            f"--max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}", args
-        )
-        self.assertIn(
-            f"--confirm-max-notional {_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL}",
-            args,
         )
         _, flatten_container = _load_cronjob_container(
             "argocd/applications/torghut/paper-account-flatten-cronjob.yaml"
@@ -719,7 +610,6 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self,
     ) -> None:
         cronjob_paths = (
-            "argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml",
             "argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml",
             "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml",
             "argocd/applications/torghut/execution-tca-refresh-cronjob.yaml",
@@ -742,7 +632,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
                 )
                 self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 1800)
                 checked_cronjobs += 1
-        self.assertEqual(checked_cronjobs, 9)
+        self.assertEqual(checked_cronjobs, 8)
 
         replay_cronworkflow = _load_yaml_mapping(
             "argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"

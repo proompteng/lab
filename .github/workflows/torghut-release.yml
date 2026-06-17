@@ -286,7 +286,6 @@ jobs:
             argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml \
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml \
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml \
-            argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml \
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml \
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
             argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml \
@@ -331,7 +330,6 @@ jobs:
             argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
-            argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml
@@ -380,7 +378,6 @@ jobs:
             argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
-            argocd/applications/torghut/bounded-paper-route-target-materialization-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml

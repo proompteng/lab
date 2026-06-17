@@ -100,9 +100,7 @@ fun main() {
         .returns(object : TypeHint<Envelope<QuotePayload>>() {})
         .assignTimestampsAndWatermarks(watermarkStrategy(config))
     } else {
-      env
-        .fromData(emptyList<Envelope<QuotePayload>>())
-        .assignTimestampsAndWatermarks(emptyWatermarks())
+      emptyQuoteStream(env)
     }
 
   val bars1mStream =
@@ -116,9 +114,7 @@ fun main() {
         .returns(object : TypeHint<Envelope<MicroBarPayload>>() {})
         .assignTimestampsAndWatermarks(watermarkStrategy(config))
     } else {
-      env
-        .fromData(emptyList<Envelope<MicroBarPayload>>())
-        .assignTimestampsAndWatermarks(emptyWatermarks())
+      emptyBars1mStream(env)
     }
 
   val microBars =
@@ -330,6 +326,20 @@ private fun <T> watermarkStrategy(config: FlinkTaConfig): WatermarkStrategy<Enve
     .withTimestampAssigner(SerializableTimestampAssigner<Envelope<T>> { event, _ -> event.eventTs.toEpochMilli() })
 
 private fun <T> emptyWatermarks(): WatermarkStrategy<T> = WatermarkStrategy.noWatermarks()
+
+internal fun emptyQuoteStream(env: StreamExecutionEnvironment) =
+  env
+    .fromData(
+      emptyList<Envelope<QuotePayload>>(),
+      TypeInformation.of(object : TypeHint<Envelope<QuotePayload>>() {}),
+    ).assignTimestampsAndWatermarks(emptyWatermarks())
+
+internal fun emptyBars1mStream(env: StreamExecutionEnvironment) =
+  env
+    .fromData(
+      emptyList<Envelope<MicroBarPayload>>(),
+      TypeInformation.of(object : TypeHint<Envelope<MicroBarPayload>>() {}),
+    ).assignTimestampsAndWatermarks(emptyWatermarks())
 
 private fun kafkaSource(
   config: FlinkTaConfig,
