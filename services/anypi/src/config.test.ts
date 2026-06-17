@@ -27,6 +27,7 @@ import {
   resolveEffectiveSystemPrompt,
 } from './pi-session'
 import { buildCommitMessage, buildPullRequestTitle, normalizeConventionalSummary, renderPullRequestBody } from './run'
+import type { AnypiStatus, CommandResult } from './types'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -378,4 +379,328 @@ describe('Anypi prompt contract', () => {
     expect(prompt).toContain('requires a real implementation')
     expect(prompt).toContain('leave the final changes in the worktree')
   })
+
+  test('required-check fallback behavior when no required checks are available', async () => {
+    const { isNoChecksReportedResult, parseCiChecksResult } = await import('./git')
+
+    // Simulate required-only check that reports no checks
+    const requiredOnlyResult: CommandResult = {
+      command: 'gh',
+      args: ['pr', 'checks', 'codex/test', '--required', '--json', 'name,bucket'],
+      exitCode: 1,
+      stdout: '',
+      stderr: "no checks reported on the 'codex/test' branch",
+      durationMs: 15,
+    }
+
+    expect(isNoChecksReportedResult(requiredOnlyResult)).toBe(true)
+
+    // parseCiChecksResult throws on error; this is expected
+    expect(() => parseCiChecksResult(requiredOnlyResult)).toThrow(/gh pr checks failed/)
+
+    // After fallback to all checks, success result should parse correctly
+    const allChecksResult: CommandResult = {
+      command: 'gh',
+      args: ['pr', 'checks', 'codex/test', '--json', 'name,bucket'],
+      exitCode: 0,
+      stdout: JSON.stringify([{ name: 'test', bucket: 'pending' }]),
+      stderr: '',
+      durationMs: 100,
+    }
+
+    expect(isNoChecksReportedResult(allChecksResult)).toBe(false)
+    expect(parseCiChecksResult(allChecksResult)).toHaveLength(1)
+  })
+
+  test('pending-check timeout summaries include proper status and duration', async () => {
+    const { summarizeChecks } = await import('./git')
+
+    // Simulate checks that are still pending after timeout
+    const pendingChecks = [
+      { name: 'ci/test', bucket: 'pending' },
+      { name: 'ci/build', bucket: 'pending' },
+      { name: 'ci/deploy', bucket: 'pending' },
+    ]
+
+    const summary = summarizeChecks(pendingChecks)
+    expect(summary.pending).toHaveLength(3)
+    expect(summary.summary).toBe('0 passed/skipped, 3 pending, 0 failed/cancelled')
+  })
+
+  test('failed-check repair signals include check details for debugging', async () => {
+    const { summarizeChecks } = await import('./git')
+
+    // Simulate failed checks that should trigger repair
+    const failedChecks = [
+      { name: 'lint', workflow: 'CI', bucket: 'fail', state: 'FAILURE' },
+      { name: 'security-scan', workflow: 'Security', bucket: 'fail', state: 'FAILURE' },
+      { name: 'test', workflow: 'CI', bucket: 'cancel', state: 'CANCELLED' },
+    ]
+
+    const summary = summarizeChecks(failedChecks)
+    expect(summary.failed).toHaveLength(3)
+    expect(summary.summary).toBe('0 passed/skipped, 0 pending, 3 failed/cancelled')
+
+    // Verify check details for repair prompt
+    const failed = summary.failed
+    expect(failed[0]).toMatchObject({ name: 'lint', workflow: 'CI' })
+    expect(failed[1]).toMatchObject({ name: 'security-scan', workflow: 'Security' })
+    expect(failed[2]).toMatchObject({ name: 'test', workflow: 'CI' })
+  })
+
+  test('PR body includes validation and CI results for testing output', async () => {
+    const { renderPullRequestBody } = await import('./run')
+
+    const status = {
+      provider: 'anypi' as const,
+      status: 'running' as const,
+      startedAt: '2026-06-16T00:00:00.000Z',
+      runName: 'anypi-eval-test-runner-20260616',
+      namespace: 'agents',
+      model: 'qwen3-coder-flamingo',
+      providerModel: 'flamingo/qwen3-coder-flamingo',
+      promptVariant: 'strict-repo' as const,
+      promptHash: 'abcdef1234567890',
+      tools: ['bash', 'edit'],
+      sessionFile: '/workspace/.anypi/sessions/initial/session.json',
+      validations: [
+        {
+          command: 'bun' as const,
+          args: ['run', '--filter', '@proompteng/anypi', 'test'],
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 42,
+          ok: true,
+        },
+      ],
+      validationPlan: {
+        policy: 'append' as const,
+        sources: ['inferred' as const, 'run-spec' as const],
+        commands: ['bun run --filter @proompteng/anypi test'],
+      },
+      agentAttempts: 1,
+      validationAttempts: 1,
+      ciAttempts: 3,
+      promptChars: 1500,
+      ci: {
+        ok: true,
+        status: 'passed' as const,
+        requiredOnly: true,
+        attempts: 3,
+        durationMs: 3500,
+        checks: [],
+        summary: '2 passed/skipped, 0 pending, 0 failed/cancelled',
+      },
+    }
+
+    const body = renderPullRequestBody({
+      runSpec: { implementation: { summary: 'Improve CI watcher coverage' } },
+      status,
+      git: {
+        repository: 'proompteng/lab',
+        baseBranch: 'main',
+        headBranch: 'codex/anypi-eval/runner',
+        cloneUrl: 'https://github.com/proompteng/lab.git',
+        webUrl: 'https://github.com/proompteng/lab',
+        worktree: '/workspace/lab',
+        env: {},
+        writeEnabled: true,
+        pullRequestsEnabled: true,
+      },
+      piText: 'implemented changes',
+      template: '## Testing\n\n## Summary',
+    })
+
+    expect(body).toContain('## Testing')
+    expect(body).toContain('## Summary')
+    expect(body).toContain('bun run --filter @proompteng/anypi test')
+    expect(body).toContain('exit 0')
+    expect(body).toContain('CI: passed: 2 passed/skipped, 0 pending, 0 failed/cancelled')
+    expect(body).toContain('Prompt variant: `strict-repo` (`abcdef1234567890`).')
+    expect(body).toContain('Session artifact:')
+    expect(body).not.toContain('<!--')
+    expect(body).not.toContain('[ ]')
+  })
+
+  test('PR body includes CI failure details for repair signals', async () => {
+    const { renderPullRequestBody } = await import('./run')
+
+    const status = {
+      provider: 'anypi' as const,
+      status: 'running' as const,
+      startedAt: '2026-06-16T00:00:00.000Z',
+      runName: 'anypi-eval-fail-runner-20260616',
+      namespace: 'agents',
+      model: 'qwen3-coder-flamingo',
+      providerModel: 'flamingo/qwen3-coder-flamingo',
+      promptVariant: 'repair-loop' as const,
+      promptHash: 'deadbeef12345678',
+      tools: ['bash', 'edit'],
+      sessionFile: '/workspace/.anypi/sessions/initial/session.json',
+      validations: [
+        {
+          command: 'bun' as const,
+          args: ['run', '--filter', '@proompteng/anypi', 'lint'],
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          durationMs: 100,
+          ok: true,
+        },
+      ],
+      validationPlan: {
+        policy: 'append' as const,
+        sources: ['inferred' as const],
+        commands: ['bun run --filter @proompteng/anypi lint'],
+      },
+      agentAttempts: 2,
+      validationAttempts: 1,
+      ciAttempts: 1,
+      promptChars: 2000,
+      ci: {
+        ok: false,
+        status: 'failed' as const,
+        requiredOnly: true,
+        attempts: 2,
+        durationMs: 5000,
+        checks: [
+          { name: 'lint', workflow: 'CI', bucket: 'pass' },
+          { name: 'security', workflow: 'Security', bucket: 'fail' },
+          { name: 'test', workflow: 'CI', bucket: 'fail' },
+        ],
+        summary: '1 passed/skipped, 0 pending, 2 failed/cancelled',
+      },
+    }
+
+    const body = renderPullRequestBody({
+      runSpec: { implementation: { summary: 'Fix CI failures' } },
+      status,
+      git: {
+        repository: 'proompteng/lab',
+        baseBranch: 'main',
+        headBranch: 'codex/anypi-eval/repair',
+        cloneUrl: 'https://github.com/proompteng/lab.git',
+        webUrl: 'https://github.com/proompteng/lab',
+        worktree: '/workspace/lab',
+        env: {},
+        writeEnabled: true,
+        pullRequestsEnabled: true,
+      },
+      piText: 'fixed security and test failures',
+      template: '## Testing\n\n## Summary',
+    })
+
+    expect(body).toContain('CI: failed: 1 passed/skipped, 0 pending, 2 failed/cancelled')
+    expect(body).toContain('lint') // From validation command
+    expect(body).toContain('exit 0') // Validation still passed
+    expect(body).toContain('repair-loop')
+    expect(body).toContain('deadbeef12345678')
+  })
+
+  test('PR body handles missing CI result (checks not started)', async () => {
+    const { renderPullRequestBody } = await import('./run')
+
+    const status = {
+      provider: 'anypi' as const,
+      status: 'running' as const,
+      startedAt: '2026-06-16T00:00:00.000Z',
+      runName: 'anypi-eval-noci-runner-20260616',
+      namespace: 'agents',
+      model: 'qwen3-coder-flamingo',
+      providerModel: 'flamingo/qwen3-coder-flamingo',
+      promptVariant: 'minimal' as const,
+      promptHash: '0011223344556677',
+      tools: ['bash'],
+      sessionFile: '/workspace/.anypi/sessions/initial/session.json',
+      validations: [],
+      validationPlan: {
+        policy: 'append' as const,
+        sources: ['inferred' as const],
+        commands: [],
+      },
+      agentAttempts: 1,
+      validationAttempts: 0,
+      ciAttempts: 0,
+      promptChars: 500,
+      ci: undefined,
+    }
+
+    const body = renderPullRequestBody({
+      runSpec: { implementation: { summary: 'Add basic functionality' } },
+      status,
+      git: {
+        repository: 'proompteng/lab',
+        baseBranch: 'main',
+        headBranch: 'codex/anypi-eval/noci',
+        cloneUrl: 'https://github.com/proompteng/lab.git',
+        webUrl: 'https://github.com/proompteng/lab',
+        worktree: '/workspace/lab',
+        env: {},
+        writeEnabled: true,
+        pullRequestsEnabled: true,
+      },
+      piText: 'basic implementation',
+      template: '## Testing\n\n## Summary',
+    })
+
+    expect(body).toContain('## Testing')
+    expect(body).toContain('Pending: pull request checks have not completed yet.')
+    expect(body).toContain('CI: Pending')
+    expect(body).toContain('minimal')
+    expect(body).toContain('0011223344556677')
+    expect(body).not.toContain('<!--')
+  })
+
+  test('PR body renders without template placeholders', async () => {
+    const { renderPullRequestBody } = await import('./run')
+
+    const body = renderPullRequestBody({
+      runSpec: { implementation: { summary: 'Clean up template usage' } },
+      status: {
+        provider: 'anypi',
+        status: 'running',
+        startedAt: '2026-06-16T00:00:00.000Z',
+        runName: 'anypi-eval-template-20260616',
+        namespace: 'agents',
+        model: 'qwen3-coder-flamingo',
+        providerModel: 'flamingo/qwen3-coder-flamingo',
+        promptVariant: 'strict-repo',
+        promptHash: 'aabbccddeeff0011',
+        tools: ['bash', 'edit'],
+        sessionFile: '/workspace/.anypi/sessions/initial/session.json',
+        validations: [],
+        validationPlan: { policy: 'append', sources: ['inferred'], commands: [] },
+        agentAttempts: 1,
+        validationAttempts: 0,
+        ciAttempts: 0,
+        promptChars: 800,
+      },
+      git: {
+        repository: 'proompteng/lab',
+        baseBranch: 'main',
+        headBranch: 'codex/anypi-eval/template',
+        cloneUrl: 'https://github.com/proompteng/lab.git',
+        webUrl: 'https://github.com/proompteng/lab',
+        worktree: '/workspace/lab',
+        env: {},
+        writeEnabled: true,
+        pullRequestsEnabled: true,
+      },
+      piText: 'cleaned up',
+      template: '## Summary\n\n<!-- placeholders -->\n\n## Testing\n\n<!-- more placeholders -->',
+    })
+
+    expect(body).not.toContain('<!--')
+    expect(body).not.toContain('[ ]')
+    expect(body).not.toMatch(/TODO|TBD|<\.\.\.>/)
+  })
 })
+
+async function loadGitModule() {
+  return await import('./git')
+}
+
+async function loadRunModule() {
+  return await import('./run')
+}

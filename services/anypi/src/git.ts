@@ -37,15 +37,19 @@ const sleep = async (ms: number) => await new Promise((resolve) => setTimeout(re
 const repositoryOwner = (repository: string) => repository.split('/')[0]
 
 export const parsePullRequestList = (raw: string): PullRequestLookup | null => {
-  const parsed = JSON.parse(raw || '[]') as unknown
-  if (!Array.isArray(parsed)) return null
-  const [first] = parsed
-  if (!first || typeof first !== 'object') return null
-  const record = first as Record<string, unknown>
-  const number = typeof record.number === 'number' ? record.number : Number(record.number)
-  if (!Number.isFinite(number) || number <= 0) return null
-  const url = typeof record.html_url === 'string' ? record.html_url : undefined
-  return { number, url }
+  try {
+    const parsed = JSON.parse(raw || '[]') as unknown
+    if (!Array.isArray(parsed)) return null
+    const [first] = parsed
+    if (!first || typeof first !== 'object') return null
+    const record = first as Record<string, unknown>
+    const number = typeof record.number === 'number' ? record.number : Number(record.number)
+    if (!Number.isFinite(number) || number <= 0) return null
+    const url = typeof record.html_url === 'string' ? record.html_url : undefined
+    return { number, url }
+  } catch {
+    return null
+  }
 }
 
 const parsePullRequestResponse = (raw: string): PullRequestLookup => {
