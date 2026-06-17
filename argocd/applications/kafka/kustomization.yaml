@@ -40,9 +40,11 @@ resources:
   - karapace.yaml
   - torghut-ws-kafkauser.yaml
   - torghut-options-kafkauser.yaml
+  - torghut-hyperliquid-feed-kafkauser.yaml
   - torghut-topics.yaml
   - torghut-sim-topics.yaml
   - torghut-options-topics.yaml
+  - torghut-hyperliquid-feed-topics.yaml
 patches:
   # Make the operator watch all namespaces
   - target:

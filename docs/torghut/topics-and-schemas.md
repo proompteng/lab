@@ -15,6 +15,29 @@
 | `torghut.ta.signals.v1`    | TA indicators/signals                                        | 1          | 3   | 14d       | lz4         | delete              |
 | `torghut.ta.status.v1`     | TA job status                                                | 1          | 3   | 7d        | lz4         | compaction optional |
 
+## Hyperliquid Public Market Topics
+
+The Hyperliquid lane is public market data only. It intentionally excludes user addresses,
+private keys, signed exchange actions, and order placement.
+
+| Topic                                  | Purpose                                      | Partitions | RF  | Retention | Compression | Cleanup        |
+| -------------------------------------- | -------------------------------------------- | ---------- | --- | --------- | ----------- | -------------- |
+| `torghut.hyperliquid.raw.v1`           | Raw websocket frames for replay/debug        | 6          | 3   | 7d        | lz4         | delete         |
+| `torghut.hyperliquid.markets.v1`       | Perp/spot catalog and canonical market IDs   | 6          | 3   | 30d       | lz4         | compact,delete |
+| `torghut.hyperliquid.trades.v1`        | Public trade stream                          | 12         | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.books.l2.v1`      | L2 book snapshots                            | 12         | 3   | 7d        | lz4         | delete         |
+| `torghut.hyperliquid.bbo.v1`           | Best bid/offer updates                       | 12         | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.candles.v1`       | Public candle stream                         | 12         | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.asset-ctx.v1`     | Public market contexts, mids, and asset ctxs | 6          | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.funding.v1`       | Funding and predicted funding snapshots      | 6          | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.status.v1`        | Feed status and unknown public channels      | 6          | 3   | 7d        | lz4         | compact,delete |
+
+Hyperliquid market IDs:
+
+- Perps: `hl:perp:<dex-or-default>:<coin>`.
+- Spot: `hl:spot:<index>:<name>`.
+- Spot websocket subscriptions use `PURR/USDC` for PURR and `@<index>` for other spot pairs.
+
 Notes:
 
 - Ordering is preserved per symbol by using Kafka message key = `symbol`.
@@ -35,6 +58,34 @@ Notes:
   "window": { "size": "PT1S", "step": "PT1S", "start": "...", "end": "..." },
   "payload": {
     /* type-specific */
+  },
+  "version": 1
+}
+```
+
+Hyperliquid records use the same envelope intent with provider-specific fields:
+
+```json
+{
+  "ingest_ts": "2026-06-17T18:32:10.123Z",
+  "event_ts": "2026-06-17T18:32:10.000Z",
+  "provider": "hyperliquid",
+  "network": "mainnet",
+  "feed": "hyperliquid-mainnet",
+  "channel": "trades",
+  "symbol": "BTC",
+  "market_type": "perp",
+  "market_id": "hl:perp:default:BTC",
+  "dex": null,
+  "coin": "BTC",
+  "spot_index": null,
+  "seq": 123,
+  "is_final": true,
+  "source": "ws",
+  "payload": {
+    "coin": "BTC",
+    "px": "65000",
+    "sz": "0.1"
   },
   "version": 1
 }
@@ -88,6 +139,21 @@ Notes:
 
 ## ClickHouse storage contract
 
+Hyperliquid public data is materialized by `torghut-hyperliquid-feed` into:
+
+- `torghut.hyperliquid_market_catalog`
+- `torghut.hyperliquid_trades`
+- `torghut.hyperliquid_l2_books`
+- `torghut.hyperliquid_bbo`
+- `torghut.hyperliquid_candles`
+- `torghut.hyperliquid_asset_contexts`
+- `torghut.hyperliquid_funding`
+- `torghut.hyperliquid_status`
+- `torghut.hyperliquid_raw`
+
+These tables keep envelope fields as columns and store the original Hyperliquid payload as JSON text.
+They are research/TA inputs only and are not wired into live trading decisions by this rollout.
+
 The authoritative ClickHouse table for TA signals is currently **flattened** and stores envelope fields
 as columns (no nested `payload` column):
 
@@ -133,6 +199,9 @@ Registration helper: `docs/torghut/register-schemas.sh` (uses KARAPACE_URL env, 
 - Trades: `i`
 - Quotes/Bars: `(event_ts, symbol)`
 - Trade updates: order id (if enabled)
+- Hyperliquid trades: `(block_time, coin, tid)`.
+- Hyperliquid books/BBO/asset contexts: `(channel, market_id, time)`.
+- Hyperliquid candles: `(channel, market_id, interval, open_ts, close_ts)`.
 
 ## Data quality monitors
 

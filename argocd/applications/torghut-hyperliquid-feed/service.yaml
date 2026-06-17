@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-hyperliquid-feed
+  namespace: torghut
+  labels:
+    app: torghut-hyperliquid-feed
+spec:
+  selector:
+    app: torghut-hyperliquid-feed
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+    - name: metrics
+      port: 9090
+      targetPort: metrics
