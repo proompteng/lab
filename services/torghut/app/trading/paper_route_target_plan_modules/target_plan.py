@@ -70,9 +70,13 @@ def _target_plan_from_proofs_payload(payload: Mapping[str, Any]) -> dict[str, An
         target = _target_from_proof_identity(proof)
         if not target:
             continue
-        for key, value in capital_blocked_authority(
-            blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
-        ).as_target_fields().items():
+        for key, value in (
+            capital_blocked_authority(
+                blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
+            )
+            .as_target_fields()
+            .items()
+        ):
             target.setdefault(key, value)
         targets.append(target)
     if not targets:

@@ -10,6 +10,7 @@ from ....models import (
     Strategy,
 )
 from ...models import StrategyDecision
+from ...promotion_authority import paper_probation_authority
 from ...runtime_decision_authority import (
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
@@ -307,11 +308,9 @@ class SimplePipelineSourceCollectionLineageMixin(SourceCollectionRuntimeMixin):
             "profit_proof_eligible": True,
             "paper_route_target_plan_source": "external_target_plan_url",
             "paper_route_probe_scope_authority": "external_target_plan",
-            "paper_probation_authorized": True,
-            "promotion_allowed": False,
-            "final_promotion_authorized": False,
-            "final_authority_ok": False,
-            "final_promotion_allowed": False,
+            **paper_probation_authority(
+                blockers=["live_runtime_ledger_required"],
+            ).as_target_fields(),
             **lineage,
         }
         if strategy is not None:
@@ -438,9 +437,14 @@ class SimplePipelineSourceCollectionLineageMixin(SourceCollectionRuntimeMixin):
             params["strategy_signal_paper"] = metadata
             params["source_decision_mode"] = STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE
             params["profit_proof_eligible"] = True
-            params.setdefault("promotion_allowed", False)
-            params.setdefault("final_promotion_authorized", False)
-            params.setdefault("final_promotion_allowed", False)
+            for key, value in (
+                paper_probation_authority(
+                    blockers=["live_runtime_ledger_required"],
+                )
+                .as_target_fields()
+                .items()
+            ):
+                params.setdefault(key, value)
             if "exit_minute_after_open" in metadata:
                 params.setdefault(
                     "exit_minute_after_open",

@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence, cast
 
+from ..promotion_authority import (
+    capital_blocked_authority,
+    target_capital_promotion_allowed,
+    target_promotion_stage,
+)
 from .repair_queue import (
     bool_value,
     choose_mapping,
@@ -157,6 +162,9 @@ def _is_source_collection_target(target: Mapping[str, Any]) -> bool:
 def _summarize_runtime_window_import_target(
     target: Mapping[str, Any],
 ) -> dict[str, object]:
+    promotion_blockers = _string_items(
+        target.get("promotion_blockers")
+    ) or _string_items(target.get("final_promotion_blockers"))
     payload: dict[str, object] = {
         "hypothesis_id": _text(target.get("hypothesis_id")),
         "candidate_id": _text(target.get("candidate_id")),
@@ -181,13 +189,16 @@ def _summarize_runtime_window_import_target(
         "handoff": _text(target.get("handoff")),
         "probation_reason": _text(target.get("probation_reason")),
         "max_notional": _text(target.get("max_notional"), "0"),
-        "promotion_allowed": False,
-        "final_promotion_allowed": False,
-        "final_promotion_authorized": False,
-        "final_authority_ok": False,
-        "final_promotion_blockers": _string_items(
-            target.get("final_promotion_blockers")
+        "promotion_stage": target_promotion_stage(target).value,
+        "capital_promotion_allowed": target_capital_promotion_allowed(target),
+        "promotion_blockers": promotion_blockers,
+        "legacy_promotion_allowed": _bool(target.get("promotion_allowed")),
+        "legacy_final_promotion_allowed": _bool(target.get("final_promotion_allowed")),
+        "legacy_final_promotion_authorized": _bool(
+            target.get("final_promotion_authorized")
         ),
+        "final_authority_ok": _bool(target.get("final_authority_ok")),
+        "final_promotion_blockers": promotion_blockers,
         "candidate_blockers": _string_items(target.get("candidate_blockers")),
         "source_collection_reason_codes": _string_items(
             target.get("source_collection_reason_codes")
@@ -222,10 +233,9 @@ def _summarize_runtime_window_import_repair(
             "skipped_target_count": 0,
             "blocked_reasons": blocked_reasons,
             "top_targets": [],
-            "promotion_allowed": False,
-            "final_promotion_allowed": False,
-            "final_promotion_authorized": False,
-            "final_authority_ok": False,
+            **capital_blocked_authority(
+                blockers=["runtime_ledger_source_collection_plan_missing"],
+            ).as_target_fields(),
         }
 
     raw_targets = _mapping_items(plan.get("targets"))
@@ -286,10 +296,9 @@ def _summarize_runtime_window_import_repair(
             }
             for target in skipped_targets[:5]
         ],
-        "promotion_allowed": False,
-        "final_promotion_allowed": False,
-        "final_promotion_authorized": False,
-        "final_authority_ok": False,
+        **capital_blocked_authority(
+            blockers=["runtime_ledger_source_collection_pending"],
+        ).as_target_fields(),
     }
 
 

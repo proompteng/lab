@@ -41,6 +41,10 @@ from .persistence_types import (
     PersistedRows,
     PersistencePlan,
 )
+from ..promotion_authority import (
+    capital_allowed_authority,
+    capital_blocked_authority,
+)
 
 
 def runtime_materialization_target(
@@ -50,6 +54,13 @@ def runtime_materialization_target(
     evidence_blocking_reasons: Sequence[str],
     promotion_allowed: bool,
 ) -> dict[str, Any]:
+    authority = (
+        capital_allowed_authority()
+        if promotion_allowed
+        else capital_blocked_authority(
+            blockers=plan.promotion.promotion_blocking_reasons
+        )
+    )
     return {
         "candidate_id": plan.request.candidate_id,
         "hypothesis_id": plan.request.hypothesis_id,
@@ -75,7 +86,7 @@ def runtime_materialization_target(
         "proof_status": proof_status,
         "proof_blockers": list(proof_blockers),
         "evidence_blocking_reasons": list(evidence_blocking_reasons),
-        "capital_promotion_allowed": promotion_allowed,
+        **authority.as_target_fields(),
         "capital_promotion_blocking_reasons": plan.promotion.promotion_blocking_reasons,
     }
 
@@ -251,6 +262,14 @@ def _final_capital_stage(plan: PersistencePlan) -> str:
     )
 
 
+def _promotion_authority_fields(plan: PersistencePlan) -> dict[str, object]:
+    if plan.promotion.promotion_allowed:
+        return capital_allowed_authority().as_target_fields()
+    return capital_blocked_authority(
+        blockers=plan.promotion.promotion_blocking_reasons
+    ).as_target_fields()
+
+
 def _add_capital_allocation(plan: PersistencePlan, final_capital_stage: str) -> None:
     plan.request.session.add(
         StrategyCapitalAllocation(
@@ -270,7 +289,7 @@ def _capital_allocation_payload(plan: PersistencePlan) -> dict[str, Any]:
     return {
         **_summary_payload(plan),
         **plan.metrics.runtime_ledger_daily_summary,
-        "promotion_allowed": plan.promotion.promotion_allowed,
+        **_promotion_authority_fields(plan),
         "promotion_blocking_reasons": plan.promotion.promotion_blocking_reasons,
         "evidence_blocking_reasons": plan.promotion.evidence_blocking_reasons,
         "delay_adjusted_depth_stress": plan.context.delay_depth_stress_summary,
@@ -285,7 +304,7 @@ def _promotion_decision_payload(plan: PersistencePlan) -> dict[str, Any]:
         "avg_post_cost_expectancy_bps": str(plan.metrics.average_post_cost),
         **plan.metrics.runtime_ledger_daily_summary,
         "latest_three_within_budget": plan.metrics.latest_three_budget_ok,
-        "promotion_allowed": plan.promotion.promotion_allowed,
+        **_promotion_authority_fields(plan),
         "promotion_blocking_reasons": plan.promotion.promotion_blocking_reasons,
         "evidence_blocking_reasons": plan.promotion.evidence_blocking_reasons,
         "delay_adjusted_depth_stress": plan.context.delay_depth_stress_summary,
@@ -587,7 +606,7 @@ def final_summary(
         **plan.metrics.runtime_ledger_daily_summary,
         "latest_three_within_budget": plan.metrics.latest_three_budget_ok,
         "slippage_budget_bps": str(plan.context.budget),
-        "promotion_allowed": plan.promotion.promotion_allowed,
+        **_promotion_authority_fields(plan),
         "promotion_blocking_reasons": plan.promotion.promotion_blocking_reasons,
         "evidence_blocking_reasons": plan.promotion.evidence_blocking_reasons,
         "proof_status": plan.promotion.proof_status,

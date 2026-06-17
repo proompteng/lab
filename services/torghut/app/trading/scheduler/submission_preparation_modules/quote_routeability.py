@@ -11,6 +11,7 @@ from ....models import (
     TradeDecision,
 )
 from ...models import StrategyDecision
+from ...promotion_authority import capital_blocked_authority
 from ...prices import MarketSnapshot
 from ...quote_quality import (
     QuoteQualityStatus,
@@ -246,9 +247,9 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
                 if status.valid
                 else status.operator_next_action or "refresh_source_snapshot"
             ),
-            "promotion_allowed": False,
-            "final_authority_ok": False,
-            "final_promotion_allowed": False,
+            **capital_blocked_authority(
+                blockers=["quote_routeability_not_capital_promotion_authority"],
+            ).as_target_fields(),
             "readiness": {
                 "schema_version": "torghut.paper-route-fillability-readiness.v1",
                 "state": "ready" if status.valid else "blocked",
@@ -256,8 +257,9 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
                 "next_operator_action": status.operator_next_action,
                 "repair_action": status.repair_action,
                 "evidence_requirements": list(status.evidence_requirements),
-                "promotion_allowed": False,
-                "final_authority_ok": False,
+                **capital_blocked_authority(
+                    blockers=["quote_routeability_not_capital_promotion_authority"],
+                ).as_target_fields(),
             },
             "target_plan_source_mismatch": dict(request.target_mismatch)
             if request.target_mismatch is not None

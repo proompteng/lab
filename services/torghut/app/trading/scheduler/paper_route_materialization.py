@@ -17,6 +17,7 @@ from ...models import (
     TradeDecision,
 )
 from ..models import StrategyDecision
+from ..promotion_authority import source_collection_authority
 from ..runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
 )
@@ -201,10 +202,14 @@ class SimplePipelinePaperRouteMaterializationMixin(
         )
         target.setdefault("observed_stage", "paper")
         target.setdefault("bounded_collection_stage", "bounded_paper_collection")
-        target.setdefault("promotion_allowed", False)
-        target.setdefault("final_authority_ok", False)
-        target.setdefault("final_promotion_authorized", False)
-        target.setdefault("final_promotion_allowed", False)
+        for key, value in (
+            source_collection_authority(
+                blockers=["paper_route_runtime_ledger_import_pending"],
+            )
+            .as_target_fields()
+            .items()
+        ):
+            target.setdefault(key, value)
         target.setdefault("live_capital_routing_enabled", False)
         if target.get("paper_route_probe_window_start") is None:
             target["paper_route_probe_window_start"] = target.get(
@@ -356,10 +361,9 @@ class SimplePipelinePaperRouteMaterializationMixin(
             "paper_route_probe_symbols": metadata.get("paper_route_probe_symbols"),
             "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
             "bounded_collection_stage": "bounded_paper_collection",
-            "promotion_allowed": False,
-            "final_promotion_authorized": False,
-            "final_authority_ok": False,
-            "final_promotion_allowed": False,
+            **source_collection_authority(
+                blockers=["paper_route_runtime_ledger_import_pending"],
+            ).as_target_fields(),
             "live_capital_routing_enabled": False,
             **execution_metadata,
             "bounded_paper_route_submit_path": execution_metadata["submit_path"],

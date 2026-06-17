@@ -15,6 +15,7 @@ from ...models import (
 from ..hypotheses import (
     HypothesisManifest,
 )
+from ..promotion_authority import target_capital_promotion_allowed
 from ..runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
 from ..runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
@@ -58,10 +59,8 @@ _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
 
 RUNTIME_WINDOW_IMPORT_CAPITAL_ONLY_BLOCKERS = frozenset(
     {
-        "candidate_board_promotion_not_allowed",
+        "capital_promotion_not_allowed",
         "drift_checks_not_ok",
-        "final_promotion_not_authorized",
-        "final_promotion_not_allowed",
         "live_runtime_ledger_required",
         "paper_probation_evidence_collection_only",
         "paper_stage_evidence_collection_only",
@@ -674,10 +673,6 @@ def paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> list
     )
     if paper_probation_authorized is True and evidence_collection_stage == "paper":
         reasons.append("paper_probation_evidence_collection_only")
-    if observation_bool(target_metadata.get("promotion_allowed")) is False:
-        reasons.append("candidate_board_promotion_not_allowed")
-    if observation_bool(target_metadata.get("final_promotion_authorized")) is False:
-        reasons.append("final_promotion_not_authorized")
-    if observation_bool(target_metadata.get("final_promotion_allowed")) is False:
-        reasons.append("final_promotion_not_allowed")
+    if not target_capital_promotion_allowed(target_metadata):
+        reasons.append("capital_promotion_not_allowed")
     return list(dict.fromkeys(reasons))
