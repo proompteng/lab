@@ -286,6 +286,11 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             decision.symbol,
         )
         if proof_floor_symbol_block_reason is not None:
+            if self._bounded_live_paper_route_probe_profit_floor_allowed(
+                decision,
+                proof_floor_symbol_block_reason,
+            ):
+                return True
             self._block_decision_submission(
                 session=request.session,
                 decision=decision,

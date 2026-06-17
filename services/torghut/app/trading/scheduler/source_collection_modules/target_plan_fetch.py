@@ -72,7 +72,7 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
     def _paper_route_target_plan_url_points_to_current_service(url: str) -> bool:
         parsed = urlsplit(url)
         path = (parsed.path or "").rstrip("/")
-        if path not in {"/trading/paper-route-target-plan", "/trading/proofs"}:
+        if path != "/trading/paper-route-target-plan":
             return False
         hostname = (parsed.hostname or "").strip().lower()
         service_name = os.getenv("K_SERVICE", "").strip().lower()
@@ -574,6 +574,10 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
             "paper_route_probe_symbols": sorted(_target_symbols(target)),
             "paper_route_probe_window_start": context.window_start.isoformat(),
             "paper_route_probe_window_end": context.window_end.isoformat(),
+            "paper_route_probe_total_max_notional": (
+                _safe_text(target.get("paper_route_probe_total_max_notional"))
+                or str(context.target_cap)
+            ),
             "paper_route_probe_next_session_max_notional": str(context.target_cap),
             "paper_route_probe_effective_max_notional": str(context.target_cap),
             "paper_route_probe_symbol_quantities": {
