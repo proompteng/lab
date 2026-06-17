@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
@@ -13,19 +12,11 @@ from sqlalchemy.orm import Session
 from .shared_context import (
     int_env as _int_env,
     str_env as _str_env,
-    build_whitepaper_run_id,
-    comment_requests_requeue,
-    extract_pdf_urls,
     logger,
-    normalize_github_issue_event,
-    parse_marker_block,
-    whitepaper_inngest_enabled,
     whitepaper_kafka_enabled,
-    whitepaper_semantic_indexing_enabled,
     whitepaper_workflow_enabled,
 )
 from .ceph_s3_client import (
-    IssueKickoffResult,
     WhitepaperWorkflowServiceFields as _WhitepaperWorkflowServiceFields,
 )
 from .whitepaper_workflow_ingestion_methods import (
@@ -217,7 +208,7 @@ class WhitepaperKafkaIssueIngestor:
             records: list[Any] = []
             for bucket in cast(Mapping[Any, Any], polled).values():
                 if isinstance(bucket, list):
-                    records.extend(bucket)
+                    records.extend(cast(list[Any], bucket))
             return records
         if isinstance(polled, list):
             return cast(list[Any], polled)
@@ -312,23 +303,6 @@ class WhitepaperKafkaWorker:
     def _ingest_once(self) -> None:
         with self._session_factory() as session:
             self._ingestor.ingest_once(session)
-
-
-__all__ = [
-    "IssueKickoffResult",
-    "WhitepaperKafkaIssueIngestor",
-    "WhitepaperKafkaWorker",
-    "WhitepaperWorkflowService",
-    "build_whitepaper_run_id",
-    "comment_requests_requeue",
-    "extract_pdf_urls",
-    "normalize_github_issue_event",
-    "parse_marker_block",
-    "whitepaper_inngest_enabled",
-    "whitepaper_kafka_enabled",
-    "whitepaper_semantic_indexing_enabled",
-    "whitepaper_workflow_enabled",
-]
 
 
 __all__ = (

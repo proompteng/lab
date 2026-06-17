@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading decision engine based on TA signals."""
 
 from __future__ import annotations
@@ -6,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Optional, cast
+from typing import Any, Literal, Optional, cast
 
 from ...models import Strategy
 from ..features import (
@@ -15,6 +14,7 @@ from ..features import (
     extract_signal_features,
     normalize_feature_vector_v3,
 )
+from ..forecasting import ForecastRouterV5
 from ..microstructure import parse_microstructure_state
 from ..models import SignalEnvelope, StrategyDecision
 from ..regime_hmm import (
@@ -78,7 +78,7 @@ def _resolve_legacy_action(features: SignalFeatures) -> Any:
 class _LegacyDecisionInputs:
     timeframe: str
     features: SignalFeatures
-    action: str
+    action: Literal["buy", "sell"]
     rationale_parts: list[str]
 
 
@@ -111,6 +111,21 @@ class _BuildParamsRequest:
 
 
 class _DecisionEngineRuntimeMethods:
+    def evaluate_legacy_strategy(
+        self,
+        signal: SignalEnvelope,
+        strategy: Strategy,
+        *,
+        equity: Optional[Decimal],
+        positions: Optional[list[dict[str, Any]]],
+    ) -> Optional[StrategyDecision]:
+        return self._evaluate_legacy_strategy(
+            signal,
+            strategy,
+            equity=equity,
+            positions=positions,
+        )
+
     def _evaluate_legacy_strategy(
         self,
         signal: SignalEnvelope,
@@ -176,8 +191,10 @@ class _DecisionEngineRuntimeMethods:
     ) -> tuple[Optional[Decimal], Optional[MarketSnapshot]]:
         price = features.price
         snapshot: Optional[MarketSnapshot] = None
-        if price is None and self.price_fetcher is not None:
-            snapshot = self.price_fetcher.fetch_market_snapshot(signal)
+        core_methods = cast(_DecisionEngineCoreMethods, self)
+        price_fetcher = core_methods.price_fetcher
+        if price is None and price_fetcher is not None:
+            snapshot = price_fetcher.fetch_market_snapshot(signal)
             if snapshot is not None:
                 price = snapshot.price
         return price, snapshot
@@ -189,7 +206,9 @@ class _DecisionEngineRuntimeMethods:
         timeframe: str,
         price: Optional[Decimal],
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        if self.forecast_router is None:
+        core_methods = cast(_DecisionEngineCoreMethods, self)
+        forecast_router: ForecastRouterV5 | None = core_methods.forecast_router
+        if forecast_router is None:
             return None, None
         normalized_payload = dict(signal.payload)
         if price is not None and "price" not in normalized_payload:
@@ -199,12 +218,12 @@ class _DecisionEngineRuntimeMethods:
             feature_vector = normalize_feature_vector_v3(normalized_signal)
         except FeatureNormalizationError:
             return None, None
-        forecast_result = self.forecast_router.route_and_forecast(
+        forecast_result = forecast_router.route_and_forecast(
             feature_vector=feature_vector,
             horizon=timeframe,
             event_ts=signal.event_ts,
         )
-        self._last_forecast_telemetry.append(forecast_result.telemetry)
+        core_methods.append_forecast_telemetry(forecast_result.telemetry)
         return forecast_result.contract.to_payload(), forecast_result.audit.to_payload()
 
 
@@ -224,10 +243,12 @@ def _legacy_decision_inputs(
     if action_bundle is None:
         return None
     action, rationale_parts = action_bundle
+    if action not in {"buy", "sell"}:
+        return None
     return _LegacyDecisionInputs(
         timeframe=timeframe,
         features=features,
-        action=action,
+        action=cast(Literal["buy", "sell"], action),
         rationale_parts=list(rationale_parts),
     )
 

@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from threading import Lock
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple, TypeVar, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -75,6 +75,8 @@ from ..tca import build_tca_gate_inputs
 
 
 logger = logging.getLogger("app.trading.submission_council")
+
+_CompatSymbol = TypeVar("_CompatSymbol")
 
 _CAPITAL_STAGE_ORDER = (
     "shadow",
@@ -146,11 +148,11 @@ _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
 )
 
 
-def _compat_symbol(name: str, fallback: object) -> object:
+def _compat_symbol(name: str, fallback: _CompatSymbol) -> _CompatSymbol:
     facade = sys.modules.get("app.trading.submission_council")
     if facade is None:
         return fallback
-    return getattr(facade, name, fallback)
+    return cast(_CompatSymbol, getattr(facade, name, fallback))
 
 
 def _safe_int(value: object) -> int:

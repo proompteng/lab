@@ -1,11 +1,10 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading decision engine based on TA signals."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Iterable, Literal, Optional, cast
+from typing import Any, Iterable, Literal, Optional, Protocol, cast
 
 from ...config import settings
 from ...models import Strategy
@@ -63,6 +62,17 @@ from .decision_engine_core_support import (
 )
 
 
+class _LegacyStrategyEvaluator(Protocol):
+    def evaluate_legacy_strategy(
+        self,
+        signal: SignalEnvelope,
+        strategy: Strategy,
+        *,
+        equity: Optional[Decimal],
+        positions: Optional[list[dict[str, Any]]],
+    ) -> Optional[StrategyDecision]: ...
+
+
 class _DecisionEngineCoreMethods:
     def __init__(
         self,
@@ -104,6 +114,9 @@ class _DecisionEngineCoreMethods:
             else None
         )
         self._last_forecast_telemetry: list[ForecastRoutingTelemetry] = []
+
+    def append_forecast_telemetry(self, telemetry: ForecastRoutingTelemetry) -> None:
+        self._last_forecast_telemetry.append(telemetry)
 
     def evaluate(
         self,
@@ -791,7 +804,7 @@ class _DecisionEngineCoreMethods:
                     strategy.base_timeframe,
                 )
                 continue
-            decision = self._evaluate_legacy_strategy(
+            decision = cast(_LegacyStrategyEvaluator, self).evaluate_legacy_strategy(
                 signal,
                 strategy,
                 equity=equity,

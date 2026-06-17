@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 # fmt: off
 """Traceability helpers for doc 29 completion gates."""
 
@@ -17,108 +16,33 @@ from ..empirical_jobs import build_empirical_jobs_status
 
 
 from .runtime_matrix_path import (
-    DOC29_COMPLETION_ENDPOINT,
-    DOC29_COMPLETION_MATRIX_DOC_PATH,
-    DOC29_COMPLETION_MATRIX_RUNTIME_PATH,
     DOC29_EMPIRICAL_JOBS_GATE,
-    DOC29_EMPIRICAL_MANIFEST_GATE,
     DOC29_LIVE_CANARY_GATE,
     DOC29_LIVE_SCALE_GATE,
     DOC29_PAPER_GATE,
     DOC29_SIMULATION_FULL_DAY_GATE,
-    DOC29_SIMULATION_SMOKE_GATE,
     TRACE_STATUSES,
     TRACE_STATUS_BLOCKED,
     TRACE_STATUS_REGRESSED,
     TRACE_STATUS_SATISFIED,
     TRACE_STATUS_STALE,
-    build_completion_trace,
+    as_dict as _as_dict,
+    as_list as _as_list,
+    as_text as _as_text,
+    latest_completion_rows as _latest_completion_rows,
+    latest_completion_rows_filtered as _latest_completion_rows_filtered,
+    latest_empirical_rows as _latest_empirical_rows,
+    latest_hypothesis_windows as _latest_hypothesis_windows,
     load_doc29_completion_matrix,
-    persist_completion_trace,
-    runtime_and_doc_completion_matrices_match,
-    upsert_completion_gate_result,
-    validate_doc29_completion_matrix,
+    promotion_decision_keys_for_windows as _promotion_decision_keys_for_windows,
+    safe_int as _safe_int,
 )
-from . import runtime_matrix_path as _runtime_matrix_path_private_41
-from . import runtime_ledger_bucket_existing_blockers as _runtime_ledger_bucket_existing_blockers_private_97
-
-_PromotionDecisionKey = getattr(_runtime_matrix_path_private_41, '_PromotionDecisionKey')
-_RUNTIME_LEDGER_BUCKET_SCHEMAS = getattr(_runtime_matrix_path_private_41, '_RUNTIME_LEDGER_BUCKET_SCHEMAS')
-_as_dict = getattr(_runtime_matrix_path_private_41, '_as_dict')
-_as_list = getattr(_runtime_matrix_path_private_41, '_as_list')
-_as_text = getattr(_runtime_matrix_path_private_41, '_as_text')
-_candidate_hypothesis_manifests = getattr(_runtime_matrix_path_private_41, '_candidate_hypothesis_manifests')
-_doc_matrix_path = getattr(_runtime_matrix_path_private_41, '_doc_matrix_path')
-_gate_policy_parameters = getattr(_runtime_matrix_path_private_41, '_gate_policy_parameters')
-_latest_completion_rows = getattr(_runtime_matrix_path_private_41, '_latest_completion_rows')
-_latest_completion_rows_filtered = getattr(_runtime_matrix_path_private_41, '_latest_completion_rows_filtered')
-_latest_empirical_rows = getattr(_runtime_matrix_path_private_41, '_latest_empirical_rows')
-_latest_hypothesis_windows = getattr(_runtime_matrix_path_private_41, '_latest_hypothesis_windows')
-_load_hypothesis_manifests_by_id = getattr(_runtime_matrix_path_private_41, '_load_hypothesis_manifests_by_id')
-_load_yaml_mapping = getattr(_runtime_matrix_path_private_41, '_load_yaml_mapping')
-_manifest_runtime_session_threshold = getattr(_runtime_matrix_path_private_41, '_manifest_runtime_session_threshold')
-_median_decimal = getattr(_runtime_matrix_path_private_41, '_median_decimal')
-_normalize_gate_definition = getattr(_runtime_matrix_path_private_41, '_normalize_gate_definition')
-_p10_decimal = getattr(_runtime_matrix_path_private_41, '_p10_decimal')
-_policy_int = getattr(_runtime_matrix_path_private_41, '_policy_int')
-_positive_hash_count = getattr(_runtime_matrix_path_private_41, '_positive_hash_count')
-_promotion_decision_blocked_reason = getattr(_runtime_matrix_path_private_41, '_promotion_decision_blocked_reason')
-_promotion_decision_key = getattr(_runtime_matrix_path_private_41, '_promotion_decision_key')
-_promotion_decision_key_for_decision = getattr(_runtime_matrix_path_private_41, '_promotion_decision_key_for_decision')
-_promotion_decision_key_for_window = getattr(_runtime_matrix_path_private_41, '_promotion_decision_key_for_window')
-_promotion_decision_keys_for_windows = getattr(_runtime_matrix_path_private_41, '_promotion_decision_keys_for_windows')
-_runtime_ledger_bucket_promotion_payload = getattr(_runtime_matrix_path_private_41, '_runtime_ledger_bucket_promotion_payload')
-_runtime_ledger_trading_day_key = getattr(_runtime_matrix_path_private_41, '_runtime_ledger_trading_day_key')
-_runtime_matrix_path = getattr(_runtime_matrix_path_private_41, '_runtime_matrix_path')
-_safe_float = getattr(_runtime_matrix_path_private_41, '_safe_float')
-_safe_int = getattr(_runtime_matrix_path_private_41, '_safe_int')
-_utc = getattr(_runtime_matrix_path_private_41, '_utc')
-_windows_with_allowed_promotion_decisions = getattr(_runtime_matrix_path_private_41, '_windows_with_allowed_promotion_decisions')
-_EmpiricalJobsGateEvidence = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_EmpiricalJobsGateEvidence')
-_LiveScaleRuntimeSummary = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_LiveScaleRuntimeSummary')
-_RuntimeLedgerBucketTotals = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_RuntimeLedgerBucketTotals')
-_RuntimeLedgerDailySeries = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_RuntimeLedgerDailySeries')
-_RuntimeLedgerSourceAuthoritySummary = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_RuntimeLedgerSourceAuthoritySummary')
-_TraceGateRefs = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_TraceGateRefs')
-_WindowWeightedMetrics = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_WindowWeightedMetrics')
-_benchmark_missing_families = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_benchmark_missing_families')
-_blocked_trace_gate_result = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_blocked_trace_gate_result')
-_empirical_jobs_consistency_status = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_empirical_jobs_consistency_status')
-_empirical_jobs_gate_evidence = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_empirical_jobs_gate_evidence')
-_evaluate_empirical_jobs_gate = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_evaluate_empirical_jobs_gate')
-_evaluate_live_canary_gate = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_evaluate_live_canary_gate')
-_evaluate_live_scale_gate = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_evaluate_live_scale_gate')
-_evaluate_paper_gate = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_evaluate_paper_gate')
-_latest_three_within_budget = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_latest_three_within_budget')
-_live_scale_blocked_reason = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_live_scale_blocked_reason')
-_live_scale_gate_result = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_live_scale_gate_result')
-_live_scale_runtime_summary = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_live_scale_runtime_summary')
-_missing_or_ineligible_empirical_jobs = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_missing_or_ineligible_empirical_jobs')
-_paper_gate_acceptance = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_paper_gate_acceptance')
-_paper_gate_benchmark_blocked_reason = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_paper_gate_benchmark_blocked_reason')
-_paper_gate_has_insufficient_decisions = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_paper_gate_has_insufficient_decisions')
-_paper_gate_identity_result = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_paper_gate_identity_result')
-_paper_gate_precondition_result = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_paper_gate_precondition_result')
-_paper_gate_refs_with_fill_price_artifact = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_paper_gate_refs_with_fill_price_artifact')
-_promotion_decision_blocked_gate_result = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_promotion_decision_blocked_gate_result')
-_runtime_ledger_bucket_existing_blockers = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_bucket_existing_blockers')
-_runtime_ledger_bucket_is_promotion_grade = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_bucket_is_promotion_grade')
-_runtime_ledger_bucket_matches_window = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_bucket_matches_window')
-_runtime_ledger_bucket_refs_for_windows = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_bucket_refs_for_windows')
-_runtime_ledger_bucket_summary = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_bucket_summary')
-_runtime_ledger_bucket_totals = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_bucket_totals')
-_runtime_ledger_bucket_window_match_key = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_bucket_window_match_key')
-_runtime_ledger_daily_series = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_daily_series')
-_runtime_ledger_daily_summary = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_daily_summary')
-_runtime_ledger_persisted_daily_summary = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_persisted_daily_summary')
-_runtime_ledger_schema_versions = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_schema_versions')
-_runtime_ledger_source_authority_summary = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_ledger_source_authority_summary')
-_runtime_observed_rows_for_candidate = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_runtime_observed_rows_for_candidate')
-_satisfied_trace_gate_result = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_satisfied_trace_gate_result')
-_trace_gate_refs_from_gate = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_trace_gate_refs_from_gate')
-_trace_gate_result = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_trace_gate_result')
-_window_gate_summary = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_window_gate_summary')
-_window_weighted_metrics = getattr(_runtime_ledger_bucket_existing_blockers_private_97, '_window_weighted_metrics')
+from .runtime_ledger_bucket_existing_blockers import (
+    evaluate_empirical_jobs_gate as _evaluate_empirical_jobs_gate,
+    evaluate_live_canary_gate as _evaluate_live_canary_gate,
+    evaluate_live_scale_gate as _evaluate_live_scale_gate,
+    evaluate_paper_gate as _evaluate_paper_gate,
+)
 
 
 def _effective_row_status(
@@ -418,31 +342,6 @@ def build_doc29_completion_status(
         'promotion_authority': promotion_authority,
         'gates': gates,
     }
-
-__all__ = [
-    'DOC29_COMPLETION_ENDPOINT',
-    'DOC29_COMPLETION_MATRIX_DOC_PATH',
-    'DOC29_COMPLETION_MATRIX_RUNTIME_PATH',
-    'DOC29_EMPIRICAL_JOBS_GATE',
-    'DOC29_EMPIRICAL_MANIFEST_GATE',
-    'DOC29_LIVE_CANARY_GATE',
-    'DOC29_LIVE_SCALE_GATE',
-    'DOC29_PAPER_GATE',
-    'DOC29_SIMULATION_FULL_DAY_GATE',
-    'DOC29_SIMULATION_SMOKE_GATE',
-    'TRACE_STATUS_BLOCKED',
-    'TRACE_STATUS_REGRESSED',
-    'TRACE_STATUS_SATISFIED',
-    'TRACE_STATUS_STALE',
-    'build_completion_trace',
-    'build_doc29_completion_status',
-    'load_doc29_completion_matrix',
-    'persist_completion_trace',
-    'runtime_and_doc_completion_matrices_match',
-    'upsert_completion_gate_result',
-    'validate_doc29_completion_matrix',
-]
-
 
 __all__ = (
     "build_doc29_completion_status",
