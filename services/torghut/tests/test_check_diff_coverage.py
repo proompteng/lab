@@ -13,6 +13,8 @@ from scripts.check_diff_coverage import (
     FileDiffCoverage,
     _drop_missing_non_executable_files,
     _executable_source_lines,
+    _format_missing_line_range,
+    _format_range,
     _format_summary,
     _git,
     _git_optional,
@@ -455,20 +457,143 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         self.assertEqual(summary, [])
 
     def test_format_summary_includes_missing_from_coverage_suffix(self) -> None:
-        text = _format_summary(
-            [
-                FileDiffCoverage(
-                    filename="scripts/check_diff_coverage.py",
-                    executable_changed_lines=2,
-                    covered_lines=1,
-                    missing_lines=(20,),
-                    missing_from_coverage=True,
-                )
-            ]
-        )
+        with TemporaryDirectory() as tmpdir:
+            # Create a dummy source file to test line context
+            scripts_dir = Path(tmpdir) / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            (scripts_dir / "check_diff_coverage.py").write_text(
+                'def main():\n    return 0\n    print("hello")\n', encoding="utf-8"
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="scripts/check_diff_coverage.py",
+                        executable_changed_lines=2,
+                        covered_lines=0,
+                        missing_lines=(1, 2),  # Use valid line numbers
+                        missing_from_coverage=True,
+                    )
+                ],
+                service_root=Path(tmpdir),
+            )
 
         self.assertIn("missing-from-coverage", text)
-        self.assertIn("missing lines: 20", text)
+        self.assertIn("missing lines: 1-2", text)
+        # The context should show the code on the missing lines
+        self.assertIn("+1: def main():", text)
+        self.assertIn("+2:     return 0", text)
+
+    def test_format_summary_shows_consecutive_line_ranges(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "app" / "trading" / "foo.py"
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text(
+                "def func():\n    a = 1\n    b = 2\n    c = 3\n    d = 4\n",
+                encoding="utf-8",
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="app/trading/foo.py",
+                        executable_changed_lines=4,
+                        covered_lines=1,
+                        missing_lines=(2, 3, 4),
+                    )
+                ],
+                service_root=Path(tmpdir),
+            )
+
+        # Consecutive lines should be shown as a range
+        self.assertIn("missing lines: 2-4", text)
+        # Context should show code for first 3 lines
+        self.assertIn("+2:     a = 1", text)
+        self.assertIn("+3:     b = 2", text)
+        self.assertIn("+4:     c = 3", text)
+
+    def test_format_summary_shows_individual_lines_when_not_consecutive(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "app" / "trading" / "foo.py"
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text(
+                "def func():\n    a = 1\n    b = 2\n    c = 3\n", encoding="utf-8"
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="app/trading/foo.py",
+                        executable_changed_lines=3,
+                        covered_lines=0,
+                        missing_lines=(1, 4),  # Not consecutive
+                    )
+                ],
+                service_root=Path(tmpdir),
+            )
+
+        # Non-consecutive lines should be shown individually
+        self.assertIn("missing lines: 1, 4", text)
+        # Context should show code
+        self.assertIn("+1: def func():", text)
+        self.assertIn("+4:     c = 3", text)
+
+    def test_format_summary_truncates_context_after_three_lines(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "app" / "trading" / "foo.py"
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text(
+                "def func():\n    a = 1\n    b = 2\n    c = 3\n    d = 4\n    e = 5\n",
+                encoding="utf-8",
+            )
+            text = _format_summary(
+                [
+                    FileDiffCoverage(
+                        filename="app/trading/foo.py",
+                        executable_changed_lines=5,
+                        covered_lines=0,
+                        missing_lines=(1, 2, 3, 4, 5),
+                    )
+                ],
+                service_root=Path(tmpdir),
+            )
+
+        # Should show ranges
+        self.assertIn("missing lines: 1-5", text)
+        # Should only show first 3 lines of context
+        self.assertIn("+1: def func():", text)
+        self.assertIn("+2:     a = 1", text)
+        self.assertIn("+3:     b = 2", text)
+        # Should indicate there are more
+        self.assertIn("... and 2 more missing lines", text)
+        # Should not show lines 4 and 5 in context
+        self.assertNotIn("+4:", text)
+        self.assertNotIn("+5:", text)
+
+    def test_format_missing_line_range_single_line(self) -> None:
+        result = _format_missing_line_range((5,))
+        self.assertEqual(result, "5")
+
+    def test_format_missing_line_range_consecutive(self) -> None:
+        result = _format_missing_line_range((1, 2, 3))
+        self.assertEqual(result, "1-3")
+
+    def test_format_missing_line_range_non_consecutive(self) -> None:
+        result = _format_missing_line_range((1, 3, 5))
+        self.assertEqual(result, "1, 3, 5")
+
+    def test_format_missing_line_range_mixed(self) -> None:
+        result = _format_missing_line_range((1, 2, 5, 7, 8, 9))
+        self.assertEqual(result, "1-2, 5, 7-9")
+
+    def test_format_missing_line_range_empty(self) -> None:
+        result = _format_missing_line_range(())
+        self.assertEqual(result, "none")
+
+    def test_format_range_single_number(self) -> None:
+        result = _format_range(5, 5)
+        self.assertEqual(result, "5")
+
+    def test_format_range_multiple_numbers(self) -> None:
+        result = _format_range(1, 3)
+        self.assertEqual(result, "1-3")
 
     @patch("scripts.check_diff_coverage._parse_args")
     @patch("scripts.check_diff_coverage._repo_root")

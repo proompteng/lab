@@ -265,7 +265,15 @@ def summarize_changed_coverage(
     return summary
 
 
-def _format_summary(summary: list[FileDiffCoverage]) -> str:
+def _load_source_lines(path: Path) -> list[str]:
+    """Load source file lines, returning empty list if file doesn't exist."""
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError):
+        return []
+
+
+def _format_summary(summary: list[FileDiffCoverage], service_root: Path) -> str:
     lines: list[str] = []
     for item in summary:
         coverage_pct = item.coverage_ratio * 100
@@ -275,10 +283,49 @@ def _format_summary(summary: list[FileDiffCoverage]) -> str:
             f"lines covered ({coverage_pct:.2f}%){suffix}"
         )
         if item.missing_lines:
-            lines.append(
-                f"  missing lines: {', '.join(str(line) for line in item.missing_lines)}"
-            )
+            source_lines = _load_source_lines(service_root / item.filename)
+            # Show range for consecutive lines for conciseness
+            missing_str = _format_missing_line_range(item.missing_lines)
+            lines.append(f"  missing lines: {missing_str}")
+            # Show context for first 3 missing lines to help decide next test
+            shown = 0
+            for line_no in sorted(item.missing_lines):
+                if shown >= 3:
+                    lines.append(
+                        f"  ... and {len(item.missing_lines) - shown} more missing lines"
+                    )
+                    break
+                if 1 <= line_no <= len(source_lines):
+                    code = source_lines[line_no - 1].rstrip()
+                    if code:
+                        lines.append(f"    +{line_no}: {code}")
+                        shown += 1
     return "\n".join(lines)
+
+
+def _format_missing_line_range(missing_lines: tuple[int, ...]) -> str:
+    """Format missing line numbers concisely, using ranges for consecutive lines."""
+    if not missing_lines:
+        return "none"
+    ranges: list[str] = []
+    start = missing_lines[0]
+    end = start
+    for line in missing_lines[1:]:
+        if line == end + 1:
+            end = line
+        else:
+            ranges.append(_format_range(start, end))
+            start = line
+            end = line
+    ranges.append(_format_range(start, end))
+    return ", ".join(ranges)
+
+
+def _format_range(start: int, end: int) -> str:
+    """Format a range of line numbers, showing single number if start == end."""
+    if start == end:
+        return str(start)
+    return f"{start}-{end}"
 
 
 def main() -> int:
@@ -329,7 +376,7 @@ def main() -> int:
     coverage_pct = (
         (total_covered / total_executable) * 100 if total_executable else 100.0
     )
-    print(_format_summary(summary))
+    print(_format_summary(summary, service_root))
     print(
         f"total changed-line coverage: {total_covered}/{total_executable} ({coverage_pct:.2f}%)"
     )
