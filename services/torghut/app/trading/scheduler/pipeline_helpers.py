@@ -1,5 +1,5 @@
 """Pure and shared helpers for the trading pipeline."""
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from ..regime_hmm import (
 from .state import (
     RuntimeUncertaintyGate,
     RuntimeUncertaintyGateAction,
-    _normalize_reason_metric,
+    normalize_reason_metric as _normalize_reason_metric,
 )
 
 logger = logging.getLogger(__name__)
@@ -974,3 +974,7 @@ __all__ = [
     "_uncertainty_gate_staleness_reason",
     "build_llm_policy_resolution",
 ]
+
+# Public aliases used by split modules.
+extract_json_error_payload = _extract_json_error_payload
+price_snapshot_payload = _price_snapshot_payload

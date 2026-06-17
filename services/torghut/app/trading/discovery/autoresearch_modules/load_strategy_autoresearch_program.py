@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Autoresearch-style outer loop helpers for strategy discovery."""
 
 from __future__ import annotations
@@ -32,21 +32,21 @@ from .shared_context import (
     SnapshotPolicy,
     StrategyAutoresearchProgram,
     StrategyObjective,
-    _SCHEMA_VERSION,
-    _coerce_decimal,
-    _current_grid_value,
-    _decimal_from_candidate,
-    _dedupe_preserve_order,
-    _format_numeric_like,
-    _json_clone,
-    _load_mutation_space,
-    _load_runtime_closure_policy,
-    _mapping,
-    _resolve_program_path,
-    _resolve_seed_sweep_path,
-    _stable_value_key,
-    _string,
-    _string_list,
+    SCHEMA_VERSION as _SCHEMA_VERSION,
+    coerce_decimal as _coerce_decimal,
+    current_grid_value as _current_grid_value,
+    decimal_from_candidate as _decimal_from_candidate,
+    dedupe_preserve_order as _dedupe_preserve_order,
+    format_numeric_like as _format_numeric_like,
+    json_clone as _json_clone,
+    load_mutation_space as _load_mutation_space,
+    load_runtime_closure_policy as _load_runtime_closure_policy,
+    mapping as _mapping,
+    resolve_program_path as _resolve_program_path,
+    resolve_seed_sweep_path as _resolve_seed_sweep_path,
+    stable_value_key as _stable_value_key,
+    string as _string,
+    string_list as _string_list,
 )
 
 

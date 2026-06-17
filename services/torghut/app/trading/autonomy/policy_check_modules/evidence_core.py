@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Core Janus, contamination, HMM, and expert-router evidence validation."""
 
 from __future__ import annotations
@@ -13,31 +13,31 @@ from .common import (
     datetime,
 )
 from .evidence_artifacts import (
-    _ArtifactEvaluation,
-    _append_detail,
-    _append_evidence_artifact_reasons,
-    _load_required_evidence_artifact,
-    _require_float_max_field,
-    _require_min_int_field,
-    _require_schema_version,
-    _require_status,
+    ArtifactEvaluation as _ArtifactEvaluation,
+    append_detail as _append_detail,
+    append_evidence_artifact_reasons as _append_evidence_artifact_reasons,
+    load_required_evidence_artifact as _load_required_evidence_artifact,
+    require_float_max_field as _require_float_max_field,
+    require_min_int_field as _require_min_int_field,
+    require_schema_version as _require_schema_version,
+    require_status as _require_status,
 )
 from .requirements import (
-    _as_dict,
-    _as_list_of_dicts,
-    _coerce_evidence_bool,
-    _contamination_registry_required_artifact_refs,
-    _expert_router_required_artifact_refs,
-    _float_or_none,
-    _hmm_state_posterior_required_artifact_refs,
-    _int_or_default,
-    _list_from_any,
-    _list_of_strings,
-    _requires_contamination_registry,
-    _requires_expert_router_registry,
-    _requires_hmm_state_posterior,
-    _requires_janus_evidence,
-    _sha256_json,
+    as_dict as _as_dict,
+    as_list_of_dicts as _as_list_of_dicts,
+    coerce_evidence_bool as _coerce_evidence_bool,
+    contamination_registry_required_artifact_refs as _contamination_registry_required_artifact_refs,
+    expert_router_required_artifact_refs as _expert_router_required_artifact_refs,
+    float_or_none as _float_or_none,
+    hmm_state_posterior_required_artifact_refs as _hmm_state_posterior_required_artifact_refs,
+    int_or_default as _int_or_default,
+    list_from_any as _list_from_any,
+    list_of_strings as _list_of_strings,
+    requires_contamination_registry as _requires_contamination_registry,
+    requires_expert_router_registry as _requires_expert_router_registry,
+    requires_hmm_state_posterior as _requires_hmm_state_posterior,
+    requires_janus_evidence as _requires_janus_evidence,
+    sha256_json as _sha256_json,
 )
 
 
@@ -704,3 +704,9 @@ def _evaluate_expert_router_registry_evidence(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+evaluate_contamination_registry_evidence = _evaluate_contamination_registry_evidence
+evaluate_expert_router_registry_evidence = _evaluate_expert_router_registry_evidence
+evaluate_hmm_state_posterior_evidence = _evaluate_hmm_state_posterior_evidence
+evaluate_janus_evidence = _evaluate_janus_evidence

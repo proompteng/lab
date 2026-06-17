@@ -1,5 +1,5 @@
 """Shared live-submission gate helpers for status and runtime paths."""
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
 
 from __future__ import annotations
 
@@ -13,19 +13,19 @@ from .submission_council_modules.common import (
     Session,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
-    _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
-    _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES,
-    _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
-    _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
-    _QUANT_HEALTH_CACHE,
-    _coerce_aware_datetime,
-    _maybe_set_runtime_ledger_status_statement_timeout,
-    _normalize_reason_codes,
-    _rollback_runtime_ledger_status_session,
-    _runtime_ledger_status_query_timeout_ms,
-    _safe_int,
-    _safe_text,
-    _stage_rank,
+    CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT as _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
+    LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES as _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES,
+    PROMOTION_PORTFOLIO_READY_SCAN_LIMIT as _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
+    PROMOTION_TABLE_COUNT_SCAN_LIMIT as _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
+    QUANT_HEALTH_CACHE as _QUANT_HEALTH_CACHE,
+    coerce_aware_datetime as _coerce_aware_datetime,
+    maybe_set_runtime_ledger_status_statement_timeout as _maybe_set_runtime_ledger_status_statement_timeout,
+    normalize_reason_codes as _normalize_reason_codes,
+    rollback_runtime_ledger_status_session as _rollback_runtime_ledger_status_session,
+    runtime_ledger_status_query_timeout_ms as _runtime_ledger_status_query_timeout_ms,
+    safe_int as _safe_int,
+    safe_text as _safe_text,
+    stage_rank as _stage_rank,
     build_profit_lease_projection,
     build_profit_window_contract,
     build_tca_gate_inputs,
@@ -40,8 +40,8 @@ from .submission_council_modules.common import (
     urlopen,
 )
 from .submission_council_modules.quant_health import (
-    _autoresearch_portfolio_current_oracle_passed,
-    _runtime_window_import_health_gate_inputs,
+    autoresearch_portfolio_current_oracle_passed as _autoresearch_portfolio_current_oracle_passed,
+    runtime_window_import_health_gate_inputs as _runtime_window_import_health_gate_inputs,
     build_shadow_first_toggle_parity,
     critical_trading_toggle_snapshot,
     load_quant_evidence_status,
@@ -50,57 +50,57 @@ from .submission_council_modules.quant_health import (
 )
 from .submission_council_modules.runtime_summary import build_hypothesis_runtime_summary
 from .submission_council_modules.paper_probation import (
-    _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER,
-    _bounded_source_collection_probe_window,
-    _runtime_ledger_paper_probation_candidates,
-    _runtime_ledger_paper_probation_blockers,
-    _runtime_ledger_source_collection_candidates,
-    _runtime_ledger_source_collection_target_progress_payload,
+    RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER as _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER,
+    bounded_source_collection_probe_window as _bounded_source_collection_probe_window,
+    runtime_ledger_paper_probation_candidates as _runtime_ledger_paper_probation_candidates,
+    runtime_ledger_paper_probation_blockers as _runtime_ledger_paper_probation_blockers,
+    runtime_ledger_source_collection_candidates as _runtime_ledger_source_collection_candidates,
+    runtime_ledger_source_collection_target_progress_payload as _runtime_ledger_source_collection_target_progress_payload,
 )
 from .submission_council_modules.import_plan import (
-    _paper_probation_eligible_total_with_runtime_ledger,
-    _runtime_ledger_paper_probation_import_plan,
-    _with_bounded_paper_route_manifest_collection_targets,
+    paper_probation_eligible_total_with_runtime_ledger as _paper_probation_eligible_total_with_runtime_ledger,
+    runtime_ledger_paper_probation_import_plan as _runtime_ledger_paper_probation_import_plan,
+    with_bounded_paper_route_manifest_collection_targets as _with_bounded_paper_route_manifest_collection_targets,
 )
 from .submission_council_modules.repair_candidates import (
-    _extract_runtime_summary,
-    _load_runtime_ledger_repair_candidates,
-    _refresh_runtime_summary_totals,
+    extract_runtime_summary as _extract_runtime_summary,
+    load_runtime_ledger_repair_candidates as _load_runtime_ledger_repair_candidates,
+    refresh_runtime_summary_totals as _refresh_runtime_summary_totals,
     build_submission_gate_market_context_status,
 )
 from .submission_council_modules.certificate_loading import (
-    _certificate_evidence_selection_key,
-    _load_latest_certificate_evidence,
-    _merge_runtime_certificate_evidence,
-    _metric_window_activity_reason_codes,
+    certificate_evidence_selection_key as _certificate_evidence_selection_key,
+    load_latest_certificate_evidence as _load_latest_certificate_evidence,
+    merge_runtime_certificate_evidence as _merge_runtime_certificate_evidence,
+    metric_window_activity_reason_codes as _metric_window_activity_reason_codes,
 )
 from .submission_council_modules.certificate_eval import (
-    _attach_lineage_refs,
-    _candidate_reason_codes_for_gate_scope,
-    _default_lineage_ref,
-    _evaluate_certificate_candidates,
-    _runtime_hypothesis_ids_for_gate_scope,
-    _runtime_ledger_hypothesis_ids_for_gate_scope,
-    _segment_summary,
+    attach_lineage_refs as _attach_lineage_refs,
+    candidate_reason_codes_for_gate_scope as _candidate_reason_codes_for_gate_scope,
+    default_lineage_ref as _default_lineage_ref,
+    evaluate_certificate_candidates as _evaluate_certificate_candidates,
+    runtime_hypothesis_ids_for_gate_scope as _runtime_hypothesis_ids_for_gate_scope,
+    runtime_ledger_hypothesis_ids_for_gate_scope as _runtime_ledger_hypothesis_ids_for_gate_scope,
+    segment_summary as _segment_summary,
 )
 from .submission_council_modules.profit_readiness import (
-    _build_profit_data_readiness_summary,
-    _build_profit_live_controls,
-    _build_profit_rejection_summary,
-    _load_persisted_profit_rejection_summary,
-    _load_profit_promotion_table_counts,
+    build_profit_data_readiness_summary as _build_profit_data_readiness_summary,
+    build_profit_live_controls as _build_profit_live_controls,
+    build_profit_rejection_summary as _build_profit_rejection_summary,
+    load_persisted_profit_rejection_summary as _load_persisted_profit_rejection_summary,
+    load_profit_promotion_table_counts as _load_profit_promotion_table_counts,
 )
 from .submission_council_modules.runtime_certificates import (
-    _certificate_evidence_authority_score,
-    _load_latest_runtime_ledger_summary,
-    _runtime_ledger_repair_reason_codes,
-    _runtime_ledger_repair_score,
+    certificate_evidence_authority_score as _certificate_evidence_authority_score,
+    load_latest_runtime_ledger_summary as _load_latest_runtime_ledger_summary,
+    runtime_ledger_repair_reason_codes as _runtime_ledger_repair_reason_codes,
+    runtime_ledger_repair_score as _runtime_ledger_repair_score,
 )
 from .submission_council_modules.runtime_summary import (
-    _runtime_ledger_aggregate_candidate_payloads,
-    _runtime_ledger_latest_payloads_per_symbol,
-    _runtime_ledger_merge_count_maps,
-    _runtime_ledger_unique_sequence,
+    runtime_ledger_aggregate_candidate_payloads as _runtime_ledger_aggregate_candidate_payloads,
+    runtime_ledger_latest_payloads_per_symbol as _runtime_ledger_latest_payloads_per_symbol,
+    runtime_ledger_merge_count_maps as _runtime_ledger_merge_count_maps,
+    runtime_ledger_unique_sequence as _runtime_ledger_unique_sequence,
 )
 from .live_submit_activation import (
     live_submit_activation_blocker,

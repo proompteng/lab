@@ -739,3 +739,23 @@ __all__ = [name for name in globals() if not name.startswith("__")]
 # Public aliases used by split-module consumers.
 http_json_request = _http_json_request
 normalize_string_parameter = _normalize_string_parameter
+
+# Public aliases used by split modules.
+DEFAULT_DSPY_AGENT_NAME = _DEFAULT_DSPY_AGENT_NAME
+extract_submitted_agentrun_id = _extract_submitted_agentrun_id
+IDEMPOTENCY_HASH_HEX_LENGTH = _IDEMPOTENCY_HASH_HEX_LENGTH
+IMPLEMENTATION_SPEC_BY_LANE = _IMPLEMENTATION_SPEC_BY_LANE
+json_copy = _json_copy
+K8S_LABEL_VALUE_MAX_LENGTH = _K8S_LABEL_VALUE_MAX_LENGTH
+lane_overrides_with_defaults = _lane_overrides_with_defaults
+load_eval_gate_snapshot = _load_eval_gate_snapshot
+load_local_artifact_payload = _load_local_artifact_payload
+normalize_local_path = _normalize_local_path
+parse_iso_datetime = _parse_iso_datetime
+PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = _PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS
+PROMOTION_EVIDENCE_OVERRIDE_KEYS = _PROMOTION_EVIDENCE_OVERRIDE_KEYS
+PROMOTION_MAX_FALLBACK_RATE = _PROMOTION_MAX_FALLBACK_RATE
+PROMOTION_MIN_SCHEMA_VALID_RATE = _PROMOTION_MIN_SCHEMA_VALID_RATE
+TERMINAL_PHASES = _TERMINAL_PHASES
+to_bool = _to_bool
+to_float = _to_float

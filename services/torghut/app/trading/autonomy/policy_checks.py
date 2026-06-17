@@ -1,5 +1,5 @@
 """Promotion progression and rollback readiness policy checks for Torghut autonomy."""
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
 
 from __future__ import annotations
 
@@ -16,46 +16,46 @@ from .policy_check_modules.common import (
     timezone,
 )
 from .policy_check_modules.requirements import (
-    _as_dict,
-    _benchmark_parity_artifact_candidates,
-    _coerce_evidence_bool,
-    _first_existing_artifact_path,
-    _float_or_default,
-    _float_or_none,
-    _gates,
-    _int_or_default,
-    _list_of_strings,
-    _observed_throughput,
-    _parse_datetime,
-    _promotion_rank,
-    _required_artifacts_for_target,
-    _required_rollback_checks,
-    _required_throughput,
-    _requires_advisor_fallback_slo,
-    _requires_alpha_readiness_contract,
-    _requires_benchmark_parity,
-    _requires_contamination_registry,
-    _requires_deeplob_bdlob_contract,
-    _requires_expert_router_registry,
-    _requires_foundation_router_parity,
-    _requires_hmm_state_posterior,
-    _requires_jangar_dependency_quorum,
-    _requires_janus_evidence,
-    _requires_profitability_evidence,
-    _requires_shadow_live_deviation,
-    _requires_simulation_calibration,
-    _requires_stress_evidence,
+    as_dict as _as_dict,
+    benchmark_parity_artifact_candidates as _benchmark_parity_artifact_candidates,
+    coerce_evidence_bool as _coerce_evidence_bool,
+    first_existing_artifact_path as _first_existing_artifact_path,
+    float_or_default as _float_or_default,
+    float_or_none as _float_or_none,
+    gates as _gates,
+    int_or_default as _int_or_default,
+    list_of_strings as _list_of_strings,
+    observed_throughput as _observed_throughput,
+    parse_datetime as _parse_datetime,
+    promotion_rank as _promotion_rank,
+    required_artifacts_for_target as _required_artifacts_for_target,
+    required_rollback_checks as _required_rollback_checks,
+    required_throughput as _required_throughput,
+    requires_advisor_fallback_slo as _requires_advisor_fallback_slo,
+    requires_alpha_readiness_contract as _requires_alpha_readiness_contract,
+    requires_benchmark_parity as _requires_benchmark_parity,
+    requires_contamination_registry as _requires_contamination_registry,
+    requires_deeplob_bdlob_contract as _requires_deeplob_bdlob_contract,
+    requires_expert_router_registry as _requires_expert_router_registry,
+    requires_foundation_router_parity as _requires_foundation_router_parity,
+    requires_hmm_state_posterior as _requires_hmm_state_posterior,
+    requires_jangar_dependency_quorum as _requires_jangar_dependency_quorum,
+    requires_janus_evidence as _requires_janus_evidence,
+    requires_profitability_evidence as _requires_profitability_evidence,
+    requires_shadow_live_deviation as _requires_shadow_live_deviation,
+    requires_simulation_calibration as _requires_simulation_calibration,
+    requires_stress_evidence as _requires_stress_evidence,
 )
 from .policy_check_modules.profitability_manifest import (
-    _append_benchmark_parity_evidence_reasons,
-    _append_janus_evidence_reasons,
-    _append_portfolio_optimizer_evidence_reasons,
-    _append_profitability_evidence_reasons,
-    _append_profitability_stage_manifest_reasons,
+    append_benchmark_parity_evidence_reasons as _append_benchmark_parity_evidence_reasons,
+    append_janus_evidence_reasons as _append_janus_evidence_reasons,
+    append_portfolio_optimizer_evidence_reasons as _append_portfolio_optimizer_evidence_reasons,
+    append_profitability_evidence_reasons as _append_profitability_evidence_reasons,
+    append_profitability_stage_manifest_reasons as _append_profitability_stage_manifest_reasons,
 )
 from .policy_check_modules.promotion_evidence import (
-    _evaluate_alpha_readiness_summary as _evaluate_alpha_readiness_summary,
-    _evaluate_promotion_evidence,
+    evaluate_alpha_readiness_summary,
+    evaluate_promotion_evidence as _evaluate_promotion_evidence,
 )
 
 _PATCHABLE_OS_MODULE = os
@@ -682,6 +682,7 @@ def evaluate_rollback_readiness(
 __all__ = [
     "PromotionPrerequisiteResult",
     "RollbackReadinessResult",
+    "evaluate_alpha_readiness_summary",
     "evaluate_promotion_prerequisites",
     "evaluate_rollback_readiness",
 ]

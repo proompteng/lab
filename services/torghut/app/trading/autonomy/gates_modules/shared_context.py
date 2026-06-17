@@ -718,3 +718,15 @@ def _gate6_profitability_evidence(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+empty_artifact_refs = _empty_artifact_refs
+empty_dict = _empty_dict
+empty_str_list = _empty_str_list
+gate0_data_integrity = _gate0_data_integrity
+gate1_statistical_robustness = _gate1_statistical_robustness
+gate2_risk_and_capacity = _gate2_risk_and_capacity
+gate3_shadow_paper_quality = _gate3_shadow_paper_quality
+gate4_operational_readiness = _gate4_operational_readiness
+gate5_live_ramp_readiness = _gate5_live_ramp_readiness
+gate6_profitability_evidence = _gate6_profitability_evidence

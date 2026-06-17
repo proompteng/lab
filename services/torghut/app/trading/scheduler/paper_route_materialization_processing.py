@@ -1,4 +1,4 @@
-# pyright: reportUnusedImport=false, reportPrivateUsage=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportAttributeAccessIssue=false
+# pyright: reportUnusedImport=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportAttributeAccessIssue=false
 """Late-stage materialized paper-route processing mixin."""
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from ...config import settings
 from ...models import Strategy, TradeDecision, coerce_json_payload
 from ..models import StrategyDecision
 from .target_plan_helpers import (
-    _bounded_sim_collection_metadata_from_decision,
-    _safe_int,
-    _safe_text,
+    bounded_sim_collection_metadata_from_decision as _bounded_sim_collection_metadata_from_decision,
+    safe_int as _safe_int,
+    safe_text as _safe_text,
 )
 
 logger = logging.getLogger(__name__)

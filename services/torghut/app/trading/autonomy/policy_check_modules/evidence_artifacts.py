@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Simulation, shadow-live, fold, stress, and rationale evidence validation."""
 
 from __future__ import annotations
@@ -15,18 +15,18 @@ from .common import (
     timezone,
 )
 from .requirements import (
-    _as_dict,
-    _float_or_none,
-    _int_or_default,
-    _list_from_any,
-    _list_of_strings,
-    _load_json_if_exists,
-    _normalize_artifact_path,
-    _parse_datetime,
-    _requires_shadow_live_deviation,
-    _requires_simulation_calibration,
-    _shadow_live_deviation_required_artifact_refs,
-    _simulation_calibration_required_artifact_refs,
+    as_dict as _as_dict,
+    float_or_none as _float_or_none,
+    int_or_default as _int_or_default,
+    list_from_any as _list_from_any,
+    list_of_strings as _list_of_strings,
+    load_json_if_exists as _load_json_if_exists,
+    normalize_artifact_path as _normalize_artifact_path,
+    parse_datetime as _parse_datetime,
+    requires_shadow_live_deviation as _requires_shadow_live_deviation,
+    requires_simulation_calibration as _requires_simulation_calibration,
+    shadow_live_deviation_required_artifact_refs as _shadow_live_deviation_required_artifact_refs,
+    simulation_calibration_required_artifact_refs as _simulation_calibration_required_artifact_refs,
 )
 
 
@@ -880,3 +880,18 @@ def _evaluate_rationale_evidence(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+append_detail = _append_detail
+append_evidence_artifact_reasons = _append_evidence_artifact_reasons
+ArtifactEvaluation = _ArtifactEvaluation
+evaluate_fold_metrics_evidence = _evaluate_fold_metrics_evidence
+evaluate_rationale_evidence = _evaluate_rationale_evidence
+evaluate_shadow_live_deviation_evidence = _evaluate_shadow_live_deviation_evidence
+evaluate_simulation_calibration_evidence = _evaluate_simulation_calibration_evidence
+evaluate_stress_metrics_evidence = _evaluate_stress_metrics_evidence
+load_required_evidence_artifact = _load_required_evidence_artifact
+require_float_max_field = _require_float_max_field
+require_min_int_field = _require_min_int_field
+require_schema_version = _require_schema_version
+require_status = _require_status

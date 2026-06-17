@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Whitepaper workflow ingestion, orchestration, and persistence helpers."""
 
 from __future__ import annotations
@@ -57,30 +57,30 @@ from .shared_context import (
     EngineeringGradeDecision,
     GithubIssueEvent,
     ManualApprovalPayload,
-    _ELIGIBLE_AUTO_VERDICTS,
-    _GITHUB_ISSUE_ACTIONS,
-    _GITHUB_ISSUE_COMMENT_ACTIONS,
-    _MAX_SEMANTIC_RELEVANT_DISTANCE,
-    _PASS_GATE_STATUSES,
-    _REJECT_VERDICTS,
-    _RETRYABLE_AGENTRUN_STATUSES,
-    _SEMANTIC_RELATIVE_DISTANCE_WINDOW,
-    _WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
-    _WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
-    _bool_env,
-    _coerce_issue_number,
-    _extract_github_event_metadata,
-    _extract_github_issue_payload,
-    _extract_sender_login,
-    _float_env,
-    _http_request_bytes,
-    _int_env,
-    _mounted_or_env_value,
-    _normalize_identifier,
-    _read_text_file,
-    _sorted_unique,
-    _str_env,
-    _whitepaper_ceph_bucket_name,
+    ELIGIBLE_AUTO_VERDICTS as _ELIGIBLE_AUTO_VERDICTS,
+    GITHUB_ISSUE_ACTIONS as _GITHUB_ISSUE_ACTIONS,
+    GITHUB_ISSUE_COMMENT_ACTIONS as _GITHUB_ISSUE_COMMENT_ACTIONS,
+    MAX_SEMANTIC_RELEVANT_DISTANCE as _MAX_SEMANTIC_RELEVANT_DISTANCE,
+    PASS_GATE_STATUSES as _PASS_GATE_STATUSES,
+    REJECT_VERDICTS as _REJECT_VERDICTS,
+    RETRYABLE_AGENTRUN_STATUSES as _RETRYABLE_AGENTRUN_STATUSES,
+    SEMANTIC_RELATIVE_DISTANCE_WINDOW as _SEMANTIC_RELATIVE_DISTANCE_WINDOW,
+    WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR as _WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
+    WHITEPAPER_CEPH_DEFAULT_SECRET_DIR as _WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
+    bool_env as _bool_env,
+    coerce_issue_number as _coerce_issue_number,
+    extract_github_event_metadata as _extract_github_event_metadata,
+    extract_github_issue_payload as _extract_github_issue_payload,
+    extract_sender_login as _extract_sender_login,
+    float_env as _float_env,
+    http_request_bytes as _http_request_bytes,
+    int_env as _int_env,
+    mounted_or_env_value as _mounted_or_env_value,
+    normalize_identifier as _normalize_identifier,
+    read_text_file as _read_text_file,
+    sorted_unique as _sorted_unique,
+    str_env as _str_env,
+    whitepaper_ceph_bucket_name as _whitepaper_ceph_bucket_name,
     build_whitepaper_run_id,
     comment_requests_requeue,
     extract_pdf_urls,
@@ -103,28 +103,28 @@ from .shared_context import (
 from .ceph_s3_client import (
     CephS3Client,
     IssueKickoffResult,
-    _IssueRunIdentity,
-    _PdfStorageOutcome,
-    _WhitepaperWorkflowServiceFields,
+    IssueRunIdentity as _IssueRunIdentity,
+    PdfStorageOutcome as _PdfStorageOutcome,
+    WhitepaperWorkflowServiceFields as _WhitepaperWorkflowServiceFields,
 )
 from .whitepaper_workflow_ingestion_methods import (
-    _WhitepaperWorkflowIngestionMethods,
+    WhitepaperWorkflowIngestionMethods as _WhitepaperWorkflowIngestionMethods,
 )
 from .whitepaper_workflow_persistence_methods import (
-    _WhitepaperWorkflowPersistenceMethods,
+    WhitepaperWorkflowPersistenceMethods as _WhitepaperWorkflowPersistenceMethods,
 )
 from .whitepaper_workflow_agent_methods import (
-    _WhitepaperWorkflowAgentMethods,
+    WhitepaperWorkflowAgentMethods as _WhitepaperWorkflowAgentMethods,
 )
 from .whitepaper_workflow_verdict_methods import (
-    _EmbeddingRequestConfig,
-    _EngineeringDecisionOutcome,
-    _EngineeringDecisionPolicy,
-    _EngineeringDecisionSignals,
-    _WhitepaperWorkflowVerdictMethods,
+    EmbeddingRequestConfig as _EmbeddingRequestConfig,
+    EngineeringDecisionOutcome as _EngineeringDecisionOutcome,
+    EngineeringDecisionPolicy as _EngineeringDecisionPolicy,
+    EngineeringDecisionSignals as _EngineeringDecisionSignals,
+    WhitepaperWorkflowVerdictMethods as _WhitepaperWorkflowVerdictMethods,
 )
 from .whitepaper_workflow_rollout_methods import (
-    _WhitepaperWorkflowRolloutMethods,
+    WhitepaperWorkflowRolloutMethods as _WhitepaperWorkflowRolloutMethods,
 )
 
 
@@ -859,3 +859,6 @@ class _WhitepaperWorkflowApiMethods:
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+WhitepaperWorkflowApiMethods = _WhitepaperWorkflowApiMethods

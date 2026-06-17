@@ -744,3 +744,31 @@ def _runtime_ledger_target_blockers(
 weighted_decimal_average = _weighted_decimal_average
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+DelayAdjustedDepthStressInputs = _DelayAdjustedDepthStressInputs
+extract_controller_ingestion_settlement = _extract_controller_ingestion_settlement
+extract_foreclosure_carry_rollout_witness = _extract_foreclosure_carry_rollout_witness
+extract_repair_slot_escrow = _extract_repair_slot_escrow
+extract_stage_debt_repair_admission = _extract_stage_debt_repair_admission
+extract_stage_renewal_bonds = _extract_stage_renewal_bonds
+extract_verify_trust_foreclosure_board = _extract_verify_trust_foreclosure_board
+latest_tca_timestamp = _latest_tca_timestamp
+manifest_pair_contract_blockers = _manifest_pair_contract_blockers
+NON_AUTHORITY_TCA_DECISION_MODES = _NON_AUTHORITY_TCA_DECISION_MODES
+NON_AUTHORITY_TCA_SOURCE_KINDS = _NON_AUTHORITY_TCA_SOURCE_KINDS
+normalized_route_token = _normalized_route_token
+resolve_delay_adjusted_depth_stress_inputs = _resolve_delay_adjusted_depth_stress_inputs
+resolve_tca_readiness_inputs = _resolve_tca_readiness_inputs
+route_tca_adverse_slippage = _route_tca_adverse_slippage
+route_tca_authority_blockers = _route_tca_authority_blockers
+route_tca_bool = _route_tca_bool
+route_tca_diagnostic = _route_tca_diagnostic
+route_tca_target_blockers = _route_tca_target_blockers
+route_tca_text = _route_tca_text
+runtime_ledger_rows_for_hypothesis = _runtime_ledger_rows_for_hypothesis
+runtime_ledger_target_blockers = _runtime_ledger_target_blockers
+runtime_target_token = _runtime_target_token
+runtime_text = _runtime_text
+RuntimeLedgerReadinessInputs = _RuntimeLedgerReadinessInputs
+TcaReadinessInputs = _TcaReadinessInputs

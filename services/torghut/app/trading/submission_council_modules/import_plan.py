@@ -762,3 +762,31 @@ __all__ = [
     "_source_collection_reason_codes",
     "_with_bounded_paper_route_manifest_collection_targets",
 ]
+
+# Public aliases used by split modules.
+blocked_import_target = _blocked_import_target
+bounded_paper_route_manifest_collection_targets = (
+    _bounded_paper_route_manifest_collection_targets
+)
+candidate_reason_codes = _candidate_reason_codes
+duplicate_import_target = _duplicate_import_target
+missing_import_target = _missing_import_target
+paper_probation_eligible_total_with_runtime_ledger = (
+    _paper_probation_eligible_total_with_runtime_ledger
+)
+runtime_ledger_base_import_target = _runtime_ledger_base_import_target
+runtime_ledger_import_candidate = _runtime_ledger_import_candidate
+runtime_ledger_import_handoff = _runtime_ledger_import_handoff
+runtime_ledger_import_plan_has_target = _runtime_ledger_import_plan_has_target
+runtime_ledger_import_plan_payload = _runtime_ledger_import_plan_payload
+runtime_ledger_import_probation_reason = _runtime_ledger_import_probation_reason
+runtime_ledger_import_selector = _runtime_ledger_import_selector
+runtime_ledger_import_target = _runtime_ledger_import_target
+runtime_ledger_import_target_key = _runtime_ledger_import_target_key
+runtime_ledger_paper_probation_import_plan = _runtime_ledger_paper_probation_import_plan
+RuntimeLedgerImportCandidate = _RuntimeLedgerImportCandidate
+source_collection_import_target_metadata = _source_collection_import_target_metadata
+source_collection_reason_codes = _source_collection_reason_codes
+with_bounded_paper_route_manifest_collection_targets = (
+    _with_bounded_paper_route_manifest_collection_targets
+)

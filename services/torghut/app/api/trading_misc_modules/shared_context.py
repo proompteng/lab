@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Extracted Torghut API route and support functions."""
 
 # ruff: noqa: F401,F403,F405,F811,F821
@@ -88,30 +88,30 @@ from ..common import (
     WhitepaperKafkaWorker,
     WhitepaperRolloutTransition,
     WhitepaperWorkflowService,
-    _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
-    _ALPACA_HEALTH_CACHE_LOCK,
-    _ALPACA_HEALTH_STATE,
-    _OPTIONS_CATALOG_FRESHNESS_CACHE,
-    _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
-    _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
-    _READINESS_PROMOTION_AUTHORITY_KEYS,
-    _RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
-    _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-    _TRADING_DEPENDENCY_HEALTH_CACHE,
-    _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
-    _TRADING_HEALTH_SURFACE_EVALUATIONS,
-    _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
-    _TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
-    _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
-    _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
-    _TRADING_STATUS_READ_BUDGET_SECONDS,
-    _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
-    _paper_route_target_plan_success_cache,
-    _retryable_tca_recompute_error,
-    _shared_mapping_items,
-    _shared_paper_route_target_plan_from_payload,
+    ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS as _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
+    ALPACA_HEALTH_CACHE_LOCK as _ALPACA_HEALTH_CACHE_LOCK,
+    ALPACA_HEALTH_STATE as _ALPACA_HEALTH_STATE,
+    OPTIONS_CATALOG_FRESHNESS_CACHE as _OPTIONS_CATALOG_FRESHNESS_CACHE,
+    OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK as _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
+    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL as _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS as _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
+    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK as _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
+    READINESS_PROMOTION_AUTHORITY_KEYS as _READINESS_PROMOTION_AUTHORITY_KEYS,
+    RETRYABLE_TCA_RECOMPUTE_SQLSTATES as _RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
+    SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
+    TRADING_DEPENDENCY_HEALTH_CACHE as _TRADING_DEPENDENCY_HEALTH_CACHE,
+    TRADING_DEPENDENCY_HEALTH_CACHE_LOCK as _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
+    TRADING_HEALTH_SURFACE_EVALUATIONS as _TRADING_HEALTH_SURFACE_EVALUATIONS,
+    TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR as _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
+    TRADING_HEALTH_SURFACE_EVALUATION_LOCK as _TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
+    TRADING_HEALTH_SURFACE_PAYLOAD_CACHE as _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
+    TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS as _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
+    TRADING_STATUS_READ_BUDGET_SECONDS as _TRADING_STATUS_READ_BUDGET_SECONDS,
+    ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS as _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
+    paper_route_target_plan_success_cache as _paper_route_target_plan_success_cache,
+    retryable_tca_recompute_error as _retryable_tca_recompute_error,
+    shared_mapping_items as _shared_mapping_items,
+    shared_paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
     active_simulation_runtime_context,
     assert_runtime_gate_policy_contract,
     asynccontextmanager,
@@ -914,3 +914,40 @@ def get_lean_shadow_parity(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS
+ALPACA_HEALTH_CACHE_LOCK = _ALPACA_HEALTH_CACHE_LOCK
+ALPACA_HEALTH_STATE = _ALPACA_HEALTH_STATE
+build_consumer_evidence_receipt_projection = _build_consumer_evidence_receipt_projection
+build_trading_consumer_evidence_payload = _build_trading_consumer_evidence_payload
+consumer_evidence_dependency_quorum = _consumer_evidence_dependency_quorum
+consumer_evidence_summary_view = _consumer_evidence_summary_view
+OPTIONS_CATALOG_FRESHNESS_CACHE = _OPTIONS_CATALOG_FRESHNESS_CACHE
+OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK
+PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = (
+    _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL
+)
+PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = (
+    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS
+)
+paper_route_target_plan_success_cache = _paper_route_target_plan_success_cache
+PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK
+READINESS_PROMOTION_AUTHORITY_KEYS = _READINESS_PROMOTION_AUTHORITY_KEYS
+retryable_tca_recompute_error = _retryable_tca_recompute_error
+RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _RETRYABLE_TCA_RECOMPUTE_SQLSTATES
+revenue_repair_topline_fields = _revenue_repair_topline_fields
+shared_mapping_items = _shared_mapping_items
+shared_paper_route_target_plan_from_payload = (
+    _shared_paper_route_target_plan_from_payload
+)
+SIMPLE_LANE_ALLOWED_REJECT_REASONS = _SIMPLE_LANE_ALLOWED_REJECT_REASONS
+TRADING_DEPENDENCY_HEALTH_CACHE = _TRADING_DEPENDENCY_HEALTH_CACHE
+TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK
+TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR
+TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _TRADING_HEALTH_SURFACE_EVALUATION_LOCK
+TRADING_HEALTH_SURFACE_EVALUATIONS = _TRADING_HEALTH_SURFACE_EVALUATIONS
+TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE
+TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+TRADING_STATUS_READ_BUDGET_SECONDS = _TRADING_STATUS_READ_BUDGET_SECONDS
+ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS

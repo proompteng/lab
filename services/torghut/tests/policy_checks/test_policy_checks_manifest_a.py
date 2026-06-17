@@ -5,10 +5,10 @@ from tests.policy_checks.policy_checks_support import (
     PolicyChecksTestCaseBase,
     _build_profitability_stage_manifest_payload,
     _candidate_state,
-    _evaluate_alpha_readiness_summary,
     _gate_report,
     _sha256_json,
     datetime,
+    evaluate_alpha_readiness_summary,
     evaluate_promotion_prerequisites,
     json,
     tempfile,
@@ -18,7 +18,7 @@ from tests.policy_checks.policy_checks_support import (
 
 class TestPolicyChecksManifestA(PolicyChecksTestCaseBase):
     def test_alpha_readiness_summary_skips_disabled_policy_gates(self) -> None:
-        reasons, details = _evaluate_alpha_readiness_summary(
+        reasons, details = evaluate_alpha_readiness_summary(
             policy_payload={
                 "promotion_require_alpha_readiness_contract": False,
                 "promotion_require_jangar_dependency_quorum": False,

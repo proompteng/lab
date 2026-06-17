@@ -807,3 +807,20 @@ def _significance_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, obje
 extract_report_slices = _extract_report_slices
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+append_profitability_reason = _append_profitability_reason
+benchmark_summary = _benchmark_summary
+confidence_summary = _confidence_summary
+empty_slice_metrics = _empty_slice_metrics
+significance_summary = _significance_summary
+slice_deltas = _slice_deltas
+slice_metrics = _slice_metrics
+validate_profitability_confidence_metrics = _validate_profitability_confidence_metrics
+validate_profitability_cost_metrics = _validate_profitability_cost_metrics
+validate_profitability_reproducibility = _validate_profitability_reproducibility
+validate_profitability_risk_metrics = _validate_profitability_risk_metrics
+validate_profitability_schema_versions = _validate_profitability_schema_versions
+validate_profitability_significance_metrics = (
+    _validate_profitability_significance_metrics
+)

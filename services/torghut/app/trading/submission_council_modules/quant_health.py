@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Quant health and runtime-window health helpers."""
 
 from __future__ import annotations
@@ -38,42 +38,42 @@ from .common import (
     TradeDecision,
     VNextDatasetSnapshot,
     VNextPromotionDecision,
-    _AUTORESEARCH_PORTFOLIO_READY_STATUSES,
-    _CAPITAL_STAGE_ORDER,
-    _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
-    _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
-    _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
-    _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES,
-    _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
-    _PROMOTION_PORTFOLIO_SAMPLE_LIMIT,
-    _PROMOTION_SCALAR_COUNT_LIMIT,
-    _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
-    _PortfolioPromotionRow,
-    _QUANT_HEALTH_CACHE,
-    _QUANT_HEALTH_CACHE_LOCK,
-    _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT,
-    _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
-    _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS,
-    _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV,
-    _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS,
-    _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS,
-    _RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT,
-    _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES,
-    _STALE_SEGMENT_STATES,
-    _TA_CORE_REASON_CODES,
-    _TYPED_QUANT_HEALTH_PATH,
-    _bounded_paper_route_probe_collection_payload,
-    _bounded_paper_route_probe_notional,
-    _coerce_aware_datetime,
-    _compat_symbol,
-    _decimal_text,
-    _normalize_reason_codes,
-    _safe_attr_text,
-    _safe_bool,
-    _safe_decimal,
-    _safe_int,
-    _safe_text,
-    _stage_rank,
+    AUTORESEARCH_PORTFOLIO_READY_STATUSES as _AUTORESEARCH_PORTFOLIO_READY_STATUSES,
+    CAPITAL_STAGE_ORDER as _CAPITAL_STAGE_ORDER,
+    CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT as _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
+    CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT as _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
+    CERTIFICATE_EVIDENCE_WINDOW_LIMIT as _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
+    LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES as _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES,
+    PROMOTION_PORTFOLIO_READY_SCAN_LIMIT as _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
+    PROMOTION_PORTFOLIO_SAMPLE_LIMIT as _PROMOTION_PORTFOLIO_SAMPLE_LIMIT,
+    PROMOTION_SCALAR_COUNT_LIMIT as _PROMOTION_SCALAR_COUNT_LIMIT,
+    PROMOTION_TABLE_COUNT_SCAN_LIMIT as _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
+    PortfolioPromotionRow as _PortfolioPromotionRow,
+    QUANT_HEALTH_CACHE as _QUANT_HEALTH_CACHE,
+    QUANT_HEALTH_CACHE_LOCK as _QUANT_HEALTH_CACHE_LOCK,
+    RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT as _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT,
+    RUNTIME_LEDGER_REPAIR_SCAN_LIMIT as _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
+    RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS as _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS,
+    RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV as _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV,
+    RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS as _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS,
+    RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS as _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS,
+    RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT as _RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT,
+    RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES as _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES,
+    STALE_SEGMENT_STATES as _STALE_SEGMENT_STATES,
+    TA_CORE_REASON_CODES as _TA_CORE_REASON_CODES,
+    TYPED_QUANT_HEALTH_PATH as _TYPED_QUANT_HEALTH_PATH,
+    bounded_paper_route_probe_collection_payload as _bounded_paper_route_probe_collection_payload,
+    bounded_paper_route_probe_notional as _bounded_paper_route_probe_notional,
+    coerce_aware_datetime as _coerce_aware_datetime,
+    compat_symbol as _compat_symbol,
+    decimal_text as _decimal_text,
+    normalize_reason_codes as _normalize_reason_codes,
+    safe_attr_text as _safe_attr_text,
+    safe_bool as _safe_bool,
+    safe_decimal as _safe_decimal,
+    safe_int as _safe_int,
+    safe_text as _safe_text,
+    stage_rank as _stage_rank,
     active_market_context_mapping,
     active_market_context_reasons,
     bounded_paper_route_probe_collection_payload,
@@ -689,3 +689,16 @@ def resolve_active_capital_stage(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+autoresearch_portfolio_current_oracle_passed = (
+    _autoresearch_portfolio_current_oracle_passed
+)
+build_quant_health_request_url = _build_quant_health_request_url
+derive_quant_health_url = _derive_quant_health_url
+empty_profit_promotion_table_counts = _empty_profit_promotion_table_counts
+fresh_clickhouse_signal_continuity = _fresh_clickhouse_signal_continuity
+load_profit_promotion_bounded_row_count = _load_profit_promotion_bounded_row_count
+runtime_window_import_continuity_signal = _runtime_window_import_continuity_signal
+runtime_window_import_drift_signal = _runtime_window_import_drift_signal
+runtime_window_import_health_gate_inputs = _runtime_window_import_health_gate_inputs

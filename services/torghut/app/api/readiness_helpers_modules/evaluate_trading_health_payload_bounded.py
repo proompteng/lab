@@ -198,133 +198,129 @@ from .shared_context import (
     whitepaper_workflow_enabled,
 )
 
-_SHARED_CONTEXT_PRIVATE_EXPORTS = shared_context_api.__dict__
-_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS"
+_SHARED_CONTEXT_EXPORTS = shared_context_api.__dict__
+_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _SHARED_CONTEXT_EXPORTS[
+    "ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS"
 ]
-_ALPACA_HEALTH_CACHE_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS["_ALPACA_HEALTH_CACHE_LOCK"]
-_ALPACA_HEALTH_STATE = _SHARED_CONTEXT_PRIVATE_EXPORTS["_ALPACA_HEALTH_STATE"]
-_OPTIONS_CATALOG_FRESHNESS_CACHE = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_OPTIONS_CATALOG_FRESHNESS_CACHE"
+_ALPACA_HEALTH_CACHE_LOCK = _SHARED_CONTEXT_EXPORTS["ALPACA_HEALTH_CACHE_LOCK"]
+_ALPACA_HEALTH_STATE = _SHARED_CONTEXT_EXPORTS["ALPACA_HEALTH_STATE"]
+_OPTIONS_CATALOG_FRESHNESS_CACHE = _SHARED_CONTEXT_EXPORTS[
+    "OPTIONS_CATALOG_FRESHNESS_CACHE"
 ]
-_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK"
+_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _SHARED_CONTEXT_EXPORTS[
+    "OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK"
 ]
-_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL"
+_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = _SHARED_CONTEXT_EXPORTS[
+    "PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL"
 ]
-_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS"
+_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = _SHARED_CONTEXT_EXPORTS[
+    "PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS"
 ]
-_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK"
+_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _SHARED_CONTEXT_EXPORTS[
+    "PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK"
 ]
-_READINESS_PROMOTION_AUTHORITY_KEYS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_READINESS_PROMOTION_AUTHORITY_KEYS"
+_READINESS_PROMOTION_AUTHORITY_KEYS = _SHARED_CONTEXT_EXPORTS[
+    "READINESS_PROMOTION_AUTHORITY_KEYS"
 ]
-_RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_RETRYABLE_TCA_RECOMPUTE_SQLSTATES"
+_RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _SHARED_CONTEXT_EXPORTS[
+    "RETRYABLE_TCA_RECOMPUTE_SQLSTATES"
 ]
-_SIMPLE_LANE_ALLOWED_REJECT_REASONS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_SIMPLE_LANE_ALLOWED_REJECT_REASONS"
+_SIMPLE_LANE_ALLOWED_REJECT_REASONS = _SHARED_CONTEXT_EXPORTS[
+    "SIMPLE_LANE_ALLOWED_REJECT_REASONS"
 ]
-_TRADING_DEPENDENCY_HEALTH_CACHE = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_TRADING_DEPENDENCY_HEALTH_CACHE"
+_TRADING_DEPENDENCY_HEALTH_CACHE = _SHARED_CONTEXT_EXPORTS[
+    "TRADING_DEPENDENCY_HEALTH_CACHE"
 ]
-_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK"
+_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _SHARED_CONTEXT_EXPORTS[
+    "TRADING_DEPENDENCY_HEALTH_CACHE_LOCK"
 ]
-_TRADING_HEALTH_SURFACE_EVALUATIONS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_EVALUATIONS"
+_TRADING_HEALTH_SURFACE_EVALUATIONS = _SHARED_CONTEXT_EXPORTS[
+    "TRADING_HEALTH_SURFACE_EVALUATIONS"
 ]
-_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR"
+_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _SHARED_CONTEXT_EXPORTS[
+    "TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR"
 ]
-_TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_EVALUATION_LOCK"
+_TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _SHARED_CONTEXT_EXPORTS[
+    "TRADING_HEALTH_SURFACE_EVALUATION_LOCK"
 ]
-_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE"
+_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _SHARED_CONTEXT_EXPORTS[
+    "TRADING_HEALTH_SURFACE_PAYLOAD_CACHE"
 ]
-_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS"
+_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _SHARED_CONTEXT_EXPORTS[
+    "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS"
 ]
-_TRADING_STATUS_READ_BUDGET_SECONDS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_TRADING_STATUS_READ_BUDGET_SECONDS"
+_TRADING_STATUS_READ_BUDGET_SECONDS = _SHARED_CONTEXT_EXPORTS[
+    "TRADING_STATUS_READ_BUDGET_SECONDS"
 ]
-_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS"
+_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _SHARED_CONTEXT_EXPORTS[
+    "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS"
 ]
-_append_unique_reason = _SHARED_CONTEXT_PRIVATE_EXPORTS["_append_unique_reason"]
-_cache_completed_trading_health_surface_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_cache_completed_trading_health_surface_payload"
+_append_unique_reason = _SHARED_CONTEXT_EXPORTS["append_unique_reason"]
+_cache_completed_trading_health_surface_payload = _SHARED_CONTEXT_EXPORTS[
+    "cache_completed_trading_health_surface_payload"
 ]
-_cached_readiness_dependencies_for_health_surface = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_cached_readiness_dependencies_for_health_surface"
+_cached_readiness_dependencies_for_health_surface = _SHARED_CONTEXT_EXPORTS[
+    "cached_readiness_dependencies_for_health_surface"
 ]
-_cached_trading_health_surface_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_cached_trading_health_surface_payload"
+_cached_trading_health_surface_payload = _SHARED_CONTEXT_EXPORTS[
+    "cached_trading_health_surface_payload"
 ]
-_core_readiness_live_submission_gate = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_core_readiness_live_submission_gate"
+_core_readiness_live_submission_gate = _SHARED_CONTEXT_EXPORTS[
+    "core_readiness_live_submission_gate"
 ]
-_evaluate_core_readiness_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_evaluate_core_readiness_payload"
+_evaluate_core_readiness_payload = _SHARED_CONTEXT_EXPORTS[
+    "evaluate_core_readiness_payload"
 ]
-_fail_closed_health_evaluation_gate = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_fail_closed_health_evaluation_gate"
+_fail_closed_health_evaluation_gate = _SHARED_CONTEXT_EXPORTS[
+    "fail_closed_health_evaluation_gate"
 ]
-_guard_live_submission_gate_for_readiness = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_guard_live_submission_gate_for_readiness"
+_guard_live_submission_gate_for_readiness = _SHARED_CONTEXT_EXPORTS[
+    "guard_live_submission_gate_for_readiness"
 ]
-_health_surface_timeout_dependency_placeholder = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_health_surface_timeout_dependency_placeholder"
+_health_surface_timeout_dependency_placeholder = _SHARED_CONTEXT_EXPORTS[
+    "health_surface_timeout_dependency_placeholder"
 ]
-_health_surface_timeout_fallback_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_health_surface_timeout_fallback_payload"
+_health_surface_timeout_fallback_payload = _SHARED_CONTEXT_EXPORTS[
+    "health_surface_timeout_fallback_payload"
 ]
-_minimal_health_surface_timeout_live_submission_gate = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_minimal_health_surface_timeout_live_submission_gate"
+_minimal_health_surface_timeout_live_submission_gate = _SHARED_CONTEXT_EXPORTS[
+    "minimal_health_surface_timeout_live_submission_gate"
 ]
-_minimal_health_surface_timeout_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_minimal_health_surface_timeout_payload"
+_minimal_health_surface_timeout_payload = _SHARED_CONTEXT_EXPORTS[
+    "minimal_health_surface_timeout_payload"
 ]
-_minimal_health_surface_timeout_proof_floor = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_minimal_health_surface_timeout_proof_floor"
+_minimal_health_surface_timeout_proof_floor = _SHARED_CONTEXT_EXPORTS[
+    "minimal_health_surface_timeout_proof_floor"
 ]
-_paper_route_target_plan_success_cache = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_paper_route_target_plan_success_cache"
+_paper_route_target_plan_success_cache = _SHARED_CONTEXT_EXPORTS[
+    "paper_route_target_plan_success_cache"
 ]
-_readiness_authority_truthy = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_readiness_authority_truthy"
+_readiness_authority_truthy = _SHARED_CONTEXT_EXPORTS["readiness_authority_truthy"]
+_readiness_dependency_cache_key = _SHARED_CONTEXT_EXPORTS[
+    "readiness_dependency_cache_key"
 ]
-_readiness_dependency_cache_key = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_readiness_dependency_cache_key"
+_readiness_dependency_checks = _SHARED_CONTEXT_EXPORTS["readiness_dependency_checks"]
+_readiness_dependency_degradation_reason_codes = _SHARED_CONTEXT_EXPORTS[
+    "readiness_dependency_degradation_reason_codes"
 ]
-_readiness_dependency_checks = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_readiness_dependency_checks"
+_readiness_dependency_snapshot = _SHARED_CONTEXT_EXPORTS[
+    "readiness_dependency_snapshot"
 ]
-_readiness_dependency_degradation_reason_codes = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_readiness_dependency_degradation_reason_codes"
+_record_trading_health_surface_completion = _SHARED_CONTEXT_EXPORTS[
+    "record_trading_health_surface_completion"
 ]
-_readiness_dependency_snapshot = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_readiness_dependency_snapshot"
+_retryable_tca_recompute_error = _SHARED_CONTEXT_EXPORTS[
+    "retryable_tca_recompute_error"
 ]
-_record_trading_health_surface_completion = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_record_trading_health_surface_completion"
+_shared_mapping_items = _SHARED_CONTEXT_EXPORTS["shared_mapping_items"]
+_shared_paper_route_target_plan_from_payload = _SHARED_CONTEXT_EXPORTS[
+    "shared_paper_route_target_plan_from_payload"
 ]
-_retryable_tca_recompute_error = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_retryable_tca_recompute_error"
+_strip_promotion_authority_claims_for_readiness = _SHARED_CONTEXT_EXPORTS[
+    "strip_promotion_authority_claims_for_readiness"
 ]
-_shared_mapping_items = _SHARED_CONTEXT_PRIVATE_EXPORTS["_shared_mapping_items"]
-_shared_paper_route_target_plan_from_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_shared_paper_route_target_plan_from_payload"
-]
-_strip_promotion_authority_claims_for_readiness = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_strip_promotion_authority_claims_for_readiness"
-]
-_trading_health_surface_cache_key = _SHARED_CONTEXT_PRIVATE_EXPORTS[
-    "_trading_health_surface_cache_key"
+_trading_health_surface_cache_key = _SHARED_CONTEXT_EXPORTS[
+    "trading_health_surface_cache_key"
 ]
 
 
@@ -445,7 +441,7 @@ def _evaluate_trading_health_payload_bounded(
         0.1,
         float(
             main_runtime_value(
-                "_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
+                "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
                 _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
             )
         ),
@@ -485,3 +481,6 @@ def _evaluate_trading_health_payload_bounded(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+evaluate_trading_health_payload_bounded = _evaluate_trading_health_payload_bounded

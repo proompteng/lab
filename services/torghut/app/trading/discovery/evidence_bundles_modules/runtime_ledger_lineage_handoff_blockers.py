@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Canonical evidence bundles for autoresearch candidates."""
 
 from __future__ import annotations
@@ -30,23 +30,23 @@ from .shared_context import (
     RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS,
     STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS,
     VALID_COST_CALIBRATION_STATUSES,
-    _artifact_refs_from_scorecard,
-    _bool,
-    _decimal,
-    _decimal_mapping_total,
-    _frontier_replay_config,
-    _frontier_replay_params,
-    _frontier_strategy_overrides,
-    _int,
-    _int_mapping,
-    _mapping,
-    _order_lifecycle_metrics,
-    _order_type_ablation_metrics,
-    _order_type_execution_metrics,
-    _runtime_ledger_lineage_handoff,
-    _stable_hash,
-    _string,
-    _string_list,
+    artifact_refs_from_scorecard as _artifact_refs_from_scorecard,
+    bool_value as _bool,
+    decimal as _decimal,
+    decimal_mapping_total as _decimal_mapping_total,
+    frontier_replay_config as _frontier_replay_config,
+    frontier_replay_params as _frontier_replay_params,
+    frontier_strategy_overrides as _frontier_strategy_overrides,
+    int_value as _int,
+    int_mapping as _int_mapping,
+    mapping as _mapping,
+    order_lifecycle_metrics as _order_lifecycle_metrics,
+    order_type_ablation_metrics as _order_type_ablation_metrics,
+    order_type_execution_metrics as _order_type_execution_metrics,
+    runtime_ledger_lineage_handoff as _runtime_ledger_lineage_handoff,
+    stable_hash as _stable_hash,
+    string as _string,
+    string_list as _string_list,
 )
 
 
@@ -537,3 +537,17 @@ def evidence_bundle_id_for_payload(payload: Mapping[str, Any]) -> str:
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+decomposition_activity_counts = _decomposition_activity_counts
+decomposition_symbol_contribution_shares = _decomposition_symbol_contribution_shares
+delay_depth_fillability = _delay_depth_fillability
+enrich_scorecard_with_replay_stress_metrics = (
+    _enrich_scorecard_with_replay_stress_metrics
+)
+freshness_status_from_validation_status = _freshness_status_from_validation_status
+is_synthetic_dataset_snapshot = _is_synthetic_dataset_snapshot
+p10 = _p10
+runtime_ledger_lineage_handoff_blockers = _runtime_ledger_lineage_handoff_blockers
+scorecard_with_freshness_lineage = _scorecard_with_freshness_lineage
+sum_mapping_int_values = _sum_mapping_int_values

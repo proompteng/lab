@@ -178,7 +178,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
                     return_value=(True, {"ok": True, "running": True}),
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.shared_context._readiness_dependency_snapshot",
+                    "app.api.readiness_helpers_modules.shared_context.readiness_dependency_snapshot",
                     return_value=(
                         {
                             "postgres": {"ok": True, "detail": "ok"},

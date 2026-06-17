@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Foundation-router parity evidence validation."""
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from .common import (
     Path,
 )
 from .requirements import (
-    _as_dict,
-    _float_or_none,
-    _foundation_router_required_artifact_refs,
-    _list_from_any,
-    _load_json_if_exists,
-    _normalize_artifact_path,
-    _requires_foundation_router_parity,
+    as_dict as _as_dict,
+    float_or_none as _float_or_none,
+    foundation_router_required_artifact_refs as _foundation_router_required_artifact_refs,
+    list_from_any as _list_from_any,
+    load_json_if_exists as _load_json_if_exists,
+    normalize_artifact_path as _normalize_artifact_path,
+    requires_foundation_router_parity as _requires_foundation_router_parity,
 )
 
 
@@ -303,3 +303,6 @@ def _evaluate_foundation_router_parity_evidence(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+evaluate_foundation_router_parity_evidence = _evaluate_foundation_router_parity_evidence

@@ -719,3 +719,15 @@ def load_jangar_dependency_quorum(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+dedupe_runtime_ledger_blockers = _dedupe_runtime_ledger_blockers
+fallback_quorum_from_legacy_status = _fallback_quorum_from_legacy_status
+hash_count = _hash_count
+load_manifest_payload = _load_manifest_payload
+resolve_runtime_ledger_readiness_inputs = _resolve_runtime_ledger_readiness_inputs
+runtime_ledger_blockers = _runtime_ledger_blockers
+runtime_ledger_latest_row = _runtime_ledger_latest_row
+runtime_ledger_provenance_blockers = _runtime_ledger_provenance_blockers
+runtime_ledger_row_rank = _runtime_ledger_row_rank
+runtime_ledger_window_bound_blockers = _runtime_ledger_window_bound_blockers

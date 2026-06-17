@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Autoresearch-style outer loop helpers for strategy discovery."""
 
 from __future__ import annotations
@@ -487,3 +487,20 @@ def _load_runtime_closure_policy(payload: Mapping[str, Any]) -> RuntimeClosurePo
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+coerce_decimal = _coerce_decimal
+current_grid_value = _current_grid_value
+decimal_from_candidate = _decimal_from_candidate
+dedupe_preserve_order = _dedupe_preserve_order
+format_numeric_like = _format_numeric_like
+json_clone = _json_clone
+load_mutation_space = _load_mutation_space
+load_runtime_closure_policy = _load_runtime_closure_policy
+mapping = _mapping
+resolve_program_path = _resolve_program_path
+resolve_seed_sweep_path = _resolve_seed_sweep_path
+SCHEMA_VERSION = _SCHEMA_VERSION
+stable_value_key = _stable_value_key
+string = _string
+string_list = _string_list

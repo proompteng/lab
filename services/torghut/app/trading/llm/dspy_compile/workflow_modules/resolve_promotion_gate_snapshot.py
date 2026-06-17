@@ -482,7 +482,7 @@ def _build_dspy_lane_context(
     lane_overrides, requested_eval_report_ref = _lane_overrides_with_defaults(
         lane=lane,
         lane_overrides=(request.lane_parameter_overrides or {}).get(lane, {}),
-        artifact_root=_artifact_root_normalized(request),
+        artifact_root=artifact_root_normalized(request),
     )
     gate_snapshot = _prepare_promotion_gate_snapshot(
         request,
@@ -494,7 +494,7 @@ def _build_dspy_lane_context(
     )
     run_key = _dspy_lane_run_key(request, lane)
     idempotency_key = _dspy_lane_idempotency_key(request, lane)
-    artifact_path = f"{_artifact_root_normalized(request)}/{lane}"
+    artifact_path = f"{artifact_root_normalized(request)}/{lane}"
     payload = _build_dspy_lane_payload(
         request,
         lane=lane,
@@ -520,7 +520,7 @@ def _build_dspy_lane_context(
     )
 
 
-def _artifact_root_normalized(request: _DSPyWorkflowRequest) -> str:
+def artifact_root_normalized(request: _DSPyWorkflowRequest) -> str:
     return request.artifact_root.strip().rstrip("/")
 
 
@@ -575,7 +575,7 @@ def _prepare_promotion_gate_snapshot(
     gate_snapshot = _resolve_promotion_gate_snapshot(
         lane_overrides,
         requested_eval_report_ref=requested_eval_report_ref,
-        artifact_root=_artifact_root_normalized(request),
+        artifact_root=artifact_root_normalized(request),
     )
     gate_failures = _promotion_gate_failures(
         gate_snapshot, now=datetime.now(timezone.utc)
@@ -900,3 +900,45 @@ def _execute_local_dspy_lane(**kwargs: Any) -> dict[str, Any]:
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+build_dspy_lane_context = _build_dspy_lane_context
+build_dspy_lane_payload = _build_dspy_lane_payload
+compile_result_for_lane = _compile_result_for_lane
+dspy_lane_idempotency_key = _dspy_lane_idempotency_key
+dspy_lane_run_key = _dspy_lane_run_key
+dspy_lane_terminal_metadata = _dspy_lane_terminal_metadata
+dspy_workflow_lanes = _dspy_workflow_lanes
+dspy_workflow_request_from_kwargs = _dspy_workflow_request_from_kwargs
+DSPyLaneContext = _DSPyLaneContext
+DSPyWorkflowRequest = _DSPyWorkflowRequest
+DSPyWorkflowSnapshots = _DSPyWorkflowSnapshots
+DSPyWorkflowState = _DSPyWorkflowState
+ensure_promotion_artifact_hash = _ensure_promotion_artifact_hash
+eval_report_for_lane = _eval_report_for_lane
+execute_and_persist_local_dspy_lane = _execute_and_persist_local_dspy_lane
+load_dspy_model_snapshot = _load_dspy_model_snapshot
+load_eval_snapshot_for_promotion = _load_eval_snapshot_for_promotion
+orchestrate_dspy_workflow = _orchestrate_dspy_workflow
+orchestrate_dspy_workflow_lane = _orchestrate_dspy_workflow_lane
+persist_blocked_promotion_lane = _persist_blocked_promotion_lane
+pop_required_workflow_kwarg = _pop_required_workflow_kwarg
+prepare_promotion_gate_snapshot = _prepare_promotion_gate_snapshot
+promotion_gate_compatibility_failures = _promotion_gate_compatibility_failures
+promotion_gate_created_at_failures = _promotion_gate_created_at_failures
+promotion_gate_determinism_failures = _promotion_gate_determinism_failures
+promotion_gate_failures = _promotion_gate_failures
+promotion_gate_fallback_failures = _promotion_gate_fallback_failures
+promotion_gate_schema_failures = _promotion_gate_schema_failures
+promotion_gate_trust_failures = _promotion_gate_trust_failures
+promotion_record_for_lane = _promotion_record_for_lane
+refresh_dspy_workflow_snapshots = _refresh_dspy_workflow_snapshots
+requested_eval_report_ref_rejection = _requested_eval_report_ref_rejection
+resolve_promotion_gate_snapshot = _resolve_promotion_gate_snapshot
+resolved_eval_report_ref_rejection = _resolved_eval_report_ref_rejection
+submit_and_persist_remote_dspy_lane = _submit_and_persist_remote_dspy_lane
+untrusted_eval_snapshot = _untrusted_eval_snapshot
+upsert_dspy_lane_submitted_record = _upsert_dspy_lane_submitted_record
+upsert_dspy_lane_terminal_record = _upsert_dspy_lane_terminal_record
+validate_dspy_workflow_request = _validate_dspy_workflow_request
+wait_for_dspy_lane_terminal_phase = _wait_for_dspy_lane_terminal_phase

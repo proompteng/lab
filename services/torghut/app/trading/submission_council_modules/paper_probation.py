@@ -694,3 +694,51 @@ __all__ = [
     "runtime_ledger_source_collection_source_dsn_env",
     "strategy_lookup_names",
 ]
+
+# Public aliases used by split modules.
+runtime_ledger_paper_probation_activity_blockers = (
+    _runtime_ledger_paper_probation_activity_blockers
+)
+RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = (
+    _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
+)
+runtime_ledger_paper_probation_candidates = _runtime_ledger_paper_probation_candidates
+runtime_ledger_paper_probation_eligible = _runtime_ledger_paper_probation_eligible
+runtime_ledger_paper_probation_hash_blockers = (
+    _runtime_ledger_paper_probation_hash_blockers
+)
+RUNTIME_LEDGER_PAPER_PROBATION_MIN_CLOSED_ROUND_TRIPS = (
+    _RUNTIME_LEDGER_PAPER_PROBATION_MIN_CLOSED_ROUND_TRIPS
+)
+runtime_ledger_paper_probation_profit_blockers = (
+    _runtime_ledger_paper_probation_profit_blockers
+)
+RUNTIME_LEDGER_PAPER_PROBATION_REASON = _RUNTIME_LEDGER_PAPER_PROBATION_REASON
+RUNTIME_LEDGER_SOURCE_COLLECTION_BUCKET_SOURCE = (
+    _RUNTIME_LEDGER_SOURCE_COLLECTION_BUCKET_SOURCE
+)
+RUNTIME_LEDGER_SOURCE_COLLECTION_BUCKET_SOURCE_DSN_ENVS = (
+    _RUNTIME_LEDGER_SOURCE_COLLECTION_BUCKET_SOURCE_DSN_ENVS
+)
+runtime_ledger_source_collection_candidate = _runtime_ledger_source_collection_candidate
+runtime_ledger_source_collection_candidates = (
+    _runtime_ledger_source_collection_candidates
+)
+RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER = (
+    _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER
+)
+runtime_ledger_source_collection_profit_target_candidate = (
+    _runtime_ledger_source_collection_profit_target_candidate
+)
+runtime_ledger_source_collection_profit_target_metadata = (
+    _runtime_ledger_source_collection_profit_target_metadata
+)
+RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV = (
+    _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV
+)
+runtime_ledger_source_collection_target_progress_payload = (
+    _runtime_ledger_source_collection_target_progress_payload
+)
+RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS = (
+    _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS
+)

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Target requirements, artifact references, coercion, and parsing helpers."""
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from .common import (
 )
 
 
-def _append_policy_issue(
+def append_policy_issue(
     reasons: list[str],
     details: list[dict[str, object]],
     reason: str,
@@ -27,9 +27,9 @@ def _append_policy_issue(
     details.append({"reason": reason, **fields})
 
 
-def _regime_slice_count(benchmark_payload: dict[str, Any]) -> int:
+def regime_slice_count(benchmark_payload: dict[str, Any]) -> int:
     regime_slices = 0
-    for item in _list_from_any(benchmark_payload.get("slices")):
+    for item in list_from_any(benchmark_payload.get("slices")):
         if not isinstance(item, dict):
             continue
         payload = cast(dict[str, Any], item)
@@ -64,12 +64,12 @@ def _required_artifacts_for_target(
             "gates/gate-evaluation.json",
         ],
     )
-    base = _list_from_any(base_raw)
+    base = list_from_any(base_raw)
     required = [str(item) for item in base if isinstance(item, str)]
     patch_targets_raw = policy_payload.get(
         "promotion_require_patch_targets", ["paper", "live"]
     )
-    patch_targets = _list_from_any(patch_targets_raw)
+    patch_targets = list_from_any(patch_targets_raw)
     if promotion_target in patch_targets:
         required.append("paper-candidate/strategy-configmap-patch.yaml")
     if include_profitability_artifacts:
@@ -82,7 +82,7 @@ def _required_artifacts_for_target(
                 "gates/recalibration-report.json",
             ],
         )
-        profitability_artifacts = _list_from_any(profitability_artifacts_raw)
+        profitability_artifacts = list_from_any(profitability_artifacts_raw)
         for artifact in profitability_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
@@ -114,7 +114,7 @@ def _required_artifacts_for_target(
                 "gates/janus-hgrm-reward-v1.json",
             ],
         )
-        janus_artifacts = _list_from_any(janus_artifacts_raw)
+        janus_artifacts = list_from_any(janus_artifacts_raw)
         for artifact in janus_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
@@ -123,23 +123,23 @@ def _required_artifacts_for_target(
         for artifact in benchmark_artifacts:
             required.append(artifact)
     if include_foundation_router_parity_artifacts:
-        foundation_router_artifacts = _foundation_router_required_artifact_refs(
+        foundation_router_artifacts = foundation_router_required_artifact_refs(
             policy_payload
         )
         for artifact in foundation_router_artifacts:
             required.append(artifact)
     if include_deeplob_bdlob_artifacts:
-        deeplob_bdlob_artifacts = _deeplob_bdlob_required_artifact_refs(policy_payload)
+        deeplob_bdlob_artifacts = deeplob_bdlob_required_artifact_refs(policy_payload)
         for artifact in deeplob_bdlob_artifacts:
             required.append(artifact)
     if include_advisor_fallback_slo_artifacts:
-        advisor_fallback_artifacts = _advisor_fallback_slo_required_artifact_refs(
+        advisor_fallback_artifacts = advisor_fallback_slo_required_artifact_refs(
             policy_payload
         )
         for artifact in advisor_fallback_artifacts:
             required.append(artifact)
     if include_contamination_artifacts:
-        contamination_artifacts = _contamination_registry_required_artifact_refs(
+        contamination_artifacts = contamination_registry_required_artifact_refs(
             policy_payload
         )
         for artifact in contamination_artifacts:
@@ -149,28 +149,28 @@ def _required_artifacts_for_target(
             "promotion_stress_required_artifacts",
             ["gates/stress-metrics-v1.json"],
         )
-        stress_artifacts = _list_from_any(stress_artifacts_raw)
+        stress_artifacts = list_from_any(stress_artifacts_raw)
         for artifact in stress_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
     if include_simulation_calibration_artifacts:
         simulation_calibration_artifacts = (
-            _simulation_calibration_required_artifact_refs(policy_payload)
+            simulation_calibration_required_artifact_refs(policy_payload)
         )
         for artifact in simulation_calibration_artifacts:
             required.append(artifact)
     if include_shadow_live_deviation_artifacts:
-        shadow_live_deviation_artifacts = _shadow_live_deviation_required_artifact_refs(
+        shadow_live_deviation_artifacts = shadow_live_deviation_required_artifact_refs(
             policy_payload
         )
         for artifact in shadow_live_deviation_artifacts:
             required.append(artifact)
     if include_hmm_state_posterior_artifacts:
-        hmm_artifacts = _hmm_state_posterior_required_artifact_refs(policy_payload)
+        hmm_artifacts = hmm_state_posterior_required_artifact_refs(policy_payload)
         for artifact in hmm_artifacts:
             required.append(artifact)
     if include_expert_router_artifacts:
-        expert_router_artifacts = _expert_router_required_artifact_refs(policy_payload)
+        expert_router_artifacts = expert_router_required_artifact_refs(policy_payload)
         for artifact in expert_router_artifacts:
             required.append(artifact)
     return sorted(set(required))
@@ -185,7 +185,7 @@ def _benchmark_parity_required_artifact_refs(
     )
     benchmark_artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(benchmark_artifacts_raw)
+        for artifact in list_from_any(benchmark_artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if benchmark_artifacts:
@@ -200,12 +200,12 @@ def _benchmark_parity_required_artifact_refs(
     return ["gates/benchmark-parity-report-v1.json"]
 
 
-def _benchmark_parity_artifact_reference(
+def benchmark_parity_artifact_reference(
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
 ) -> str:
-    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
-    benchmark_payload = _as_dict(evidence.get("benchmark_parity"))
+    evidence = as_dict(gate_report_payload.get("promotion_evidence"))
+    benchmark_payload = as_dict(evidence.get("benchmark_parity"))
     evidence_ref = str(benchmark_payload.get("artifact_ref") or "").strip()
     if evidence_ref:
         return evidence_ref
@@ -214,12 +214,12 @@ def _benchmark_parity_artifact_reference(
     return required_artifacts[0]
 
 
-def _benchmark_parity_artifact_candidates(
+def benchmark_parity_artifact_candidates(
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
 ) -> list[str]:
-    evidence = _as_dict(
-        _as_dict(gate_report_payload.get("promotion_evidence")).get("benchmark_parity")
+    evidence = as_dict(
+        as_dict(gate_report_payload.get("promotion_evidence")).get("benchmark_parity")
     )
     evidence_ref = str(evidence.get("artifact_ref") or "").strip()
     candidates: list[str] = []
@@ -234,13 +234,13 @@ def _benchmark_parity_artifact_candidates(
     return candidates
 
 
-def _first_existing_artifact_path(
+def first_existing_artifact_path(
     artifact_refs: Sequence[str],
     *,
     artifact_root: Path,
 ) -> Path | None:
     for artifact_ref in artifact_refs:
-        artifact_path = _normalize_artifact_path(
+        artifact_path = normalize_artifact_path(
             artifact_ref, artifact_root=artifact_root
         )
         if artifact_path is not None and artifact_path.exists():
@@ -248,7 +248,7 @@ def _first_existing_artifact_path(
     return None
 
 
-def _foundation_router_required_artifact_refs(
+def foundation_router_required_artifact_refs(
     policy_payload: dict[str, Any],
 ) -> list[str]:
     foundation_artifacts_raw = policy_payload.get(
@@ -257,7 +257,7 @@ def _foundation_router_required_artifact_refs(
     )
     foundation_artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(foundation_artifacts_raw)
+        for artifact in list_from_any(foundation_artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if foundation_artifacts:
@@ -271,7 +271,7 @@ def _foundation_router_required_artifact_refs(
     return ["router/foundation-router-parity-report-v1.json"]
 
 
-def _deeplob_bdlob_required_artifact_refs(
+def deeplob_bdlob_required_artifact_refs(
     policy_payload: dict[str, Any],
 ) -> list[str]:
     artifacts_raw = policy_payload.get(
@@ -280,7 +280,7 @@ def _deeplob_bdlob_required_artifact_refs(
     )
     artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(artifacts_raw)
+        for artifact in list_from_any(artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if artifacts:
@@ -288,7 +288,7 @@ def _deeplob_bdlob_required_artifact_refs(
     return ["microstructure/deeplob-bdlob-report-v1.json"]
 
 
-def _advisor_fallback_slo_required_artifact_refs(
+def advisor_fallback_slo_required_artifact_refs(
     policy_payload: dict[str, Any],
 ) -> list[str]:
     artifacts_raw = policy_payload.get(
@@ -297,7 +297,7 @@ def _advisor_fallback_slo_required_artifact_refs(
     )
     artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(artifacts_raw)
+        for artifact in list_from_any(artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if artifacts:
@@ -305,7 +305,7 @@ def _advisor_fallback_slo_required_artifact_refs(
     return ["execution/advisor-fallback-slo-report-v1.json"]
 
 
-def _contamination_registry_required_artifact_refs(
+def contamination_registry_required_artifact_refs(
     policy_payload: dict[str, Any],
 ) -> list[str]:
     contamination_artifacts_raw = policy_payload.get(
@@ -314,7 +314,7 @@ def _contamination_registry_required_artifact_refs(
     )
     contamination_artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(contamination_artifacts_raw)
+        for artifact in list_from_any(contamination_artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if contamination_artifacts:
@@ -328,7 +328,7 @@ def _contamination_registry_required_artifact_refs(
     return ["gates/contamination-leakage-report-v1.json"]
 
 
-def _hmm_state_posterior_required_artifact_refs(
+def hmm_state_posterior_required_artifact_refs(
     policy_payload: dict[str, Any],
 ) -> list[str]:
     artifacts_raw = policy_payload.get(
@@ -337,7 +337,7 @@ def _hmm_state_posterior_required_artifact_refs(
     )
     artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(artifacts_raw)
+        for artifact in list_from_any(artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if artifacts:
@@ -345,7 +345,7 @@ def _hmm_state_posterior_required_artifact_refs(
     return ["gates/hmm-state-posterior-v1.json"]
 
 
-def _expert_router_required_artifact_refs(
+def expert_router_required_artifact_refs(
     policy_payload: dict[str, Any],
 ) -> list[str]:
     artifacts_raw = policy_payload.get(
@@ -354,7 +354,7 @@ def _expert_router_required_artifact_refs(
     )
     artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(artifacts_raw)
+        for artifact in list_from_any(artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if artifacts:
@@ -362,7 +362,7 @@ def _expert_router_required_artifact_refs(
     return ["gates/expert-router-registry-v1.json"]
 
 
-def _simulation_calibration_required_artifact_refs(
+def simulation_calibration_required_artifact_refs(
     policy_payload: dict[str, Any],
 ) -> list[str]:
     artifacts_raw = policy_payload.get(
@@ -371,7 +371,7 @@ def _simulation_calibration_required_artifact_refs(
     )
     artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(artifacts_raw)
+        for artifact in list_from_any(artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if artifacts:
@@ -379,7 +379,7 @@ def _simulation_calibration_required_artifact_refs(
     return ["gates/simulation-calibration-report-v1.json"]
 
 
-def _shadow_live_deviation_required_artifact_refs(
+def shadow_live_deviation_required_artifact_refs(
     policy_payload: dict[str, Any],
 ) -> list[str]:
     artifacts_raw = policy_payload.get(
@@ -388,7 +388,7 @@ def _shadow_live_deviation_required_artifact_refs(
     )
     artifacts = [
         str(artifact).strip()
-        for artifact in _list_from_any(artifacts_raw)
+        for artifact in list_from_any(artifacts_raw)
         if isinstance(artifact, str) and artifact.strip()
     ]
     if artifacts:
@@ -396,7 +396,7 @@ def _shadow_live_deviation_required_artifact_refs(
     return ["gates/shadow-live-deviation-report-v1.json"]
 
 
-def _requires_jangar_dependency_quorum(
+def requires_jangar_dependency_quorum(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -405,7 +405,7 @@ def _requires_jangar_dependency_quorum(
         policy_payload.get("promotion_require_jangar_dependency_quorum", False)
     ):
         return False
-    required_targets = _list_of_strings(
+    required_targets = list_of_strings(
         policy_payload.get(
             "promotion_jangar_dependency_quorum_required_targets",
             ["paper", "live"],
@@ -416,7 +416,7 @@ def _requires_jangar_dependency_quorum(
     return promotion_target in required_targets
 
 
-def _requires_alpha_readiness_contract(
+def requires_alpha_readiness_contract(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -425,7 +425,7 @@ def _requires_alpha_readiness_contract(
         policy_payload.get("promotion_require_alpha_readiness_contract", False)
     ):
         return False
-    required_targets = _list_of_strings(
+    required_targets = list_of_strings(
         policy_payload.get(
             "promotion_alpha_readiness_required_targets",
             ["paper", "live"],
@@ -436,7 +436,7 @@ def _requires_alpha_readiness_contract(
     return promotion_target in required_targets
 
 
-def _requires_hmm_state_posterior(
+def requires_hmm_state_posterior(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -449,7 +449,7 @@ def _requires_hmm_state_posterior(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -457,7 +457,7 @@ def _requires_hmm_state_posterior(
     return promotion_target in required_targets
 
 
-def _requires_expert_router_registry(
+def requires_expert_router_registry(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -470,7 +470,7 @@ def _requires_expert_router_registry(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -478,7 +478,7 @@ def _requires_expert_router_registry(
     return promotion_target in required_targets
 
 
-def _requires_profitability_evidence(
+def requires_profitability_evidence(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -490,7 +490,7 @@ def _requires_profitability_evidence(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -498,7 +498,7 @@ def _requires_profitability_evidence(
     return promotion_target in required_targets
 
 
-def _requires_janus_evidence(
+def requires_janus_evidence(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -512,7 +512,7 @@ def _requires_janus_evidence(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -520,7 +520,7 @@ def _requires_janus_evidence(
     return promotion_target in required_targets
 
 
-def _requires_stress_evidence(
+def requires_stress_evidence(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -532,7 +532,7 @@ def _requires_stress_evidence(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -540,7 +540,7 @@ def _requires_stress_evidence(
     return promotion_target in required_targets
 
 
-def _requires_simulation_calibration(
+def requires_simulation_calibration(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -553,7 +553,7 @@ def _requires_simulation_calibration(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -561,7 +561,7 @@ def _requires_simulation_calibration(
     return promotion_target in required_targets
 
 
-def _requires_shadow_live_deviation(
+def requires_shadow_live_deviation(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -574,7 +574,7 @@ def _requires_shadow_live_deviation(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -582,7 +582,7 @@ def _requires_shadow_live_deviation(
     return promotion_target in required_targets
 
 
-def _requires_contamination_registry(
+def requires_contamination_registry(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -595,7 +595,7 @@ def _requires_contamination_registry(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -603,7 +603,7 @@ def _requires_contamination_registry(
     return promotion_target in required_targets
 
 
-def _requires_fold_evidence(
+def requires_fold_evidence(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -616,7 +616,7 @@ def _requires_fold_evidence(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -624,7 +624,7 @@ def _requires_fold_evidence(
     return promotion_target in required_targets
 
 
-def _required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:
+def required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:
     checks_raw = policy_payload.get(
         "rollback_required_checks",
         [
@@ -633,11 +633,11 @@ def _required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:
             "strategyDisableDryRunPassed",
         ],
     )
-    checks = _list_from_any(checks_raw)
+    checks = list_from_any(checks_raw)
     return [str(item) for item in checks if isinstance(item, str)]
 
 
-def _normalize_artifact_path(artifact_ref: str, *, artifact_root: Path) -> Path | None:
+def normalize_artifact_path(artifact_ref: str, *, artifact_root: Path) -> Path | None:
     normalized_ref = str(artifact_ref).strip()
     if not normalized_ref:
         return None
@@ -661,21 +661,21 @@ def _normalize_artifact_path(artifact_ref: str, *, artifact_root: Path) -> Path 
     return normalized_candidate
 
 
-def _required_throughput(policy_payload: dict[str, Any]) -> dict[str, int]:
+def required_throughput(policy_payload: dict[str, Any]) -> dict[str, int]:
     return {
         "min_signal_count": max(
-            1, _int_or_default(policy_payload.get("promotion_min_signal_count"), 1)
+            1, int_or_default(policy_payload.get("promotion_min_signal_count"), 1)
         ),
         "min_decision_count": max(
-            1, _int_or_default(policy_payload.get("promotion_min_decision_count"), 1)
+            1, int_or_default(policy_payload.get("promotion_min_decision_count"), 1)
         ),
         "min_trade_count": max(
-            0, _int_or_default(policy_payload.get("promotion_min_trade_count"), 0)
+            0, int_or_default(policy_payload.get("promotion_min_trade_count"), 0)
         ),
     }
 
 
-def _requires_foundation_router_parity(
+def requires_foundation_router_parity(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -690,7 +690,7 @@ def _requires_foundation_router_parity(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -698,7 +698,7 @@ def _requires_foundation_router_parity(
     return promotion_target in required_targets
 
 
-def _requires_deeplob_bdlob_contract(
+def requires_deeplob_bdlob_contract(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -711,7 +711,7 @@ def _requires_deeplob_bdlob_contract(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -719,7 +719,7 @@ def _requires_deeplob_bdlob_contract(
     return promotion_target in required_targets
 
 
-def _requires_advisor_fallback_slo(
+def requires_advisor_fallback_slo(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -732,7 +732,7 @@ def _requires_advisor_fallback_slo(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -740,7 +740,7 @@ def _requires_advisor_fallback_slo(
     return promotion_target in required_targets
 
 
-def _requires_benchmark_parity(
+def requires_benchmark_parity(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
     if promotion_target == "shadow":
@@ -753,7 +753,7 @@ def _requires_benchmark_parity(
     )
     required_targets = [
         str(target)
-        for target in _list_from_any(required_targets_raw)
+        for target in list_from_any(required_targets_raw)
         if isinstance(target, str)
     ]
     if not required_targets:
@@ -761,7 +761,7 @@ def _requires_benchmark_parity(
     return promotion_target in required_targets
 
 
-def _observed_throughput(
+def observed_throughput(
     *,
     gate_report_payload: dict[str, Any],
     candidate_state_payload: dict[str, Any],
@@ -773,11 +773,11 @@ def _observed_throughput(
     metrics_raw = gate_report_payload.get("metrics")
     metrics = cast(dict[str, Any], metrics_raw) if isinstance(metrics_raw, dict) else {}
 
-    signal_count = _int_or_default(throughput.get("signal_count"), 0)
-    decision_count = _int_or_default(
+    signal_count = int_or_default(throughput.get("signal_count"), 0)
+    decision_count = int_or_default(
         throughput.get("decision_count", metrics.get("decision_count")), 0
     )
-    trade_count = _int_or_default(
+    trade_count = int_or_default(
         throughput.get("trade_count", metrics.get("trade_count")), 0
     )
 
@@ -806,9 +806,9 @@ def _observed_throughput(
     }
 
 
-def _gates(gate_report_payload: dict[str, Any]) -> list[dict[str, Any]]:
+def gates(gate_report_payload: dict[str, Any]) -> list[dict[str, Any]]:
     gates_raw = gate_report_payload.get("gates")
-    gates_list = _list_from_any(gates_raw)
+    gates_list = list_from_any(gates_raw)
     gates: list[dict[str, Any]] = []
     for item in gates_list:
         if isinstance(item, dict):
@@ -816,13 +816,13 @@ def _gates(gate_report_payload: dict[str, Any]) -> list[dict[str, Any]]:
     return gates
 
 
-def _list_from_any(value: Any) -> list[object]:
+def list_from_any(value: Any) -> list[object]:
     if not isinstance(value, list):
         return []
     return cast(list[object], value)
 
 
-def _as_list_of_dicts(value: object) -> list[dict[str, Any]]:
+def as_list_of_dicts(value: object) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     values = cast(list[object], value)
@@ -833,24 +833,24 @@ def _as_list_of_dicts(value: object) -> list[dict[str, Any]]:
     return result
 
 
-def _list_count(value: Any) -> int:
+def list_count(value: Any) -> int:
     if not isinstance(value, list):
         return 0
     return len(cast(list[object], value))
 
 
-def _as_dict(value: Any) -> dict[str, Any]:
+def as_dict(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     return cast(dict[str, Any], value)
 
 
-def _list_of_strings(value: Any) -> list[str]:
-    raw = _list_from_any(value)
+def list_of_strings(value: Any) -> list[str]:
+    raw = list_from_any(value)
     return [str(item) for item in raw if isinstance(item, str)]
 
 
-def _load_json_if_exists(path: Path) -> dict[str, Any] | None:
+def load_json_if_exists(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
@@ -862,19 +862,19 @@ def _load_json_if_exists(path: Path) -> dict[str, Any] | None:
     return cast(dict[str, Any], payload)
 
 
-def _sha256_path(path: Path) -> str:
+def sha256_path(path: Path) -> str:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return ""
 
 
-def _sha256_json(payload: object) -> str:
+def sha256_json(payload: object) -> str:
     payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
 
-def _int_or_default(value: Any, default: int) -> int:
+def int_or_default(value: Any, default: int) -> int:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -889,7 +889,7 @@ def _int_or_default(value: Any, default: int) -> int:
     return default
 
 
-def _int_or_none(value: Any) -> int | None:
+def int_or_none(value: Any) -> int | None:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -921,14 +921,14 @@ def _coerce_evidence_bool(value: object) -> bool | None:
     return None
 
 
-def _float_or_default(value: Any, default: float) -> float:
-    parsed = _float_or_none(value)
+def float_or_default(value: Any, default: float) -> float:
+    parsed = float_or_none(value)
     if parsed is None:
         return default
     return parsed
 
 
-def _float_or_none(value: Any) -> float | None:
+def float_or_none(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         parsed = float(value)
         if math.isfinite(parsed):
@@ -947,12 +947,12 @@ def _float_or_none(value: Any) -> float | None:
     return None
 
 
-def _promotion_rank(target: str) -> int:
+def promotion_rank(target: str) -> int:
     ranking = {"shadow": 1, "paper": 2, "live": 3}
     return ranking.get(target, 0)
 
 
-def _parse_datetime(value: str) -> datetime | None:
+def parse_datetime(value: str) -> datetime | None:
     if not value:
         return None
     try:
@@ -963,5 +963,8 @@ def _parse_datetime(value: str) -> datetime | None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
+
+coerce_evidence_bool = _coerce_evidence_bool
+required_artifacts_for_target = _required_artifacts_for_target
 
 __all__ = [name for name in globals() if not name.startswith("__")]

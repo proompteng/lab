@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Executable alpha receipt projection for zero-notional repair planning."""
 
 from __future__ import annotations
@@ -584,3 +584,53 @@ def _executable_alpha_repair_receipt(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+ALPHA_RUNTIME_REPAIR_REASONS = _ALPHA_RUNTIME_REPAIR_REASONS
+ALPHA_RUNTIME_REPLAY_CLASS = _ALPHA_RUNTIME_REPLAY_CLASS
+BREADTH_HYPOTHESIS = _BREADTH_HYPOTHESIS
+CLOSED_SESSION_REPAIR_REASONS = _CLOSED_SESSION_REPAIR_REASONS
+DEFAULT_FRESHNESS_SECONDS = _DEFAULT_FRESHNESS_SECONDS
+EXECUTABLE_ALPHA_REPAIR_DESIGN_REF = _EXECUTABLE_ALPHA_REPAIR_DESIGN_REF
+executable_alpha_repair_receipt = _executable_alpha_repair_receipt
+EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET = _EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET
+EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF = _EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF
+EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET = (
+    _EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET
+)
+expected_gate_delta = _expected_gate_delta
+FEATURE_OR_DRIFT_REPAIR_REASONS = _FEATURE_OR_DRIFT_REPAIR_REASONS
+find_by_symbol = _find_by_symbol
+first_with_state = _first_with_state
+float_value = _float
+HARD_ALPHA_ECONOMIC_REASONS = _HARD_ALPHA_ECONOMIC_REASONS
+int_value = _int
+LIVE_AAPL_HYPOTHESIS = _LIVE_AAPL_HYPOTHESIS
+mapping = _mapping
+NO_DELTA_RELEASE_CONDITIONS = _NO_DELTA_RELEASE_CONDITIONS
+POST_COST_REPAIR_REASONS = _POST_COST_REPAIR_REASONS
+proof_window = _proof_window
+reason_list_from_target = _reason_list_from_target
+receipt_by_hypothesis = _receipt_by_hypothesis
+receipt_revenue_lane_rank = _receipt_revenue_lane_rank
+receipt_target_key = _receipt_target_key
+repair_class_for_target = _repair_class_for_target
+REPAIR_CLASS_RANK = _REPAIR_CLASS_RANK
+REPAIR_REASON_CLASSES = _REPAIR_REASON_CLASSES
+required_input_refs = _required_input_refs
+route_board_rows = _route_board_rows
+route_records = _route_records
+RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS = _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS
+RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = (
+    _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
+)
+RUNTIME_LEDGER_PAPER_PROBATION_REASON = _RUNTIME_LEDGER_PAPER_PROBATION_REASON
+sequence = _sequence
+SIM_NVDA_HYPOTHESIS = _SIM_NVDA_HYPOTHESIS
+stable_hash = _stable_hash
+string_list = _string_list
+targets_from_alpha_readiness = _targets_from_alpha_readiness
+text = _text
+top_alpha_repair = _top_alpha_repair
+VALIDATION_COMMANDS_BY_CLASS = _VALIDATION_COMMANDS_BY_CLASS
+ZERO_RUNTIME_EVIDENCE_REASONS = _ZERO_RUNTIME_EVIDENCE_REASONS

@@ -817,3 +817,20 @@ coerce_fill_quantity_basis = _coerce_fill_quantity_basis
 normalize_fill_row = _normalize_fill_row
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+apply_fill_to_position = _apply_fill_to_position
+coerce_event_type = _coerce_event_type
+is_linked_materialized_order_event_fill = _is_linked_materialized_order_event_fill
+is_non_promotion_runtime_source_row = _is_non_promotion_runtime_source_row
+is_order_feed_lifecycle_source_row = _is_order_feed_lifecycle_source_row
+is_order_feed_source_fill = _is_order_feed_source_fill
+is_order_feed_source_row = _is_order_feed_source_row
+open_position = _open_position
+order_lifecycle_blockers = _order_lifecycle_blockers
+row_requires_promotion_source_authority = _row_requires_promotion_source_authority
+row_value = _row_value
+runtime_source_collection_mode_blockers = _runtime_source_collection_mode_blockers
+runtime_source_hard_mode_blockers = _runtime_source_hard_mode_blockers
+source_offset_present = _source_offset_present
+source_materialization_blockers = _source_materialization_blockers

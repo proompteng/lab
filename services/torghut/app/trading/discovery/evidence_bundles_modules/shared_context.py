@@ -675,3 +675,21 @@ def _runtime_ledger_lineage_handoff(
 bool_value = _bool
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+artifact_refs_from_scorecard = _artifact_refs_from_scorecard
+decimal = _decimal
+decimal_mapping_total = _decimal_mapping_total
+frontier_replay_config = _frontier_replay_config
+frontier_replay_params = _frontier_replay_params
+frontier_strategy_overrides = _frontier_strategy_overrides
+int_value = _int
+int_mapping = _int_mapping
+mapping = _mapping
+order_lifecycle_metrics = _order_lifecycle_metrics
+order_type_ablation_metrics = _order_type_ablation_metrics
+order_type_execution_metrics = _order_type_execution_metrics
+runtime_ledger_lineage_handoff = _runtime_ledger_lineage_handoff
+stable_hash = _stable_hash
+string = _string
+string_list = _string_list

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Benchmark parity evidence validation."""
 
 from __future__ import annotations
@@ -14,23 +14,23 @@ from .common import (
     BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
     BENCHMARK_PARITY_SCHEMA_VERSION,
     Path,
-    _BenchmarkParityThresholds,
+    BenchmarkParityThresholds as _BenchmarkParityThresholds,
     hashlib,
     json,
 )
 from .requirements import (
-    _append_policy_issue,
-    _as_dict,
-    _as_list_of_dicts,
-    _benchmark_parity_artifact_candidates,
-    _benchmark_parity_artifact_reference,
-    _coerce_evidence_bool,
-    _first_existing_artifact_path,
-    _float_or_none,
-    _list_from_any,
-    _load_json_if_exists,
-    _normalize_artifact_path,
-    _requires_benchmark_parity,
+    append_policy_issue as _append_policy_issue,
+    as_dict as _as_dict,
+    as_list_of_dicts as _as_list_of_dicts,
+    benchmark_parity_artifact_candidates as _benchmark_parity_artifact_candidates,
+    benchmark_parity_artifact_reference as _benchmark_parity_artifact_reference,
+    coerce_evidence_bool as _coerce_evidence_bool,
+    first_existing_artifact_path as _first_existing_artifact_path,
+    float_or_none as _float_or_none,
+    list_from_any as _list_from_any,
+    load_json_if_exists as _load_json_if_exists,
+    normalize_artifact_path as _normalize_artifact_path,
+    requires_benchmark_parity as _requires_benchmark_parity,
 )
 
 
@@ -904,3 +904,7 @@ def _append_degradation_issue(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+evaluate_benchmark_parity_evidence = _evaluate_benchmark_parity_evidence
+policy_float = _policy_float

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Advisor fallback SLO evidence validation."""
 
 from __future__ import annotations
@@ -15,15 +15,15 @@ from .common import (
     json,
 )
 from .requirements import (
-    _advisor_fallback_slo_required_artifact_refs,
-    _as_dict,
-    _coerce_evidence_bool,
-    _float_or_none,
-    _int_or_none,
-    _list_from_any,
-    _load_json_if_exists,
-    _normalize_artifact_path,
-    _requires_advisor_fallback_slo,
+    advisor_fallback_slo_required_artifact_refs as _advisor_fallback_slo_required_artifact_refs,
+    as_dict as _as_dict,
+    coerce_evidence_bool as _coerce_evidence_bool,
+    float_or_none as _float_or_none,
+    int_or_none as _int_or_none,
+    list_from_any as _list_from_any,
+    load_json_if_exists as _load_json_if_exists,
+    normalize_artifact_path as _normalize_artifact_path,
+    requires_advisor_fallback_slo as _requires_advisor_fallback_slo,
 )
 
 
@@ -345,3 +345,6 @@ def _evaluate_advisor_fallback_slo_evidence(
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split modules.
+evaluate_advisor_fallback_slo_evidence = _evaluate_advisor_fallback_slo_evidence
