@@ -109,9 +109,13 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
-      {{- with .Values.nodeSelector }}
+      {{- if hasKey .Values "nodeSelector" }}
       nodeSelector:
-        {{- toYaml . | nindent 8 }}
+        {{- if .Values.nodeSelector }}
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+        {{- else }}
+        {}
+        {{- end }}
       {{- end }}
       {{- with .Values.affinity }}
       affinity:
