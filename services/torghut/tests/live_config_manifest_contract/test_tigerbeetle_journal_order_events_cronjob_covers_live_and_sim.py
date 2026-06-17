@@ -409,9 +409,9 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             "'http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
             args,
         )
-        self.assertNotIn(
+        self.assertIn(
             "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/status",
+            "'http://torghut.torghut.svc.cluster.local/trading/status'",
             args,
         )
         self.assertIn("--runtime-window-target-plan-url-timeout-seconds 45", args)
