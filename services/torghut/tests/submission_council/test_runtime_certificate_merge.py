@@ -100,7 +100,7 @@ class TestSubmissionCouncilRuntimeCertificateMerge(SubmissionCouncilTestCase):
         import_plan = gate["runtime_ledger_paper_probation_import_plan"]
         self.assertEqual(import_plan["target_count"], 1)
         self.assertEqual(import_plan["manifest_bounded_collection_target_count"], 1)
-        self.assertFalse(import_plan["bounded_live_paper_collection_authorized"])
+        self.assertTrue(import_plan["bounded_live_paper_collection_authorized"])
         self.assertFalse(
             import_plan["paper_probation_satisfied_for_bounded_live_paper_collection"]
         )
@@ -114,8 +114,15 @@ class TestSubmissionCouncilRuntimeCertificateMerge(SubmissionCouncilTestCase):
         self.assertEqual(
             target["runtime_strategy_name"], "microbar-cross-sectional-pairs-v1"
         )
-        self.assertFalse(target["bounded_evidence_collection_authorized"])
-        self.assertFalse(target["bounded_live_paper_collection_authorized"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertTrue(target["bounded_live_paper_collection_authorized"])
+        self.assertEqual(
+            target["bounded_evidence_collection_scope"],
+            "paper_route_probe_next_session_only",
+        )
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
+        self.assertEqual(target["paper_route_probe_next_session_max_notional"], "25")
+        self.assertEqual(target["max_notional"], "25")
         self.assertFalse(
             target["paper_probation_satisfied_for_bounded_live_paper_collection"]
         )

@@ -16,7 +16,6 @@ from .common import (
 )
 from .paper_probation import (
     BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS as _BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS,
-    BOUNDED_PAPER_ROUTE_COLLECTION_SCOPE as _BOUNDED_PAPER_ROUTE_COLLECTION_SCOPE,
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_KIND as _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_KIND,
     HPAIRS_BOUNDED_COLLECTION_CANDIDATE_ID as _HPAIRS_BOUNDED_COLLECTION_CANDIDATE_ID,
     HPAIRS_BOUNDED_COLLECTION_HYPOTHESIS_ID as _HPAIRS_BOUNDED_COLLECTION_HYPOTHESIS_ID,
@@ -639,11 +638,8 @@ def _bounded_paper_route_manifest_collection_targets(
                 "proof_mode": "probation",
                 "evidence_collection_ok": True,
                 "canary_collection_authorized": False,
-                "bounded_live_paper_collection_authorized": False,
-                "bounded_evidence_collection_authorized": False,
-                "bounded_evidence_collection_scope": (
-                    _BOUNDED_PAPER_ROUTE_COLLECTION_SCOPE
-                ),
+                "bounded_live_paper_collection_authorized": True,
+                **_bounded_paper_route_probe_collection_payload(authorized=True),
                 "capital_promotion_allowed": False,
                 "final_authority_ok": False,
                 "evidence_collection_stage": "paper",
@@ -667,7 +663,6 @@ def _bounded_paper_route_manifest_collection_targets(
                 "promotion_gate": "runtime_ledger_live_or_live_paper_required",
                 "selected_by": "hypothesis_manifest_bounded_paper_route_collection",
                 "selection_reason": "source_decisions_missing_for_bounded_paper_route",
-                "max_notional": "0",
             }
         )
     return targets
