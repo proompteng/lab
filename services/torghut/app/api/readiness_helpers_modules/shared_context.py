@@ -7,6 +7,11 @@ from __future__ import annotations
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
+from ...trading.live_submit_activation import (
+    live_submit_activation_blocker,
+    live_submit_activation_status,
+)
+
 # ruff: noqa: F401,F403,F405,F821,F821,F821
 
 
@@ -588,6 +593,11 @@ def _core_readiness_live_submission_gate() -> dict[str, object]:
             and not settings.trading_simple_submit_enabled
         ):
             blocked_reasons.append("simple_submit_disabled")
+        activation_blocker = live_submit_activation_blocker(
+            now=datetime.now(timezone.utc)
+        )
+        if activation_blocker is not None:
+            blocked_reasons.append(activation_blocker)
 
     return {
         "allowed": False,
@@ -603,6 +613,9 @@ def _core_readiness_live_submission_gate() -> dict[str, object]:
         "capital_state": "observe",
         "read_model_evaluated": False,
         "readiness_surface": "core_dependencies_only",
+        "live_submit_activation": live_submit_activation_status(
+            now=datetime.now(timezone.utc)
+        ),
     }
 
 
@@ -795,6 +808,11 @@ def _minimal_health_surface_timeout_live_submission_gate(
             and not settings.trading_simple_submit_enabled
         ):
             blocked_reasons.append("simple_submit_disabled")
+        activation_blocker = live_submit_activation_blocker(
+            now=datetime.now(timezone.utc)
+        )
+        if activation_blocker is not None:
+            blocked_reasons.append(activation_blocker)
 
     reason = blocked_reasons[0] if blocked_reasons else reason_code
 
@@ -817,6 +835,9 @@ def _minimal_health_surface_timeout_live_submission_gate(
             "reason_codes": [reason_code],
             "detail": detail,
         },
+        "live_submit_activation": live_submit_activation_status(
+            now=datetime.now(timezone.utc)
+        ),
     }
 
 

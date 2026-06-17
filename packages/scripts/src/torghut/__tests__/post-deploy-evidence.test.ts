@@ -17,7 +17,41 @@ const baseRouteBoard = {
   },
 }
 
+const baseLiveSubmitActivation = {
+  configured: true,
+  valid: true,
+  expired: false,
+  expires_at: '2026-06-17T20:05:00+00:00',
+  observed_at: '2026-06-17T14:00:00+00:00',
+  reason: null,
+}
+
 const baseTradingStatus = {
+  autonomy_enabled: false,
+  empirical_jobs: {
+    ready: true,
+    status: 'healthy',
+    authority: 'empirical',
+    blocked_reasons: [],
+  },
+  live_submission_gate: {
+    allowed: true,
+    reason: null,
+    blocked_reasons: [],
+    simple_lane: {
+      submit_enabled: true,
+      shared_gate_enforced: true,
+      blocked_reasons: [],
+      live_submit_activation: baseLiveSubmitActivation,
+    },
+  },
+  simple_lane_status: {
+    submit_enabled: true,
+    paper_route_probe_max_notional: 100,
+    max_notional_per_order: 100,
+    max_notional_per_symbol: 250,
+    max_gross_exposure_pct_equity: 0.05,
+  },
   route_reacquisition_board: baseRouteBoard,
 }
 
@@ -136,6 +170,66 @@ describe('validatePostDeployEvidence', () => {
     })
 
     expect(result.readyzAcceptedReason).toBe('healthy_2xx')
+    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `bounded_june17_activation`')
+  })
+
+  it('rejects healthy readyz when live submit is not bounded by the June 17 activation contract', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: {
+          ...baseTradingStatus,
+          live_submission_gate: {
+            ...baseTradingStatus.live_submission_gate,
+            simple_lane: {
+              ...baseTradingStatus.live_submission_gate.simple_lane,
+              live_submit_activation: {
+                ...baseLiveSubmitActivation,
+                expired: true,
+                reason: 'live_submit_activation_expired',
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow('live_submit_activation.expired must be false')
+  })
+
+  it('rejects healthy readyz when live submit caps drift above the GitOps contract', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: {
+          ...baseTradingStatus,
+          simple_lane_status: {
+            ...baseTradingStatus.simple_lane_status,
+            max_notional_per_order: 1000,
+          },
+        },
+      }),
+    ).toThrow('max_notional_per_order must be 100')
+  })
+
+  it('rejects healthy readyz when empirical jobs are still stale', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: {
+          ...baseTradingStatus,
+          empirical_jobs: {
+            ready: false,
+            status: 'degraded',
+            blocked_reasons: ['job_stale'],
+          },
+        },
+      }),
+    ).toThrow('empirical jobs must be fresh')
   })
 
   it('accepts repair-only zero-notional readyz 503 without treating it as a rollout failure', () => {

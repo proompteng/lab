@@ -297,6 +297,7 @@ class Settings(BaseSettings):
     trading_simple_max_gross_exposure_pct_equity: Optional[float]
     trading_simple_buying_power_reserve_bps: float
     trading_simple_submit_enabled: bool
+    trading_live_submit_activation_expires_at: Optional[str]
     trading_simple_order_feed_telemetry_enabled: bool
     trading_simple_paper_route_probe_enabled: bool
     trading_simple_paper_route_probe_max_notional: float

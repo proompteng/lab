@@ -138,10 +138,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-        self.assertEqual(
-            pod_spec.get("nodeSelector"),
-            {"kubernetes.io/arch": "arm64"},
-        )
+        self.assertNotIn("nodeSelector", pod_spec)
         self.assertTrue(containers)
 
         container = containers[0]
@@ -217,7 +214,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertEqual(spec.get("schedule"), "*/10 9-16 * * 1-5")
         self.assertEqual(spec.get("timeZone"), "America/New_York")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(spec.get("failedJobsHistoryLimit"), 0)
+        self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
         self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
         job_spec = cast(
             Mapping[str, object],
@@ -228,15 +225,12 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 1800)
+        self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
         self.assertEqual(job_spec.get("backoffLimit"), 0)
         self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
         self.assertEqual(pod_spec.get("restartPolicy"), "Never")
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-        self.assertEqual(
-            pod_spec.get("nodeSelector"),
-            {"kubernetes.io/arch": "arm64"},
-        )
+        self.assertNotIn("nodeSelector", pod_spec)
         self.assertIn(
             "registry.ide-newton.ts.net/lab/torghut@sha256:",
             str(container.get("image")),
@@ -295,6 +289,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertEqual(spec.get("schedule"), "5,15,20,25 9,16 * * 1-5")
         self.assertEqual(spec.get("timeZone"), "America/New_York")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
         job_spec = cast(
             Mapping[str, object],
             cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
@@ -304,12 +299,10 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+        self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
         self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-        self.assertEqual(
-            pod_spec.get("nodeSelector"),
-            {"kubernetes.io/arch": "arm64"},
-        )
+        self.assertNotIn("nodeSelector", pod_spec)
         resources = cast(Mapping[str, object], container.get("resources", {}))
         self.assertEqual(
             resources,
@@ -331,6 +324,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             item.get("name"): item
             for item in cast(list[Mapping[str, object]], container.get("env", []))
         }
+        self.assertEqual(env["PYTHONUNBUFFERED"].get("value"), "1")
         db_dsn = cast(Mapping[str, object], env["DB_DSN"])
         value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
         self.assertEqual(
@@ -400,6 +394,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
 
         self.assertEqual(spec.get("schedule"), "13,43 * * * *")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
         self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
         job_spec = cast(
             Mapping[str, object],
@@ -410,12 +405,10 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+        self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
         self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-        self.assertEqual(
-            pod_spec.get("nodeSelector"),
-            {"kubernetes.io/arch": "arm64"},
-        )
+        self.assertNotIn("nodeSelector", pod_spec)
         resources = cast(Mapping[str, object], container.get("resources", {}))
         self.assertEqual(
             resources,
@@ -441,6 +434,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             item.get("name"): item
             for item in cast(list[Mapping[str, object]], container.get("env", []))
         }
+        self.assertEqual(env["PYTHONUNBUFFERED"].get("value"), "1")
         self.assertEqual(
             env["SIM_DB_DSN"].get("value"),
             "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
@@ -575,13 +569,17 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertEqual(live_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
         self.assertEqual(
             live_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "1.0",
+            "0.05",
         )
         self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "1.0",
+            "0.05",
         )
+        self.assertEqual(live_env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER"), "100")
+        self.assertEqual(live_env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL"), "250")
+        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER"), "100")
+        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL"), "250")
         _, flatten_container = _load_cronjob_container(
             "argocd/applications/torghut/paper-account-flatten-cronjob.yaml"
         )
@@ -623,14 +621,14 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             for manifest in _load_yaml_mappings(relative_path):
                 self.assertEqual(manifest.get("kind"), "CronJob")
                 spec = cast(Mapping[str, object], manifest.get("spec", {}))
-                self.assertEqual(spec.get("failedJobsHistoryLimit"), 0)
+                self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
                 job_spec = cast(
                     Mapping[str, object],
                     cast(Mapping[str, object], spec.get("jobTemplate", {})).get(
                         "spec", {}
                     ),
                 )
-                self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 1800)
+                self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
                 checked_cronjobs += 1
         self.assertEqual(checked_cronjobs, 8)
 

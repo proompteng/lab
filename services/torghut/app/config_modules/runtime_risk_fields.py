@@ -210,6 +210,15 @@ class RuntimeRiskSettingsFields(BaseSettings):
         description="Allow the simple lane to submit live broker orders.",
     )
 
+    trading_live_submit_activation_expires_at: Optional[str] = Field(
+        default=None,
+        alias="TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT",
+        description=(
+            "Optional UTC timestamp that expires a temporary live-submit activation. "
+            "Once expired or invalid, live submission fails closed."
+        ),
+    )
+
     trading_simple_order_feed_telemetry_enabled: bool = Field(
         default=False,
         alias="TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED",

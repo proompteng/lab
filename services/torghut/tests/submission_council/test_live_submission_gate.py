@@ -12,6 +12,77 @@ from tests.submission_council.support import (
 
 
 class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
+    def test_primary_live_submission_reason_prioritizes_invalid_activation_expiry(
+        self,
+    ) -> None:
+        from app.trading.submission_council import (
+            _primary_live_submission_blocked_reason,
+        )
+
+        self.assertEqual(
+            _primary_live_submission_blocked_reason(
+                [
+                    "alpha_readiness_not_promotion_eligible",
+                    "live_submit_activation_expiry_invalid",
+                ]
+            ),
+            "live_submit_activation_expiry_invalid",
+        )
+
+    def test_build_live_submission_gate_payload_blocks_after_live_submit_activation_expiry(
+        self,
+    ) -> None:
+        from app.config import settings
+
+        settings.trading_live_submit_activation_expires_at = "2000-01-01T00:00:00Z"
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"0.10x canary": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+                "items": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "candidate_id": "cand-1",
+                        "lane_id": "continuation",
+                        "strategy_family": "intraday_continuation",
+                        "promotion_eligible": True,
+                        "capital_stage": "0.10x canary",
+                        "reasons": [],
+                        "observed": self._runtime_ledger_observed(),
+                    }
+                ],
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(),
+                    "promotion_decision": self._promotion_decision(),
+                    "runtime_ledger_bucket": self._runtime_ledger_bucket_payload(),
+                }
+            ],
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "live_submit_activation_expired")
+        self.assertIn("live_submit_activation_expired", result["blocked_reasons"])
+        self.assertEqual(
+            result["live_submit_activation"]["expires_at"],
+            "2000-01-01T00:00:00+00:00",
+        )
+
     def test_build_live_submission_gate_payload_exports_runtime_window_health_inputs(
         self,
     ) -> None:

@@ -65,6 +65,10 @@ from ..submission_council import (
     build_submission_gate_market_context_status,
     load_quant_evidence_status,
 )
+from ..live_submit_activation import (
+    live_submit_activation_blocker,
+    live_submit_activation_status,
+)
 from ..tca import build_tca_gate_inputs
 from ..time_source import trading_now
 from .pipeline import TradingPipeline
@@ -550,6 +554,9 @@ class SimpleTradingPipeline(
             simple_blocked_reasons.append("kill_switch_enabled")
         if not settings.trading_simple_submit_enabled:
             simple_blocked_reasons.append("simple_submit_disabled")
+        activation_blocker = live_submit_activation_blocker()
+        if activation_blocker is not None:
+            simple_blocked_reasons.append(activation_blocker)
         if settings.trading_emergency_stop_enabled and bool(
             getattr(self.state, "emergency_stop_active", False)
         ):
@@ -581,6 +588,15 @@ class SimpleTradingPipeline(
             "submit_enabled": settings.trading_simple_submit_enabled,
             "shared_gate_enforced": True,
             "blocked_reasons": simple_blocked_reasons,
+            "live_submit_activation": live_submit_activation_status(),
+            "paper_route_probe_max_notional": (
+                settings.trading_simple_paper_route_probe_max_notional
+            ),
+            "max_notional_per_order": settings.trading_simple_max_notional_per_order,
+            "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
+            "max_gross_exposure_pct_equity": (
+                settings.trading_simple_max_gross_exposure_pct_equity
+            ),
         }
         self._last_live_submission_gate = dict(gate)
         return gate

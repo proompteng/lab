@@ -411,10 +411,18 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
             _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
         )
+        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER"), "100")
+        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL"), "250")
         self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "1.0",
+            "0.05",
+        )
+        self.assertFalse(_manifest_bool(sim_env, "WHITEPAPER_WORKFLOW_ENABLED"))
+        self.assertFalse(_manifest_bool(sim_env, "WHITEPAPER_KAFKA_ENABLED"))
+        self.assertFalse(_manifest_bool(sim_env, "WHITEPAPER_AGENTRUN_AUTO_DISPATCH"))
+        self.assertFalse(
+            _manifest_bool(sim_env, "WHITEPAPER_SEMANTIC_INDEXING_ENABLED")
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
@@ -539,7 +547,11 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
 
         self.assertEqual(live_env.get("TRADING_MODE"), "live")
-        self.assertFalse(_manifest_bool(live_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertTrue(_manifest_bool(live_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertEqual(
+            live_env.get("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT"),
+            "2026-06-17T20:05:00Z",
+        )
         self.assertTrue(
             _manifest_bool(live_env, "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED"),
             "live proof floor requires lifecycle telemetry even while submit stays disabled",
@@ -559,6 +571,12 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
         self.assertEqual(live_env.get("TRADING_ORDER_FEED_ASSIGNMENT_MODE"), "manual")
         self.assertEqual(live_env.get("TRADING_ORDER_FEED_AUTO_OFFSET_RESET"), "latest")
+        self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_WORKFLOW_ENABLED"))
+        self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_KAFKA_ENABLED"))
+        self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_AGENTRUN_AUTO_DISPATCH"))
+        self.assertFalse(
+            _manifest_bool(live_env, "WHITEPAPER_SEMANTIC_INDEXING_ENABLED")
+        )
 
     def test_autonomy_config_does_not_treat_normal_no_signal_as_critical(self) -> None:
         manifest = _load_yaml_mapping(

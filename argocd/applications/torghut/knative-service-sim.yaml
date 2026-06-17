@@ -130,11 +130,15 @@ spec:
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
-              value: "25000"
+              value: "100"
+            - name: TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER
+              value: "100"
+            - name: TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL
+              value: "250"
             - name: TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY
               value: "0.25"
             - name: TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY
-              value: "1.0"
+              value: "0.05"
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_URL
               value: http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS
@@ -430,7 +434,7 @@ spec:
             - name: WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID
               value: torghut-whitepaper-synthesis-index-v1
             - name: WHITEPAPER_SEMANTIC_INDEXING_ENABLED
-              value: "true"
+              value: "false"
             - name: WHITEPAPER_SEMANTIC_REQUIRED
               value: "false"
             - name: WHITEPAPER_EMBEDDING_API_BASE_URL

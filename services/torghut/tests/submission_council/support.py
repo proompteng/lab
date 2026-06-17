@@ -139,6 +139,7 @@ class SubmissionCouncilTestCase(TestCase):
             "trading_autonomy_enabled": settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_live_submit_activation_expires_at": settings.trading_live_submit_activation_expires_at,
             "trading_jangar_quant_health_url": settings.trading_jangar_quant_health_url,
             "trading_jangar_quant_health_required": settings.trading_jangar_quant_health_required,
             "trading_jangar_quant_window": settings.trading_jangar_quant_window,
@@ -153,6 +154,7 @@ class SubmissionCouncilTestCase(TestCase):
         settings.trading_autonomy_enabled = False
         settings.trading_autonomy_allow_live_promotion = False
         settings.trading_kill_switch_enabled = False
+        settings.trading_live_submit_activation_expires_at = None
 
     def tearDown(self) -> None:
         settings.trading_enabled = self._settings_snapshot["trading_enabled"]
@@ -165,6 +167,9 @@ class SubmissionCouncilTestCase(TestCase):
         ]
         settings.trading_kill_switch_enabled = self._settings_snapshot[
             "trading_kill_switch_enabled"
+        ]
+        settings.trading_live_submit_activation_expires_at = self._settings_snapshot[
+            "trading_live_submit_activation_expires_at"
         ]
         settings.trading_jangar_quant_health_url = self._settings_snapshot[
             "trading_jangar_quant_health_url"

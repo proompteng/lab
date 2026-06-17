@@ -54,6 +54,20 @@ const formatScalar = (value: unknown, fallback = 'unknown'): string => {
   return fallback
 }
 
+const normalizedScalar = (value: unknown): string => formatScalar(value, '').trim().toLowerCase()
+
+const requireBoolean = (value: unknown, label: string): boolean => {
+  if (value === true || value === 'true') return true
+  if (value === false || value === 'false') return false
+  throw new Error(`${label} must be a boolean`)
+}
+
+const requireScalarValue = (value: unknown, expected: string, label: string) => {
+  if (normalizedScalar(value) !== expected) {
+    throw new Error(`${label} must be ${expected}`)
+  }
+}
+
 const parseHttpStatus = (value: string): number => {
   if (!/^[0-9]{3}$/.test(value)) {
     throw new Error(`Torghut /readyz returned invalid HTTP status ${value}`)
@@ -150,6 +164,52 @@ const assertRepairOnlyZeroNotionalReadyz = (readyz: JsonObject, digest: JsonObje
       throw new Error(`missing expected repair-only dependency failure: ${requiredFailure}`)
     }
   }
+}
+
+const assertLiveSubmitActivationContract = (activation: JsonObject) => {
+  if (requireBoolean(activation.configured, 'torghut live_submit_activation.configured') !== true) {
+    throw new Error('torghut live_submit_activation.configured must be true')
+  }
+  if (requireBoolean(activation.valid, 'torghut live_submit_activation.valid') !== true) {
+    throw new Error('torghut live_submit_activation.valid must be true')
+  }
+  if (requireBoolean(activation.expired, 'torghut live_submit_activation.expired') !== false) {
+    throw new Error('torghut live_submit_activation.expired must be false')
+  }
+  const expiresAt = formatScalar(activation.expires_at, '')
+  if (!expiresAt.startsWith('2026-06-17T20:05:00')) {
+    throw new Error('torghut live_submit_activation.expires_at must be 2026-06-17T20:05:00Z')
+  }
+  if (activation.reason !== null && activation.reason !== undefined && formatScalar(activation.reason, '') !== '') {
+    throw new Error('torghut live_submit_activation.reason must be empty before expiry')
+  }
+}
+
+const assertBoundedLiveSubmitContract = (status: JsonObject) => {
+  const liveSubmissionGate = requireObject(status.live_submission_gate, 'torghut status live_submission_gate')
+  const simpleLane = requireObject(liveSubmissionGate.simple_lane, 'torghut status live_submission_gate.simple_lane')
+  const simpleLaneStatus = requireObject(status.simple_lane_status, 'torghut status simple_lane_status')
+  const activation = requireObject(simpleLane.live_submit_activation, 'torghut status live_submit_activation')
+  const empiricalJobs = requireObject(status.empirical_jobs, 'torghut status empirical_jobs')
+
+  if (requireBoolean(status.autonomy_enabled, 'torghut status autonomy_enabled') !== false) {
+    throw new Error('torghut status autonomy_enabled must be false for bounded live-submit rollout')
+  }
+  if (requireBoolean(simpleLane.submit_enabled, 'torghut live_submission_gate.simple_lane.submit_enabled') !== true) {
+    throw new Error('torghut simple live submit must be enabled for bounded live-submit rollout')
+  }
+  if (requireBoolean(simpleLaneStatus.submit_enabled, 'torghut simple_lane_status.submit_enabled') !== true) {
+    throw new Error('torghut simple_lane_status.submit_enabled must be true')
+  }
+  assertLiveSubmitActivationContract(activation)
+  requireScalarValue(simpleLaneStatus.paper_route_probe_max_notional, '100', 'torghut paper_route_probe_max_notional')
+  requireScalarValue(simpleLaneStatus.max_notional_per_order, '100', 'torghut max_notional_per_order')
+  requireScalarValue(simpleLaneStatus.max_notional_per_symbol, '250', 'torghut max_notional_per_symbol')
+  requireScalarValue(simpleLaneStatus.max_gross_exposure_pct_equity, '0.05', 'torghut max_gross_exposure_pct_equity')
+  if (requireBoolean(empiricalJobs.ready, 'torghut empirical_jobs.ready') !== true) {
+    throw new Error('torghut empirical jobs must be fresh before bounded live-submit rollout acceptance')
+  }
+  requireScalarValue(empiricalJobs.status, 'healthy', 'torghut empirical_jobs.status')
 }
 
 type PaperRouteTargetEnvelope = {
@@ -481,6 +541,8 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
     }
     assertRepairOnlyZeroNotionalReadyz(readyz, digest)
     readyzAcceptedReason = 'repair_only_zero_notional'
+  } else {
+    assertBoundedLiveSubmitContract(status)
   }
 
   const routeBoard = requireObject(status.route_reacquisition_board, 'torghut status route_reacquisition_board')
@@ -552,6 +614,9 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
     `- Capital state: \`${formatScalar(capital.capital_state)}\``,
     `- Max notional: \`${formatScalar(capital.max_notional)}\``,
   ]
+  if (readyzAcceptedReason === 'healthy_2xx') {
+    lines.push('- Live submit contract: `bounded_june17_activation`')
+  }
   if (blockerReasons.length > 0) {
     lines.push(`- Blockers: ${blockerReasons.map((reason) => `\`${reason}\``).join(', ')}`)
   }

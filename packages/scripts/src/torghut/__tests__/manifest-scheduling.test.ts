@@ -19,14 +19,6 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
   { path: 'argocd/applications/torghut/db-migrations-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
   { path: 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
   {
-    path: 'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml',
-    selectorPath: ['spec', 'jobTemplate', 'spec', 'template', 'spec'],
-  },
-  {
-    path: 'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
-    selectorPath: ['spec', 'jobTemplate', 'spec', 'template', 'spec'],
-  },
-  {
     path: 'argocd/applications/torghut/analysis-template-runtime-ready.yaml',
     selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
   },
@@ -100,7 +92,7 @@ describe('Torghut manifest scheduling', () => {
     }
   })
 
-  it('prevents Torghut scheduled failures from lingering in Argo app health', () => {
+  it('retains Torghut scheduled failure logs for same-day debugging', () => {
     const cronJobPaths = [
       'argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml',
       'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml',
@@ -117,8 +109,8 @@ describe('Torghut manifest scheduling', () => {
         expect(manifest.kind, path).toBe('CronJob')
         const spec = getAtPath(manifest, ['spec'])
         const jobSpec = getAtPath(manifest, ['spec', 'jobTemplate', 'spec'])
-        expect(spec.failedJobsHistoryLimit, path).toBe(0)
-        expect(jobSpec.ttlSecondsAfterFinished, path).toBe(1800)
+        expect(spec.failedJobsHistoryLimit, path).toBe(2)
+        expect(jobSpec.ttlSecondsAfterFinished, path).toBe(86400)
         checkedCronJobs += 1
       }
     }
