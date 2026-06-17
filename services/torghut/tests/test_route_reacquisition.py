@@ -432,7 +432,10 @@ def test_live_route_book_can_advertise_next_session_paper_probe_without_capital_
     assert probe["next_session_max_notional"] == "25"
     assert probe["eligible_symbols"] == ["AAPL"]
     assert probe["active_symbols"] == []
-    assert probe["blocking_reasons"] == ["not_paper_mode", "session_closed"]
+    assert probe["blocking_reasons"] == [
+        "live_paper_route_probe_collection_disabled",
+        "session_closed",
+    ]
     assert probe["capital_authority"] == "none"
     assert book["capital_rule"] == "live_zero_notional_unchanged"
 
@@ -444,6 +447,71 @@ def test_live_route_book_can_advertise_next_session_paper_probe_without_capital_
     assert aapl_probe["notional_limit"] == "0"
     assert aapl_probe["next_session_notional_limit"] == "25"
     assert aapl_probe["capital_authority"] == "none"
+
+
+def test_live_route_book_allows_bounded_paper_probe_collection_with_explicit_opt_in() -> (
+    None
+):
+    book = build_route_reacquisition_book(
+        proof_floor_receipt={
+            "generated_at": "2026-06-17T13:45:00+00:00",
+            "account_label": "PA3SX7FYNUTF",
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "proof_dimensions": [
+                {
+                    "dimension": "execution_tca",
+                    "state": "pass",
+                    "source_ref": {
+                        "symbol_routes": {
+                            "scope_symbols": ["AAPL"],
+                            "scope_symbol_count": 1,
+                            "routeable_symbols": [],
+                            "blocked_symbols": [],
+                            "missing_symbols": ["AAPL"],
+                        }
+                    },
+                },
+                {"dimension": "market_context", "state": "pass"},
+                {"dimension": "quant_ingestion", "state": "pass"},
+                {"dimension": "alpha_readiness", "state": "fail"},
+            ],
+        },
+        trading_mode="live",
+        market_session_open=True,
+        paper_route_probe_enabled=True,
+        paper_route_probe_allow_live_mode=True,
+        paper_route_probe_max_notional="100",
+    )
+
+    assert book["capital_rule"] == "live_zero_notional_unchanged"
+    assert book["promotion_authority"] is False
+    assert book["rollback_target"] == {
+        "paper_probe_notional_limit": "0",
+        "live_submit_enabled": False,
+        "promotion_authority": False,
+    }
+    probe = cast(Mapping[str, Any], book["paper_route_probe"])
+    assert probe["configured_enabled"] is True
+    assert probe["live_mode_collection_allowed"] is True
+    assert probe["active"] is True
+    assert probe["effective_max_notional"] == "100"
+    assert probe["next_session_max_notional"] == "100"
+    assert probe["eligible_symbols"] == ["AAPL"]
+    assert probe["active_symbols"] == ["AAPL"]
+    assert probe["blocking_reasons"] == []
+    assert probe["capital_authority"] == "none"
+    assert probe["promotion_authority"] is False
+
+    records = cast(list[Mapping[str, Any]], book["records"])
+    aapl = next(item for item in records if item["symbol"] == "AAPL")
+    aapl_probe = cast(Mapping[str, Any], aapl["paper_route_probe"])
+    assert aapl["paper_probe_notional_limit"] == "0"
+    assert aapl_probe["active"] is True
+    assert aapl_probe["notional_limit"] == "100"
+    assert aapl_probe["next_session_notional_limit"] == "100"
+    assert aapl_probe["capital_authority"] == "none"
+    assert aapl_probe["promotion_authority"] is False
 
 
 def test_route_book_marks_paper_route_probe_active_only_when_market_open() -> None:

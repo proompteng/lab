@@ -400,6 +400,7 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             settings.trading_mode == "live"
             and settings.trading_simple_submit_enabled
             and settings.trading_simple_paper_route_probe_enabled
+            and settings.trading_simple_paper_route_probe_allow_live_mode
             and (
                 self._paper_route_probe_exit_metadata(decision) is not None
                 or paper_route_probe_entry_metadata(decision.params) is not None

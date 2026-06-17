@@ -267,6 +267,8 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         self,
         now: datetime,
     ) -> str | None:
+        if not settings.trading_simple_paper_route_probe_allow_live_mode:
+            return "live_paper_route_probe_collection_disabled"
         if not settings.trading_simple_submit_enabled:
             return "simple_submit_disabled"
         activation = live_submit_activation_status(now=now)
@@ -667,7 +669,13 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
 
     def _paper_route_target_plan_reservation_enabled(self, now: datetime) -> bool:
         return (
-            settings.trading_mode == "paper"
+            (
+                settings.trading_mode == "paper"
+                or (
+                    settings.trading_mode == "live"
+                    and settings.trading_simple_paper_route_probe_allow_live_mode
+                )
+            )
             and settings.trading_simple_paper_route_probe_enabled
             and self._is_market_session_open(now)
         )

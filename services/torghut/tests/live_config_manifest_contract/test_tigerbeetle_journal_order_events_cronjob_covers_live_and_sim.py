@@ -739,6 +739,9 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             "2026-06-17T20:05:00Z",
         )
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
+        self.assertTrue(
+            _manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE")
+        )
         self.assertEqual(
             env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
             _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,

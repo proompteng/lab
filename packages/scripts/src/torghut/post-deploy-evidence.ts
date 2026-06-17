@@ -205,6 +205,14 @@ const assertBoundedLiveSubmitContract = (status: JsonObject) => {
     throw new Error('torghut simple_lane_status.submit_enabled must be true')
   }
   assertLiveSubmitActivationContract(activation)
+  if (
+    requireBoolean(
+      simpleLaneStatus.paper_route_probe_allow_live_mode,
+      'torghut simple_lane_status.paper_route_probe_allow_live_mode',
+    ) !== true
+  ) {
+    throw new Error('torghut simple_lane_status.paper_route_probe_allow_live_mode must be true')
+  }
   requireScalarValue(simpleLaneStatus.paper_route_probe_max_notional, '100', 'torghut paper_route_probe_max_notional')
   requireScalarValue(simpleLaneStatus.max_notional_per_order, '100', 'torghut max_notional_per_order')
   requireScalarValue(simpleLaneStatus.max_notional_per_symbol, '250', 'torghut max_notional_per_symbol')

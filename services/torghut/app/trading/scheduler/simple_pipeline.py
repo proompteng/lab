@@ -404,7 +404,12 @@ class SimpleTradingPipeline(
         *,
         session: Session | None = None,
     ) -> tuple[set[str], set[str]] | None:
-        if settings.trading_mode != "paper":
+        if settings.trading_mode not in {"paper", "live"}:
+            return None
+        if (
+            settings.trading_mode == "live"
+            and not settings.trading_simple_paper_route_probe_allow_live_mode
+        ):
             return None
         if not settings.trading_simple_paper_route_probe_enabled:
             return None
@@ -526,6 +531,9 @@ class SimpleTradingPipeline(
             "shared_gate_enforced": True,
             "blocked_reasons": simple_blocked_reasons,
             "live_submit_activation": live_submit_activation_status(),
+            "paper_route_probe_allow_live_mode": (
+                settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
             "paper_route_probe_max_notional": (
                 settings.trading_simple_paper_route_probe_max_notional
             ),
