@@ -38,11 +38,11 @@ const baseTradingStatus = {
     allowed: true,
     reason: null,
     blocked_reasons: [],
+    live_submit_activation: baseLiveSubmitActivation,
     simple_lane: {
       submit_enabled: true,
       shared_gate_enforced: true,
       blocked_reasons: [],
-      live_submit_activation: baseLiveSubmitActivation,
     },
   },
   simple_lane_status: {
@@ -183,13 +183,10 @@ describe('validatePostDeployEvidence', () => {
           ...baseTradingStatus,
           live_submission_gate: {
             ...baseTradingStatus.live_submission_gate,
-            simple_lane: {
-              ...baseTradingStatus.live_submission_gate.simple_lane,
-              live_submit_activation: {
-                ...baseLiveSubmitActivation,
-                expired: true,
-                reason: 'live_submit_activation_expired',
-              },
+            live_submit_activation: {
+              ...baseLiveSubmitActivation,
+              expired: true,
+              reason: 'live_submit_activation_expired',
             },
           },
         },

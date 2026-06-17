@@ -189,7 +189,10 @@ const assertBoundedLiveSubmitContract = (status: JsonObject) => {
   const liveSubmissionGate = requireObject(status.live_submission_gate, 'torghut status live_submission_gate')
   const simpleLane = requireObject(liveSubmissionGate.simple_lane, 'torghut status live_submission_gate.simple_lane')
   const simpleLaneStatus = requireObject(status.simple_lane_status, 'torghut status simple_lane_status')
-  const activation = requireObject(simpleLane.live_submit_activation, 'torghut status live_submit_activation')
+  const activation = requireObject(
+    liveSubmissionGate.live_submit_activation,
+    'torghut status live_submission_gate.live_submit_activation',
+  )
   const empiricalJobs = requireObject(status.empirical_jobs, 'torghut status empirical_jobs')
 
   if (requireBoolean(status.autonomy_enabled, 'torghut status autonomy_enabled') !== false) {
