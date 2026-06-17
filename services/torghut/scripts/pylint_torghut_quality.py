@@ -16,6 +16,7 @@ PLUGIN_PATH = Path(__file__).resolve()
 GENERATED_SPLIT_NAME_RE = re.compile(
     r"^(?:part_\d+|source_part_\d+|test_part_\d+).*\.(?:py|pyi)$"
 )
+PYRIGHT_PRIVATE_USAGE_SETTING = "report" + "PrivateUsage"
 
 
 class TextRule(NamedTuple):
@@ -49,6 +50,13 @@ FORBIDDEN_TEXT_RULES: tuple[TextRule, ...] = (
         re.compile(r"sys\.modules\[[^\]]+\]\s*="),
         "torghut-module-replacement",
         "module replacement",
+    ),
+    TextRule(
+        re.compile(
+            rf"^\s*#\s*pyright:.*\b{PYRIGHT_PRIVATE_USAGE_SETTING}\s*=\s*false\b"
+        ),
+        "torghut-private-pyright-suppression",
+        "private-usage Pyright suppression",
     ),
     TextRule(
         re.compile(r"^\s*#\s*pyright:.*(?:=false|\bignore\b)"),
@@ -150,6 +158,11 @@ class TorghutQualityChecker(BaseChecker):
             "Dead test compatibility wrapper; delete the wrapper and run split tests directly",
             "torghut-test-compat-wrapper",
             "Used when a test module only disables collection and re-exports split tests.",
+        ),
+        "C9016": (
+            "%s: %s",
+            "torghut-private-pyright-suppression",
+            "Used when a file-level Pyright suppression disables private-usage checks.",
         ),
     }
 

@@ -17,6 +17,7 @@ PLUGIN_ENABLES = ",".join(
         "torghut-compat-module-registry",
         "torghut-module-class-mutation",
         "torghut-module-replacement",
+        "torghut-private-pyright-suppression",
         "torghut-file-pyright-suppression",
         "torghut-type-ignore",
         "torghut-file-ruff-noqa",
@@ -63,6 +64,7 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
     module_class_mutation = "_sys." + "modules[__name__].__class__ = Facade"
     dynamic_exports = "__all__ = [name for name in " + "globals() if name]"
     type_suppression = "# type:" + " ignore[assignment]"
+    private_usage_suppression = "# pyright: " + "report" + "PrivateUsage" + "=false"
     compat_class = "class " + "Compat" + "Module:"
     compat_registry = "__compat_" + "par" + "t_modules__ = []"
     module_path = tmp_path / ("par" + "t_01_generated.py")
@@ -76,6 +78,7 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
                 "from math import *",
                 "",
                 "# pyright: reportUnknownMemberType=false",
+                private_usage_suppression,
                 "# ruff: noqa: F401,F403",
                 "# pylint: disable=too-many-lines",
                 f"answer = 1  {type_suppression}",
@@ -111,6 +114,7 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
         "torghut-compat-module-registry",
         "torghut-module-class-mutation",
         "torghut-module-replacement",
+        "torghut-private-pyright-suppression",
         "torghut-file-pyright-suppression",
         "torghut-type-ignore",
         "torghut-file-ruff-noqa",

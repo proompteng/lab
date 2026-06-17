@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 # ruff: noqa: F401,F403,F405,F811,F821
 from typing import Any
 import json
@@ -32,21 +32,19 @@ from ..ingest import SignalBatch
 from ..models import SignalEnvelope
 from ..time_source import trading_now
 from .pipeline import TradingPipeline
-from .safety import (
-    _FRESH_TAIL_NO_SIGNAL_REASONS,
-    _coerce_recovery_reason_sequence,
-    _is_market_session_open,
-    _is_recoverable_emergency_stop_reason,
-    _latch_signal_continuity_alert_state,
-    _merge_emergency_stop_reasons,
-    _record_signal_continuity_recovery_cycle,
-    _signal_bootstrap_grace_active,
-    _signal_tail_is_fresh,
-    _split_emergency_stop_reasons,
-)
 from .state import TradingState
 
 logger: Any
+_FRESH_TAIL_NO_SIGNAL_REASONS: Any
+_coerce_recovery_reason_sequence: Any
+_is_market_session_open: Any
+_is_recoverable_emergency_stop_reason: Any
+_latch_signal_continuity_alert_state: Any
+_merge_emergency_stop_reasons: Any
+_record_signal_continuity_recovery_cycle: Any
+_signal_bootstrap_grace_active: Any
+_signal_tail_is_fresh: Any
+_split_emergency_stop_reasons: Any
 
 def _resolve_autonomy_artifact_root(*args: Any, **kwargs: Any) -> Any: ...
 def _int_from_mapping(*args: Any, **kwargs: Any) -> Any: ...

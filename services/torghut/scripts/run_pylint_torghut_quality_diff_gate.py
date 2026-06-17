@@ -19,6 +19,7 @@ CUSTOM_RULES = (
     "torghut-compat-module-registry",
     "torghut-module-class-mutation",
     "torghut-module-replacement",
+    "torghut-private-pyright-suppression",
     "torghut-blanket-pylint-disable",
     "torghut-dynamic-attribute-hook",
     "torghut-wildcard-import",

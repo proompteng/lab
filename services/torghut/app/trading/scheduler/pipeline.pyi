@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 # ruff: noqa: F401,F403,F405,F811,F821
 from typing import Any
 import hashlib
@@ -105,55 +105,51 @@ from ..submission_council import (
     build_submission_gate_market_context_status,
     load_quant_evidence_status,
 )
-from .pipeline_helpers import (
-    _allocator_rejection_reasons,
-    _apply_projected_position_decision,
-    _attach_dspy_lineage,
-    _autonomy_gate_report_is_saturated_fail_sentinel,
-    _build_committee_veto_alignment_payload,
-    _build_llm_policy_resolution,
-    _build_portfolio_snapshot,
-    _classify_llm_error,
-    _clone_positions,
-    _coerce_bool,
-    _coerce_json,
-    _coerce_runtime_uncertainty_gate_action,
-    _coerce_strategy_symbols,
-    _committee_trace_has_veto,
-    _extract_json_error_payload,
-    _format_order_submit_rejection,
-    _hash_payload,
-    _is_runtime_risk_increasing_entry,
-    _llm_guardrail_controls_snapshot,
-    _load_recent_decisions,
-    _normalize_rollout_stage,
-    _optional_decimal,
-    _optional_int,
-    _price_snapshot_payload,
-    _project_open_orders_onto_positions,
-    _resolve_decision_regime_label_with_source,
-    _resolve_llm_review_error_reject_reason,
-    _resolve_llm_unavailable_reject_reason,
-    _resolve_signal_regime,
-    _select_strictest_runtime_uncertainty_gate,
-    _uncertainty_gate_staleness_reason,
-)
-from .safety import (
-    _FRESH_TAIL_NO_SIGNAL_REASONS,
-    _is_market_session_open,
-    _latch_signal_continuity_alert_state,
-    _record_signal_continuity_recovery_cycle,
-    _signal_bootstrap_grace_active,
-    _signal_tail_is_fresh,
-)
 from .state import (
     RuntimeUncertaintyGate,
     RuntimeUncertaintyGateAction,
     TradingState,
-    _normalize_reason_metric,
 )
 
 logger: Any
+_allocator_rejection_reasons: Any
+_apply_projected_position_decision: Any
+_attach_dspy_lineage: Any
+_autonomy_gate_report_is_saturated_fail_sentinel: Any
+_build_committee_veto_alignment_payload: Any
+_build_llm_policy_resolution: Any
+_build_portfolio_snapshot: Any
+_classify_llm_error: Any
+_clone_positions: Any
+_coerce_bool: Any
+_coerce_json: Any
+_coerce_runtime_uncertainty_gate_action: Any
+_coerce_strategy_symbols: Any
+_committee_trace_has_veto: Any
+_extract_json_error_payload: Any
+_format_order_submit_rejection: Any
+_hash_payload: Any
+_is_runtime_risk_increasing_entry: Any
+_llm_guardrail_controls_snapshot: Any
+_load_recent_decisions: Any
+_normalize_rollout_stage: Any
+_optional_decimal: Any
+_optional_int: Any
+_price_snapshot_payload: Any
+_project_open_orders_onto_positions: Any
+_resolve_decision_regime_label_with_source: Any
+_resolve_llm_review_error_reject_reason: Any
+_resolve_llm_unavailable_reject_reason: Any
+_resolve_signal_regime: Any
+_select_strictest_runtime_uncertainty_gate: Any
+_uncertainty_gate_staleness_reason: Any
+_FRESH_TAIL_NO_SIGNAL_REASONS: Any
+_is_market_session_open: Any
+_latch_signal_continuity_alert_state: Any
+_record_signal_continuity_recovery_cycle: Any
+_signal_bootstrap_grace_active: Any
+_signal_tail_is_fresh: Any
+_normalize_reason_metric: Any
 _REJECTED_SIGNAL_OUTCOME_FOLLOWUP_HORIZON: Any
 _REJECTED_SIGNAL_OUTCOME_LABEL_LIMIT: Any
 _AUTONOMY_PHASE_ORDER: tuple[str, ...]
