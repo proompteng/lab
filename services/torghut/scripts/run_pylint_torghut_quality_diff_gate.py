@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import subprocess
 import sys
@@ -30,6 +31,7 @@ _PYLINT_MESSAGE_RE = re.compile(
     r"^(?P<path>[^:]+):(?P<line>\d+):(?P<column>\d+): "
     r"(?P<code>[A-Z]\d+): "
 )
+_SOURCE_PAYLOAD_FILE_PREFIX = "source_" + "segment_"
 
 
 @dataclass(frozen=True)
@@ -225,7 +227,63 @@ def _base_torghut_app_script_lines(base: str, repo_root: Path) -> set[str]:
     )
     if content.returncode not in {0, 1}:
         raise RuntimeError(content.stdout)
-    return {line.strip() for line in content.stdout.splitlines() if line.strip()}
+    lines = {line.strip() for line in content.stdout.splitlines() if line.strip()}
+    lines.update(_base_generated_payload_lines(base, repo_root))
+    return lines
+
+
+def _base_generated_payload_lines(base: str, repo_root: Path) -> set[str]:
+    paths = _run(
+        [
+            "git",
+            "ls-tree",
+            "-r",
+            "--name-only",
+            base,
+            "--",
+            "services/torghut/app",
+            "services/torghut/scripts",
+        ],
+        cwd=repo_root,
+        check=True,
+    )
+    segment_lines: set[str] = set()
+    for path in paths.stdout.splitlines():
+        if f"/{_SOURCE_PAYLOAD_FILE_PREFIX}" not in path or not path.endswith(".py"):
+            continue
+        segment_source = _run(
+            ["git", "show", f"{base}:{path}"],
+            cwd=repo_root,
+            check=False,
+        )
+        if segment_source.returncode != 0:
+            continue
+        segment_lines.update(_source_literal_lines(segment_source.stdout))
+    return segment_lines
+
+
+def _source_literal_lines(module_text: str) -> set[str]:
+    try:
+        tree = ast.parse(module_text)
+    except SyntaxError:
+        return set()
+    lines: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "SOURCE"
+            for target in node.targets
+        ):
+            continue
+        try:
+            source = ast.literal_eval(node.value)
+        except (SyntaxError, ValueError):
+            continue
+        if not isinstance(source, str):
+            continue
+        lines.update(line.strip() for line in source.splitlines() if line.strip())
+    return lines
 
 
 def _line_text(path: Path, line_number: int) -> str | None:
