@@ -7,6 +7,8 @@ describe('status utils', () => {
     const current = {
       phase: 'Running',
       updatedAt: '2026-01-20T00:00:00Z',
+      lastCheckedAt: '2026-01-20T00:00:00Z',
+      lastValidatedAt: '2026-01-20T00:00:00Z',
       conditions: [
         {
           type: 'Ready',
@@ -21,6 +23,8 @@ describe('status utils', () => {
     const next = {
       phase: 'Running',
       updatedAt: '2026-01-20T00:01:00Z',
+      lastCheckedAt: '2026-01-20T00:01:00Z',
+      lastValidatedAt: '2026-01-20T00:01:00Z',
       conditions: [
         {
           type: 'Ready',
@@ -69,6 +73,8 @@ describe('status utils', () => {
       spec: { runtime: { type: 'job' } },
       status: {
         updatedAt: '2026-01-20T00:00:00Z',
+        lastCheckedAt: '2026-01-20T00:00:00Z',
+        lastValidatedAt: '2026-01-20T00:00:00Z',
         conditions: [
           {
             type: 'Ready',
@@ -87,6 +93,8 @@ describe('status utils', () => {
       status: {
         ...base.status,
         updatedAt: '2026-01-20T00:01:00Z',
+        lastCheckedAt: '2026-01-20T00:01:00Z',
+        lastValidatedAt: '2026-01-20T00:01:00Z',
         conditions: [
           {
             type: 'Ready',

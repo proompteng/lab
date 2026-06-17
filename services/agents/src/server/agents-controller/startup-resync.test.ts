@@ -120,4 +120,116 @@ describe('agents controller startup resync', () => {
 
     __test.stopWatchHandles(handles)
   })
+
+  it('does not trigger full reconcile for dependency heartbeat-only events', () => {
+    const existing = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'Memory',
+      metadata: {
+        name: 'agents-primitives',
+        namespace: 'agents',
+        generation: 2,
+        resourceVersion: '100',
+      },
+      spec: {
+        type: 'postgres',
+        connection: { secretRef: { name: 'memory-secret' } },
+      },
+      status: {
+        observedGeneration: 2,
+        updatedAt: '2026-01-20T00:00:00Z',
+        lastCheckedAt: '2026-01-20T00:00:00Z',
+        conditions: [{ type: 'Ready', status: 'True', reason: 'SecretResolved', message: '' }],
+      },
+    }
+    const resources = new Map([[existing.metadata.name, existing]])
+
+    expect(
+      __test.shouldDependencyEventTriggerFullReconcile(resources, 'MODIFIED', {
+        ...existing,
+        metadata: { ...existing.metadata, resourceVersion: '101' },
+        status: {
+          ...existing.status,
+          updatedAt: '2026-01-20T00:01:00Z',
+          lastCheckedAt: '2026-01-20T00:01:00Z',
+        },
+      }),
+    ).toBe(false)
+
+    expect(
+      __test.shouldDependencyEventTriggerFullReconcile(resources, 'MODIFIED', {
+        ...existing,
+        metadata: { ...existing.metadata, resourceVersion: '102' },
+        spec: {
+          ...existing.spec,
+          default: true,
+        },
+      }),
+    ).toBe(true)
+
+    expect(
+      __test.shouldDependencyEventTriggerFullReconcile(resources, 'MODIFIED', {
+        ...existing,
+        metadata: { ...existing.metadata, resourceVersion: '103' },
+        status: {
+          ...existing.status,
+          conditions: [{ type: 'Ready', status: 'False', reason: 'SecretNotFound', message: 'secret missing' }],
+        },
+      }),
+    ).toBe(true)
+
+    expect(__test.shouldDependencyEventTriggerFullReconcile(resources, 'DELETED', existing)).toBe(true)
+  })
+
+  it('does not apply primitive status when only heartbeat timestamps change', async () => {
+    const kube = buildKube()
+    const readyCondition = { type: 'Ready', status: 'True', reason: 'Reconciled', message: '' }
+    const stablePrimitiveConditions = [
+      readyCondition,
+      { type: 'Progressing', status: 'False', reason: 'Progressing', message: '' },
+      { type: 'Degraded', status: 'False', reason: 'Degraded', message: '' },
+    ]
+
+    await __test.setStatus(
+      kube as never,
+      {
+        apiVersion: 'agents.proompteng.ai/v1alpha1',
+        kind: 'Memory',
+        metadata: { name: 'agents-primitives', namespace: 'agents', generation: 2 },
+        status: {
+          observedGeneration: 2,
+          updatedAt: '2026-01-20T00:00:00Z',
+          lastCheckedAt: '2026-01-20T00:00:00Z',
+          conditions: stablePrimitiveConditions,
+        },
+      },
+      {
+        observedGeneration: 2,
+        lastCheckedAt: '2026-01-20T00:01:00Z',
+        conditions: [readyCondition],
+      },
+    )
+
+    await __test.setStatus(
+      kube as never,
+      {
+        apiVersion: 'agents.proompteng.ai/v1alpha1',
+        kind: 'VersionControlProvider',
+        metadata: { name: 'github', namespace: 'agents', generation: 2 },
+        status: {
+          observedGeneration: 2,
+          updatedAt: '2026-01-20T00:00:00Z',
+          lastValidatedAt: '2026-01-20T00:00:00Z',
+          conditions: stablePrimitiveConditions,
+        },
+      },
+      {
+        observedGeneration: 2,
+        lastValidatedAt: '2026-01-20T00:01:00Z',
+        conditions: [readyCondition],
+      },
+    )
+
+    expect(kube.applyStatus).not.toHaveBeenCalled()
+  })
 })
