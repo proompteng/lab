@@ -3,7 +3,11 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { __private } from '../build-image'
+import { __private, buildImages } from '../build-image'
+import { __private as dockerPrivate } from '../../shared/docker'
+
+const originalSpawn = Bun.spawn
+const originalWhich = Bun.which
 
 const envKeys = [
   'AGENTS_BUILD_CACHE_MODE',
@@ -13,6 +17,7 @@ const envKeys = [
   'AGENTS_BUILD_MINIFY',
   'AGENTS_BUILD_NODE_OPTIONS',
   'AGENTS_BUILD_PRUNE_SCOPE',
+  'AGENTS_BUILD_CACHE_REF',
   'AGENTS_BUILD_SOURCEMAP',
   'AGENTS_COMMIT',
   'AGENTS_DOCKERFILE',
@@ -28,6 +33,9 @@ afterEach(() => {
   for (const key of envKeys) {
     delete process.env[key]
   }
+  Bun.spawn = originalSpawn
+  Bun.which = originalWhich
+  dockerPrivate.setSpawnSync()
 })
 
 describe('agents build-image helpers', () => {
@@ -59,6 +67,15 @@ describe('agents build-image helpers', () => {
       AGENTS_BUILD_CI: 'true',
       AGENTS_BUILD_LOG_LEVEL: 'warn',
     })
+  })
+
+  it('keeps batch cache exports target-specific when a shared cache ref is configured', () => {
+    expect(__private.cacheRefForBatchTarget('registry.example/cache:amd64', 'controller', true)).toBe(
+      'registry.example/cache:amd64-controller',
+    )
+    expect(__private.cacheRefForBatchTarget('registry.example/cache:amd64', 'controller', false)).toBe(
+      'registry.example/cache:amd64',
+    )
   })
 
   it('uses the Agents workspace as the default control-plane prune scope', () => {
@@ -109,6 +126,66 @@ describe('agents build-image helpers', () => {
       expect(existsSync(agentsNodeModules)).toBeFalse()
       expect(existsSync(nestedNodeModules)).toBeFalse()
       expect(existsSync(sourceDirectory)).toBeTrue()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('builds a batch of Agents images through one Buildx Bake invocation', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agents-batch-context-'))
+    const commands: string[][] = []
+    try {
+      process.env.AGENTS_BUILD_CONTEXT = dir
+      Bun.which = ((binary: string) => (binary === 'docker' ? '/usr/bin/docker' : null)) as typeof Bun.which
+      Bun.spawn = ((command: Parameters<typeof Bun.spawn>[0]) => {
+        commands.push(typeof command === 'string' ? [command] : [...command])
+        return {
+          exited: Promise.resolve(0),
+          stdout: new Response('').body,
+          stderr: new Response('').body,
+        } as ReturnType<typeof Bun.spawn>
+      }) as typeof Bun.spawn
+      dockerPrivate.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+        const joined = typeof command === 'string' ? command : command.join(' ')
+        if (joined === 'docker buildx version') {
+          return { exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+        }
+        if (joined === 'docker buildx inspect') {
+          return {
+            exitCode: 0,
+            stdout: Buffer.from('Driver: docker-container\n'),
+            stderr: new Uint8Array(),
+          } as ReturnType<typeof Bun.spawnSync>
+        }
+        return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
+      }) as typeof Bun.spawnSync)
+
+      const results = await buildImages([
+        {
+          registry: 'registry.example',
+          repository: 'lab/agents-controller',
+          tag: 'abc123',
+          target: 'controller',
+          platforms: ['linux/arm64'],
+        },
+        {
+          registry: 'registry.example',
+          repository: 'lab/agents-control-plane',
+          tag: 'abc123',
+          target: 'control-plane',
+          platforms: ['linux/arm64'],
+        },
+      ])
+
+      expect(results.map((result) => result.image)).toEqual([
+        'registry.example/lab/agents-controller:abc123',
+        'registry.example/lab/agents-control-plane:abc123',
+      ])
+      expect(commands).toHaveLength(1)
+      expect(commands[0].slice(0, 3)).toEqual(['docker', 'buildx', 'bake'])
+      expect(commands[0]).toContain('--push')
+      expect(commands[0]).toContain('controller')
+      expect(commands[0]).toContain('control-plane')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

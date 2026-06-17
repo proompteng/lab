@@ -237,6 +237,24 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('group: agents-build-${{ github.ref }}-${{ github.sha }}')
   })
 
+  it('publishes Agents images with native per-architecture runners', () => {
+    const workflow = readFileSync(
+      new URL('../../../../../.github/workflows/agents-build-push.yml', import.meta.url),
+      'utf8',
+    )
+
+    expect(workflow).toContain('runner: arc-amd64')
+    expect(workflow).toContain('runner: arc-arm64')
+    expect(workflow).toContain('AGENTS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}-${{ matrix.arch }}')
+    expect(workflow).toContain('AGENTS_IMAGE_PLATFORMS: ${{ matrix.platform }}')
+    expect(workflow).not.toContain('AGENTS_IMAGE_PLATFORMS: linux/amd64,linux/arm64')
+    expect(workflow).toContain('docker buildx imagetools create')
+    expect(workflow).toContain('registry.ide-newton.ts.net/lab/agents-controller')
+    expect(workflow).toContain('registry.ide-newton.ts.net/lab/agents-control-plane')
+    expect(workflow).toContain('registry.ide-newton.ts.net/lab/agents-codex-runner')
+    expect(workflow).toContain('packages/scripts/src/agents/update-values.ts')
+  })
+
   it('builds local Agents smoke images from the Agents Dockerfile', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
