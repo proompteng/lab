@@ -60,6 +60,16 @@ describe('Agents control-plane image layout', () => {
     expect(dockerfileTarget('controller')).toContain('AGENTS_SERVER_PROFILE=agents-controllers')
   })
 
+  it('runs package builds on the build platform while keeping runtime dependencies target-native', () => {
+    const content = dockerfile()
+
+    expect(content).toContain('FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-build-tools')
+    expect(content).toContain('FROM agents-build-tools AS agents-workspace-deps')
+    expect(content).toContain('FROM agents-tools AS agents-deps-prod')
+    expect(dockerfileTarget('agents-build-tools')).toContain('ARCH="${BUILDARCH:-$(uname -m)}"')
+    expect(dockerfileTarget('agents-tools')).toContain('ARCH="${TARGETARCH:-$(uname -m)}"')
+  })
+
   it('installs runtime helper CLIs from cx-tools rather than service-local scripts', () => {
     const content = dockerfile()
 

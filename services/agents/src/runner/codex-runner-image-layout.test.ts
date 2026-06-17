@@ -36,6 +36,18 @@ describe('Agents Codex runner image layout', () => {
     expect(content).not.toContain('node-gyp')
   })
 
+  it('runs runner bundle builds on the build platform', () => {
+    const content = dockerfile()
+
+    expect(content).toContain(
+      'FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS codex-package-build',
+    )
+    expect(content).toContain(
+      'FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS agents-runner-build',
+    )
+    expect(finalStage()).toContain('FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim')
+  })
+
   it('copies only built runner and Codex package payloads into the final image', () => {
     const content = finalStage()
 

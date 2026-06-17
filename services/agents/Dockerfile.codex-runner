@@ -22,7 +22,7 @@ RUN npm install -g "@openai/codex@${CODEX_VERSION}" \
     && npm cache clean --force \
     && test -x /usr/local/bin/codex
 
-FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS codex-package-build
+FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS codex-package-build
 
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
@@ -41,7 +41,7 @@ COPY tsconfig.base.json /opt/proompteng/tsconfig.base.json
 
 RUN bash -lc 'cd /opt/proompteng/packages/codex && bun install --no-save && bun run build && rm -rf node_modules'
 
-FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS agents-runner-build
+FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS agents-runner-build
 
 WORKDIR /opt/proompteng
 
