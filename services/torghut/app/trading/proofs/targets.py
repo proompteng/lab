@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+from ..promotion_authority import capital_blocked_authority
 from ..session_context import is_regular_equities_session_date
 from .schemas import PROOFS_RUNTIME_ACCOUNT_LABEL, ProofWindowSelector
 
@@ -67,9 +68,9 @@ class ProofTarget:
                 "symbols": list(self.symbols),
                 "paper_route_probe_symbol_actions": self.symbol_actions,
                 "paper_route_probe_symbol_quantities": self.symbol_quantities,
-                "promotion_allowed": False,
-                "final_promotion_allowed": False,
-                "final_promotion_authorized": False,
+                **capital_blocked_authority(
+                    blockers=["proof_target_not_runtime_capital_authority"],
+                ).as_target_fields(),
             }
         )
         return {key: value for key, value in payload.items() if value is not None}

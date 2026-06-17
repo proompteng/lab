@@ -6,6 +6,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
+from app.trading.promotion_authority import (
+    capital_blocked_authority,
+    paper_probation_authority,
+    source_collection_authority,
+)
+
 from .common import (
     bounded_paper_route_probe_collection_payload as _bounded_paper_route_probe_collection_payload,
     derived_strategy_name_from_strategy_id,
@@ -302,6 +308,17 @@ def _runtime_ledger_base_import_target(
     bounded_probe_authorized = bool(
         bounded_probe_payload.get("bounded_evidence_collection_authorized")
     )
+    authority = (
+        source_collection_authority(
+            blockers=candidate.final_blockers,
+            bounded_live_paper_collection_authorized=bounded_probe_authorized,
+        )
+        if candidate.source_collection
+        else paper_probation_authority(
+            blockers=candidate.final_blockers,
+            bounded_live_paper_collection_authorized=bounded_probe_authorized,
+        )
+    )
     return {
         "hypothesis_id": candidate.hypothesis_id,
         "candidate_id": candidate.candidate_id,
@@ -327,14 +344,12 @@ def _runtime_ledger_base_import_target(
         "source_kind": candidate.source_kind,
         "window_start": candidate.window_start,
         "window_end": candidate.window_end,
-        "paper_probation_authorized": candidate.paper_probation_satisfied,
         "paper_probation_authorization_scope": (
             "evidence_collection_only" if candidate.paper_probation_satisfied else ""
         ),
         "paper_probation_satisfied_for_bounded_live_paper_collection": (
             candidate.paper_probation_satisfied
         ),
-        "source_collection_authorized": candidate.source_collection,
         "source_collection_authorization_scope": (
             "source_window_evidence_collection_only"
             if candidate.source_collection
@@ -342,21 +357,13 @@ def _runtime_ledger_base_import_target(
         ),
         "source_collection_reason_codes": _source_collection_reason_codes(candidate),
         "proof_mode": "probation",
-        "evidence_collection_ok": True,
         "canary_collection_authorized": candidate.paper_probation_satisfied,
-        "bounded_live_paper_collection_authorized": bounded_probe_authorized,
+        **authority.as_target_fields(),
         **bounded_probe_payload,
-        "capital_promotion_allowed": False,
-        "final_authority_ok": False,
         "evidence_collection_stage": "paper",
         "probation_allowed": candidate.paper_probation_satisfied,
         "probation_reason": _runtime_ledger_import_probation_reason(candidate),
-        "promotion_allowed": False,
-        "final_promotion_authorized": False,
-        "final_promotion_allowed": False,
-        "final_promotion_blockers": candidate.final_blockers,
         "candidate_blockers": _candidate_reason_codes(candidate),
-        "runtime_ledger_target_metadata_blockers": candidate.final_blockers,
         "handoff": _runtime_ledger_import_handoff(candidate),
         "promotion_gate": "runtime_ledger_live_or_live_paper_required",
         "selected_by": _runtime_ledger_import_selector(candidate),
@@ -483,12 +490,39 @@ def _runtime_ledger_import_plan_payload(
     targets: Sequence[Mapping[str, object]],
     skipped_targets: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
+    paper_probation_target_count = sum(
+        1 for target in targets if bool(target.get("paper_probation_authorized"))
+    )
+    source_collection_target_count = sum(
+        1 for target in targets if bool(target.get("source_collection_authorized"))
+    )
+    bounded_live_paper_collection_authorized = any(
+        bool(target.get("bounded_live_paper_collection_authorized"))
+        for target in targets
+    )
+    if source_collection_target_count:
+        authority = source_collection_authority(
+            blockers=list(_RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS),
+            bounded_live_paper_collection_authorized=(
+                bounded_live_paper_collection_authorized
+            ),
+        )
+    elif paper_probation_target_count:
+        authority = paper_probation_authority(
+            blockers=list(_RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS),
+            bounded_live_paper_collection_authorized=(
+                bounded_live_paper_collection_authorized
+            ),
+        )
+    else:
+        authority = capital_blocked_authority(
+            blockers=["runtime_ledger_paper_probation_import_targets_missing"],
+        )
     return {
         "schema_version": _RUNTIME_LEDGER_PAPER_PROBATION_IMPORT_SCHEMA_VERSION,
         "source": "runtime_ledger_paper_probation_and_source_collection_candidates",
         "purpose": "paper_stage_runtime_ledger_source_evidence_collection",
         "proof_mode": "probation",
-        "evidence_collection_ok": bool(targets),
         "paper_probation_satisfied_for_bounded_live_paper_collection": any(
             bool(
                 target.get(
@@ -500,22 +534,10 @@ def _runtime_ledger_import_plan_payload(
         "canary_collection_authorized": any(
             bool(target.get("canary_collection_authorized")) for target in targets
         ),
-        "bounded_live_paper_collection_authorized": any(
-            bool(target.get("bounded_live_paper_collection_authorized"))
-            for target in targets
-        ),
-        "capital_promotion_allowed": False,
-        "final_authority_ok": False,
-        "promotion_allowed": False,
-        "final_promotion_authorized": False,
-        "final_promotion_allowed": False,
+        **authority.as_target_fields(),
         "target_count": len(targets),
-        "paper_probation_target_count": sum(
-            1 for target in targets if bool(target.get("paper_probation_authorized"))
-        ),
-        "source_collection_target_count": sum(
-            1 for target in targets if bool(target.get("source_collection_authorized"))
-        ),
+        "paper_probation_target_count": paper_probation_target_count,
+        "source_collection_target_count": source_collection_target_count,
         "source_collection_profit_target_count": sum(
             1
             for target in targets
@@ -625,10 +647,8 @@ def _bounded_paper_route_manifest_collection_targets(
                 or "",
                 "source_manifest_ref": source_manifest_ref,
                 "source_kind": _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_KIND,
-                "paper_probation_authorized": False,
                 "paper_probation_authorization_scope": "",
                 "paper_probation_satisfied_for_bounded_live_paper_collection": False,
-                "source_collection_authorized": True,
                 "source_collection_authorization_scope": (
                     "bounded_paper_route_source_decision_collection_only"
                 ),
@@ -637,29 +657,20 @@ def _bounded_paper_route_manifest_collection_targets(
                     "bounded_paper_route_manifest_seed",
                 ],
                 "proof_mode": "probation",
-                "evidence_collection_ok": True,
                 "canary_collection_authorized": False,
-                "bounded_live_paper_collection_authorized": True,
+                **source_collection_authority(
+                    blockers=list(_BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS),
+                    bounded_live_paper_collection_authorized=True,
+                ).as_target_fields(),
                 **_bounded_paper_route_probe_collection_payload(authorized=True),
-                "capital_promotion_allowed": False,
-                "final_authority_ok": False,
                 "evidence_collection_stage": "paper",
                 "probation_allowed": False,
                 "probation_reason": "source_backed_paper_probation_required",
-                "promotion_allowed": False,
-                "final_promotion_authorized": False,
-                "final_promotion_allowed": False,
-                "final_promotion_blockers": list(
-                    _BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS
-                ),
                 "candidate_blockers": [
                     "runtime_ledger_source_decisions_missing",
                     "source_backed_paper_probation_required",
                     "paper_route_runtime_ledger_import_pending",
                 ],
-                "runtime_ledger_target_metadata_blockers": list(
-                    _BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS
-                ),
                 "handoff": "next_paper_route_runtime_window_import",
                 "promotion_gate": "runtime_ledger_live_or_live_paper_required",
                 "selected_by": "hypothesis_manifest_bounded_paper_route_collection",
@@ -706,11 +717,14 @@ def _with_bounded_paper_route_manifest_collection_targets(
         bool(target.get("bounded_live_paper_collection_authorized"))
         for target in targets
     )
-    merged_plan["capital_promotion_allowed"] = False
-    merged_plan["final_authority_ok"] = False
-    merged_plan["promotion_allowed"] = False
-    merged_plan["final_promotion_authorized"] = False
-    merged_plan["final_promotion_allowed"] = False
+    merged_plan.update(
+        source_collection_authority(
+            blockers=list(_BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS),
+            bounded_live_paper_collection_authorized=bool(
+                merged_plan["bounded_live_paper_collection_authorized"]
+            ),
+        ).as_target_fields()
+    )
     return merged_plan
 
 

@@ -14,6 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...models import Strategy, TradeDecision, coerce_json_payload
+from ..promotion_authority import (
+    capital_blocked_authority,
+    source_collection_authority,
+)
 from ..runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     source_decision_mode_is_profit_proof_eligible,
@@ -220,9 +224,7 @@ def _blocked_target_readiness(blockers: Sequence[str]) -> dict[str, Any]:
         "state": "blocked",
         "blockers": list(blockers),
         "next_operator_action": next_action,
-        "promotion_allowed": False,
-        "final_authority_ok": False,
-        "final_promotion_allowed": False,
+        **capital_blocked_authority(blockers=blockers).as_target_fields(),
     }
 
 
@@ -365,13 +367,10 @@ def _paper_route_decision_payload(
         "bounded_evidence_collection_authorized": True,
         "bounded_live_paper_collection_authorized": True,
         "canary_collection_authorized": True,
-        "evidence_collection_ok": True,
         "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
-        "capital_promotion_allowed": False,
-        "promotion_allowed": False,
-        "final_authority_ok": False,
-        "final_promotion_authorized": False,
-        "final_promotion_allowed": False,
+        **source_collection_authority(
+            blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
+        ).as_target_fields(),
         "live_capital_routing_enabled": False,
         "account_stage_runtime_identity": {
             "account_label": identity.get("account_label"),
@@ -467,14 +466,9 @@ def _paper_route_decision_payload(
                 "client_order_id",
             ],
         },
-        "capital_promotion_allowed": False,
-        "promotion_allowed": False,
-        "final_authority_ok": False,
-        "final_promotion_authorized": False,
-        "final_promotion_allowed": False,
-        "final_promotion_blockers": list(
-            PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS
-        ),
+        **source_collection_authority(
+            blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
+        ).as_target_fields(),
         "live_capital_routing_enabled": False,
         "route_submission_enabled": True,
         "params": {
@@ -497,10 +491,9 @@ def _paper_route_decision_payload(
             "target_quantity_source": quantity_source,
             "target_notional_sizing_required": target_notional_sizing_required,
             "bounded_collection_stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
-            "promotion_allowed": False,
-            "final_authority_ok": False,
-            "final_promotion_authorized": False,
-            "final_promotion_allowed": False,
+            **source_collection_authority(
+                blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
+            ).as_target_fields(),
             "live_capital_routing_enabled": False,
             "route_submission_enabled": True,
         },
@@ -702,9 +695,9 @@ def _materialize_target_symbol(
             "target_notional": decimal_text(item.target_notional),
             "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
             "target_identity": item.identity,
-            "promotion_allowed": False,
-            "final_authority_ok": False,
-            "final_promotion_authorized": False,
+            **source_collection_authority(
+                blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
+            ).as_target_fields(),
             "live_capital_routing_enabled": False,
         }
     )
@@ -796,11 +789,9 @@ def _materialization_result(
         ),
         "decisions": state.materialized_decisions,
         "route_submissions": state.route_submissions,
-        "capital_promotion_allowed": False,
-        "promotion_allowed": False,
-        "final_authority_ok": False,
-        "final_promotion_authorized": False,
-        "final_promotion_allowed": False,
+        **source_collection_authority(
+            blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
+        ).as_target_fields(),
         "live_capital_routing_enabled": False,
         "blocked_targets": state.blocked_targets,
     }
