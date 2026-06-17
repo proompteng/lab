@@ -19,7 +19,7 @@ def pytest_configure() -> None:
         logging.getLogger(logger_name).setLevel(logging.ERROR)
 
 
-def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001, ARG001
+def pytest_sessionfinish(session, exitstatus):
     # Litellm registers an atexit cleanup callback that can fail when no event loop is
     # active and standard streams are already closed. Run the cleanup explicitly here so
     # atexit exits cleanly without creating a fresh loop.

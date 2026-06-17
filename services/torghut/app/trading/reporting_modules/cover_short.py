@@ -17,7 +17,7 @@ from ..evaluation import WalkForwardDecision, WalkForwardResults
 from ..evaluation_trace import SweepCandidateResult
 from ..regime import RegimeLabel, classify_regime
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .evaluationreportconfig import (
     EvaluationGateOutcome,

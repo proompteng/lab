@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
 from typing import Any
 
 

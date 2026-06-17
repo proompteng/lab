@@ -208,8 +208,8 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
             ],
         }
 
-        plans = flatten_script._target_plan_readback_plans(proofs_payload)  # noqa: SLF001
-        plan_name, _plan, targets = flatten_script._target_plan_readback_targets(  # noqa: SLF001
+        plans = flatten_script._target_plan_readback_plans(proofs_payload)
+        plan_name, _plan, targets = flatten_script._target_plan_readback_targets(
             proofs_payload
         )
 

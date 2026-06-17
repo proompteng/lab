@@ -186,7 +186,7 @@ def _read_json_path(path: str | Path) -> Mapping[str, object]:
 
 def _read_status_url(url: str, timeout: float) -> Mapping[str, object]:
     request = urllib.request.Request(url, method="GET")
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - bounded explicit URL is user supplied.
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         loaded = json.loads(response.read().decode("utf-8"))
     if not isinstance(loaded, Mapping):
         raise ValueError(f"{url} returned a non-object JSON payload")

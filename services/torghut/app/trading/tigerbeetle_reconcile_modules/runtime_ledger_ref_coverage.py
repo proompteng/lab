@@ -46,7 +46,7 @@ from app.trading.tigerbeetle_ledger_model import (
     decimal_usd_to_nearest_micros,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     BLOCKER_AMOUNT_MISMATCH,

@@ -22,7 +22,7 @@ from numpy.typing import NDArray
 from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 HPAIRS_PREFILTER_SCHEMA_VERSION = "torghut.hpairs-microstructure-prefilter.v1"

@@ -39,7 +39,7 @@ from ...reporting import (
     build_promotion_recommendation,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 @dataclass(frozen=True)

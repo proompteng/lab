@@ -325,7 +325,7 @@ class TestPaperRouteTargetPlanCanBeRequiredBeforeSessionOpen(
         self.assertFalse(preopen_summary["conditions"]["target_plan_account_clean"])
 
     def test_proofs_payload_summarizes_target_plan_readiness(self) -> None:
-        summary = verifier._paper_route_target_plan_summary(  # noqa: SLF001
+        summary = verifier._paper_route_target_plan_summary(
             _proofs_evidence(
                 state="proof_ready",
                 blockers=[],

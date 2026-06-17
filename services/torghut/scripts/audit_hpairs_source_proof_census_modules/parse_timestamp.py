@@ -71,7 +71,7 @@ from app.trading.runtime_ledger_source_authority import (
     RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     AUTHORITY_CANDIDATE_READY,
@@ -255,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
                 ended_at=ended_at,
             )
             source_kind = "sqlalchemy_dsn"
-    except Exception as exc:  # noqa: BLE001 - readback must fail closed into JSON diagnostics.
+    except Exception as exc:
         rows = CensusSourceRows()
         read_error = str(exc)
         source_kind = (

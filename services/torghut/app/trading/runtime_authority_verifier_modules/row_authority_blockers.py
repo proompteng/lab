@@ -46,7 +46,7 @@ from app.trading.runtime_ledger_source_authority import (
     runtime_ledger_source_window_present,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER,

@@ -12,7 +12,7 @@ from typing import cast
 
 from ..runtime_cost_authority import is_non_promotion_grade_runtime_cost_basis
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     EXACT_REPLAY_LEDGER_SCHEMA_VERSION,

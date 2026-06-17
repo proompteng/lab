@@ -36,7 +36,7 @@ class TestPosthogObservability(TestCase):
             app_env="prod",
         ):
             with patch.object(
-                posthog_observability._ASYNC_EMITTER,  # noqa: SLF001
+                posthog_observability._ASYNC_EMITTER,
                 "enqueue",
                 side_effect=_capture_enqueue,
             ):
@@ -80,7 +80,7 @@ class TestPosthogObservability(TestCase):
             posthog_distinct_id="torghut-service",
         ):
             with patch.object(
-                posthog_observability._ASYNC_EMITTER,  # noqa: SLF001
+                posthog_observability._ASYNC_EMITTER,
                 "enqueue",
                 return_value=(False, "queue_full"),
             ):
@@ -99,7 +99,7 @@ class TestPosthogObservability(TestCase):
             "posthog_timeout_seconds",
             0.25,
         ):
-            emitted, reason = posthog_observability._send_capture_request(  # noqa: SLF001
+            emitted, reason = posthog_observability._send_capture_request(
                 "http://posthog-events.posthog.svc.cluster.local:abc/capture/",
                 {"event": "torghut.runtime.loop_failed"},
             )

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F401,F811
+# ruff: noqa: F401
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone

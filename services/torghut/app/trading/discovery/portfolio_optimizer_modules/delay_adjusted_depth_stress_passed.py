@@ -21,7 +21,7 @@ from app.trading.discovery.profit_target_oracle import evaluate_profit_target_or
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.runtime_ledger import POST_COST_PNL_BASIS
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     CONFORMAL_TAIL_RISK_ALPHA,

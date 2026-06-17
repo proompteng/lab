@@ -580,7 +580,7 @@ def _load_json_location(
         if _is_url(location):
             _guard_read_only_url(location)
             request = urllib.request.Request(location, method="GET")
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 - operator-supplied read-only URL
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
         else:
             raw = Path(location).read_text(encoding="utf-8")

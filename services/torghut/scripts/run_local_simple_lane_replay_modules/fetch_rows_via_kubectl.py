@@ -1,7 +1,6 @@
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Replay one trading session through Torghut's simple execution lane locally."""
-# ruff: noqa: E402,F811
 
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ import yaml
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-# ruff: noqa: F401,F821,F821,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     ALLOWED_REJECT_REASONS,

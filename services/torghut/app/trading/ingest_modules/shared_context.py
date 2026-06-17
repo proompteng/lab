@@ -28,7 +28,7 @@ from ..simulation_progress import active_simulation_runtime_context
 from ..simulation_window import normalize_simulation_cursor, simulation_window_bounds
 from ..time_source import trading_now
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 
 logger = logging.getLogger(__name__)

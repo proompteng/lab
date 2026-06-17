@@ -96,7 +96,7 @@ from scripts.materialize_replay_tape import (
     _select_effective_window as _select_effective_replay_tape_window,
 )
 
-# ruff: noqa: F401,F811,F821
+# ruff: noqa: F401
 
 from .shared_context import (
     LatestCompleteWindowRequirement,

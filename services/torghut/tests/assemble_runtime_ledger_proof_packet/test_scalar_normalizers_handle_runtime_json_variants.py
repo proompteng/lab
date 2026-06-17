@@ -574,8 +574,8 @@ class TestScalarNormalizersHandleRuntimeJsonVariants(_TestRuntimeLedgerProofPack
     def test_proofs_payload_builds_target_plan_and_import_audit(self) -> None:
         proofs = _proofs_payload()
 
-        plan = packet._paper_route_target_plan(proofs)  # noqa: SLF001
-        audit = packet._paper_route_runtime_window_import_audit(proofs)  # noqa: SLF001
+        plan = packet._paper_route_target_plan(proofs)
+        audit = packet._paper_route_runtime_window_import_audit(proofs)
 
         self.assertEqual(plan["source"], "trading_proofs_endpoint")
         self.assertEqual(plan["target_count"], 1)

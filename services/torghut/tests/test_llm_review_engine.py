@@ -32,7 +32,7 @@ class FakeDSPyRuntime:
         self._response_payload = response_payload
         self._error = error
 
-    def review(self, _request):  # noqa: ANN001
+    def review(self, _request):
         if self._error is not None:
             if isinstance(self._error, Exception):
                 raise self._error
@@ -46,7 +46,7 @@ class FakeDSPyRuntime:
             {
                 "program_name": self.program_name,
                 "signature_version": self.signature_version,
-                "to_payload": lambda self: {  # noqa: ANN001
+                "to_payload": lambda self: {
                     "mode": runtime_mode,
                     "program_name": "trade-review-committee-v1",
                     "signature_version": "v1",
