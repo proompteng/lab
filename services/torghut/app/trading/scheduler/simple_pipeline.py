@@ -149,7 +149,7 @@ class SimpleTradingPipeline(
     ) = None
 
     def _trading_now(self) -> datetime:
-        return trading_now(account_label=self.account_label)
+        return trading_now(account_label=getattr(self, "account_label", None))
 
     def _fetch_paper_route_target_plan_url(
         self,
