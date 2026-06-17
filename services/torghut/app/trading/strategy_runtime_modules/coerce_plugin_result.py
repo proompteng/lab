@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Strategy runtime scaffolding for deterministic plugin execution."""
 
 from __future__ import annotations
@@ -37,21 +37,24 @@ from ..strategy_specs import (
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .empty_meta import (
-    _empty_meta,
-    _generic_plugin_trace,
-    _microbar_entry_window_minutes,
-    _microbar_exit_minute_after_open,
-    _microbar_minutes_elapsed,
-    _microbar_observed_rank_universe_size,
-    _microbar_pair_max_legs,
-    _microbar_pair_rank_thresholds,
-    _microbar_pair_side_count,
-    _microbar_rank_thresholds,
-    _microbar_rank_universe_size,
-    _microbar_required_features,
-    _microbar_runtime_position_qty,
-    _microbar_universe_size,
-    _plugin_result_from_sleeve_result,
+    decimal as _decimal,
+    empty_meta as _empty_meta,
+    generic_plugin_trace as _generic_plugin_trace,
+    microbar_entry_window_minutes as _microbar_entry_window_minutes,
+    microbar_exit_minute_after_open as _microbar_exit_minute_after_open,
+    microbar_minutes_elapsed as _microbar_minutes_elapsed,
+    microbar_observed_rank_universe_size as _microbar_observed_rank_universe_size,
+    microbar_pair_max_legs as _microbar_pair_max_legs,
+    microbar_pair_rank_thresholds as _microbar_pair_rank_thresholds,
+    microbar_pair_side_count as _microbar_pair_side_count,
+    microbar_rank_thresholds as _microbar_rank_thresholds,
+    microbar_rank_universe_size as _microbar_rank_universe_size,
+    microbar_required_features as _microbar_required_features,
+    microbar_runtime_position_qty as _microbar_runtime_position_qty,
+    microbar_universe_size as _microbar_universe_size,
+    plugin_result_from_sleeve_result as _plugin_result_from_sleeve_result,
+    resolved_target_notional as _resolved_target_notional,
+    target_notional as _target_notional,
 )
 from .evaluate_microbar_cross_sectional import (
     AggregatedIntent,
@@ -64,7 +67,7 @@ from .evaluate_microbar_cross_sectional import (
     StrategyDefinition,
     StrategyIntent,
     StrategyPlugin,
-    _evaluate_microbar_cross_sectional,
+    evaluate_microbar_cross_sectional as _evaluate_microbar_cross_sectional,
 )
 
 
@@ -102,6 +105,37 @@ class _CircuitState:
     degraded_until: datetime | None = None
 
 
+def _default_strategy_plugins() -> dict[str, StrategyPlugin]:
+    from .breakout_continuation_long_plugin import (
+        BreakoutContinuationLongPlugin,
+        MeanReversionExhaustionShortPlugin,
+        MeanReversionReboundLongPlugin,
+        MicrobarCrossSectionalLongPlugin,
+        MicrobarCrossSectionalPairsPlugin,
+        MicrobarCrossSectionalShortPlugin,
+        WashoutReboundLongPlugin,
+    )
+    from .late_day_continuation_long_plugin import (
+        EndOfDayReversalLongPlugin,
+        LateDayContinuationLongPlugin,
+    )
+
+    return {
+        "legacy_macd_rsi": LegacyMacdRsiPlugin(),
+        "intraday_tsmom_v1": IntradayTsmomPlugin(),
+        "momentum_pullback_long_v1": MomentumPullbackLongPlugin(),
+        "breakout_continuation_long_v1": BreakoutContinuationLongPlugin(),
+        "mean_reversion_rebound_long_v1": MeanReversionReboundLongPlugin(),
+        "mean_reversion_exhaustion_short_v1": MeanReversionExhaustionShortPlugin(),
+        "microbar_cross_sectional_long_v1": MicrobarCrossSectionalLongPlugin(),
+        "microbar_cross_sectional_short_v1": MicrobarCrossSectionalShortPlugin(),
+        "microbar_cross_sectional_pairs_v1": MicrobarCrossSectionalPairsPlugin(),
+        "washout_rebound_long_v1": WashoutReboundLongPlugin(),
+        "late_day_continuation_long_v1": LateDayContinuationLongPlugin(),
+        "end_of_day_reversal_long_v1": EndOfDayReversalLongPlugin(),
+    }
+
+
 class StrategyRegistry:
     def __init__(
         self,
@@ -110,20 +144,7 @@ class StrategyRegistry:
         circuit_error_threshold: int = 3,
         cooldown_seconds: int = 300,
     ) -> None:
-        plugin_map = plugins or {
-            "legacy_macd_rsi": LegacyMacdRsiPlugin(),
-            "intraday_tsmom_v1": IntradayTsmomPlugin(),
-            "momentum_pullback_long_v1": MomentumPullbackLongPlugin(),
-            "breakout_continuation_long_v1": BreakoutContinuationLongPlugin(),
-            "mean_reversion_rebound_long_v1": MeanReversionReboundLongPlugin(),
-            "mean_reversion_exhaustion_short_v1": MeanReversionExhaustionShortPlugin(),
-            "microbar_cross_sectional_long_v1": MicrobarCrossSectionalLongPlugin(),
-            "microbar_cross_sectional_short_v1": MicrobarCrossSectionalShortPlugin(),
-            "microbar_cross_sectional_pairs_v1": MicrobarCrossSectionalPairsPlugin(),
-            "washout_rebound_long_v1": WashoutReboundLongPlugin(),
-            "late_day_continuation_long_v1": LateDayContinuationLongPlugin(),
-            "end_of_day_reversal_long_v1": EndOfDayReversalLongPlugin(),
-        }
+        plugin_map = plugins or _default_strategy_plugins()
         self._by_key: dict[tuple[str, str], StrategyPlugin] = {}
         self._type_alias: dict[str, tuple[str, str]] = {}
         for alias, plugin in plugin_map.items():
@@ -586,5 +607,10 @@ class MomentumPullbackLongPlugin:
             evaluation=evaluation,
         )
 
+
+# Public aliases used by split-module consumers.
+CircuitState = _CircuitState
+coerce_plugin_result = _coerce_plugin_result
+trace_suppression_reason = _trace_suppression_reason
 
 __all__ = [name for name in globals() if not name.startswith("__")]

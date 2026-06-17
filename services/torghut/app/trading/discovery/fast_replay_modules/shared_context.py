@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only vectorized scoring over manifest-verified replay tapes."""
 
 from __future__ import annotations
@@ -365,6 +365,22 @@ class FastReplayPreviewRow:
     bootstrap_lower_percentile_post_cost_utility_bps: Decimal = Decimal("0")
 
     def to_payload(self) -> dict[str, Any]:
+        from .extract_price import (
+            mapping as _mapping,
+            observed_post_cost_expectancy_bps as _observed_post_cost_expectancy_bps,
+            ranking_only_reasons_for_row as _ranking_only_reasons_for_row,
+            required_daily_notional_for_target as _required_daily_notional_for_target,
+            risk_flags_for_row as _risk_flags_for_row,
+            risk_veto_reasons_for_row as _risk_veto_reasons_for_row,
+        )
+        from .frontier_selection_blockers_for_row import (
+            discovery_stage_metadata as _discovery_stage_metadata,
+            exact_replay_selection_blockers_for_row as _exact_replay_selection_blockers_for_row,
+            frontier_selection_blockers_for_row as _frontier_selection_blockers_for_row,
+            lineage_blockers_for_row as _lineage_blockers_for_row,
+            row_runtime_ledger_lineage_handoff as _row_runtime_ledger_lineage_handoff,
+        )
+
         observed_post_cost_expectancy_bps = _observed_post_cost_expectancy_bps(self)
         required_daily_notional = _required_daily_notional_for_target(
             observed_post_cost_expectancy_bps

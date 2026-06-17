@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Order execution and idempotency helpers."""
 
 from __future__ import annotations
@@ -46,61 +46,63 @@ from ..tca import upsert_execution_tca_metric
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .shared_context import (
-    _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    _COST_MODEL_HASH_KEYS,
-    _COST_MODEL_PAYLOAD_KEYS,
-    _EXECUTION_POLICY_HASH_KEYS,
-    _LINEAGE_HASH_KEYS,
-    _LINEAGE_PAYLOAD_KEYS,
-    _OrderExecutorFields,
-    _RUNTIME_COST_AMOUNT_KEYS,
-    _RUNTIME_COST_BASIS_KEYS,
-    _RUNTIME_COST_PAYLOAD_KEYS,
-    _SHORTING_METADATA_CACHE_TTL_SECONDS,
-    _TARGET_PLAN_SOURCE_DECISION_MODE,
-    _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS,
-    _has_target_plan_source_decision,
-    _mapping_payload,
-    _target_plan_ref_value,
-    _target_plan_source_decision_mode,
-    _target_plan_source_decision_needs_refresh,
-    _target_plan_source_metadata,
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE as _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    COST_MODEL_HASH_KEYS as _COST_MODEL_HASH_KEYS,
+    COST_MODEL_PAYLOAD_KEYS as _COST_MODEL_PAYLOAD_KEYS,
+    EXECUTION_POLICY_HASH_KEYS as _EXECUTION_POLICY_HASH_KEYS,
+    LINEAGE_HASH_KEYS as _LINEAGE_HASH_KEYS,
+    LINEAGE_PAYLOAD_KEYS as _LINEAGE_PAYLOAD_KEYS,
+    OrderExecutorFields as _OrderExecutorFields,
+    RUNTIME_COST_AMOUNT_KEYS as _RUNTIME_COST_AMOUNT_KEYS,
+    RUNTIME_COST_BASIS_KEYS as _RUNTIME_COST_BASIS_KEYS,
+    RUNTIME_COST_PAYLOAD_KEYS as _RUNTIME_COST_PAYLOAD_KEYS,
+    SHORTING_METADATA_CACHE_TTL_SECONDS as _SHORTING_METADATA_CACHE_TTL_SECONDS,
+    TARGET_PLAN_SOURCE_DECISION_MODE as _TARGET_PLAN_SOURCE_DECISION_MODE,
+    TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS as _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS,
+    has_target_plan_source_decision as _has_target_plan_source_decision,
+    mapping_payload as _mapping_payload,
+    target_plan_ref_value as _target_plan_ref_value,
+    target_plan_source_decision_mode as _target_plan_source_decision_mode,
+    target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
+    target_plan_source_metadata as _target_plan_source_metadata,
     logger,
 )
 from .order_executor_core_methods import (
-    _OrderExecutorCoreMethods,
-    _PreparedOrderSubmission,
-    _ResolvedSellInventory,
-    _SellInventoryReservations,
-    _execution_request_from_decision,
-    _merge_execution_audit,
-    _open_sell_order_reserves_symbol,
-    _order_payload_with_execution_metadata,
-    _sell_inventory_metadata_update,
-    _sell_inventory_request_symbol,
-    _submission_extra_params,
+    OrderExecutorCoreMethods as _OrderExecutorCoreMethods,
+)
+from .order_executor_core_support import (
+    PreparedOrderSubmission as _PreparedOrderSubmission,
+    ResolvedSellInventory as _ResolvedSellInventory,
+    SellInventoryReservations as _SellInventoryReservations,
+    execution_request_from_decision as _execution_request_from_decision,
+    merge_execution_audit as _merge_execution_audit,
+    open_sell_order_reserves_symbol as _open_sell_order_reserves_symbol,
+    order_payload_with_execution_metadata as _order_payload_with_execution_metadata,
+    sell_inventory_metadata_update as _sell_inventory_metadata_update,
+    sell_inventory_request_symbol as _sell_inventory_request_symbol,
+    submission_extra_params as _submission_extra_params,
 )
 from .order_executor_submission_methods import (
     OrderExecutor,
-    _NormalizedRejectReason,
-    _OrderExecutorSubmissionMethods,
-    _coerce_json,
-    _coerce_string_list,
-    _copy_mapping,
-    _decision_state_payload,
-    _extract_sizing_debug,
-    _first_mapping_text,
-    _first_mapping_value,
-    _first_param_mapping,
-    _first_param_text,
-    _first_param_value,
-    _json_default,
-    _merge_decision_metadata,
-    _merge_unique_strings,
-    _normalize_reject_reason,
-    _normalize_reject_reasons,
-    _normalize_submission_block_reasons,
-    _stable_payload_hash,
+    NormalizedRejectReason as _NormalizedRejectReason,
+    OrderExecutorSubmissionMethods as _OrderExecutorSubmissionMethods,
+    coerce_json as _coerce_json,
+    coerce_string_list as _coerce_string_list,
+    copy_mapping as _copy_mapping,
+    decision_state_payload as _decision_state_payload,
+    extract_sizing_debug as _extract_sizing_debug,
+    first_mapping_text as _first_mapping_text,
+    first_mapping_value as _first_mapping_value,
+    first_param_mapping as _first_param_mapping,
+    first_param_text as _first_param_text,
+    first_param_value as _first_param_value,
+    json_default as _json_default,
+    merge_decision_metadata as _merge_decision_metadata,
+    merge_unique_strings as _merge_unique_strings,
+    normalize_reject_reason as _normalize_reject_reason,
+    normalize_reject_reasons as _normalize_reject_reasons,
+    normalize_submission_block_reasons as _normalize_submission_block_reasons,
+    stable_payload_hash as _stable_payload_hash,
 )
 
 
@@ -580,5 +582,16 @@ def _positive_decimal(value: Any) -> Decimal | None:
 
 __all__ = ["OrderExecutor"]
 
+
+# Public aliases used by split-module consumers.
+apply_execution_status = _apply_execution_status
+attach_execution_policy_context = _attach_execution_policy_context
+extract_execution_advice_provenance = _extract_execution_advice_provenance
+extract_execution_metadata = _extract_execution_metadata
+extract_execution_policy_context = _extract_execution_policy_context
+optional_decimal = _optional_decimal
+persist_lean_shadow_event = _persist_lean_shadow_event
+resolve_submission_simulation_context = _resolve_submission_simulation_context
+validate_pre_submit_request = _validate_pre_submit_request
 
 __all__ = [name for name in globals() if not name.startswith("__")]

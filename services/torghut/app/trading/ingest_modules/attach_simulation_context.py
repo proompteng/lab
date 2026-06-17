@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
@@ -38,60 +38,60 @@ from .shared_context import (
     LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN,
     SIMULATION_CURSOR_BASELINE,
     SignalBatch,
-    _ClickHouseSignalIngestorFields,
-    _coerce_count,
-    _simulation_fetch_window,
+    ClickHouseSignalIngestorFields as _ClickHouseSignalIngestorFields,
+    coerce_count as _coerce_count,
+    simulation_fetch_window as _simulation_fetch_window,
     logger,
 )
 from .clickhouse_signal_ingestor_core_methods import (
-    _ClickHouseSignalIngestorCoreMethods,
+    ClickHouseSignalIngestorCoreMethods as _ClickHouseSignalIngestorCoreMethods,
 )
 from .clickhouse_signal_ingestor_market_methods import (
-    _ClickHouseRequest,
-    _ClickHouseSignalIngestorMarketMethods,
-    _LatestSignalCacheLookup,
-    _column_names_from_rows,
-    _latest_signal_timestamp_from_rows,
+    ClickHouseRequest as _ClickHouseRequest,
+    ClickHouseSignalIngestorMarketMethods as _ClickHouseSignalIngestorMarketMethods,
+    LatestSignalCacheLookup as _LatestSignalCacheLookup,
+    column_names_from_rows as _column_names_from_rows,
+    latest_signal_timestamp_from_rows as _latest_signal_timestamp_from_rows,
 )
 from .clickhouse_signal_ingestor_persistence_methods import (
     ClickHouseSignalIngestor,
-    _ClickHouseSignalIngestorPersistenceMethods,
-    _coerce_seq,
-    _coerce_timeframe,
-    _copy_extended_ta_fields,
-    _copy_row_value_if_missing,
-    _copy_row_values_if_missing,
-    _dedupe_columns,
-    _ensure_price_value,
-    _mark_non_authority_stale_fallback_signal,
-    _merge_dict_payload,
-    _merge_flat_row_fallbacks,
-    _merge_imbalance_payload,
-    _merge_macd_payload,
-    _merge_microstructure_signal_payload,
-    _merge_signal_json_payload,
-    _next_signal_cursor_state,
-    _normalize_payload,
-    _normalized_signal_sources,
-    _normalized_signal_symbols,
-    _normalized_signal_timeframes,
-    _parse_ts,
-    _payload_from_flat_row,
-    _prefer_preferred_signal,
-    _quote_literal,
-    _select_columns,
-    _signal_identity,
-    _signal_matches_active_simulation_run,
-    _signal_payload_context_fingerprint,
-    _signal_payload_fingerprint,
-    _signal_preference_key,
-    _signal_provenance_completeness,
-    _signal_provenance_key,
-    _signal_scope_key,
-    _signal_simulation_context,
-    _signal_sort_key,
-    _timeframe_from_iso_duration,
-    _timeframes_to_iso_durations,
+    ClickHouseSignalIngestorPersistenceMethods as _ClickHouseSignalIngestorPersistenceMethods,
+    coerce_seq as _coerce_seq,
+    coerce_timeframe as _coerce_timeframe,
+    copy_extended_ta_fields as _copy_extended_ta_fields,
+    copy_row_value_if_missing as _copy_row_value_if_missing,
+    copy_row_values_if_missing as _copy_row_values_if_missing,
+    dedupe_columns as _dedupe_columns,
+    ensure_price_value as _ensure_price_value,
+    mark_non_authority_stale_fallback_signal as _mark_non_authority_stale_fallback_signal,
+    merge_dict_payload as _merge_dict_payload,
+    merge_flat_row_fallbacks as _merge_flat_row_fallbacks,
+    merge_imbalance_payload as _merge_imbalance_payload,
+    merge_macd_payload as _merge_macd_payload,
+    merge_microstructure_signal_payload as _merge_microstructure_signal_payload,
+    merge_signal_json_payload as _merge_signal_json_payload,
+    next_signal_cursor_state as _next_signal_cursor_state,
+    normalize_payload as _normalize_payload,
+    normalized_signal_sources as _normalized_signal_sources,
+    normalized_signal_symbols as _normalized_signal_symbols,
+    normalized_signal_timeframes as _normalized_signal_timeframes,
+    parse_ts as _parse_ts,
+    payload_from_flat_row as _payload_from_flat_row,
+    prefer_preferred_signal as _prefer_preferred_signal,
+    quote_literal as _quote_literal,
+    select_columns as _select_columns,
+    signal_identity as _signal_identity,
+    signal_matches_active_simulation_run as _signal_matches_active_simulation_run,
+    signal_payload_context_fingerprint as _signal_payload_context_fingerprint,
+    signal_payload_fingerprint as _signal_payload_fingerprint,
+    signal_preference_key as _signal_preference_key,
+    signal_provenance_completeness as _signal_provenance_completeness,
+    signal_provenance_key as _signal_provenance_key,
+    signal_scope_key as _signal_scope_key,
+    signal_simulation_context as _signal_simulation_context,
+    signal_sort_key as _signal_sort_key,
+    timeframe_from_iso_duration as _timeframe_from_iso_duration,
+    timeframes_to_iso_durations as _timeframes_to_iso_durations,
 )
 
 
@@ -165,5 +165,10 @@ def _qualified_table_name(table: str) -> str:
 
 __all__ = ["ClickHouseSignalIngestor", "SignalBatch"]
 
+
+# Public aliases used by split-module consumers.
+attach_simulation_context_payload = _attach_simulation_context
+qualified_table_name = _qualified_table_name
+safe_identifier = _safe_identifier
 
 __all__ = [name for name in globals() if not name.startswith("__")]

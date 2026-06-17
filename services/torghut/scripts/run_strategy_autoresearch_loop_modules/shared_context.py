@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Run an autoresearch-style outer loop for Torghut strategy discovery."""
 
@@ -84,15 +84,9 @@ from app.trading.discovery.replay_tape import (
 from app.trading.discovery.runtime_closure import write_runtime_closure_bundle
 from app.trading.discovery.runtime_closure import RuntimeClosureExecutionContext
 import scripts.local_intraday_tsmom_replay as replay_mod
+import scripts.materialize_replay_tape as materialize_replay_tape
 from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
-)
-from scripts.materialize_replay_tape import (
-    _DEFAULT_MAX_COVERAGE_SPREAD_BPS,
-    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
-    _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
-    _DEFAULT_MIN_QUOTE_VALID_RATIO,
-    _select_effective_window as _select_effective_replay_tape_window,
 )
 
 # ruff: noqa: F401,F403,F405,F811,F821
@@ -109,9 +103,19 @@ _REPO_ROOT = _find_repo_root(Path(__file__))
 
 _CAPITAL_LIMIT_SAFETY_MULTIPLIER = Decimal("0.98")
 
+_DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY = 18_000
+_DEFAULT_MIN_QUOTE_VALID_RATIO = Decimal("0.90")
+_DEFAULT_MAX_COVERAGE_SPREAD_BPS = Decimal("50")
+_DEFAULT_MAX_EXECUTABLE_GAP_SECONDS = 120
+
 _DEFAULT_CLICKHOUSE_HTTP_URL = (
     "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
 )
+
+
+def _select_effective_replay_tape_window(*args: Any, **kwargs: Any) -> Any:
+    selector = getattr(materialize_replay_tape, "_select_effective_window")
+    return selector(*args, **kwargs)
 
 
 def _default_clickhouse_http_url() -> str:

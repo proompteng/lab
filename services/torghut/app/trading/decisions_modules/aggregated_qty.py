@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Aggregated strategy quantity sizing helpers for the trading decision engine."""
 
 from __future__ import annotations
@@ -42,21 +42,21 @@ from .shared_context import (
     StrategyRegistry,
     StrategyRuntime,
     StrategyTrace,
-    _BUY_EXIT_ONLY_STRATEGY_TYPES,
-    _DecisionEngineFields,
-    _EXIT_ONLY_BUY_FLAT_REASON,
-    _EXIT_ONLY_SELL_FLAT_REASON,
-    _MICROBAR_PAIR_EXIT_RATIONALE,
-    _RUNTIME_TRADE_POLICY_SHARED_OWNER,
-    _RuntimeTradePolicySessionState,
-    _SAME_DIRECTION_REENTRY_REASON,
-    _SELL_EXIT_ONLY_STRATEGY_TYPES,
-    _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
-    _feature_vector_with_positions,
-    _feature_vector_with_runtime_position,
-    _merge_runtime_counter,
-    _merge_runtime_evaluations,
-    _runtime_position_side,
+    BUY_EXIT_ONLY_STRATEGY_TYPES as _BUY_EXIT_ONLY_STRATEGY_TYPES,
+    DecisionEngineFields as _DecisionEngineFields,
+    EXIT_ONLY_BUY_FLAT_REASON as _EXIT_ONLY_BUY_FLAT_REASON,
+    EXIT_ONLY_SELL_FLAT_REASON as _EXIT_ONLY_SELL_FLAT_REASON,
+    MICROBAR_PAIR_EXIT_RATIONALE as _MICROBAR_PAIR_EXIT_RATIONALE,
+    RUNTIME_TRADE_POLICY_SHARED_OWNER as _RUNTIME_TRADE_POLICY_SHARED_OWNER,
+    RuntimeTradePolicySessionState as _RuntimeTradePolicySessionState,
+    SAME_DIRECTION_REENTRY_REASON as _SAME_DIRECTION_REENTRY_REASON,
+    SELL_EXIT_ONLY_STRATEGY_TYPES as _SELL_EXIT_ONLY_STRATEGY_TYPES,
+    SHORT_ENTRY_BELOW_MIN_QTY_REASON as _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+    feature_vector_with_positions as _feature_vector_with_positions,
+    feature_vector_with_runtime_position as _feature_vector_with_runtime_position,
+    merge_runtime_counter as _merge_runtime_counter,
+    merge_runtime_evaluations as _merge_runtime_evaluations,
+    runtime_position_side as _runtime_position_side,
     build_default_forecast_router,
     date,
     datetime,
@@ -75,52 +75,181 @@ from .shared_context import (
     resolve_simulation_context,
     timezone,
 )
-from .decision_engine_core_methods import _DecisionEngineCoreMethods
+from .decision_engine_core_methods import (
+    DecisionEngineCoreMethods as _DecisionEngineCoreMethods,
+)
 from .decision_engine_runtime_methods import (
     DecisionEngine,
-    _BuildParamsRequest,
-    _DecisionEngineRuntimeMethods,
-    _LegacyDecisionInputs,
-    _LegacyMarketContext,
-    _LegacySizing,
-    _SingleStrategyCapacityAdjustment,
-    _SingleStrategyQtyContext,
-    _StrategyBudget,
-    _base_decision_params,
-    _build_params,
-    _build_params_request,
-    _forecast_decision_params,
-    _has_explicit_regime_context,
-    _legacy_decision_inputs,
-    _legacy_runtime_metadata,
-    _legacy_strategy_decision,
-    _log_skipped_legacy_decision,
-    _market_decision_params,
-    _regime_decision_params,
-    _resolve_decision_simulation_context,
-    _resolve_execution_advice_payload,
-    _resolve_execution_feature_payload,
-    _resolve_fragility_snapshot_payload,
-    _resolve_microstructure_state_payload,
-    _resolve_qty,
-    _resolve_regime_context,
-    _resolve_single_strategy_qty_from_context,
-    _single_strategy_budget,
-    _single_strategy_capacity_adjustment,
-    _single_strategy_capacity_exhausted_result,
-    _single_strategy_capacity_reason,
-    _single_strategy_common_meta,
-    _single_strategy_exit_guard_result,
-    _single_strategy_min_qty_capacity_reason,
-    _single_strategy_min_qty_result,
-    _single_strategy_qty_context,
-    _single_strategy_requested_qty,
-    _single_strategy_short_entry_below_min_result,
-    _single_strategy_success_result,
-    _skip_non_executable_decision_qty,
-    _snapshot_payload,
-    _source_context_decision_params,
+    BuildParamsRequest as _BuildParamsRequest,
+    DecisionEngineRuntimeMethods as _DecisionEngineRuntimeMethods,
+    LegacyDecisionInputs as _LegacyDecisionInputs,
+    LegacyMarketContext as _LegacyMarketContext,
+    LegacySizing as _LegacySizing,
+    SingleStrategyCapacityAdjustment as _SingleStrategyCapacityAdjustment,
+    SingleStrategyQtyContext as _SingleStrategyQtyContext,
+    StrategyBudget as _StrategyBudget,
+    base_decision_params as _base_decision_params,
+    build_params as _build_params,
+    build_params_request as _build_params_request,
+    forecast_decision_params as _forecast_decision_params,
+    has_explicit_regime_context as _has_explicit_regime_context,
+    legacy_decision_inputs as _legacy_decision_inputs,
+    legacy_runtime_metadata as _legacy_runtime_metadata,
+    legacy_strategy_decision as _legacy_strategy_decision,
+    log_skipped_legacy_decision as _log_skipped_legacy_decision,
+    market_decision_params as _market_decision_params,
+    regime_decision_params as _regime_decision_params,
+    resolve_decision_simulation_context as _resolve_decision_simulation_context,
+    resolve_execution_advice_payload as _resolve_execution_advice_payload,
+    resolve_execution_feature_payload as _resolve_execution_feature_payload,
+    resolve_fragility_snapshot_payload as _resolve_fragility_snapshot_payload,
+    resolve_microstructure_state_payload as _resolve_microstructure_state_payload,
+    resolve_qty as _resolve_qty,
+    resolve_regime_context as _resolve_regime_context,
+    resolve_single_strategy_qty_from_context as _resolve_single_strategy_qty_from_context,
+    single_strategy_budget as _single_strategy_budget,
+    single_strategy_capacity_adjustment as _single_strategy_capacity_adjustment,
+    single_strategy_capacity_exhausted_result as _single_strategy_capacity_exhausted_result,
+    single_strategy_capacity_reason as _single_strategy_capacity_reason,
+    single_strategy_common_meta as _single_strategy_common_meta,
+    single_strategy_exit_guard_result as _single_strategy_exit_guard_result,
+    single_strategy_min_qty_capacity_reason as _single_strategy_min_qty_capacity_reason,
+    single_strategy_min_qty_result as _single_strategy_min_qty_result,
+    single_strategy_qty_context as _single_strategy_qty_context,
+    single_strategy_requested_qty as _single_strategy_requested_qty,
+    single_strategy_short_entry_below_min_result as _single_strategy_short_entry_below_min_result,
+    single_strategy_success_result as _single_strategy_success_result,
+    skip_non_executable_decision_qty as _skip_non_executable_decision_qty,
+    snapshot_payload as _snapshot_payload,
+    source_context_decision_params as _source_context_decision_params,
 )
+
+
+def _resolve_aggregated_notional_budget(
+    strategies: list[Strategy],
+    *,
+    equity: Optional[Decimal],
+    runtime_target_notional: Decimal | None = None,
+) -> Decimal:
+    from .positions_for_strategy_action import resolve_aggregated_notional_budget
+
+    return resolve_aggregated_notional_budget(
+        strategies,
+        equity=equity,
+        runtime_target_notional=runtime_target_notional,
+    )
+
+
+def _position_qty_for_symbol(
+    positions: Optional[list[dict[str, Any]]],
+    symbol: str,
+) -> Optional[Decimal]:
+    from .positions_for_strategy_action import position_qty_for_symbol
+
+    return position_qty_for_symbol(positions, symbol)
+
+
+def _resolve_symbol_notional_cap(
+    *,
+    strategy_pcts: list[Optional[Decimal]],
+    equity: Optional[Decimal],
+) -> Optional[Decimal]:
+    from .positions_for_strategy_action import resolve_symbol_notional_cap
+
+    return resolve_symbol_notional_cap(strategy_pcts=strategy_pcts, equity=equity)
+
+
+def _resolve_portfolio_gross_cap(
+    *,
+    strategies: list[Strategy],
+    equity: Optional[Decimal],
+) -> Optional[Decimal]:
+    from .positions_for_strategy_action import resolve_portfolio_gross_cap
+
+    return resolve_portfolio_gross_cap(strategies=strategies, equity=equity)
+
+
+def _position_value_for_symbol(
+    positions: Optional[list[dict[str, Any]]],
+    symbol: str,
+) -> Optional[Decimal]:
+    from .positions_for_strategy_action import position_value_for_symbol
+
+    return position_value_for_symbol(positions, symbol)
+
+
+def _portfolio_gross_exposure(
+    positions: Optional[list[dict[str, Any]]],
+) -> Decimal:
+    from .positions_for_strategy_action import portfolio_gross_exposure
+
+    return portfolio_gross_exposure(positions)
+
+
+def _treats_sell_as_exit_only_any(strategies: list[Strategy]) -> bool:
+    from .positions_for_strategy_action import treats_sell_as_exit_only_any
+
+    return treats_sell_as_exit_only_any(strategies)
+
+
+def _treats_buy_as_exit_only_any(strategies: list[Strategy]) -> bool:
+    from .positions_for_strategy_action import treats_buy_as_exit_only_any
+
+    return treats_buy_as_exit_only_any(strategies)
+
+
+def _blocks_same_direction_reentry_any(strategies: list[Strategy]) -> bool:
+    from .positions_for_strategy_action import blocks_same_direction_reentry_any
+
+    return blocks_same_direction_reentry_any(strategies)
+
+
+def _same_direction_reentry_exists(
+    *,
+    action: str,
+    position_qty: Optional[Decimal],
+) -> bool:
+    from .positions_for_strategy_action import same_direction_reentry_exists
+
+    return same_direction_reentry_exists(action=action, position_qty=position_qty)
+
+
+def _cap_requested_qty_by_symbol_cap(
+    *,
+    action: str,
+    requested_qty: Decimal,
+    price: Decimal,
+    position_qty: Optional[Decimal],
+    symbol_notional_cap: Optional[Decimal],
+) -> Decimal | None:
+    from .positions_for_strategy_action import cap_requested_qty_by_symbol_cap
+
+    return cap_requested_qty_by_symbol_cap(
+        action=action,
+        requested_qty=requested_qty,
+        price=price,
+        position_qty=position_qty,
+        symbol_notional_cap=symbol_notional_cap,
+    )
+
+
+def _cap_requested_qty_by_portfolio_gross_cap(
+    *,
+    action: str,
+    requested_qty: Decimal,
+    price: Decimal,
+    positions: Optional[list[dict[str, Any]]],
+    portfolio_gross_cap: Optional[Decimal],
+) -> Decimal | None:
+    from .positions_for_strategy_action import cap_requested_qty_by_portfolio_gross_cap
+
+    return cap_requested_qty_by_portfolio_gross_cap(
+        action=action,
+        requested_qty=requested_qty,
+        price=price,
+        positions=positions,
+        portfolio_gross_cap=portfolio_gross_cap,
+    )
 
 
 @dataclass(frozen=True)
@@ -526,5 +655,27 @@ def _aggregated_capacity_meta(
         ),
     }
 
+
+# Public aliases used by split-module consumers.
+resolve_qty_for_aggregated = _resolve_qty_for_aggregated
+AggregatedCapacityAdjustment = _AggregatedCapacityAdjustment
+AggregatedQtyContext = _AggregatedQtyContext
+aggregated_capacity_adjustment = _aggregated_capacity_adjustment
+aggregated_capacity_exhausted_result = _aggregated_capacity_exhausted_result
+aggregated_capacity_meta = _aggregated_capacity_meta
+aggregated_capacity_reason = _aggregated_capacity_reason
+aggregated_exit_or_reentry_result = _aggregated_exit_or_reentry_result
+aggregated_min_qty_capacity_reason = _aggregated_min_qty_capacity_reason
+aggregated_min_qty_result = _aggregated_min_qty_result
+aggregated_qty_context = _aggregated_qty_context
+aggregated_qty_success_result = _aggregated_qty_success_result
+aggregated_requested_qty = _aggregated_requested_qty
+aggregated_short_entry_below_min = _aggregated_short_entry_below_min
+aggregated_zero_qty_result = _aggregated_zero_qty_result
+negative_position_qty = _negative_position_qty
+position_qty_is_flat_or_long = _position_qty_is_flat_or_long
+position_qty_is_flat_or_short = _position_qty_is_flat_or_short
+positive_position_qty = _positive_position_qty
+resolve_qty_from_aggregated_context = _resolve_qty_from_aggregated_context
 
 __all__ = [name for name in globals() if not name.startswith("__")]

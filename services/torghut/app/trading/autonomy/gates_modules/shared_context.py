@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Gate policy matrix evaluator for Torghut v3 autonomous lanes."""
 
 from __future__ import annotations
@@ -30,6 +30,57 @@ def _empty_artifact_refs() -> list[str]:
 
 def _empty_dict() -> dict[str, Any]:
     return {}
+
+
+def _decimal_or_default(value: Any, default: Decimal) -> Decimal:
+    if value is None:
+        return default
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return default
+
+
+def _gate7_helpers() -> Any:
+    import importlib
+
+    return importlib.import_module(f"{__package__}.gate7_uncertainty_calibration")
+
+
+def _decimal(value: Any) -> Decimal | None:
+    return _gate7_helpers()._decimal(value)
+
+
+def _gate2_base_reasons(*args: Any, **kwargs: Any) -> list[str]:
+    return _gate7_helpers()._gate2_base_reasons(*args, **kwargs)
+
+
+def _gate2_tca_reasons(*args: Any, **kwargs: Any) -> list[str]:
+    return _gate7_helpers()._gate2_tca_reasons(*args, **kwargs)
+
+
+def _gate6_early_result(*args: Any, **kwargs: Any) -> Any:
+    return _gate7_helpers()._gate6_early_result(*args, **kwargs)
+
+
+def _gate6_schema_reasons(*args: Any, **kwargs: Any) -> list[str]:
+    return _gate7_helpers()._gate6_schema_reasons(*args, **kwargs)
+
+
+def _gate6_threshold_reasons(*args: Any, **kwargs: Any) -> list[str]:
+    return _gate7_helpers()._gate6_threshold_reasons(*args, **kwargs)
+
+
+def _gate6_reproducibility_reasons(*args: Any, **kwargs: Any) -> list[str]:
+    return _gate7_helpers()._gate6_reproducibility_reasons(*args, **kwargs)
+
+
+def _gate6_janus_q_reasons(*args: Any, **kwargs: Any) -> list[str]:
+    return _gate7_helpers()._gate6_janus_q_reasons(*args, **kwargs)
+
+
+def _gate7_uncertainty_calibration(*args: Any, **kwargs: Any) -> Any:
+    return _gate7_helpers()._gate7_uncertainty_calibration(*args, **kwargs)
 
 
 @dataclass(frozen=True)

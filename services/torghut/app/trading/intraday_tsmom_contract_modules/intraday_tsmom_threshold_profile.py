@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Shared parameter contract for intraday_tsmom_v1 across runtimes."""
 
 from __future__ import annotations
@@ -9,6 +9,118 @@ from decimal import Decimal
 from typing import Any, Literal, Mapping
 
 # ruff: noqa: F401,F403,F405,F811,F821
+
+
+def _decimal(value: Any) -> Decimal | None:
+    from .decimal import (
+        decimal as decimal_value,
+    )
+
+    return decimal_value(value)
+
+
+def _validate_optional_minute_param(*args: Any, **kwargs: Any) -> None:
+    from .decimal import (
+        validate_optional_minute_param as validate_param,
+    )
+
+    validate_param(*args, **kwargs)
+
+
+def _validate_optional_decimal_param(*args: Any, **kwargs: Any) -> None:
+    from .decimal import (
+        validate_optional_decimal_param as validate_param,
+    )
+
+    validate_param(*args, **kwargs)
+
+
+def _validate_optional_rsi_param(*args: Any, **kwargs: Any) -> None:
+    from .decimal import (
+        validate_optional_rsi_param as validate_param,
+    )
+
+    validate_param(*args, **kwargs)
+
+
+def _volatility_within_budget(*args: Any, **kwargs: Any) -> bool:
+    from .decimal import (
+        volatility_within_budget,
+    )
+
+    return volatility_within_budget(*args, **kwargs)
+
+
+def _spread_bps(*args: Any, **kwargs: Any) -> Decimal | None:
+    from .decimal import (
+        spread_bps,
+    )
+
+    return spread_bps(*args, **kwargs)
+
+
+def _rsi_within_bearish_bounds(*args: Any, **kwargs: Any) -> bool:
+    from .decimal import (
+        rsi_within_bearish_bounds,
+    )
+
+    return rsi_within_bearish_bounds(*args, **kwargs)
+
+
+def _optional_min_threshold(*args: Any, **kwargs: Any) -> bool:
+    from .decimal import (
+        optional_min_threshold,
+    )
+
+    return optional_min_threshold(*args, **kwargs)
+
+
+def _optional_max_threshold(*args: Any, **kwargs: Any) -> bool:
+    from .decimal import (
+        optional_max_threshold,
+    )
+
+    return optional_max_threshold(*args, **kwargs)
+
+
+def _within_entry_window(*args: Any, **kwargs: Any) -> bool:
+    from .decimal import (
+        within_entry_window,
+    )
+
+    return within_entry_window(*args, **kwargs)
+
+
+def _resolve_live_continuation_rank(*args: Any, **kwargs: Any) -> Decimal | None:
+    from .decimal import (
+        resolve_live_continuation_rank as resolve_live_rank,
+    )
+
+    return resolve_live_rank(*args, **kwargs)
+
+
+def _decayed_minimum(*args: Any, **kwargs: Any) -> Decimal | None:
+    from .decimal import (
+        decayed_minimum,
+    )
+
+    return decayed_minimum(*args, **kwargs)
+
+
+def _isolated_continuation_strength_confirmed(*args: Any, **kwargs: Any) -> bool:
+    from .decimal import (
+        isolated_continuation_strength_confirmed as isolated_strength_confirmed,
+    )
+
+    return isolated_strength_confirmed(*args, **kwargs)
+
+
+def _relax_floor_for_isolated_strength(*args: Any, **kwargs: Any) -> Decimal | None:
+    from .decimal import (
+        relax_floor_for_isolated_strength as relax_floor,
+    )
+
+    return relax_floor(*args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -756,5 +868,14 @@ def _optional_decimal_param(
     value = _decimal(params.get(key))
     return default if value is None else value
 
+
+# Public aliases used by split-module consumers.
+DEFAULT_PROFILE = _DEFAULT_PROFILE
+ONE_SECOND_PROFILE = _ONE_SECOND_PROFILE
+decimal_param = _decimal_param
+normalize_timeframe = _normalize_timeframe
+optional_decimal_param = _optional_decimal_param
+price_within_entry_band = _price_within_entry_band
+profile_for_timeframe = _profile_for_timeframe
 
 __all__ = [name for name in globals() if not name.startswith("__")]

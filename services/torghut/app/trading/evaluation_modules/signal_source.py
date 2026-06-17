@@ -1,10 +1,11 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Walk-forward evaluation harness for offline backtests."""
 
 from __future__ import annotations
 
-import json
 import hashlib
+import importlib
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -22,6 +23,101 @@ from ..features import SignalFeatures, extract_signal_features
 from ..models import SignalEnvelope, StrategyDecision
 
 # ruff: noqa: F401,F403,F405,F811,F821
+
+
+def _bootstrap_helpers() -> Any:
+    return importlib.import_module(f"{__package__}.bootstrap_mean_samples")
+
+
+def _calibration_helpers() -> Any:
+    return importlib.import_module(
+        f"{__package__}.build_simulation_calibration_report_v1"
+    )
+
+
+def _decimal(value: Any) -> Decimal | None:
+    return _bootstrap_helpers()._decimal(value)
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return _bootstrap_helpers()._as_dict(value)
+
+
+def _as_int(value: Any) -> int | None:
+    return _bootstrap_helpers()._as_int(value)
+
+
+def _report_fold_net_pnls(report_payload: dict[str, Any]) -> list[Decimal]:
+    return _bootstrap_helpers()._report_fold_net_pnls(report_payload)
+
+
+def _decimal_mean(values: list[Decimal]) -> Decimal:
+    return _bootstrap_helpers()._decimal_mean(values)
+
+
+def _decimal_std(values: list[Decimal], mean: Decimal) -> Decimal:
+    return _bootstrap_helpers()._decimal_std(values, mean)
+
+
+def _reproducibility_payload(hashes: dict[str, str]) -> dict[str, object]:
+    return _bootstrap_helpers()._reproducibility_payload(hashes)
+
+
+def _safe_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
+    return _bootstrap_helpers()._safe_ratio(numerator, denominator)
+
+
+def _extract_report_slices(report_payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    return _calibration_helpers()._extract_report_slices(report_payload)
+
+
+def _empty_slice_metrics() -> dict[str, str]:
+    return _calibration_helpers()._empty_slice_metrics()
+
+
+def _slice_deltas(
+    candidate: dict[str, str],
+    baseline: dict[str, str],
+) -> dict[str, str]:
+    return _calibration_helpers()._slice_deltas(candidate, baseline)
+
+
+def _benchmark_summary(benchmark: Any) -> dict[str, Decimal]:
+    return _calibration_helpers()._benchmark_summary(benchmark)
+
+
+def _confidence_summary(
+    confidence_values: list[Decimal], net_pnl: Decimal
+) -> dict[str, object]:
+    return _calibration_helpers()._confidence_summary(confidence_values, net_pnl)
+
+
+def _significance_summary(benchmark: Any) -> dict[str, object]:
+    return _calibration_helpers()._significance_summary(benchmark)
+
+
+def _validate_profitability_schema_versions(*args: Any, **kwargs: Any) -> None:
+    _calibration_helpers()._validate_profitability_schema_versions(*args, **kwargs)
+
+
+def _validate_profitability_risk_metrics(*args: Any, **kwargs: Any) -> None:
+    _calibration_helpers()._validate_profitability_risk_metrics(*args, **kwargs)
+
+
+def _validate_profitability_cost_metrics(*args: Any, **kwargs: Any) -> None:
+    _calibration_helpers()._validate_profitability_cost_metrics(*args, **kwargs)
+
+
+def _validate_profitability_confidence_metrics(*args: Any, **kwargs: Any) -> None:
+    _calibration_helpers()._validate_profitability_confidence_metrics(*args, **kwargs)
+
+
+def _validate_profitability_significance_metrics(*args: Any, **kwargs: Any) -> None:
+    _calibration_helpers()._validate_profitability_significance_metrics(*args, **kwargs)
+
+
+def _validate_profitability_reproducibility(*args: Any, **kwargs: Any) -> None:
+    _calibration_helpers()._validate_profitability_reproducibility(*args, **kwargs)
 
 
 class SignalSource(Protocol):
@@ -686,5 +782,11 @@ def validate_profitability_evidence_v4(
         thresholds=policy,
     )
 
+
+# Public aliases used by split-module consumers.
+decimal_str = _decimal_str
+empty_decisions = _empty_decisions
+fold_payload = _fold_payload
+fold_regime_payload = _fold_regime_payload
 
 __all__ = [name for name in globals() if not name.startswith("__")]

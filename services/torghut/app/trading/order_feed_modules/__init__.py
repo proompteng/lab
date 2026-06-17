@@ -1,87 +1,166 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import logging as __compat_logging__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.classify_source_window_drop")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.normalize_order_feed_record")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.repair_order_feed_execution_links"
+from .shared_context import (
+    hashlib,
+    json,
+    logging,
+    uuid,
+    dataclass,
+    replace,
+    datetime,
+    timedelta,
+    timezone,
+    Decimal,
+    Any,
+    Callable,
+    Mapping,
+    cast,
+    exists,
+    func,
+    or_,
+    select,
+    IntegrityError,
+    Session,
+    ColumnElement,
+    settings,
+    Execution,
+    ExecutionOrderEvent,
+    OrderFeedConsumerCursor,
+    OrderFeedSourceWindow,
+    TradeDecision,
+    coerce_json_payload,
+    upsert_execution_tca_metric,
+    TigerBeetleLedgerJournal,
+    reconcile_tigerbeetle_transfers,
+    ORDER_FEED_SOURCE_REVISION,
+    HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+    FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA,
+    FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING,
+    EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
+    EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+    EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+    NormalizedOrderEvent,
+    NormalizationResult,
+    logger,
+    ExecutionLinkageResolution as _ExecutionLinkageResolution,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.resolve_execution_linkage_for_identity"
+from .order_feed_ingestor import OrderFeedIngestor
+from .normalize_order_feed_record import (
+    normalize_order_feed_record,
+    persist_order_event,
+    apply_order_event_to_execution,
+    merge_execution_raw_order_update,
+    latest_order_event_for_execution,
+    link_order_events_to_execution,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .classify_source_window_drop import (
+    dedupe as _dedupe,
+    mark_order_event_account_alias as _mark_order_event_account_alias,
+    order_event_account_label_alias as _order_event_account_label_alias,
+    order_event_client_identity as _order_event_client_identity,
+    order_event_linkage_blockers as _order_event_linkage_blockers,
+    raw_event_with_linkage_blockers as _raw_event_with_linkage_blockers,
+)
+from .normalize_order_feed_record import (
+    fill_delta_fields as _fill_delta_fields,
+    order_identity_matches_account_scope as _order_identity_matches_account_scope,
+)
+from .resolve_execution_linkage_for_identity import (
+    create_historical_source_window_for_event as _create_historical_source_window_for_event,
+    cross_dsn_linkage_counts_for_source_window as _cross_dsn_linkage_counts_for_source_window,
+    ensure_aware_utc as _ensure_aware_utc,
+    event_timestamp_for_source_window as _event_timestamp_for_source_window,
+    execution_backfill_event_type as _execution_backfill_event_type,
+    find_existing_source_window_for_event as _find_existing_source_window_for_event,
+    isoformat_datetime as _isoformat_datetime,
+    order_event_has_failed_unhandled_source_window as _order_event_has_failed_unhandled_source_window,
+    refresh_source_window_linkage_counts as _refresh_source_window_linkage_counts,
+    resolve_execution_linkage_for_identity as _resolve_execution_linkage_for_identity,
+    resolve_trade_decision_linkage_for_identity as _resolve_trade_decision_linkage_for_identity,
+    retry_failed_duplicate_order_event_application as _retry_failed_duplicate_order_event_application,
+    stable_execution_source_offset as _stable_execution_source_offset,
+)
+from .repair_order_feed_execution_links import (
+    repair_order_feed_execution_links,
+    repair_order_feed_execution_states,
+    repair_order_feed_fill_deltas,
+    backfill_order_feed_source_windows,
+    backfill_order_feed_events_from_executions,
+)
 
-__compat_module__ = __compat_import_module__(f"{__name__}.flatten_poll_records")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-logger = __compat_logging__.getLogger(__name__.removesuffix("_modules"))
-for __compat_loaded_module__ in globals().get("__compat_module_segments__", ()):
-    __compat_loaded_module__.__dict__["logger"] = logger
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "hashlib",
+    "json",
+    "logging",
+    "uuid",
+    "dataclass",
+    "replace",
+    "datetime",
+    "timedelta",
+    "timezone",
+    "Decimal",
+    "Any",
+    "Callable",
+    "Mapping",
+    "cast",
+    "exists",
+    "func",
+    "or_",
+    "select",
+    "IntegrityError",
+    "Session",
+    "ColumnElement",
+    "settings",
+    "Execution",
+    "ExecutionOrderEvent",
+    "OrderFeedConsumerCursor",
+    "OrderFeedSourceWindow",
+    "TradeDecision",
+    "coerce_json_payload",
+    "upsert_execution_tca_metric",
+    "TigerBeetleLedgerJournal",
+    "reconcile_tigerbeetle_transfers",
+    "logger",
+    "ORDER_FEED_SOURCE_REVISION",
+    "HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION",
+    "FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA",
+    "FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING",
+    "EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION",
+    "EXECUTION_RAW_ORDER_SOURCE_TOPIC",
+    "EXECUTION_RAW_ORDER_SOURCE_PARTITION",
+    "NormalizedOrderEvent",
+    "NormalizationResult",
+    "OrderFeedIngestor",
+    "normalize_order_feed_record",
+    "persist_order_event",
+    "apply_order_event_to_execution",
+    "merge_execution_raw_order_update",
+    "latest_order_event_for_execution",
+    "link_order_events_to_execution",
+    "_mark_order_event_account_alias",
+    "_order_event_account_label_alias",
+    "_order_event_client_identity",
+    "_order_event_linkage_blockers",
+    "_raw_event_with_linkage_blockers",
+    "repair_order_feed_execution_links",
+    "repair_order_feed_execution_states",
+    "repair_order_feed_fill_deltas",
+    "backfill_order_feed_source_windows",
+    "backfill_order_feed_events_from_executions",
+    "_ExecutionLinkageResolution",
+    "_create_historical_source_window_for_event",
+    "_cross_dsn_linkage_counts_for_source_window",
+    "_dedupe",
+    "_ensure_aware_utc",
+    "_event_timestamp_for_source_window",
+    "_execution_backfill_event_type",
+    "_fill_delta_fields",
+    "_find_existing_source_window_for_event",
+    "_isoformat_datetime",
+    "_order_identity_matches_account_scope",
+    "_order_event_has_failed_unhandled_source_window",
+    "_refresh_source_window_linkage_counts",
+    "_resolve_execution_linkage_for_identity",
+    "_resolve_trade_decision_linkage_for_identity",
+    "_retry_failed_duplicate_order_event_application",
+    "_stable_execution_source_offset",
 ]
-del __compat_module__

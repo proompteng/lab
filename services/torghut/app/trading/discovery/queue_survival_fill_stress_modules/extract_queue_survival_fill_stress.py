@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only queue-survival fill stress for replay candidate ranking.
 
 This module actualizes recent queue-position, fill-probability, and execution-delay
@@ -25,27 +25,97 @@ from .shared_context import (
     QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL,
     QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION,
     QueueSurvivalFillStressSummary,
-    _ADD_TOKENS,
-    _ASK_SIZE_FIELDS,
-    _BID_SIZE_FIELDS,
-    _CANCEL_TOKENS,
-    _EVENT_FIELDS,
-    _FILL_FIELDS,
-    _FILL_TOKENS,
-    _FillBeforeMoveStats,
-    _ORDER_BOOK_IMBALANCE_FIELDS,
-    _PRICE_FIELDS,
-    _QUEUE_POSITION_FIELDS,
-    _QUEUE_RATIO_FIELDS,
-    _QUEUE_REACTIVE_EVENT_KINDS,
-    _REJECT_TOKENS,
-    _SIDE_FIELDS,
-    _SPREAD_FIELDS,
-    _STATUS_FIELDS,
-    _VOLUME_FIELDS,
+    ADD_TOKENS as _ADD_TOKENS,
+    ASK_SIZE_FIELDS as _ASK_SIZE_FIELDS,
+    BID_SIZE_FIELDS as _BID_SIZE_FIELDS,
+    CANCEL_TOKENS as _CANCEL_TOKENS,
+    EVENT_FIELDS as _EVENT_FIELDS,
+    FILL_FIELDS as _FILL_FIELDS,
+    FILL_TOKENS as _FILL_TOKENS,
+    FillBeforeMoveStats as _FillBeforeMoveStats,
+    ORDER_BOOK_IMBALANCE_FIELDS as _ORDER_BOOK_IMBALANCE_FIELDS,
+    PRICE_FIELDS as _PRICE_FIELDS,
+    QUEUE_POSITION_FIELDS as _QUEUE_POSITION_FIELDS,
+    QUEUE_RATIO_FIELDS as _QUEUE_RATIO_FIELDS,
+    QUEUE_REACTIVE_EVENT_KINDS as _QUEUE_REACTIVE_EVENT_KINDS,
+    REJECT_TOKENS as _REJECT_TOKENS,
+    SIDE_FIELDS as _SIDE_FIELDS,
+    SPREAD_FIELDS as _SPREAD_FIELDS,
+    STATUS_FIELDS as _STATUS_FIELDS,
+    VOLUME_FIELDS as _VOLUME_FIELDS,
     build_queue_survival_fill_stress_schema_hash,
     queue_survival_fill_stress_contract,
 )
+
+
+def _event_label(payload: Mapping[str, Any]) -> str:
+    from .group_normalized_downside_reward_penalty_b import event_label as impl
+
+    return impl(payload)
+
+
+def _first_payload_value(payload: Mapping[str, Any], fields: Sequence[str]) -> Any:
+    from .group_normalized_downside_reward_penalty_b import first_payload_value as impl
+
+    return impl(payload, fields)
+
+
+def _float_or_none(value: Any) -> float | None:
+    from .group_normalized_downside_reward_penalty_b import float_or_none as impl
+
+    return impl(value)
+
+
+def _group_normalized_downside_reward_penalty_bps(*args: Any, **kwargs: Any) -> float:
+    from .group_normalized_downside_reward_penalty_b import (
+        group_normalized_downside_reward_penalty_bps as impl,
+    )
+
+    return impl(*args, **kwargs)
+
+
+def _label_has_token(label: str, tokens: set[str] | frozenset[str]) -> bool:
+    from .group_normalized_downside_reward_penalty_b import label_has_token as impl
+
+    return impl(label, tokens)
+
+
+def _log1p(value: float) -> float:
+    from .group_normalized_downside_reward_penalty_b import log1p as impl
+
+    return impl(value)
+
+
+def _median(values: Sequence[float]) -> float:
+    from .group_normalized_downside_reward_penalty_b import median as impl
+
+    return impl(values)
+
+
+def _nonnegative_float(value: Any) -> float:
+    from .group_normalized_downside_reward_penalty_b import nonnegative_float as impl
+
+    return impl(value)
+
+
+def _positive_float(value: Any) -> float | None:
+    from .group_normalized_downside_reward_penalty_b import positive_float as impl
+
+    return impl(value)
+
+
+def _quantile(values: Sequence[float], q: float) -> float:
+    from .group_normalized_downside_reward_penalty_b import quantile as impl
+
+    return impl(values, q)
+
+
+def _queue_reactive_event_kind(label: str) -> str:
+    from .group_normalized_downside_reward_penalty_b import (
+        queue_reactive_event_kind as impl,
+    )
+
+    return impl(label)
 
 
 def extract_queue_survival_fill_stress(
@@ -714,4 +784,23 @@ def _maker_fill_return_tradeoff_penalty_bps(
     return min(40.0, max(0.0, raw_penalty * contrarian_relief))
 
 
+# Public aliases used by split-module consumers.
+adverse_selection_after_touch_bps = _adverse_selection_after_touch_bps
+contrarian_reversal_support_score = _contrarian_reversal_support_score
+estimated_fill_probability = _estimated_fill_probability
+executable_side_depth = _executable_side_depth
+fill_before_opportunity_move_stats = _fill_before_opportunity_move_stats
+maker_fill_return_tradeoff_penalty_bps = _maker_fill_return_tradeoff_penalty_bps
+nonfill_opportunity_cost_bps = _nonfill_opportunity_cost_bps
+order_book_imbalance = _order_book_imbalance
+order_size_distribution_wasserstein_proxy = _order_size_distribution_wasserstein_proxy
+queue_ahead_ratio = _queue_ahead_ratio
+queue_reactive_event_mix_l1 = _queue_reactive_event_mix_l1
+randomized_priority_fill_gap_proxy_bps = _randomized_priority_fill_gap_proxy_bps
+state_dependent_fill_before_move_probability = (
+    _state_dependent_fill_before_move_probability
+)
+state_dependent_fill_risk_penalty_bps = _state_dependent_fill_risk_penalty_bps
+state_dependent_order_flow_gap_score = _state_dependent_order_flow_gap_score
+time_priority_edge_concentration_score = _time_priority_edge_concentration_score
 __all__ = [name for name in globals() if not name.startswith("__")]

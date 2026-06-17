@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
@@ -586,7 +587,9 @@ def _session_factory_from_env(
 ) -> tuple[sessionmaker[Session], Engine | None, str]:
     resolved_env = dsn_env.strip() or "DB_DSN"
     if resolved_env == "DB_DSN":
-        return SessionLocal, None, resolved_env
+        facade = sys.modules.get("scripts.flatten_paper_account_positions")
+        session_local = getattr(facade, "SessionLocal", SessionLocal)
+        return session_local, None, resolved_env
     dsn = os.getenv(resolved_env)
     if not dsn:
         raise RuntimeError(

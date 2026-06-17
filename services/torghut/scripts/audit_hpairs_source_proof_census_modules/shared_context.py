@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python
 """Read-only H-PAIRS/TORGHUT_SIM source-proof census/readback CLI.
 
@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import create_engine, or_, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -163,6 +163,13 @@ _ECONOMICS_BLOCKERS = frozenset(
 )
 
 
+def _facade_attr(name: str, fallback: object) -> object:
+    facade = sys.modules.get("scripts.audit_hpairs_source_proof_census")
+    if facade is None:
+        return fallback
+    return getattr(facade, name, fallback)
+
+
 @dataclass(frozen=True)
 class CensusIdentity:
     hypothesis_id: str
@@ -228,6 +235,22 @@ def build_source_proof_census(
     source_kind: str = "fixture_json",
 ) -> dict[str, object]:
     """Build a deterministic source-proof census from already-read rows."""
+
+    from .blocker_ladder import (
+        _blocker_ladder,
+        _classify_verdict,
+        _next_action,
+        _next_ladder_blocker,
+    )
+    from .parse_timestamp import _isoformat
+    from .source_event_row_matches_identity import _daily_census
+    from .totals import (
+        _candidate_config_match,
+        _census_blockers,
+        _missing_requirement_categories,
+        _missing_source_ref_categories,
+        _totals,
+    )
 
     scoped_rows = _authority_scope_rows(rows, identity)
     ledger_report = build_runtime_authority_report(
@@ -316,6 +339,9 @@ def census_json(report: Mapping[str, object]) -> str:
 
 
 def load_fixture_rows(path: Path) -> CensusSourceRows:
+    from .blocker_ladder import _row_list
+    from .parse_timestamp import _mapping
+
     payload = json.loads(path.read_text())
     data = _mapping(payload)
     return CensusSourceRows(
@@ -341,10 +367,13 @@ def load_dsn_rows(
 ) -> CensusSourceRows:
     """Read only the bounded H-PAIRS source rows needed for the census."""
 
-    engine = create_engine(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
-    session_factory = sessionmaker(bind=engine)
+    create_engine_fn = cast(Any, _facade_attr("create_engine", create_engine))
+    sessionmaker_fn = cast(Any, _facade_attr("sessionmaker", sessionmaker))
+    load_rows = cast(Any, _facade_attr("_load_session_rows", _load_session_rows))
+    engine = create_engine_fn(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
+    session_factory = sessionmaker_fn(bind=engine)
     with session_factory() as session:
-        return _load_session_rows(
+        return load_rows(
             session,
             identity=identity,
             started_at=started_at,
@@ -370,6 +399,16 @@ def _load_session_rows(
     started_at: datetime | None,
     ended_at: datetime | None,
 ) -> CensusSourceRows:
+    from .blocker_ladder import (
+        _decision_projection_row,
+        _execution_row,
+        _order_event_row,
+        _source_window_row,
+        _tca_row,
+    )
+    from .parse_timestamp import _text
+    from .source_event_row_matches_identity import _row_text_values
+
     source_account_label = _source_account_label(identity)
     account_labels = sorted({identity.account_label, source_account_label})
     decision_stmt = (
@@ -511,7 +550,11 @@ def _load_session_rows(
         _source_window_row(row) for row in session.scalars(source_window_stmt).all()
     ]
 
-    ledger_rows = load_runtime_authority_rows(
+    load_authority_rows = cast(
+        Any,
+        _facade_attr("load_runtime_authority_rows", load_runtime_authority_rows),
+    )
+    ledger_rows = load_authority_rows(
         session,
         hypothesis_id=identity.hypothesis_id,
         candidate_id=identity.candidate_id,
@@ -575,6 +618,18 @@ def _authority_scope_rows(
     identity: CensusIdentity,
 ) -> CensusSourceRows:
     """Return only rows allowed to contribute proof for the requested identity."""
+
+    from .parse_timestamp import _text
+    from .source_event_row_matches_identity import (
+        _ledger_row_matches_identity,
+        _optional_row_ref_matches,
+        _payload_identifier_values,
+        _row_account_label,
+        _row_ids,
+        _row_text_values,
+        _source_event_row_matches_identity,
+        _source_window_row_matches_identity,
+    )
 
     source_account_label = _source_account_label(identity)
     target_account_label = identity.account_label

@@ -1,8 +1,9 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """TigerBeetle reconciliation for Torghut ledger references."""
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -74,45 +75,93 @@ from .shared_context import (
     REF_COUNT_FIELD_NAMES,
     SAMPLE_LIMIT,
     SCHEMA_VERSION,
-    _account_payload_matches,
-    _append_sample,
-    _archived_runtime_ledger_amount_micros,
-    _archived_source_amount_micros,
-    _as_aware_utc,
-    _attr,
-    _compact_reconciliation_ref_counts,
-    _cost_amount_micros,
-    _execution_amount_micros,
-    _expected_source_amount_micros,
-    _legacy_unversioned_source_ref,
-    _order_event_ref_exists,
-    _payload_int,
-    _payload_mapping,
-    _payload_string_list,
-    _payload_value,
-    _ref_matches_expected_event,
-    _ref_sample,
-    _runtime_ledger_amount_micros,
-    _runtime_ledger_payload_account_ids,
-    _runtime_ledger_ref_is_signed,
-    _source_materialization_payload,
-    _source_ref_exists,
-    _stable_ref_archives_event_transfer,
-    _stable_ref_matches,
-    _stable_ref_payload,
-    _transfer_lookup_key,
-    _u128_text,
-    _usd_to_micros,
-    _uuid_or_none,
 )
+from . import shared_context as _shared_context_private_52
+
 from .runtime_ledger_ref_coverage import (
-    _latest_run_compact_status_payload,
-    _latest_run_payload,
-    _reconciliation_transfer_refs,
-    _runtime_ledger_ref_coverage,
-    _runtime_ledger_ref_matches_expected_bucket,
     tigerbeetle_ref_counts,
 )
+from . import runtime_ledger_ref_coverage as _runtime_ledger_ref_coverage_private_109
+
+_account_payload_matches = getattr(
+    _shared_context_private_52, "_account_payload_matches"
+)
+_append_sample = getattr(_shared_context_private_52, "_append_sample")
+_archived_runtime_ledger_amount_micros = getattr(
+    _shared_context_private_52, "_archived_runtime_ledger_amount_micros"
+)
+_archived_source_amount_micros = getattr(
+    _shared_context_private_52, "_archived_source_amount_micros"
+)
+_as_aware_utc = getattr(_shared_context_private_52, "_as_aware_utc")
+_attr = getattr(_shared_context_private_52, "_attr")
+_compact_reconciliation_ref_counts = getattr(
+    _shared_context_private_52, "_compact_reconciliation_ref_counts"
+)
+_cost_amount_micros = getattr(_shared_context_private_52, "_cost_amount_micros")
+_execution_amount_micros = getattr(
+    _shared_context_private_52, "_execution_amount_micros"
+)
+_expected_source_amount_micros = getattr(
+    _shared_context_private_52, "_expected_source_amount_micros"
+)
+_legacy_unversioned_source_ref = getattr(
+    _shared_context_private_52, "_legacy_unversioned_source_ref"
+)
+_order_event_ref_exists = getattr(_shared_context_private_52, "_order_event_ref_exists")
+_payload_int = getattr(_shared_context_private_52, "_payload_int")
+_payload_mapping = getattr(_shared_context_private_52, "_payload_mapping")
+_payload_string_list = getattr(_shared_context_private_52, "_payload_string_list")
+_payload_value = getattr(_shared_context_private_52, "_payload_value")
+_ref_matches_expected_event = getattr(
+    _shared_context_private_52, "_ref_matches_expected_event"
+)
+_ref_sample = getattr(_shared_context_private_52, "_ref_sample")
+_runtime_ledger_amount_micros = getattr(
+    _shared_context_private_52, "_runtime_ledger_amount_micros"
+)
+_runtime_ledger_payload_account_ids = getattr(
+    _shared_context_private_52, "_runtime_ledger_payload_account_ids"
+)
+_runtime_ledger_ref_is_signed = getattr(
+    _shared_context_private_52, "_runtime_ledger_ref_is_signed"
+)
+_source_materialization_payload = getattr(
+    _shared_context_private_52, "_source_materialization_payload"
+)
+_source_ref_exists = getattr(_shared_context_private_52, "_source_ref_exists")
+_stable_ref_archives_event_transfer = getattr(
+    _shared_context_private_52, "_stable_ref_archives_event_transfer"
+)
+_stable_ref_matches = getattr(_shared_context_private_52, "_stable_ref_matches")
+_stable_ref_payload = getattr(_shared_context_private_52, "_stable_ref_payload")
+_transfer_lookup_key = getattr(_shared_context_private_52, "_transfer_lookup_key")
+_u128_text = getattr(_shared_context_private_52, "_u128_text")
+_usd_to_micros = getattr(_shared_context_private_52, "_usd_to_micros")
+_uuid_or_none = getattr(_shared_context_private_52, "_uuid_or_none")
+_latest_run_compact_status_payload = getattr(
+    _runtime_ledger_ref_coverage_private_109, "_latest_run_compact_status_payload"
+)
+_latest_run_payload = getattr(
+    _runtime_ledger_ref_coverage_private_109, "_latest_run_payload"
+)
+_reconciliation_transfer_refs = getattr(
+    _runtime_ledger_ref_coverage_private_109, "_reconciliation_transfer_refs"
+)
+_runtime_ledger_ref_coverage = getattr(
+    _runtime_ledger_ref_coverage_private_109, "_runtime_ledger_ref_coverage"
+)
+_runtime_ledger_ref_matches_expected_bucket = getattr(
+    _runtime_ledger_ref_coverage_private_109,
+    "_runtime_ledger_ref_matches_expected_bucket",
+)
+
+
+def _tigerbeetle_reconcile_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("app.trading.tigerbeetle_reconcile")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 def latest_tigerbeetle_reconciliation_status_payload(
@@ -217,7 +266,11 @@ def reconcile_tigerbeetle_transfers(
     tb_client: TigerBeetleClientProtocol | None = None
     try:
         if refs:
-            tb_client = client or create_tigerbeetle_client(settings_obj)
+            client_factory = _tigerbeetle_reconcile_root_export(
+                "create_tigerbeetle_client",
+                create_tigerbeetle_client,
+            )
+            tb_client = client or client_factory(settings_obj)
             looked_up = tb_client.lookup_transfers(
                 [int(ref.transfer_id) for ref in refs]
             )

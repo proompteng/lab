@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python
 """Read-only H-PAIRS/TORGHUT_SIM source-proof census/readback CLI.
 
@@ -110,6 +110,10 @@ from .source_event_row_matches_identity import (
     _daily_census,
     _daily_payload,
     _effective_linked_order_event_fill_count,
+    _event_quantity_present,
+    _event_source_offset_present,
+    _fill_event,
+    _filled_execution,
     _ledger_row_matches_identity,
     _linked_execution_id,
     _mapping_aliases_target,
@@ -129,10 +133,41 @@ from .source_event_row_matches_identity import (
     _source_event_row_matches_identity,
     _source_window_has_canonical_ref_mismatch,
     _source_window_row_matches_identity,
+    _sum_daily_int,
     _text_values,
     _unique_row_value_map,
     _value_mentions_text,
 )
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    from .parse_timestamp import _mapping as owned
+
+    return owned(value)
+
+
+def _sequence(value: object) -> Sequence[object]:
+    from .parse_timestamp import _sequence as owned
+
+    return owned(value)
+
+
+def _text(value: object, *, default: str | None = None) -> str | None:
+    from .parse_timestamp import _text as owned
+
+    return owned(value, default=default)
+
+
+def _int(value: object) -> int:
+    from .parse_timestamp import _int as owned
+
+    return owned(value)
+
+
+def _decimal(value: object) -> Decimal:
+    from .parse_timestamp import _decimal as owned
+
+    return owned(value)
 
 
 def _totals(

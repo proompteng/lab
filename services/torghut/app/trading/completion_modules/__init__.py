@@ -1,57 +1,112 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.runtime_matrix_path")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.runtime_ledger_bucket_existing_blockers"
+from .runtime_matrix_path import (
+    os,
+    datetime,
+    timedelta,
+    timezone,
+    Decimal,
+    lru_cache,
+    Path,
+    Any,
+    Mapping,
+    Sequence,
+    cast,
+    ZoneInfo,
+    yaml,
+    select,
+    Session,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
+    StrategyRuntimeLedgerBucket,
+    VNextCompletionGateResult,
+    VNextEmpiricalJobRun,
+    EMPIRICAL_JOB_TYPES,
+    build_empirical_jobs_status,
+    HypothesisManifest,
+    load_hypothesis_registry,
+    cost_basis_counts_have_non_promotion_grade_costs,
+    is_non_promotion_grade_runtime_cost_basis,
+    POST_COST_PNL_BASIS,
+    build_runtime_ledger_profit_distance_readback,
+    runtime_ledger_promotion_source_authority_blockers,
+    DOC29_COMPLETION_MATRIX_RUNTIME_PATH,
+    DOC29_COMPLETION_MATRIX_DOC_PATH,
+    DOC29_COMPLETION_ENDPOINT,
+    TRACE_STATUS_SATISFIED,
+    TRACE_STATUS_BLOCKED,
+    TRACE_STATUS_STALE,
+    TRACE_STATUS_REGRESSED,
+    TRACE_STATUSES,
+    DOC29_SIMULATION_SMOKE_GATE,
+    DOC29_SIMULATION_FULL_DAY_GATE,
+    DOC29_EMPIRICAL_MANIFEST_GATE,
+    DOC29_EMPIRICAL_JOBS_GATE,
+    DOC29_PAPER_GATE,
+    DOC29_LIVE_CANARY_GATE,
+    DOC29_LIVE_SCALE_GATE,
+    US_EQUITIES_REGULAR_TIMEZONE,
+    validate_doc29_completion_matrix,
+    load_doc29_completion_matrix,
+    runtime_and_doc_completion_matrices_match,
+    build_completion_trace,
+    upsert_completion_gate_result,
+    persist_completion_trace,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .runtime_ledger_bucket_existing_blockers import dataclass
+from .effective_row_status import build_doc29_completion_status
 
-__compat_module__ = __compat_import_module__(f"{__name__}.effective_row_status")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "os",
+    "datetime",
+    "timedelta",
+    "timezone",
+    "Decimal",
+    "lru_cache",
+    "Path",
+    "Any",
+    "Mapping",
+    "Sequence",
+    "cast",
+    "ZoneInfo",
+    "yaml",
+    "select",
+    "Session",
+    "StrategyHypothesisMetricWindow",
+    "StrategyPromotionDecision",
+    "StrategyRuntimeLedgerBucket",
+    "VNextCompletionGateResult",
+    "VNextEmpiricalJobRun",
+    "EMPIRICAL_JOB_TYPES",
+    "build_empirical_jobs_status",
+    "HypothesisManifest",
+    "load_hypothesis_registry",
+    "cost_basis_counts_have_non_promotion_grade_costs",
+    "is_non_promotion_grade_runtime_cost_basis",
+    "POST_COST_PNL_BASIS",
+    "build_runtime_ledger_profit_distance_readback",
+    "runtime_ledger_promotion_source_authority_blockers",
+    "DOC29_COMPLETION_MATRIX_RUNTIME_PATH",
+    "DOC29_COMPLETION_MATRIX_DOC_PATH",
+    "DOC29_COMPLETION_ENDPOINT",
+    "TRACE_STATUS_SATISFIED",
+    "TRACE_STATUS_BLOCKED",
+    "TRACE_STATUS_STALE",
+    "TRACE_STATUS_REGRESSED",
+    "TRACE_STATUSES",
+    "DOC29_SIMULATION_SMOKE_GATE",
+    "DOC29_SIMULATION_FULL_DAY_GATE",
+    "DOC29_EMPIRICAL_MANIFEST_GATE",
+    "DOC29_EMPIRICAL_JOBS_GATE",
+    "DOC29_PAPER_GATE",
+    "DOC29_LIVE_CANARY_GATE",
+    "DOC29_LIVE_SCALE_GATE",
+    "US_EQUITIES_REGULAR_TIMEZONE",
+    "validate_doc29_completion_matrix",
+    "load_doc29_completion_matrix",
+    "runtime_and_doc_completion_matrices_match",
+    "build_completion_trace",
+    "upsert_completion_gate_result",
+    "persist_completion_trace",
+    "dataclass",
+    "build_doc29_completion_status",
 ]
-del __compat_module__

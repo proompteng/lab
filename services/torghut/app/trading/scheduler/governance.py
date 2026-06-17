@@ -1,14 +1,80 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
 from __future__ import annotations
+from app.trading.scheduler.governance_modules import (
+    json,
+    logging,
+    os,
+    tempfile,
+    Mapping,
+    Sequence,
+    datetime,
+    timedelta,
+    timezone,
+    Decimal,
+    Path,
+    Any,
+    Literal,
+    Optional,
+    cast,
+    settings,
+    DriftThresholds,
+    DriftTriggerPolicy,
+    decide_drift_action,
+    detect_drift,
+    evaluate_live_promotion_evidence,
+    evaluate_evidence_continuity,
+    run_autonomous_lane,
+    upsert_autonomy_no_signal_run,
+    build_phase_manifest_payload_with_runtime_and_rollback,
+    coerce_path_strings,
+    FeatureQualityThresholds,
+    evaluate_feature_batch_quality,
+    SignalBatch,
+    SignalEnvelope,
+    trading_now,
+    TradingPipeline,
+    TradingState,
+    logger,
+    TradingSchedulerGovernanceMixin,
+)
+from app.trading.scheduler.governance_modules.shared_context import (
+    resolve_autonomy_artifact_root as _resolve_autonomy_artifact_root,
+)
 
-from importlib import import_module as _import_module
-import sys as _sys
-
-_module_name = __name__
-_parent_name, _, _module_attr = _module_name.rpartition(".")
-_impl = _import_module("app.trading.scheduler.governance_modules")
-globals().update(_impl.__dict__)
-_sys.modules[_module_name] = _impl
-_parent = _sys.modules.get(_parent_name)
-if _parent is not None:
-    setattr(_parent, _module_attr, _impl)
+__all__ = [
+    "json",
+    "logging",
+    "os",
+    "tempfile",
+    "Mapping",
+    "Sequence",
+    "datetime",
+    "timedelta",
+    "timezone",
+    "Decimal",
+    "Path",
+    "Any",
+    "Literal",
+    "Optional",
+    "cast",
+    "settings",
+    "DriftThresholds",
+    "DriftTriggerPolicy",
+    "decide_drift_action",
+    "detect_drift",
+    "evaluate_live_promotion_evidence",
+    "evaluate_evidence_continuity",
+    "run_autonomous_lane",
+    "upsert_autonomy_no_signal_run",
+    "build_phase_manifest_payload_with_runtime_and_rollback",
+    "coerce_path_strings",
+    "FeatureQualityThresholds",
+    "evaluate_feature_batch_quality",
+    "SignalBatch",
+    "SignalEnvelope",
+    "trading_now",
+    "TradingPipeline",
+    "TradingState",
+    "logger",
+    "TradingSchedulerGovernanceMixin",
+    "_resolve_autonomy_artifact_root",
+]

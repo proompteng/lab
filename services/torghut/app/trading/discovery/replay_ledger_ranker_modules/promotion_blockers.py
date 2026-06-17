@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Rank exact replay ledger artifacts with runtime-ledger PnL semantics."""
 
 from __future__ import annotations
@@ -34,28 +34,70 @@ from .shared_context import (
     ReplayLedgerCandidateRanking,
     ReplayLedgerRankingFailure,
     ReplayLedgerRankingPolicy,
-    _CLOSING_AUCTION_CLEARING_PRICE_FIELDS,
-    _CLOSING_AUCTION_FIELDS,
-    _CLOSING_AUCTION_PROJECTION_FIELDS,
-    _CLOSING_WINDOW_FIELDS,
-    _EXECUTION_QUALITY_SOURCE_PAPERS,
-    _EXECUTION_SHORTFALL_FIELDS,
-    _FILL_STATUS_FIELDS,
-    _LIMIT_FILL_PROBABILITY_FIELDS,
-    _LIVE_PROMOTION_AUTHORITIES,
-    _OPPORTUNITY_COST_FIELDS,
-    _ORDER_TYPE_FIELDS,
-    _PRICE_IMPROVEMENT_FIELDS,
-    _QUEUE_POSITION_FIELDS,
-    _TERMINAL_INVENTORY_PATH_FIELDS,
-    _full_window_bucket,
-    _ledger_window,
-    _runtime_rows_with_defaults,
+    CLOSING_AUCTION_CLEARING_PRICE_FIELDS as _CLOSING_AUCTION_CLEARING_PRICE_FIELDS,
+    CLOSING_AUCTION_FIELDS as _CLOSING_AUCTION_FIELDS,
+    CLOSING_AUCTION_PROJECTION_FIELDS as _CLOSING_AUCTION_PROJECTION_FIELDS,
+    CLOSING_WINDOW_FIELDS as _CLOSING_WINDOW_FIELDS,
+    EXECUTION_QUALITY_SOURCE_PAPERS as _EXECUTION_QUALITY_SOURCE_PAPERS,
+    EXECUTION_SHORTFALL_FIELDS as _EXECUTION_SHORTFALL_FIELDS,
+    FILL_STATUS_FIELDS as _FILL_STATUS_FIELDS,
+    LIMIT_FILL_PROBABILITY_FIELDS as _LIMIT_FILL_PROBABILITY_FIELDS,
+    LIVE_PROMOTION_AUTHORITIES as _LIVE_PROMOTION_AUTHORITIES,
+    OPPORTUNITY_COST_FIELDS as _OPPORTUNITY_COST_FIELDS,
+    ORDER_TYPE_FIELDS as _ORDER_TYPE_FIELDS,
+    PRICE_IMPROVEMENT_FIELDS as _PRICE_IMPROVEMENT_FIELDS,
+    QUEUE_POSITION_FIELDS as _QUEUE_POSITION_FIELDS,
+    TERMINAL_INVENTORY_PATH_FIELDS as _TERMINAL_INVENTORY_PATH_FIELDS,
+    full_window_bucket as _full_window_bucket,
+    ledger_window as _ledger_window,
+    runtime_rows_with_defaults as _runtime_rows_with_defaults,
     build_replay_ledger_ranking_report,
     default_replay_ledger_ranking_policy,
     rank_replay_ledger_files,
     rank_replay_ledger_payload,
 )
+
+
+def _row_helpers() -> Any:
+    from . import row_has_fill_status
+
+    return row_has_fill_status
+
+
+def _safe_divide(numerator: Decimal, denominator: Decimal) -> Decimal:
+    return _row_helpers()._safe_divide(numerator, denominator)
+
+
+def _best_day_share(daily_net: Mapping[str, Decimal], total_net: Decimal) -> Decimal:
+    return _row_helpers()._best_day_share(daily_net, total_net)
+
+
+def _dedupe(values: Sequence[str]) -> list[str]:
+    return _row_helpers()._dedupe(values)
+
+
+def _text(value: object) -> str:
+    return _row_helpers()._text(value)
+
+
+def _event_type(row: Mapping[str, object]) -> str:
+    return _row_helpers()._event_type(row)
+
+
+def _positive_decimal(value: object) -> Decimal | None:
+    return _row_helpers()._positive_decimal(value)
+
+
+def _row_has_fill_status(row: Mapping[str, object]) -> bool:
+    return _row_helpers()._row_has_fill_status(row)
+
+
+def _max_single_fill_notional(rows: Sequence[Mapping[str, object]]) -> Decimal:
+    return _row_helpers()._max_single_fill_notional(rows)
+
+
+def _utc(value: datetime) -> datetime:
+    return _row_helpers()._utc(value)
 
 
 def _promotion_blockers(
@@ -742,5 +784,35 @@ def _count_texts(values: Iterable[str]) -> dict[str, int]:
         counts[value] = counts.get(value, 0) + 1
     return counts
 
+
+# Public aliases used by split-module consumers.
+candidate_id = _candidate_id
+capacity_lineage_summary = _capacity_lineage_summary
+daily_bucket_ranges = _daily_bucket_ranges
+dedupe_source_papers = _dedupe_source_papers
+execution_quality_summary = _execution_quality_summary
+lob_reality_gap_stress_summary = _lob_reality_gap_stress_summary
+lob_signal_rows = _lob_signal_rows
+mapping = _mapping
+microstructure_stress_summary = _microstructure_stress_summary
+parse_window_datetime = _parse_window_datetime
+payload_object = _payload_object
+promotion_blockers = _promotion_blockers
+stress_penalty_bps = _stress_penalty_bps
+utc = _utc
+average_decimal = _average_decimal
+candidate_identity_blockers = _candidate_identity_blockers
+cost_lineage_blockers = _cost_lineage_blockers
+count_texts = _count_texts
+decimal = _decimal
+evidence_present = _evidence_present
+first_decimal = _first_decimal
+first_evidence = _first_evidence
+first_text = _first_text
+normalized_order_type = _normalized_order_type
+order_type_for_row = _order_type_for_row
+row_event_ts = _row_event_ts
+row_ingest_ts = _row_ingest_ts
+string_list = _string_list
 
 __all__ = [name for name in globals() if not name.startswith("__")]

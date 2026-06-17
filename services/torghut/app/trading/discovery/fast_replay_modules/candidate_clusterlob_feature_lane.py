@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only vectorized scoring over manifest-verified replay tapes."""
 
 from __future__ import annotations
@@ -127,9 +127,9 @@ from .shared_context import (
 )
 from .fast_replay_preview_result import (
     FastReplayPreviewResult,
-    _SymbolTapeStats,
-    _build_clusterlob_feature_lane_by_symbol,
-    _build_symbol_stats,
+    SymbolTapeStats as _SymbolTapeStats,
+    build_clusterlob_feature_lane_by_symbol as _build_clusterlob_feature_lane_by_symbol,
+    build_symbol_stats as _build_symbol_stats,
     build_fast_replay_preview,
 )
 
@@ -139,6 +139,14 @@ def _candidate_clusterlob_feature_lane(
     requested_symbols: Sequence[str],
     feature_lane_by_symbol: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
+    from .extract_price import (
+        decimal_string_from_float as _decimal_string_from_float,
+        float_or_none as _float_or_none,
+        mapping as _mapping,
+        string_tuple as _string_tuple,
+        weighted_average as _weighted_average,
+    )
+
     matched_symbols = tuple(
         symbol for symbol in requested_symbols if symbol in feature_lane_by_symbol
     )
@@ -329,6 +337,11 @@ def _clusterlob_feature_lane_manifest(
 def _clusterlob_feature_lane_score(
     payload: Mapping[str, Any], *, direction: float
 ) -> float:
+    from .extract_price import (
+        float_or_none as _float_or_none,
+        mapping as _mapping,
+    )
+
     ranking_features = _mapping(payload.get("ranking_features"))
     directional_alignment_score = (
         _float_or_none(ranking_features.get("directional_alignment_score")) or 0.0
@@ -369,4 +382,12 @@ def _clusterlob_feature_lane_score(
     )
 
 
+# Public aliases used by split-module consumers.
+candidate_clusterlob_feature_lane = _candidate_clusterlob_feature_lane
+clusterlob_feature_lane_manifest = _clusterlob_feature_lane_manifest
+clusterlob_feature_lane_score = _clusterlob_feature_lane_score
+
+candidate_clusterlob_feature_lane_split_export = _candidate_clusterlob_feature_lane
+clusterlob_feature_lane_manifest_split_export = _clusterlob_feature_lane_manifest
+clusterlob_feature_lane_score_split_export = _clusterlob_feature_lane_score
 __all__ = [name for name in globals() if not name.startswith("__")]

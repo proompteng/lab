@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Evaluation report generation and governance gates for walk-forward runs."""
 
 from __future__ import annotations
@@ -31,17 +31,17 @@ from .evaluationreportconfig import (
     PromotionRecommendation,
     RobustnessFoldMetrics,
     RobustnessReport,
-    _PositionState,
-    _ResolvedImpactInputs,
-    _apply_fill,
-    _close_long,
-    _evaluate_gates,
-    _evaluate_metrics,
-    _evaluate_multiple_testing,
-    _evaluate_robustness,
-    _flatten_decisions,
-    _open_long,
-    _open_short,
+    PositionState as _PositionState,
+    ResolvedImpactInputs as _ResolvedImpactInputs,
+    apply_fill as _apply_fill,
+    close_long as _close_long,
+    evaluate_gates as _evaluate_gates,
+    evaluate_metrics as _evaluate_metrics,
+    evaluate_multiple_testing as _evaluate_multiple_testing,
+    evaluate_robustness as _evaluate_robustness,
+    flatten_decisions as _flatten_decisions,
+    open_long as _open_long,
+    open_short as _open_short,
     build_promotion_recommendation,
     generate_evaluation_report,
     write_evaluation_report,
@@ -523,5 +523,19 @@ __all__ = [
     "write_evaluation_report",
 ]
 
+
+# Public aliases used by split-module consumers.
+bps_from_cost = _bps_from_cost
+collect_impact_assumptions = _collect_impact_assumptions
+cost_model_payload = _cost_model_payload
+cover_short = _cover_short
+decimal = _decimal
+decimal_mean = _decimal_mean
+decimal_std = _decimal_std
+estimate_cost = _estimate_cost
+exposure_notional = _exposure_notional
+resolve_price = _resolve_price
+strategy_payload = _strategy_payload
+unrealized_pnl = _unrealized_pnl
 
 __all__ = [name for name in globals() if not name.startswith("__")]

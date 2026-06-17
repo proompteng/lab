@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
@@ -7,7 +7,6 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass, field
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Mapping, Optional, cast
 from urllib.parse import urlencode, urlsplit
@@ -38,29 +37,30 @@ from .shared_context import (
     LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN,
     SIMULATION_CURSOR_BASELINE,
     SignalBatch,
-    _ClickHouseSignalIngestorFields,
-    _coerce_count,
-    _simulation_fetch_window,
-    logger,
+    ClickHouseSignalIngestorFields as _ClickHouseSignalIngestorFields,
+    coerce_count as _coerce_count,
+    simulation_fetch_window as _simulation_fetch_window,
 )
 from .clickhouse_signal_ingestor_core_methods import (
-    _ClickHouseSignalIngestorCoreMethods,
+    ClickHouseSignalIngestorCoreMethods as _ClickHouseSignalIngestorCoreMethods,
+)
+from .clickhouse_signal_ingestor_market_support import (
+    ClickHouseRequest as _ClickHouseRequest,
+    LatestSignalCacheLookup as _LatestSignalCacheLookup,
+    column_names_from_rows as _column_names_from_rows,
+    dedupe_columns as _dedupe_columns,
+    latest_signal_timestamp_from_rows as _latest_signal_timestamp_from_rows,
+    normalized_signal_sources as _normalized_signal_sources,
+    parse_ts as _parse_ts,
+    qualified_table_name as _qualified_table_name,
+    quote_literal as _quote_literal,
+    safe_identifier as _safe_identifier,
+    select_columns as _select_columns,
+    signal_scope_key as _signal_scope_key,
+    split_table as _split_table,
 )
 
-
-@dataclass(frozen=True)
-class _LatestSignalCacheLookup:
-    hit: bool
-    value: Optional[datetime]
-
-
-@dataclass(frozen=True)
-class _ClickHouseRequest:
-    scheme: str
-    hostname: str
-    port: int | None
-    path: str
-    headers: dict[str, str]
+logger = logging.getLogger("app.trading.ingest")
 
 
 class _ClickHouseSignalIngestorMarketMethods:
@@ -325,6 +325,16 @@ class _ClickHouseSignalIngestorMarketMethods:
         )
 
     def parse_row(self, row: dict[str, Any]) -> Optional[SignalEnvelope]:
+        from .attach_simulation_context import (
+            attach_simulation_context_payload,
+        )
+        from .clickhouse_signal_ingestor_persistence_methods import (
+            coerce_timeframe,
+            merge_flat_row_fallbacks,
+            normalize_payload,
+            payload_from_flat_row,
+        )
+
         event_ts = (
             _parse_ts(row.get("event_ts"))
             or _parse_ts(row.get("ts"))
@@ -334,12 +344,12 @@ class _ClickHouseSignalIngestorMarketMethods:
         if event_ts is None or not isinstance(symbol, str):
             return None
         try:
-            payload = _normalize_payload(row.get("payload"))
+            payload = normalize_payload(row.get("payload"))
             if not payload:
-                payload = _payload_from_flat_row(row)
+                payload = payload_from_flat_row(row)
             else:
-                _merge_flat_row_fallbacks(payload, row)
-            payload = _attach_simulation_context(
+                merge_flat_row_fallbacks(payload, row)
+            payload = attach_simulation_context_payload(
                 payload=payload, row=row, event_ts=event_ts
             )
             return SignalEnvelope(
@@ -347,7 +357,7 @@ class _ClickHouseSignalIngestorMarketMethods:
                 ingest_ts=_parse_ts(row.get("ingest_ts")),
                 symbol=symbol,
                 payload=payload,
-                timeframe=_coerce_timeframe(row, payload),
+                timeframe=coerce_timeframe(row, payload),
                 seq=row.get("seq"),
                 source=row.get("source"),
             )
@@ -595,6 +605,12 @@ class _ClickHouseSignalIngestorMarketMethods:
         return signals
 
     def _dedupe_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
+        from .clickhouse_signal_ingestor_persistence_methods import (
+            prefer_preferred_signal,
+            signal_identity,
+            signal_sort_key,
+        )
+
         if len(signals) < 2:
             return signals
 
@@ -602,16 +618,16 @@ class _ClickHouseSignalIngestorMarketMethods:
             tuple[datetime, str, str | None, tuple[Any, ...], str], SignalEnvelope
         ] = {}
         for signal in signals:
-            key = _signal_identity(signal)
+            key = signal_identity(signal)
             current = deduped_by_key.get(key)
-            if current is None or _prefer_preferred_signal(
+            if current is None or prefer_preferred_signal(
                 candidate=signal, current=current
             ):
                 deduped_by_key[key] = signal
         if len(deduped_by_key) == len(signals):
             return signals
         deduped = list(deduped_by_key.values())
-        deduped.sort(key=_signal_sort_key)
+        deduped.sort(key=signal_sort_key)
         return deduped
 
     def _filter_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
@@ -627,9 +643,11 @@ class _ClickHouseSignalIngestorMarketMethods:
         ]
 
     def _sorted_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
+        from .clickhouse_signal_ingestor_persistence_methods import signal_sort_key
+
         if len(signals) < 2:
             return signals
-        return sorted(signals, key=_signal_sort_key)
+        return sorted(signals, key=signal_sort_key)
 
     def _query_clickhouse(self, query: str) -> list[dict[str, Any]]:
         params = {"query": query}
@@ -710,6 +728,8 @@ class _ClickHouseSignalIngestorMarketMethods:
         cursor_seq: Optional[int],
         cursor_symbol: Optional[str],
     ) -> list[SignalEnvelope]:
+        from .clickhouse_signal_ingestor_persistence_methods import coerce_seq
+
         filtered: list[SignalEnvelope] = []
         for signal in signals:
             if signal.event_ts < cursor_at:
@@ -717,7 +737,7 @@ class _ClickHouseSignalIngestorMarketMethods:
             if signal.event_ts > cursor_at:
                 filtered.append(signal)
                 continue
-            candidate_seq = _coerce_seq(signal.seq)
+            candidate_seq = coerce_seq(signal.seq)
             if cursor_seq is not None and candidate_seq is not None:
                 if cursor_symbol is not None:
                     if signal.symbol < cursor_symbol:
@@ -855,8 +875,12 @@ class _ClickHouseSignalIngestorMarketMethods:
     ) -> str:
         if timeframe_column == "timeframe":
             return ", ".join(_quote_literal(item) for item in timeframes)
+        from .clickhouse_signal_ingestor_persistence_methods import (
+            timeframes_to_iso_durations,
+        )
+
         return ", ".join(
-            _quote_literal(item) for item in _timeframes_to_iso_durations(timeframes)
+            _quote_literal(item) for item in timeframes_to_iso_durations(timeframes)
         )
 
     def _resolve_columns(self, force: bool = False) -> Optional[set[str]]:
@@ -923,8 +947,12 @@ class _ClickHouseSignalIngestorMarketMethods:
                 seconds=max(1, int(settings.trading_signal_stale_lag_alert_seconds))
             )
             if query_end is not None and query_end - cached_at <= max_age:
+                from .clickhouse_signal_ingestor_persistence_methods import (
+                    mark_non_authority_stale_fallback_signal,
+                )
+
                 fallback_signals = [
-                    _mark_non_authority_stale_fallback_signal(
+                    mark_non_authority_stale_fallback_signal(
                         signal,
                         reason=reason,
                         cached_at=cached_at,
@@ -962,18 +990,11 @@ class _ClickHouseSignalIngestorMarketMethods:
         return _dedupe_columns([time_column, *ENVELOPE_SIGNAL_COLUMNS])
 
 
-def _column_names_from_rows(rows: list[dict[str, Any]]) -> Optional[set[str]]:
-    columns = {str(row.get("name")) for row in rows if row.get("name")}
-    return columns or None
-
-
-def _latest_signal_timestamp_from_rows(
-    rows: list[dict[str, Any]],
-) -> Optional[datetime]:
-    if not rows:
-        return None
-    raw = rows[0].get("latest_signal_ts")
-    return _parse_ts(raw) if raw is not None else None
-
+# Public aliases used by split-module consumers.
+ClickHouseRequest = _ClickHouseRequest
+ClickHouseSignalIngestorMarketMethods = _ClickHouseSignalIngestorMarketMethods
+LatestSignalCacheLookup = _LatestSignalCacheLookup
+column_names_from_rows = _column_names_from_rows
+latest_signal_timestamp_from_rows = _latest_signal_timestamp_from_rows
 
 __all__ = [name for name in globals() if not name.startswith("__")]

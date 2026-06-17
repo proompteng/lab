@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Rank exact replay ledger artifacts with runtime-ledger PnL semantics."""
 
 from __future__ import annotations
@@ -72,6 +72,15 @@ _EXECUTION_QUALITY_SOURCE_PAPERS = (
         "mechanism": "queue_position_time_to_fill_survival_fill_probability",
     },
 )
+
+
+def _payload_object(value: object) -> object:
+    from .promotion_blockers import (
+        payload_object,
+    )
+
+    return payload_object(value)
+
 
 _ORDER_TYPE_FIELDS = (
     "order_type",
@@ -376,6 +385,26 @@ def rank_replay_ledger_payload(
     artifact_ref: str,
     policy: ReplayLedgerRankingPolicy,
 ) -> ReplayLedgerCandidateRanking:
+    from .promotion_blockers import (
+        candidate_id as _candidate_id,
+        capacity_lineage_summary as _capacity_lineage_summary,
+        daily_bucket_ranges as _daily_bucket_ranges,
+        execution_quality_summary as _execution_quality_summary,
+        lob_reality_gap_stress_summary as _lob_reality_gap_stress_summary,
+        mapping as _mapping,
+        microstructure_stress_summary as _microstructure_stress_summary,
+        promotion_blockers as _promotion_blockers,
+    )
+    from .row_has_fill_status import (
+        best_day_share as _best_day_share,
+        max_drawdown as _max_drawdown,
+        max_single_fill_notional as _max_single_fill_notional,
+        profit_factor as _profit_factor,
+        safe_divide as _safe_divide,
+        symbols as _symbols,
+        text as _text,
+    )
+
     start, end = _ledger_window(payload)
     raw_rows = payload.get("runtime_ledger_rows")
     if not isinstance(raw_rows, Sequence) or isinstance(raw_rows, (str, bytes)):
@@ -576,6 +605,10 @@ def rank_replay_ledger_files(
     *,
     policy: ReplayLedgerRankingPolicy,
 ) -> tuple[list[ReplayLedgerCandidateRanking], list[ReplayLedgerRankingFailure]]:
+    from .row_has_fill_status import (
+        ranking_sort_key as _ranking_sort_key,
+    )
+
     rankings: list[ReplayLedgerCandidateRanking] = []
     failures: list[ReplayLedgerRankingFailure] = []
     seen: set[Path] = set()
@@ -627,6 +660,11 @@ def build_replay_ledger_ranking_report(
 
 
 def _ledger_window(payload: Mapping[str, Any]) -> tuple[datetime, datetime]:
+    from .promotion_blockers import (
+        mapping as _mapping,
+        parse_window_datetime as _parse_window_datetime,
+    )
+
     full_window = _mapping(payload.get("full_window"))
     start = _parse_window_datetime(
         payload.get("window_start")
@@ -687,7 +725,12 @@ def _full_window_bucket(
     start: datetime,
     end: datetime,
 ) -> RuntimeLedgerBucket:
-    buckets = build_runtime_ledger_buckets(
+    import importlib
+
+    public_ranker = importlib.import_module(
+        "app.trading.discovery.replay_ledger_ranker"
+    )
+    buckets = public_ranker.build_runtime_ledger_buckets(
         rows,
         bucket_ranges=[(start, end)],
         require_order_lifecycle=True,
@@ -696,5 +739,24 @@ def _full_window_bucket(
         raise ValueError("runtime_ledger_bucket_missing")
     return buckets[0]
 
+
+# Public aliases used by split-module consumers.
+CLOSING_AUCTION_CLEARING_PRICE_FIELDS = _CLOSING_AUCTION_CLEARING_PRICE_FIELDS
+CLOSING_AUCTION_FIELDS = _CLOSING_AUCTION_FIELDS
+CLOSING_AUCTION_PROJECTION_FIELDS = _CLOSING_AUCTION_PROJECTION_FIELDS
+CLOSING_WINDOW_FIELDS = _CLOSING_WINDOW_FIELDS
+EXECUTION_QUALITY_SOURCE_PAPERS = _EXECUTION_QUALITY_SOURCE_PAPERS
+EXECUTION_SHORTFALL_FIELDS = _EXECUTION_SHORTFALL_FIELDS
+FILL_STATUS_FIELDS = _FILL_STATUS_FIELDS
+LIMIT_FILL_PROBABILITY_FIELDS = _LIMIT_FILL_PROBABILITY_FIELDS
+LIVE_PROMOTION_AUTHORITIES = _LIVE_PROMOTION_AUTHORITIES
+OPPORTUNITY_COST_FIELDS = _OPPORTUNITY_COST_FIELDS
+ORDER_TYPE_FIELDS = _ORDER_TYPE_FIELDS
+PRICE_IMPROVEMENT_FIELDS = _PRICE_IMPROVEMENT_FIELDS
+QUEUE_POSITION_FIELDS = _QUEUE_POSITION_FIELDS
+TERMINAL_INVENTORY_PATH_FIELDS = _TERMINAL_INVENTORY_PATH_FIELDS
+full_window_bucket = _full_window_bucket
+ledger_window = _ledger_window
+runtime_rows_with_defaults = _runtime_rows_with_defaults
 
 __all__ = [name for name in globals() if not name.startswith("__")]

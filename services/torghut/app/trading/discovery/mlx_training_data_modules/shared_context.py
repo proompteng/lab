@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Training-row and ranker helpers for the MLX autoresearch proposal model."""
 
 from __future__ import annotations
@@ -109,6 +109,16 @@ _PAPER_CONTRACT_FEATURE_NAMES = (
 def _stable_hash(payload: Mapping[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _mean(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _format_float(value: float) -> str:
+    return format(value, ".12g")
 
 
 class _TorchArrayBackend:
@@ -434,4 +444,35 @@ def _mechanism_overlay_ids(spec: CandidateSpec) -> set[str]:
     return overlay_ids
 
 
+# Public aliases used by split-module consumers.
+MECHANISM_OVERLAY_FEATURE_NAMES = _MECHANISM_OVERLAY_FEATURE_NAMES
+MECHANISM_OVERLAY_IDS = _MECHANISM_OVERLAY_IDS
+PAPER_CONTRACT_FEATURE_NAMES = _PAPER_CONTRACT_FEATURE_NAMES
+TorchArrayBackend = _TorchArrayBackend
+artifact_present = _artifact_present
+average_claim_confidence = _average_claim_confidence
+bool_feature = _bool_feature
+claim_type_count = _claim_type_count
+daily_target_shortfall = _daily_target_shortfall
+float_value = _float
+format_float = _format_float
+hard_veto_count = _hard_veto_count
+import_array_backend = _import_array_backend
+import_torch_array_backend = _import_torch_array_backend
+mapping = _mapping
+mapping_sequence = _mapping_sequence
+mean = _mean
+mechanism_overlay_ids = _mechanism_overlay_ids
+params = _params
+positive_or_default = _positive_or_default
+requirement_present = _requirement_present
+sequence_length = _sequence_length
+sequence_strings = _sequence_strings
+stable_hash = _stable_hash
+strategy_universe_size = _strategy_universe_size
+strings = _strings
+truthy_contract_key_count = _truthy_contract_key_count
+truthy_feature = _truthy_feature
+unique_string_count = _unique_string_count
+unique_strings = _unique_strings
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """DSPy compile/eval/promotion workflow helpers with Jangar-compatible contracts."""
 
 from __future__ import annotations
@@ -109,6 +109,17 @@ def _parse_iso_datetime(value: object) -> datetime | None:
     if parsed_dt.tzinfo is None:
         parsed_dt = parsed_dt.replace(tzinfo=timezone.utc)
     return parsed_dt.astimezone(timezone.utc)
+
+
+def _normalize_string_parameter(*, key: str, value: Any) -> str:
+    if value is None:
+        raise ValueError(f"parameter_{key}_must_be_non_null")
+    if isinstance(value, (dict, list, tuple, set)):
+        raise ValueError(f"parameter_{key}_must_be_string_coercible_scalar")
+    text = str(value).strip()
+    if not text:
+        raise ValueError(f"parameter_{key}_must_be_non_empty")
+    return text
 
 
 def resolve_default_dspy_universe_ref(
@@ -658,6 +669,35 @@ def _json_copy(payload: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(dict(payload), sort_keys=True, default=str))
 
 
+def _http_json_request(
+    url: str,
+    *,
+    method: str,
+    headers: Mapping[str, str],
+    body: bytes,
+    timeout_seconds: int,
+) -> tuple[int, str]:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise RuntimeError("invalid_http_scheme")
+    if not parsed.hostname:
+        raise RuntimeError("invalid_http_host")
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    connection_class = HTTPSConnection if parsed.scheme == "https" else HTTPConnection
+    connection = connection_class(
+        parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1)
+    )
+    try:
+        connection.request(method, path, body=body, headers=dict(headers))
+        response = connection.getresponse()
+        payload = response.read().decode("utf-8", errors="replace")
+        return int(response.status), payload
+    finally:
+        connection.close()
+
+
 def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
     candidate = _normalize_local_path(eval_report_ref)
     if candidate is None:
@@ -692,4 +732,10 @@ def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
     }
 
 
+sanitize_idempotency_key = _sanitize_idempotency_key
+
 __all__ = [name for name in globals() if not name.startswith("__")]
+
+# Public aliases used by split-module consumers.
+http_json_request = _http_json_request
+normalize_string_parameter = _normalize_string_parameter

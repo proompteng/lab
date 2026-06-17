@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Shared parameter contract for intraday_tsmom_v1 across runtimes."""
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from typing import Any, Literal, Mapping
 from .intraday_tsmom_threshold_profile import (
     IntradayTsmomEvaluation,
     IntradayTsmomThresholdProfile,
-    _DEFAULT_PROFILE,
-    _ONE_SECOND_PROFILE,
-    _decimal_param,
-    _normalize_timeframe,
-    _optional_decimal_param,
-    _price_within_entry_band,
-    _profile_for_timeframe,
+    DEFAULT_PROFILE as _DEFAULT_PROFILE,
+    ONE_SECOND_PROFILE as _ONE_SECOND_PROFILE,
+    decimal_param as _decimal_param,
+    normalize_timeframe as _normalize_timeframe,
+    optional_decimal_param as _optional_decimal_param,
+    price_within_entry_band as _price_within_entry_band,
+    profile_for_timeframe as _profile_for_timeframe,
     evaluate_intraday_tsmom_signal,
     resolve_intraday_tsmom_thresholds,
     validate_intraday_tsmom_params,
@@ -374,5 +374,21 @@ __all__ = [
     "validate_intraday_tsmom_params",
 ]
 
+
+# Public aliases used by split-module consumers.
+decayed_minimum = _decayed_minimum
+decimal = _decimal
+isolated_continuation_strength_confirmed = _isolated_continuation_strength_confirmed
+optional_max_threshold = _optional_max_threshold
+optional_min_threshold = _optional_min_threshold
+relax_floor_for_isolated_strength = _relax_floor_for_isolated_strength
+resolve_live_continuation_rank = _resolve_live_continuation_rank
+rsi_within_bearish_bounds = _rsi_within_bearish_bounds
+spread_bps = _spread_bps
+validate_optional_decimal_param = _validate_optional_decimal_param
+validate_optional_minute_param = _validate_optional_minute_param
+validate_optional_rsi_param = _validate_optional_rsi_param
+volatility_within_budget = _volatility_within_budget
+within_entry_window = _within_entry_window
 
 __all__ = [name for name in globals() if not name.startswith("__")]

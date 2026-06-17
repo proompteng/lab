@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """TigerBeetle reconciliation for Torghut ledger references."""
 
 from __future__ import annotations
@@ -645,5 +645,19 @@ def _runtime_ledger_payload_account_ids(ref: TigerBeetleTransferRef) -> list[str
             account_ids.append(account_id)
     return account_ids
 
+
+archived_runtime_ledger_amount_micros = _archived_runtime_ledger_amount_micros
+attr = _attr
+cost_amount_micros = _cost_amount_micros
+expected_source_amount_micros = _expected_source_amount_micros
+execution_amount_micros = _execution_amount_micros
+payload_int = _payload_int
+payload_string_list = _payload_string_list
+runtime_ledger_amount_micros = _runtime_ledger_amount_micros
+runtime_ledger_payload_account_ids = _runtime_ledger_payload_account_ids
+stable_ref_archives_event_transfer = _stable_ref_archives_event_transfer
+stable_ref_matches = _stable_ref_matches
+usd_to_micros = _usd_to_micros
+uuid_or_none = _uuid_or_none
 
 __all__ = [name for name in globals() if not name.startswith("__")]

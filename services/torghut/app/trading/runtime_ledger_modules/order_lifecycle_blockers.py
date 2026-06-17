@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Runtime execution ledger primitives for honest post-cost PnL proof."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 from ..runtime_cost_authority import is_non_promotion_grade_runtime_cost_basis
 
@@ -19,41 +19,91 @@ from .shared_context import (
     POST_COST_PNL_BASIS,
     RuntimeLedgerBucket,
     RuntimeLedgerFill,
-    _BPS_MULTIPLIER,
-    _BUY_SIDES,
-    _CANCELLED_ORDER_EVENTS,
-    _DECISION_EVENTS,
-    _DELTA_FILL_QUANTITY_BASES,
-    _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS,
-    _EXECUTION_RECONSTRUCTION_MARKERS,
-    _FILL_EVENTS,
-    _LIFECYCLE_EVENTS,
-    _LedgerAccumulator,
-    _NON_PROMOTION_SOURCE_MARKERS,
-    _NON_RUNTIME_PNL_TCA_BASIS_ALIASES,
-    _NormalizedFill,
-    _POST_COST_EXPECTANCY_SUPPRESSING_BLOCKERS,
-    _PROMOTION_GRADE_AUTHORITY_CLASSES,
-    _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS,
-    _PositionState,
-    _REJECTED_ORDER_EVENTS,
-    _SELL_SIDES,
-    _SOURCE_DECISION_COLLECTION_MARKERS,
-    _SOURCE_REF_BLOCKER_AUTHORITY_CLASS_MISSING,
-    _SOURCE_REF_BLOCKER_EXECUTION_MISSING,
-    _SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING,
-    _SOURCE_REF_BLOCKER_SOURCE_MATERIALIZATION_MISSING,
-    _SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING,
-    _SOURCE_REF_BLOCKER_SOURCE_WINDOW_MISSING,
-    _SOURCE_REF_BLOCKER_TRADE_DECISION_MISSING,
-    _SUBMITTED_ORDER_EVENTS,
-    _TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER,
-    _TIGERBEETLE_JOURNAL_SUCCESS_STATUSES,
-    _UNFILLED_ORDER_EVENTS,
-    _build_bucket,
-    _carry_in_rows_before_bucket,
+    BPS_MULTIPLIER as _BPS_MULTIPLIER,
+    BUY_SIDES as _BUY_SIDES,
+    CANCELLED_ORDER_EVENTS as _CANCELLED_ORDER_EVENTS,
+    DECISION_EVENTS as _DECISION_EVENTS,
+    DELTA_FILL_QUANTITY_BASES as _DELTA_FILL_QUANTITY_BASES,
+    DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS as _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS,
+    EXECUTION_RECONSTRUCTION_MARKERS as _EXECUTION_RECONSTRUCTION_MARKERS,
+    FILL_EVENTS as _FILL_EVENTS,
+    LIFECYCLE_EVENTS as _LIFECYCLE_EVENTS,
+    LedgerAccumulator as _LedgerAccumulator,
+    NON_PROMOTION_SOURCE_MARKERS as _NON_PROMOTION_SOURCE_MARKERS,
+    NON_RUNTIME_PNL_TCA_BASIS_ALIASES as _NON_RUNTIME_PNL_TCA_BASIS_ALIASES,
+    NormalizedFill as _NormalizedFill,
+    POST_COST_EXPECTANCY_SUPPRESSING_BLOCKERS as _POST_COST_EXPECTANCY_SUPPRESSING_BLOCKERS,
+    PROMOTION_GRADE_AUTHORITY_CLASSES as _PROMOTION_GRADE_AUTHORITY_CLASSES,
+    PROMOTION_GRADE_SOURCE_MATERIALIZATIONS as _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS,
+    PositionState as _PositionState,
+    REJECTED_ORDER_EVENTS as _REJECTED_ORDER_EVENTS,
+    SELL_SIDES as _SELL_SIDES,
+    SOURCE_DECISION_COLLECTION_MARKERS as _SOURCE_DECISION_COLLECTION_MARKERS,
+    SOURCE_REF_BLOCKER_AUTHORITY_CLASS_MISSING as _SOURCE_REF_BLOCKER_AUTHORITY_CLASS_MISSING,
+    SOURCE_REF_BLOCKER_EXECUTION_MISSING as _SOURCE_REF_BLOCKER_EXECUTION_MISSING,
+    SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING as _SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING,
+    SOURCE_REF_BLOCKER_SOURCE_MATERIALIZATION_MISSING as _SOURCE_REF_BLOCKER_SOURCE_MATERIALIZATION_MISSING,
+    SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING as _SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING,
+    SOURCE_REF_BLOCKER_SOURCE_WINDOW_MISSING as _SOURCE_REF_BLOCKER_SOURCE_WINDOW_MISSING,
+    SOURCE_REF_BLOCKER_TRADE_DECISION_MISSING as _SOURCE_REF_BLOCKER_TRADE_DECISION_MISSING,
+    SUBMITTED_ORDER_EVENTS as _SUBMITTED_ORDER_EVENTS,
+    TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER as _TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER,
+    TIGERBEETLE_JOURNAL_SUCCESS_STATUSES as _TIGERBEETLE_JOURNAL_SUCCESS_STATUSES,
+    UNFILLED_ORDER_EVENTS as _UNFILLED_ORDER_EVENTS,
+    build_bucket as _build_bucket,
+    carry_in_rows_before_bucket as _carry_in_rows_before_bucket,
     build_runtime_ledger_buckets,
 )
+
+
+def _lifecycle_helpers() -> Any:
+    from . import is_order_feed_lifecycle_only_row
+
+    return is_order_feed_lifecycle_only_row
+
+
+def _coerce_datetime(value: object | None) -> datetime | None:
+    return _lifecycle_helpers()._coerce_datetime(value)
+
+
+def _coerce_text(value: object | None) -> str | None:
+    return _lifecycle_helpers()._coerce_text(value)
+
+
+def _coerce_side(value: object | None) -> str | None:
+    return _lifecycle_helpers()._coerce_side(value)
+
+
+def _positive_decimal(value: object | None) -> Decimal | None:
+    return _lifecycle_helpers()._positive_decimal(value)
+
+
+def _non_negative_decimal(value: object | None) -> Decimal | None:
+    return _lifecycle_helpers()._non_negative_decimal(value)
+
+
+def _dedupe(items: Sequence[str]) -> list[str]:
+    return _lifecycle_helpers()._dedupe(items)
+
+
+def _same_direction(current_qty: Decimal, side_sign: Decimal) -> bool:
+    return _lifecycle_helpers()._same_direction(current_qty, side_sign)
+
+
+def _allocate(amount: Decimal, qty: Decimal, total_qty: Decimal) -> Decimal:
+    return _lifecycle_helpers()._allocate(amount, qty, total_qty)
+
+
+def _is_order_feed_lifecycle_only_row(*args: Any, **kwargs: Any) -> bool:
+    return _lifecycle_helpers()._is_order_feed_lifecycle_only_row(*args, **kwargs)
+
+
+def _has_tca_pnl_shortcut(*args: Any, **kwargs: Any) -> bool:
+    return _lifecycle_helpers()._has_tca_pnl_shortcut(*args, **kwargs)
+
+
+def _tigerbeetle_journal_blockers(*args: Any, **kwargs: Any) -> list[str]:
+    return _lifecycle_helpers()._tigerbeetle_journal_blockers(*args, **kwargs)
 
 
 def _order_lifecycle_blockers(
@@ -761,5 +811,9 @@ def _runtime_source_hard_mode_blockers(
             blockers.append("execution_reconstruction_not_runtime_ledger_proof")
     return _dedupe(blockers)
 
+
+# Public aliases used by split-module consumers.
+coerce_fill_quantity_basis = _coerce_fill_quantity_basis
+normalize_fill_row = _normalize_fill_row
 
 __all__ = [name for name in globals() if not name.startswith("__")]

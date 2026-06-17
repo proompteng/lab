@@ -1,91 +1,138 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.fast_replay_preview_result")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.candidate_clusterlob_feature_lane"
+from .shared_context import (
+    hashlib,
+    json,
+    Mapping,
+    Sequence,
+    dataclass,
+    field,
+    timezone,
+    Decimal,
+    Any,
+    cast,
+    np,
+    NDArray,
+    CandidateSpec,
+    extract_adaptive_signal_falsification_stress,
+    extract_bootstrap_robust_optimization_stress,
+    extract_adaptive_market_limit_allocation_stress,
+    extract_alpha_decay_predictability_stress,
+    extract_counterfactual_regime_replay_stress,
+    extract_cost_aware_forecast_filter_stress,
+    HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
+    extract_cluster_lob_features,
+    extract_hawkes_excitation_summary,
+    extract_execution_schedule_stress,
+    extract_feed_lag_liquidity_stress,
+    extract_hawkes_transient_impact_stress,
+    extract_intraday_jump_burst_stress,
+    extract_intraday_price_path_asymmetry_stress,
+    extract_institutional_mechanism_fidelity_stress,
+    extract_lead_lag_cross_asset_stress,
+    extract_metaorder_adverse_selection_stress,
+    extract_lob_reality_gap_stress,
+    extract_microstructure_regime_tokenization_stress,
+    HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
+    HPAIRS_PREFILTER_PROOF_SOURCE,
+    build_hpairs_microstructure_prefilter,
+    extract_nonlinear_impact_execution_stress,
+    extract_order_book_observability_stress,
+    extract_ofi_response_horizon_stress,
+    extract_option_gamma_flow_stress,
+    extract_order_transition_stress,
+    extract_order_flow_entropy_regime_stress,
+    extract_queue_survival_fill_stress,
+    extract_rough_flow_volatility_stress,
+    extract_signal_adaptive_execution_resilience_stress,
+    extract_stochastic_liquidity_resilience_stress,
+    ReplayTapeManifest,
+    SignalEnvelope,
+    FAST_REPLAY_PREVIEW_SCHEMA_VERSION,
+    FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION,
+    FAST_REPLAY_PROOF_SEMANTICS_LABEL,
+    FAST_REPLAY_TARGET_NET_PNL_PER_DAY,
+    FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
+    FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
+    FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP,
+    FAST_REPLAY_WHITEPAPER_MECHANISMS,
+    FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION,
+    FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION,
+    FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION,
+    FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SOURCES,
+    FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS,
+    FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS,
+    FastReplayPreviewRow,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.score_candidate_spec")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(f"{__name__}.preview_rank_key")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.frontier_selection_blockers_for_row"
+from .fast_replay_preview_result import (
+    FastReplayPreviewResult,
+    build_fast_replay_preview,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .extract_price import Callable
 
-__compat_module__ = __compat_import_module__(f"{__name__}.extract_price")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "hashlib",
+    "json",
+    "Mapping",
+    "Sequence",
+    "dataclass",
+    "field",
+    "timezone",
+    "Decimal",
+    "Any",
+    "cast",
+    "np",
+    "NDArray",
+    "CandidateSpec",
+    "extract_adaptive_signal_falsification_stress",
+    "extract_bootstrap_robust_optimization_stress",
+    "extract_adaptive_market_limit_allocation_stress",
+    "extract_alpha_decay_predictability_stress",
+    "extract_counterfactual_regime_replay_stress",
+    "extract_cost_aware_forecast_filter_stress",
+    "HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION",
+    "extract_cluster_lob_features",
+    "extract_hawkes_excitation_summary",
+    "extract_execution_schedule_stress",
+    "extract_feed_lag_liquidity_stress",
+    "extract_hawkes_transient_impact_stress",
+    "extract_intraday_jump_burst_stress",
+    "extract_intraday_price_path_asymmetry_stress",
+    "extract_institutional_mechanism_fidelity_stress",
+    "extract_lead_lag_cross_asset_stress",
+    "extract_metaorder_adverse_selection_stress",
+    "extract_lob_reality_gap_stress",
+    "extract_microstructure_regime_tokenization_stress",
+    "HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL",
+    "HPAIRS_PREFILTER_PROOF_SOURCE",
+    "build_hpairs_microstructure_prefilter",
+    "extract_nonlinear_impact_execution_stress",
+    "extract_order_book_observability_stress",
+    "extract_ofi_response_horizon_stress",
+    "extract_option_gamma_flow_stress",
+    "extract_order_transition_stress",
+    "extract_order_flow_entropy_regime_stress",
+    "extract_queue_survival_fill_stress",
+    "extract_rough_flow_volatility_stress",
+    "extract_signal_adaptive_execution_resilience_stress",
+    "extract_stochastic_liquidity_resilience_stress",
+    "ReplayTapeManifest",
+    "SignalEnvelope",
+    "FAST_REPLAY_PREVIEW_SCHEMA_VERSION",
+    "FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION",
+    "FAST_REPLAY_PROOF_SEMANTICS_LABEL",
+    "FAST_REPLAY_TARGET_NET_PNL_PER_DAY",
+    "FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT",
+    "FAST_REPLAY_DEFAULT_EXPLORATION_COUNT",
+    "FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP",
+    "FAST_REPLAY_WHITEPAPER_MECHANISMS",
+    "FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION",
+    "FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION",
+    "FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SCHEMA_VERSION",
+    "FAST_REPLAY_RUNTIME_LEDGER_LINEAGE_HANDOFF_SOURCES",
+    "FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS",
+    "FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS",
+    "FastReplayPreviewRow",
+    "FastReplayPreviewResult",
+    "build_fast_replay_preview",
+    "Callable",
 ]
-del __compat_module__

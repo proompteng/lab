@@ -13,6 +13,12 @@ from unittest.mock import patch
 
 import scripts.run_whitepaper_autoresearch_profit_target as runner
 from app.trading.discovery import fast_replay
+from app.trading.discovery.fast_replay_modules import (
+    extract_price as fast_replay_extract_price,
+)
+from app.trading.discovery.fast_replay_modules import (
+    frontier_selection_blockers_for_row as fast_replay_frontier,
+)
 from app.trading.discovery.replay_tape import (
     REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
     ReplayTapeManifest,
@@ -512,10 +518,14 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 }
             },
         )
-        self.assertEqual(fast_replay._candidate_symbols(no_universe_spec), ("NVDA",))
-        self.assertEqual(fast_replay._candidate_direction(no_universe_spec), 1.0)
         self.assertEqual(
-            fast_replay._extract_price(
+            fast_replay_frontier._candidate_symbols(no_universe_spec), ("NVDA",)
+        )
+        self.assertEqual(
+            fast_replay_frontier._candidate_direction(no_universe_spec), 1.0
+        )
+        self.assertEqual(
+            fast_replay_extract_price._extract_price(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -525,7 +535,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             101.0,
         )
         self.assertIsNone(
-            fast_replay._extract_price(
+            fast_replay_extract_price._extract_price(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -533,7 +543,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 )
             )
         )
-        bid_ask_spread = fast_replay._extract_spread_bps(
+        bid_ask_spread = fast_replay_extract_price._extract_spread_bps(
             SignalEnvelope(
                 event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                 symbol="NVDA",
@@ -542,7 +552,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
         )
         self.assertAlmostEqual(bid_ask_spread or 0.0, 99.50248756218905)
         self.assertEqual(
-            fast_replay._extract_spread_bps(
+            fast_replay_extract_price._extract_spread_bps(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -552,7 +562,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             5.0,
         )
         self.assertAlmostEqual(
-            fast_replay._extract_quote_depth_imbalance(
+            fast_replay_extract_price._extract_quote_depth_imbalance(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -566,7 +576,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             1.0 / 3.0,
         )
         self.assertAlmostEqual(
-            fast_replay._extract_ofi_pressure(
+            fast_replay_extract_price._extract_ofi_pressure(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -577,7 +587,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             0.46211715726000974,
         )
         self.assertGreater(
-            fast_replay._extract_microprice_bias_bps(
+            fast_replay_extract_price._extract_microprice_bias_bps(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -593,7 +603,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             0.0,
         )
         self.assertEqual(
-            fast_replay._extract_volume(
+            fast_replay_extract_price._extract_volume(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -603,7 +613,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             12345.0,
         )
         self.assertIsNone(
-            fast_replay._extract_spread_bps(
+            fast_replay_extract_price._extract_spread_bps(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -611,9 +621,9 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 )
             )
         )
-        self.assertIsNone(fast_replay._float_or_none("not-a-number"))
-        self.assertIsNone(fast_replay._float_or_none(float("nan")))
-        self.assertEqual(fast_replay._mapping("not-a-mapping"), {})
+        self.assertIsNone(fast_replay_extract_price._float_or_none("not-a-number"))
+        self.assertIsNone(fast_replay_extract_price._float_or_none(float("nan")))
+        self.assertEqual(fast_replay_extract_price._mapping("not-a-mapping"), {})
 
     def test_candidate_specs_replay_skips_compiler_and_replays_selected_specs(
         self,

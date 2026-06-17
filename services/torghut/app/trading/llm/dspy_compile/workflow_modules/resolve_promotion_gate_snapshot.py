@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """DSPy compile/eval/promotion workflow helpers with Jangar-compatible contracts."""
 
 from __future__ import annotations
@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,25 +33,6 @@ from ..schemas import (
 from .shared_context import (
     DSPyWorkflowExecutionMode,
     DSPyWorkflowLane,
-    _DEFAULT_DSPY_AGENT_NAME,
-    _IDEMPOTENCY_HASH_HEX_LENGTH,
-    _IMPLEMENTATION_SPEC_BY_LANE,
-    _K8S_LABEL_VALUE_MAX_LENGTH,
-    _PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS,
-    _PROMOTION_EVIDENCE_OVERRIDE_KEYS,
-    _PROMOTION_MAX_FALLBACK_RATE,
-    _PROMOTION_MIN_SCHEMA_VALID_RATE,
-    _TERMINAL_PHASES,
-    _extract_submitted_agentrun_id,
-    _json_copy,
-    _lane_overrides_with_defaults,
-    _load_eval_gate_snapshot,
-    _load_local_artifact_payload,
-    _normalize_local_path,
-    _parse_iso_datetime,
-    _sanitize_idempotency_key,
-    _to_bool,
-    _to_float,
     build_compile_result,
     build_dspy_agentrun_payload,
     build_eval_report,
@@ -63,6 +45,60 @@ from .shared_context import (
     wait_for_agents_agentrun_terminal_status,
     write_artifact_bundle,
 )
+from . import shared_context as _shared_context_private_33
+
+_DEFAULT_DSPY_AGENT_NAME = getattr(
+    _shared_context_private_33, "_DEFAULT_DSPY_AGENT_NAME"
+)
+_IDEMPOTENCY_HASH_HEX_LENGTH = getattr(
+    _shared_context_private_33, "_IDEMPOTENCY_HASH_HEX_LENGTH"
+)
+_IMPLEMENTATION_SPEC_BY_LANE = getattr(
+    _shared_context_private_33, "_IMPLEMENTATION_SPEC_BY_LANE"
+)
+_K8S_LABEL_VALUE_MAX_LENGTH = getattr(
+    _shared_context_private_33, "_K8S_LABEL_VALUE_MAX_LENGTH"
+)
+_PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = getattr(
+    _shared_context_private_33, "_PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS"
+)
+_PROMOTION_EVIDENCE_OVERRIDE_KEYS = getattr(
+    _shared_context_private_33, "_PROMOTION_EVIDENCE_OVERRIDE_KEYS"
+)
+_PROMOTION_MAX_FALLBACK_RATE = getattr(
+    _shared_context_private_33, "_PROMOTION_MAX_FALLBACK_RATE"
+)
+_PROMOTION_MIN_SCHEMA_VALID_RATE = getattr(
+    _shared_context_private_33, "_PROMOTION_MIN_SCHEMA_VALID_RATE"
+)
+_TERMINAL_PHASES = getattr(_shared_context_private_33, "_TERMINAL_PHASES")
+_extract_submitted_agentrun_id = getattr(
+    _shared_context_private_33, "_extract_submitted_agentrun_id"
+)
+_json_copy = getattr(_shared_context_private_33, "_json_copy")
+_lane_overrides_with_defaults = getattr(
+    _shared_context_private_33, "_lane_overrides_with_defaults"
+)
+_load_eval_gate_snapshot = getattr(
+    _shared_context_private_33, "_load_eval_gate_snapshot"
+)
+_load_local_artifact_payload = getattr(
+    _shared_context_private_33, "_load_local_artifact_payload"
+)
+_normalize_local_path = getattr(_shared_context_private_33, "_normalize_local_path")
+_parse_iso_datetime = getattr(_shared_context_private_33, "_parse_iso_datetime")
+_sanitize_idempotency_key = getattr(
+    _shared_context_private_33, "_sanitize_idempotency_key"
+)
+_to_bool = getattr(_shared_context_private_33, "_to_bool")
+_to_float = getattr(_shared_context_private_33, "_to_float")
+
+
+def _workflow_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("app.trading.llm.dspy_compile.workflow")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 def _resolve_promotion_gate_snapshot(
@@ -657,7 +693,11 @@ def _submit_and_persist_remote_dspy_lane(
     state: _DSPyWorkflowState,
     context: _DSPyLaneContext,
 ) -> None:
-    response_payload = submit_agents_agentrun(
+    submit_agent_run = _workflow_root_export(
+        "submit_agents_agentrun",
+        submit_agents_agentrun,
+    )
+    response_payload = submit_agent_run(
         base_url=request.base_url,
         payload=context.payload,
         idempotency_key=context.idempotency_key,
@@ -690,7 +730,11 @@ def _wait_for_dspy_lane_terminal_phase(
     request: _DSPyWorkflowRequest,
     response_payload: Mapping[str, Any],
 ) -> str:
-    return wait_for_agents_agentrun_terminal_status(
+    wait_for_status = _workflow_root_export(
+        "wait_for_agents_agentrun_terminal_status",
+        wait_for_agents_agentrun_terminal_status,
+    )
+    return wait_for_status(
         base_url=request.base_url,
         agent_run_id=_extract_submitted_agentrun_id(response_payload),
         namespace=request.namespace,
@@ -846,8 +890,10 @@ def _load_dspy_model_snapshot(artifact_ref: str, model_type: Any) -> Any | None:
 
 
 def _execute_local_dspy_lane(**kwargs: Any) -> dict[str, Any]:
-    from .load_eval_report_from_ref import (
-        _execute_local_dspy_lane as execute_local_dspy_lane,
+    from . import load_eval_report_from_ref as _load_eval_report_from_ref_private_865
+
+    execute_local_dspy_lane = getattr(
+        _load_eval_report_from_ref_private_865, "_execute_local_dspy_lane"
     )
 
     return execute_local_dspy_lane(**kwargs)

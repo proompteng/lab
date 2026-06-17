@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -34,6 +35,13 @@ from .flatten_core import (
     PaperFlattenClient,
     _normalize_positions,
 )
+
+
+def _facade_attr(name: str, fallback: Any) -> Any:
+    facade = sys.modules.get("scripts.flatten_paper_account_positions")
+    if facade is None:
+        return fallback
+    return getattr(facade, name, fallback)
 
 
 def _position_payload(position: FlattenPosition) -> dict[str, str | None]:
@@ -552,7 +560,11 @@ def flatten_paper_account_positions(
             lineage_persist_error: Exception | None = None
             if persist_lineage and lineage_session is not None:
                 try:
-                    decision_row, source_lineage = _persist_close_decision(
+                    persist_close_decision = _facade_attr(
+                        "_persist_close_decision",
+                        _persist_close_decision,
+                    )
+                    decision_row, source_lineage = persist_close_decision(
                         lineage_session,
                         account_label=normalized_label,
                         position=position,

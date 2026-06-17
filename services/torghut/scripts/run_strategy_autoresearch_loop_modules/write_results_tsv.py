@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUntypedBaseClass=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Run an autoresearch-style outer loop for Torghut strategy discovery."""
 
@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
@@ -87,14 +88,6 @@ import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
 )
-from scripts.materialize_replay_tape import (
-    _DEFAULT_MAX_COVERAGE_SPREAD_BPS,
-    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
-    _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
-    _DEFAULT_MIN_QUOTE_VALID_RATIO,
-    _select_effective_window as _select_effective_replay_tape_window,
-)
-
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .shared_context import (
@@ -102,6 +95,10 @@ from .shared_context import (
     WorkItem,
     _CAPITAL_LIMIT_SAFETY_MULTIPLIER,
     _DEFAULT_CLICKHOUSE_HTTP_URL,
+    _DEFAULT_MAX_COVERAGE_SPREAD_BPS,
+    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
+    _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
+    _DEFAULT_MIN_QUOTE_VALID_RATIO,
     _REPO_ROOT,
     _apply_exact_replay_guidance_to_next_sweep,
     _apply_objective_capital_limits,
@@ -127,6 +124,7 @@ from .shared_context import (
     _promotion_readiness_payload,
     _runtime_missing_candidate_payload,
     _runtime_missing_frontier_payload,
+    _select_effective_replay_tape_window,
     _slug,
     _snapshot_symbols,
     _string,
@@ -237,8 +235,16 @@ def _strategy_name_from_strategy_id(strategy_id: str) -> str:
     return base.replace("_", "-") if base else ""
 
 
+def _strategy_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("scripts.run_strategy_autoresearch_loop")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
+
+
 def _hypothesis_manifest_rows() -> list[dict[str, str]]:
-    hypothesis_dir = _REPO_ROOT / "services/torghut/config/trading/hypotheses"
+    repo_root = Path(_strategy_root_export("_REPO_ROOT", _REPO_ROOT))
+    hypothesis_dir = repo_root / "services/torghut/config/trading/hypotheses"
     rows: list[dict[str, str]] = []
     if not hypothesis_dir.exists():
         return rows

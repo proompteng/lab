@@ -1,9 +1,10 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Hypothesis registry loading and runtime alpha-readiness compilation."""
 
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -30,69 +31,150 @@ from .shared_context import (
     HypothesisRegistryLoadResult,
     HypothesisState,
     JangarDependencyQuorumStatus,
-    _CAPITAL_STAGE_RANK,
-    _DEPENDENCY_REASONS,
-    _EDGE_OR_COST_REASONS,
-    _EVIDENCE_REFRESH_REASONS,
-    _JANGAR_QUORUM_CACHE,
-    _JANGAR_QUORUM_CACHE_LOCK,
-    _KNOWN_DEPENDENCY_CAPABILITIES,
-    _KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS,
-    _RUNTIME_LEDGER_PROVENANCE_REASONS,
-    _SAMPLE_REASONS,
-    _as_payload_dict,
-    _as_payload_dict_list,
-    _bounded_route_evidence_collection_readiness,
-    _candidate_blocker_class,
-    _candidate_blocker_rank,
-    _coerce_decimal,
-    _decimal_to_string,
-    _empty_payload_dict,
-    _empty_payload_dict_list,
-    _extract_stage_trust,
-    _first_matching_reason,
-    _is_dependency_required,
-    _normalize_dependency_capability,
-    _optional_bool,
-    _optional_decimal,
-    _optional_int,
-    _parse_iso8601,
-    _ranked_candidate_dossiers,
-    _resolve_required_dependency_capabilities,
-    _sequence,
-    _stable_string_list,
     hypothesis_registry_requires_dependency_capability,
     resolve_hypothesis_dependency_quorum,
 )
-from .extract_stage_renewal_bonds import (
-    _DelayAdjustedDepthStressInputs,
-    _NON_AUTHORITY_TCA_DECISION_MODES,
-    _NON_AUTHORITY_TCA_SOURCE_KINDS,
-    _RuntimeLedgerReadinessInputs,
-    _TcaReadinessInputs,
-    _extract_controller_ingestion_settlement,
-    _extract_foreclosure_carry_rollout_witness,
-    _extract_repair_slot_escrow,
-    _extract_stage_debt_repair_admission,
-    _extract_stage_renewal_bonds,
-    _extract_verify_trust_foreclosure_board,
-    _latest_tca_timestamp,
-    _manifest_pair_contract_blockers,
-    _normalized_route_token,
-    _resolve_delay_adjusted_depth_stress_inputs,
-    _resolve_tca_readiness_inputs,
-    _route_tca_adverse_slippage,
-    _route_tca_authority_blockers,
-    _route_tca_bool,
-    _route_tca_diagnostic,
-    _route_tca_target_blockers,
-    _route_tca_text,
-    _runtime_ledger_rows_for_hypothesis,
-    _runtime_ledger_target_blockers,
-    _runtime_target_token,
-    _runtime_text,
-    _weighted_decimal_average,
+from . import shared_context as _shared_context_private_26
+
+from . import extract_stage_renewal_bonds as _extract_stage_renewal_bonds_private_68
+
+_CAPITAL_STAGE_RANK = getattr(_shared_context_private_26, "_CAPITAL_STAGE_RANK")
+_DEPENDENCY_REASONS = getattr(_shared_context_private_26, "_DEPENDENCY_REASONS")
+_EDGE_OR_COST_REASONS = getattr(_shared_context_private_26, "_EDGE_OR_COST_REASONS")
+_EVIDENCE_REFRESH_REASONS = getattr(
+    _shared_context_private_26, "_EVIDENCE_REFRESH_REASONS"
 )
+_JANGAR_QUORUM_CACHE = getattr(_shared_context_private_26, "_JANGAR_QUORUM_CACHE")
+_JANGAR_QUORUM_CACHE_LOCK = getattr(
+    _shared_context_private_26, "_JANGAR_QUORUM_CACHE_LOCK"
+)
+_KNOWN_DEPENDENCY_CAPABILITIES = getattr(
+    _shared_context_private_26, "_KNOWN_DEPENDENCY_CAPABILITIES"
+)
+_KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS = getattr(
+    _shared_context_private_26, "_KNOWN_RUNTIME_LEDGER_SCHEMA_VERSIONS"
+)
+_RUNTIME_LEDGER_PROVENANCE_REASONS = getattr(
+    _shared_context_private_26, "_RUNTIME_LEDGER_PROVENANCE_REASONS"
+)
+_SAMPLE_REASONS = getattr(_shared_context_private_26, "_SAMPLE_REASONS")
+_as_payload_dict = getattr(_shared_context_private_26, "_as_payload_dict")
+_as_payload_dict_list = getattr(_shared_context_private_26, "_as_payload_dict_list")
+_bounded_route_evidence_collection_readiness = getattr(
+    _shared_context_private_26, "_bounded_route_evidence_collection_readiness"
+)
+_candidate_blocker_class = getattr(
+    _shared_context_private_26, "_candidate_blocker_class"
+)
+_candidate_blocker_rank = getattr(_shared_context_private_26, "_candidate_blocker_rank")
+_coerce_decimal = getattr(_shared_context_private_26, "_coerce_decimal")
+_decimal_to_string = getattr(_shared_context_private_26, "_decimal_to_string")
+_empty_payload_dict = getattr(_shared_context_private_26, "_empty_payload_dict")
+_empty_payload_dict_list = getattr(
+    _shared_context_private_26, "_empty_payload_dict_list"
+)
+_extract_stage_trust = getattr(_shared_context_private_26, "_extract_stage_trust")
+_first_matching_reason = getattr(_shared_context_private_26, "_first_matching_reason")
+_is_dependency_required = getattr(_shared_context_private_26, "_is_dependency_required")
+_normalize_dependency_capability = getattr(
+    _shared_context_private_26, "_normalize_dependency_capability"
+)
+_optional_bool = getattr(_shared_context_private_26, "_optional_bool")
+_optional_decimal = getattr(_shared_context_private_26, "_optional_decimal")
+_optional_int = getattr(_shared_context_private_26, "_optional_int")
+_parse_iso8601 = getattr(_shared_context_private_26, "_parse_iso8601")
+_ranked_candidate_dossiers = getattr(
+    _shared_context_private_26, "_ranked_candidate_dossiers"
+)
+_resolve_required_dependency_capabilities = getattr(
+    _shared_context_private_26, "_resolve_required_dependency_capabilities"
+)
+_sequence = getattr(_shared_context_private_26, "_sequence")
+_stable_string_list = getattr(_shared_context_private_26, "_stable_string_list")
+_DelayAdjustedDepthStressInputs = getattr(
+    _extract_stage_renewal_bonds_private_68, "_DelayAdjustedDepthStressInputs"
+)
+_NON_AUTHORITY_TCA_DECISION_MODES = getattr(
+    _extract_stage_renewal_bonds_private_68, "_NON_AUTHORITY_TCA_DECISION_MODES"
+)
+_NON_AUTHORITY_TCA_SOURCE_KINDS = getattr(
+    _extract_stage_renewal_bonds_private_68, "_NON_AUTHORITY_TCA_SOURCE_KINDS"
+)
+_RuntimeLedgerReadinessInputs = getattr(
+    _extract_stage_renewal_bonds_private_68, "_RuntimeLedgerReadinessInputs"
+)
+_TcaReadinessInputs = getattr(
+    _extract_stage_renewal_bonds_private_68, "_TcaReadinessInputs"
+)
+_extract_controller_ingestion_settlement = getattr(
+    _extract_stage_renewal_bonds_private_68, "_extract_controller_ingestion_settlement"
+)
+_extract_foreclosure_carry_rollout_witness = getattr(
+    _extract_stage_renewal_bonds_private_68,
+    "_extract_foreclosure_carry_rollout_witness",
+)
+_extract_repair_slot_escrow = getattr(
+    _extract_stage_renewal_bonds_private_68, "_extract_repair_slot_escrow"
+)
+_extract_stage_debt_repair_admission = getattr(
+    _extract_stage_renewal_bonds_private_68, "_extract_stage_debt_repair_admission"
+)
+_extract_stage_renewal_bonds = getattr(
+    _extract_stage_renewal_bonds_private_68, "_extract_stage_renewal_bonds"
+)
+_extract_verify_trust_foreclosure_board = getattr(
+    _extract_stage_renewal_bonds_private_68, "_extract_verify_trust_foreclosure_board"
+)
+_latest_tca_timestamp = getattr(
+    _extract_stage_renewal_bonds_private_68, "_latest_tca_timestamp"
+)
+_manifest_pair_contract_blockers = getattr(
+    _extract_stage_renewal_bonds_private_68, "_manifest_pair_contract_blockers"
+)
+_normalized_route_token = getattr(
+    _extract_stage_renewal_bonds_private_68, "_normalized_route_token"
+)
+_resolve_delay_adjusted_depth_stress_inputs = getattr(
+    _extract_stage_renewal_bonds_private_68,
+    "_resolve_delay_adjusted_depth_stress_inputs",
+)
+_resolve_tca_readiness_inputs = getattr(
+    _extract_stage_renewal_bonds_private_68, "_resolve_tca_readiness_inputs"
+)
+_route_tca_adverse_slippage = getattr(
+    _extract_stage_renewal_bonds_private_68, "_route_tca_adverse_slippage"
+)
+_route_tca_authority_blockers = getattr(
+    _extract_stage_renewal_bonds_private_68, "_route_tca_authority_blockers"
+)
+_route_tca_bool = getattr(_extract_stage_renewal_bonds_private_68, "_route_tca_bool")
+_route_tca_diagnostic = getattr(
+    _extract_stage_renewal_bonds_private_68, "_route_tca_diagnostic"
+)
+_route_tca_target_blockers = getattr(
+    _extract_stage_renewal_bonds_private_68, "_route_tca_target_blockers"
+)
+_route_tca_text = getattr(_extract_stage_renewal_bonds_private_68, "_route_tca_text")
+_runtime_ledger_rows_for_hypothesis = getattr(
+    _extract_stage_renewal_bonds_private_68, "_runtime_ledger_rows_for_hypothesis"
+)
+_runtime_ledger_target_blockers = getattr(
+    _extract_stage_renewal_bonds_private_68, "_runtime_ledger_target_blockers"
+)
+_runtime_target_token = getattr(
+    _extract_stage_renewal_bonds_private_68, "_runtime_target_token"
+)
+_runtime_text = getattr(_extract_stage_renewal_bonds_private_68, "_runtime_text")
+_weighted_decimal_average = getattr(
+    _extract_stage_renewal_bonds_private_68, "_weighted_decimal_average"
+)
+
+
+def _hypotheses_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("app.trading.hypotheses")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 def _runtime_ledger_row_rank(
@@ -555,7 +637,8 @@ def load_jangar_dependency_quorum(
         if omit_torghut_consumer_evidence:
             headers["x-torghut-consumer-evidence-mode"] = "omit"
         request = Request(status_url, method="GET", headers=headers)
-        with urlopen(
+        open_url = _hypotheses_root_export("urlopen", urlopen)
+        with open_url(
             request, timeout=settings.trading_jangar_control_plane_timeout_seconds
         ) as response:
             if response.status < 200 or response.status >= 300:

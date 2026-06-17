@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Preview-only queue-survival fill stress for replay candidate ranking.
 
 This module actualizes recent queue-position, fill-probability, and execution-delay
@@ -25,44 +25,44 @@ from .shared_context import (
     QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL,
     QUEUE_SURVIVAL_FILL_STRESS_SCHEMA_VERSION,
     QueueSurvivalFillStressSummary,
-    _ADD_TOKENS,
-    _ASK_SIZE_FIELDS,
-    _BID_SIZE_FIELDS,
-    _CANCEL_TOKENS,
-    _EVENT_FIELDS,
-    _FILL_FIELDS,
-    _FILL_TOKENS,
-    _FillBeforeMoveStats,
-    _ORDER_BOOK_IMBALANCE_FIELDS,
-    _PRICE_FIELDS,
-    _QUEUE_POSITION_FIELDS,
-    _QUEUE_RATIO_FIELDS,
-    _QUEUE_REACTIVE_EVENT_KINDS,
-    _REJECT_TOKENS,
-    _SIDE_FIELDS,
-    _SPREAD_FIELDS,
-    _STATUS_FIELDS,
-    _VOLUME_FIELDS,
+    ADD_TOKENS_split_export as _ADD_TOKENS,
+    ASK_SIZE_FIELDS_split_export as _ASK_SIZE_FIELDS,
+    BID_SIZE_FIELDS_split_export as _BID_SIZE_FIELDS,
+    CANCEL_TOKENS_split_export as _CANCEL_TOKENS,
+    EVENT_FIELDS_split_export as _EVENT_FIELDS,
+    FILL_FIELDS_split_export as _FILL_FIELDS,
+    FILL_TOKENS_split_export as _FILL_TOKENS,
+    FillBeforeMoveStats_split_export as _FillBeforeMoveStats,
+    ORDER_BOOK_IMBALANCE_FIELDS_split_export as _ORDER_BOOK_IMBALANCE_FIELDS,
+    PRICE_FIELDS_split_export as _PRICE_FIELDS,
+    QUEUE_POSITION_FIELDS_split_export as _QUEUE_POSITION_FIELDS,
+    QUEUE_RATIO_FIELDS_split_export as _QUEUE_RATIO_FIELDS,
+    QUEUE_REACTIVE_EVENT_KINDS_split_export as _QUEUE_REACTIVE_EVENT_KINDS,
+    REJECT_TOKENS_split_export as _REJECT_TOKENS,
+    SIDE_FIELDS_split_export as _SIDE_FIELDS,
+    SPREAD_FIELDS_split_export as _SPREAD_FIELDS,
+    STATUS_FIELDS_split_export as _STATUS_FIELDS,
+    VOLUME_FIELDS_split_export as _VOLUME_FIELDS,
     build_queue_survival_fill_stress_schema_hash,
     queue_survival_fill_stress_contract,
 )
 from .extract_queue_survival_fill_stress import (
-    _adverse_selection_after_touch_bps,
-    _contrarian_reversal_support_score,
-    _estimated_fill_probability,
-    _executable_side_depth,
-    _fill_before_opportunity_move_stats,
-    _maker_fill_return_tradeoff_penalty_bps,
-    _nonfill_opportunity_cost_bps,
-    _order_book_imbalance,
-    _order_size_distribution_wasserstein_proxy,
-    _queue_ahead_ratio,
-    _queue_reactive_event_mix_l1,
-    _randomized_priority_fill_gap_proxy_bps,
-    _state_dependent_fill_before_move_probability,
-    _state_dependent_fill_risk_penalty_bps,
-    _state_dependent_order_flow_gap_score,
-    _time_priority_edge_concentration_score,
+    adverse_selection_after_touch_bps as _adverse_selection_after_touch_bps,
+    contrarian_reversal_support_score as _contrarian_reversal_support_score,
+    estimated_fill_probability as _estimated_fill_probability,
+    executable_side_depth as _executable_side_depth,
+    fill_before_opportunity_move_stats as _fill_before_opportunity_move_stats,
+    maker_fill_return_tradeoff_penalty_bps as _maker_fill_return_tradeoff_penalty_bps,
+    nonfill_opportunity_cost_bps as _nonfill_opportunity_cost_bps,
+    order_book_imbalance as _order_book_imbalance,
+    order_size_distribution_wasserstein_proxy as _order_size_distribution_wasserstein_proxy,
+    queue_ahead_ratio as _queue_ahead_ratio,
+    queue_reactive_event_mix_l1 as _queue_reactive_event_mix_l1,
+    randomized_priority_fill_gap_proxy_bps as _randomized_priority_fill_gap_proxy_bps,
+    state_dependent_fill_before_move_probability as _state_dependent_fill_before_move_probability,
+    state_dependent_fill_risk_penalty_bps as _state_dependent_fill_risk_penalty_bps,
+    state_dependent_order_flow_gap_score as _state_dependent_order_flow_gap_score,
+    time_priority_edge_concentration_score as _time_priority_edge_concentration_score,
     extract_queue_survival_fill_stress,
 )
 
@@ -221,4 +221,19 @@ def _stable_hash(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+# Public aliases used by split-module consumers.
+event_label = _event_label
+first_payload_value = _first_payload_value
+float_or_none = _float_or_none
+group_normalized_downside_reward_penalty_bps = (
+    _group_normalized_downside_reward_penalty_bps
+)
+label_has_token = _label_has_token
+median = _median
+nonnegative_float = _nonnegative_float
+positive_float = _positive_float
+quantile = _quantile
+queue_reactive_event_kind = _queue_reactive_event_kind
+stable_float = _stable_float
+stable_hash = _stable_hash
 __all__ = [name for name in globals() if not name.startswith("__")]

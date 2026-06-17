@@ -1,73 +1,77 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import logging as __compat_logging__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.governance_mixin_lifecycle_methods"
+import logging as _logging_for_module
+from .shared_context import (
+    json,
+    logging,
+    os,
+    tempfile,
+    Mapping,
+    Sequence,
+    datetime,
+    timedelta,
+    timezone,
+    Decimal,
+    Path,
+    Any,
+    Literal,
+    Optional,
+    cast,
+    settings,
+    DriftThresholds,
+    DriftTriggerPolicy,
+    decide_drift_action,
+    detect_drift,
+    evaluate_live_promotion_evidence,
+    evaluate_evidence_continuity,
+    run_autonomous_lane,
+    upsert_autonomy_no_signal_run,
+    build_phase_manifest_payload_with_runtime_and_rollback,
+    coerce_path_strings,
+    FeatureQualityThresholds,
+    evaluate_feature_batch_quality,
+    SignalBatch,
+    SignalEnvelope,
+    trading_now,
+    TradingPipeline,
+    TradingState,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .governance_mixin_runtime_methods import TradingSchedulerGovernanceMixin
 
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.governance_mixin_decision_methods"
-)
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.governance_mixin_runtime_methods"
-)
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
-logger = __compat_logging__.getLogger(__name__.removesuffix("_modules"))
-for __compat_loaded_module__ in globals().get("__compat_module_segments__", ()):
-    __compat_loaded_module__.__dict__["logger"] = logger
+logger = _logging_for_module.getLogger(__name__.removesuffix("_modules"))
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "json",
+    "logging",
+    "os",
+    "tempfile",
+    "Mapping",
+    "Sequence",
+    "datetime",
+    "timedelta",
+    "timezone",
+    "Decimal",
+    "Path",
+    "Any",
+    "Literal",
+    "Optional",
+    "cast",
+    "settings",
+    "DriftThresholds",
+    "DriftTriggerPolicy",
+    "decide_drift_action",
+    "detect_drift",
+    "evaluate_live_promotion_evidence",
+    "evaluate_evidence_continuity",
+    "run_autonomous_lane",
+    "upsert_autonomy_no_signal_run",
+    "build_phase_manifest_payload_with_runtime_and_rollback",
+    "coerce_path_strings",
+    "FeatureQualityThresholds",
+    "evaluate_feature_batch_quality",
+    "SignalBatch",
+    "SignalEnvelope",
+    "trading_now",
+    "TradingPipeline",
+    "TradingState",
+    "logger",
+    "TradingSchedulerGovernanceMixin",
 ]
-del __compat_module__

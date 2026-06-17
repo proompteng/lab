@@ -8,6 +8,8 @@ from tests.hypothesis_profiles import (
     load_default_hypothesis_profile,
 )
 
+pytest_plugins = ("tests.materialize_bounded_paper_route_targets.support",)
+
 _ACTIVE_HYPOTHESIS_PROFILE = load_default_hypothesis_profile()
 
 

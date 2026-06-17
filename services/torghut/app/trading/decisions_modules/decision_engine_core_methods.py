@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading decision engine based on TA signals."""
 
 from __future__ import annotations
@@ -56,22 +56,47 @@ from ..strategy_runtime import (
 
 from .shared_context import (
     DecisionRuntimeTelemetry,
-    _BUY_EXIT_ONLY_STRATEGY_TYPES,
-    _DecisionEngineFields,
-    _EXIT_ONLY_BUY_FLAT_REASON,
-    _EXIT_ONLY_SELL_FLAT_REASON,
-    _MICROBAR_PAIR_EXIT_RATIONALE,
-    _RUNTIME_TRADE_POLICY_SHARED_OWNER,
-    _RuntimeTradePolicySessionState,
-    _SAME_DIRECTION_REENTRY_REASON,
-    _SELL_EXIT_ONLY_STRATEGY_TYPES,
-    _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
-    _feature_vector_with_positions,
-    _feature_vector_with_runtime_position,
-    _merge_runtime_counter,
-    _merge_runtime_evaluations,
-    _runtime_position_side,
+    BUY_EXIT_ONLY_STRATEGY_TYPES as _BUY_EXIT_ONLY_STRATEGY_TYPES,
+    DecisionEngineFields as _DecisionEngineFields,
+    EXIT_ONLY_BUY_FLAT_REASON as _EXIT_ONLY_BUY_FLAT_REASON,
+    EXIT_ONLY_SELL_FLAT_REASON as _EXIT_ONLY_SELL_FLAT_REASON,
+    MICROBAR_PAIR_EXIT_RATIONALE as _MICROBAR_PAIR_EXIT_RATIONALE,
+    RUNTIME_TRADE_POLICY_SHARED_OWNER as _RUNTIME_TRADE_POLICY_SHARED_OWNER,
+    RuntimeTradePolicySessionState as _RuntimeTradePolicySessionState,
+    SAME_DIRECTION_REENTRY_REASON as _SAME_DIRECTION_REENTRY_REASON,
+    SELL_EXIT_ONLY_STRATEGY_TYPES as _SELL_EXIT_ONLY_STRATEGY_TYPES,
+    SHORT_ENTRY_BELOW_MIN_QTY_REASON as _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+    feature_vector_with_positions as _feature_vector_with_positions,
+    feature_vector_with_runtime_position as _feature_vector_with_runtime_position,
+    merge_runtime_counter as _merge_runtime_counter,
+    merge_runtime_evaluations as _merge_runtime_evaluations,
+    runtime_position_side as _runtime_position_side,
     logger,
+)
+
+from .decision_engine_core_support import (
+    actual_positions_only as _actual_positions_only,
+    build_params as _build_params,
+    build_runtime_position_exit_overlay as _build_runtime_position_exit_overlay,
+    decision_position_exit_type as _decision_position_exit_type,
+    passes_runtime_trade_policy as _passes_runtime_trade_policy,
+    passes_signal_exit_policy as _passes_signal_exit_policy,
+    position_avg_entry_price_for_symbol as _position_avg_entry_price_for_symbol,
+    position_qty_for_symbol as _position_qty_for_symbol,
+    position_qty_from_payload as _position_qty_from_payload,
+    position_state_scope_key as _position_state_scope_key,
+    positions_for_strategy_action as _positions_for_strategy_action,
+    record_runtime_trade_policy_decision as _record_runtime_trade_policy_decision,
+    resolve_qty_for_aggregated as _resolve_qty_for_aggregated,
+    resolve_runtime_trade_policy as _resolve_runtime_trade_policy,
+    resolve_signal_timeframe as _resolve_signal_timeframe,
+    resolve_strategy_time_in_force as _resolve_strategy_time_in_force,
+    runtime_enabled as _runtime_enabled,
+    runtime_intent_exit_side as _runtime_intent_exit_side,
+    runtime_trade_policy_key as _runtime_trade_policy_key,
+    runtime_trade_policy_owner as _runtime_trade_policy_owner,
+    skip_non_executable_decision_qty as _skip_non_executable_decision_qty,
+    strategy_uses_position_isolation as _strategy_uses_position_isolation,
 )
 
 
@@ -819,5 +844,8 @@ class _DecisionEngineCoreMethods:
         )
         return decisions
 
+
+# Public aliases used by split-module consumers.
+DecisionEngineCoreMethods = _DecisionEngineCoreMethods
 
 __all__ = [name for name in globals() if not name.startswith("__")]

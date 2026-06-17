@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Single-strategy quantity sizing helpers for the trading decision engine."""
 
 from __future__ import annotations
@@ -43,21 +43,21 @@ from .shared_context import (
     StrategyRegistry,
     StrategyRuntime,
     StrategyTrace,
-    _BUY_EXIT_ONLY_STRATEGY_TYPES,
-    _DecisionEngineFields,
-    _EXIT_ONLY_BUY_FLAT_REASON,
-    _EXIT_ONLY_SELL_FLAT_REASON,
-    _MICROBAR_PAIR_EXIT_RATIONALE,
-    _RUNTIME_TRADE_POLICY_SHARED_OWNER,
-    _RuntimeTradePolicySessionState,
-    _SAME_DIRECTION_REENTRY_REASON,
-    _SELL_EXIT_ONLY_STRATEGY_TYPES,
-    _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
-    _feature_vector_with_positions,
-    _feature_vector_with_runtime_position,
-    _merge_runtime_counter,
-    _merge_runtime_evaluations,
-    _runtime_position_side,
+    BUY_EXIT_ONLY_STRATEGY_TYPES as _BUY_EXIT_ONLY_STRATEGY_TYPES,
+    DecisionEngineFields as _DecisionEngineFields,
+    EXIT_ONLY_BUY_FLAT_REASON as _EXIT_ONLY_BUY_FLAT_REASON,
+    EXIT_ONLY_SELL_FLAT_REASON as _EXIT_ONLY_SELL_FLAT_REASON,
+    MICROBAR_PAIR_EXIT_RATIONALE as _MICROBAR_PAIR_EXIT_RATIONALE,
+    RUNTIME_TRADE_POLICY_SHARED_OWNER as _RUNTIME_TRADE_POLICY_SHARED_OWNER,
+    RuntimeTradePolicySessionState as _RuntimeTradePolicySessionState,
+    SAME_DIRECTION_REENTRY_REASON as _SAME_DIRECTION_REENTRY_REASON,
+    SELL_EXIT_ONLY_STRATEGY_TYPES as _SELL_EXIT_ONLY_STRATEGY_TYPES,
+    SHORT_ENTRY_BELOW_MIN_QTY_REASON as _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+    feature_vector_with_positions as _feature_vector_with_positions,
+    feature_vector_with_runtime_position as _feature_vector_with_runtime_position,
+    merge_runtime_counter as _merge_runtime_counter,
+    merge_runtime_evaluations as _merge_runtime_evaluations,
+    runtime_position_side as _runtime_position_side,
     build_default_forecast_router,
     date,
     datetime,
@@ -76,7 +76,121 @@ from .shared_context import (
     resolve_simulation_context,
     timezone,
 )
-from .decision_engine_core_methods import _DecisionEngineCoreMethods
+from .decision_engine_core_methods import (
+    DecisionEngineCoreMethods as _DecisionEngineCoreMethods,
+)
+
+
+def _resolve_symbol_notional_cap(
+    *,
+    strategy_pcts: list[Optional[Decimal]],
+    equity: Optional[Decimal],
+) -> Optional[Decimal]:
+    from .positions_for_strategy_action import resolve_symbol_notional_cap
+
+    return resolve_symbol_notional_cap(strategy_pcts=strategy_pcts, equity=equity)
+
+
+def _resolve_portfolio_gross_cap(
+    *,
+    strategies: list[Strategy],
+    equity: Optional[Decimal],
+) -> Optional[Decimal]:
+    from .positions_for_strategy_action import resolve_portfolio_gross_cap
+
+    return resolve_portfolio_gross_cap(strategies=strategies, equity=equity)
+
+
+def _position_value_for_symbol(
+    positions: Optional[list[dict[str, Any]]],
+    symbol: str,
+) -> Optional[Decimal]:
+    from .positions_for_strategy_action import position_value_for_symbol
+
+    return position_value_for_symbol(positions, symbol)
+
+
+def _portfolio_gross_exposure(
+    positions: Optional[list[dict[str, Any]]],
+) -> Decimal:
+    from .positions_for_strategy_action import portfolio_gross_exposure
+
+    return portfolio_gross_exposure(positions)
+
+
+def _position_qty_for_symbol(
+    positions: Optional[list[dict[str, Any]]],
+    symbol: str,
+) -> Optional[Decimal]:
+    from .positions_for_strategy_action import position_qty_for_symbol
+
+    return position_qty_for_symbol(positions, symbol)
+
+
+def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
+    from .positions_for_strategy_action import treats_sell_as_exit_only
+
+    return treats_sell_as_exit_only(strategy)
+
+
+def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
+    from .positions_for_strategy_action import treats_buy_as_exit_only
+
+    return treats_buy_as_exit_only(strategy)
+
+
+def _blocks_same_direction_reentry(strategy: Strategy) -> bool:
+    from .positions_for_strategy_action import blocks_same_direction_reentry
+
+    return blocks_same_direction_reentry(strategy)
+
+
+def _same_direction_reentry_exists(
+    *,
+    action: str,
+    position_qty: Optional[Decimal],
+) -> bool:
+    from .positions_for_strategy_action import same_direction_reentry_exists
+
+    return same_direction_reentry_exists(action=action, position_qty=position_qty)
+
+
+def _cap_requested_qty_by_symbol_cap(
+    *,
+    action: str,
+    requested_qty: Decimal,
+    price: Decimal,
+    position_qty: Optional[Decimal],
+    symbol_notional_cap: Optional[Decimal],
+) -> Decimal | None:
+    from .positions_for_strategy_action import cap_requested_qty_by_symbol_cap
+
+    return cap_requested_qty_by_symbol_cap(
+        action=action,
+        requested_qty=requested_qty,
+        price=price,
+        position_qty=position_qty,
+        symbol_notional_cap=symbol_notional_cap,
+    )
+
+
+def _cap_requested_qty_by_portfolio_gross_cap(
+    *,
+    action: str,
+    requested_qty: Decimal,
+    price: Decimal,
+    positions: Optional[list[dict[str, Any]]],
+    portfolio_gross_cap: Optional[Decimal],
+) -> Decimal | None:
+    from .positions_for_strategy_action import cap_requested_qty_by_portfolio_gross_cap
+
+    return cap_requested_qty_by_portfolio_gross_cap(
+        action=action,
+        requested_qty=requested_qty,
+        price=price,
+        positions=positions,
+        portfolio_gross_cap=portfolio_gross_cap,
+    )
 
 
 def _skip_non_executable_decision_qty(
@@ -524,5 +638,27 @@ def _single_strategy_common_meta(
         ),
     }
 
+
+# Public aliases used by split-module consumers.
+SingleStrategyCapacityAdjustment = _SingleStrategyCapacityAdjustment
+SingleStrategyQtyContext = _SingleStrategyQtyContext
+StrategyBudget = _StrategyBudget
+resolve_qty = _resolve_qty
+resolve_single_strategy_qty_from_context = _resolve_single_strategy_qty_from_context
+single_strategy_budget = _single_strategy_budget
+single_strategy_capacity_adjustment = _single_strategy_capacity_adjustment
+single_strategy_capacity_exhausted_result = _single_strategy_capacity_exhausted_result
+single_strategy_capacity_reason = _single_strategy_capacity_reason
+single_strategy_common_meta = _single_strategy_common_meta
+single_strategy_exit_guard_result = _single_strategy_exit_guard_result
+single_strategy_min_qty_capacity_reason = _single_strategy_min_qty_capacity_reason
+single_strategy_min_qty_result = _single_strategy_min_qty_result
+single_strategy_qty_context = _single_strategy_qty_context
+single_strategy_requested_qty = _single_strategy_requested_qty
+single_strategy_short_entry_below_min_result = (
+    _single_strategy_short_entry_below_min_result
+)
+single_strategy_success_result = _single_strategy_success_result
+skip_non_executable_decision_qty = _skip_non_executable_decision_qty
 
 __all__ = [name for name in globals() if not name.startswith("__")]

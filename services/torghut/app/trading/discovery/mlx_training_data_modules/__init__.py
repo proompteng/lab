@@ -1,57 +1,80 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 from __future__ import annotations
-
-from importlib import import_module as __compat_import_module__
-import sys as __compat_sys__
-import types as __compat_types__
-
-__compat_module_segments__: list[__compat_types__.ModuleType] = []
-
-
-class __CompatModule__(__compat_types__.ModuleType):
-    def __setattr__(self, name: str, value: object) -> None:
-        super().__setattr__(name, value)
-        for module in __compat_module_segments__:
-            module.__dict__[name] = value
-
-
-def __compat_export__(module: __compat_types__.ModuleType) -> None:
-    for name, value in module.__dict__.items():
-        if name.startswith("__"):
-            continue
-        globals()[name] = value
-
-
-__compat_module__ = __compat_import_module__(f"{__name__}.shared_context")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_module__ = __compat_import_module__(
-    f"{__name__}.paper_contract_feature_values"
+from .shared_context import (
+    hashlib,
+    importlib,
+    json,
+    dataclass,
+    UTC,
+    datetime,
+    Any,
+    Mapping,
+    Sequence,
+    cast,
+    CandidateSpec,
+    estimate_capital_budget,
+    CandidateEvidenceBundle,
+    deployable_lower_bound_missing_count,
+    deployable_lower_bound_net_pnl_per_day,
+    deployable_proof_failed_gate_count,
+    MLX_RANKER_SCHEMA_VERSION,
+    MlxTrainingRow,
+    MlxRankerModel,
+    MlxRankedCandidate,
+    MlxRankBucketLift,
+    MlxRankedRowsPolicyResult,
+    hard_veto_count as _hard_veto_count,
+    sequence_strings as _sequence_strings,
 )
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
+from .paper_contract_feature_values import (
+    candidate_spec_capital_features,
+    capital_budget_penalty,
+    configured_daily_notional_capacity_penalty,
+    observed_capital_penalty,
+    observed_replay_viability_penalty as _observed_replay_viability_penalty,
+)
+from .build_mlx_training_rows import (
+    build_mlx_training_rows,
+    train_mlx_ranker,
+    rank_training_rows,
+    compute_rank_bucket_lift,
+    rank_training_rows_with_lift_policy,
+    mlx_ranker_model_from_payload,
+)
 
-__compat_module__ = __compat_import_module__(f"{__name__}.build_mlx_training_rows")
-__compat_module_segments__.append(__compat_module__)
-__compat_export__(__compat_module__)
-for __compat_loaded_module__ in __compat_module_segments__:
-    __compat_loaded_module__.__dict__.update(
-        {name: value for name, value in globals().items() if not name.startswith("__")}
-    )
-
-__compat_sys__.modules[__name__].__class__ = __CompatModule__
 __all__ = [
-    name
-    for name in globals()
-    if not name.startswith("__") and not name.startswith("_CompatModule")
+    "hashlib",
+    "importlib",
+    "json",
+    "dataclass",
+    "UTC",
+    "datetime",
+    "Any",
+    "Mapping",
+    "Sequence",
+    "cast",
+    "CandidateSpec",
+    "estimate_capital_budget",
+    "CandidateEvidenceBundle",
+    "deployable_lower_bound_missing_count",
+    "deployable_lower_bound_net_pnl_per_day",
+    "deployable_proof_failed_gate_count",
+    "MLX_RANKER_SCHEMA_VERSION",
+    "MlxTrainingRow",
+    "MlxRankerModel",
+    "MlxRankedCandidate",
+    "MlxRankBucketLift",
+    "MlxRankedRowsPolicyResult",
+    "_hard_veto_count",
+    "_sequence_strings",
+    "candidate_spec_capital_features",
+    "capital_budget_penalty",
+    "configured_daily_notional_capacity_penalty",
+    "observed_capital_penalty",
+    "_observed_replay_viability_penalty",
+    "build_mlx_training_rows",
+    "train_mlx_ranker",
+    "rank_training_rows",
+    "compute_rank_bucket_lift",
+    "rank_training_rows_with_lift_policy",
+    "mlx_ranker_model_from_payload",
 ]
-del __compat_module__

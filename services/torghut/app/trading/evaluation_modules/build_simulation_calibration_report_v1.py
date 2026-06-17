@@ -1,10 +1,11 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Walk-forward evaluation harness for offline backtests."""
 
 from __future__ import annotations
 
-import json
 import hashlib
+import importlib
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -38,10 +39,10 @@ from .signal_source import (
     WalkForwardDecision,
     WalkForwardFold,
     WalkForwardResults,
-    _decimal_str,
-    _empty_decisions,
-    _fold_payload,
-    _fold_regime_payload,
+    decimal_str as _decimal_str,
+    empty_decisions as _empty_decisions,
+    fold_payload as _fold_payload,
+    fold_regime_payload as _fold_regime_payload,
     build_profitability_evidence_v4,
     execute_profitability_benchmark_v4,
     generate_walk_forward_folds,
@@ -49,6 +50,46 @@ from .signal_source import (
     validate_profitability_evidence_v4,
     write_walk_forward_results,
 )
+
+
+def _bootstrap_helpers() -> Any:
+    return importlib.import_module(f"{__package__}.bootstrap_mean_samples")
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return _bootstrap_helpers()._as_dict(value)
+
+
+def _as_int(value: Any) -> int | None:
+    return _bootstrap_helpers()._as_int(value)
+
+
+def _decimal(value: Any) -> Decimal | None:
+    return _bootstrap_helpers()._decimal(value)
+
+
+def _decimal_mean(values: list[Decimal]) -> Decimal:
+    return _bootstrap_helpers()._decimal_mean(values)
+
+
+def _decimal_std(values: list[Decimal], mean: Decimal) -> Decimal:
+    return _bootstrap_helpers()._decimal_std(values, mean)
+
+
+def _safe_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
+    return _bootstrap_helpers()._safe_ratio(numerator, denominator)
+
+
+def _bootstrap_mean_samples(
+    values: list[Decimal], *, sample_count: int
+) -> list[Decimal]:
+    return _bootstrap_helpers()._bootstrap_mean_samples(
+        values, sample_count=sample_count
+    )
+
+
+def _quantile_decimal(values: list[Decimal], quantile: Decimal) -> Decimal:
+    return _bootstrap_helpers()._quantile_decimal(values, quantile)
 
 
 def build_simulation_calibration_report_v1(
@@ -761,5 +802,8 @@ def _significance_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, obje
         "bootstrap_samples": len(sorted_samples),
     }
 
+
+# Public aliases used by split-module consumers.
+extract_report_slices = _extract_report_slices
 
 __all__ = [name for name in globals() if not name.startswith("__")]

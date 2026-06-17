@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Order execution and idempotency helpers."""
 
 from __future__ import annotations
@@ -46,40 +46,50 @@ from ..tca import upsert_execution_tca_metric
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .shared_context import (
-    _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    _COST_MODEL_HASH_KEYS,
-    _COST_MODEL_PAYLOAD_KEYS,
-    _EXECUTION_POLICY_HASH_KEYS,
-    _LINEAGE_HASH_KEYS,
-    _LINEAGE_PAYLOAD_KEYS,
-    _OrderExecutorFields,
-    _RUNTIME_COST_AMOUNT_KEYS,
-    _RUNTIME_COST_BASIS_KEYS,
-    _RUNTIME_COST_PAYLOAD_KEYS,
-    _SHORTING_METADATA_CACHE_TTL_SECONDS,
-    _TARGET_PLAN_SOURCE_DECISION_MODE,
-    _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS,
-    _has_target_plan_source_decision,
-    _mapping_payload,
-    _target_plan_ref_value,
-    _target_plan_source_decision_mode,
-    _target_plan_source_decision_needs_refresh,
-    _target_plan_source_metadata,
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE as _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    COST_MODEL_HASH_KEYS as _COST_MODEL_HASH_KEYS,
+    COST_MODEL_PAYLOAD_KEYS as _COST_MODEL_PAYLOAD_KEYS,
+    EXECUTION_POLICY_HASH_KEYS as _EXECUTION_POLICY_HASH_KEYS,
+    LINEAGE_HASH_KEYS as _LINEAGE_HASH_KEYS,
+    LINEAGE_PAYLOAD_KEYS as _LINEAGE_PAYLOAD_KEYS,
+    OrderExecutorFields as _OrderExecutorFields,
+    RUNTIME_COST_AMOUNT_KEYS as _RUNTIME_COST_AMOUNT_KEYS,
+    RUNTIME_COST_BASIS_KEYS as _RUNTIME_COST_BASIS_KEYS,
+    RUNTIME_COST_PAYLOAD_KEYS as _RUNTIME_COST_PAYLOAD_KEYS,
+    SHORTING_METADATA_CACHE_TTL_SECONDS as _SHORTING_METADATA_CACHE_TTL_SECONDS,
+    TARGET_PLAN_SOURCE_DECISION_MODE as _TARGET_PLAN_SOURCE_DECISION_MODE,
+    TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS as _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS,
+    has_target_plan_source_decision as _has_target_plan_source_decision,
+    mapping_payload as _mapping_payload,
+    target_plan_ref_value as _target_plan_ref_value,
+    target_plan_source_decision_mode as _target_plan_source_decision_mode,
+    target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
+    target_plan_source_metadata as _target_plan_source_metadata,
     logger,
 )
 from .order_executor_core_methods import (
-    _OrderExecutorCoreMethods,
-    _PreparedOrderSubmission,
-    _ResolvedSellInventory,
-    _SellInventoryReservations,
-    _execution_request_from_decision,
-    _merge_execution_audit,
-    _open_sell_order_reserves_symbol,
-    _order_payload_with_execution_metadata,
-    _sell_inventory_metadata_update,
-    _sell_inventory_request_symbol,
-    _submission_extra_params,
+    OrderExecutorCoreMethods as _OrderExecutorCoreMethods,
 )
+from .order_executor_core_support import (
+    PreparedOrderSubmission as _PreparedOrderSubmission,
+    ResolvedSellInventory as _ResolvedSellInventory,
+    SellInventoryReservations as _SellInventoryReservations,
+    execution_request_from_decision as _execution_request_from_decision,
+    merge_execution_audit as _merge_execution_audit,
+    open_sell_order_reserves_symbol as _open_sell_order_reserves_symbol,
+    order_payload_with_execution_metadata as _order_payload_with_execution_metadata,
+    sell_inventory_metadata_update as _sell_inventory_metadata_update,
+    sell_inventory_request_symbol as _sell_inventory_request_symbol,
+    submission_extra_params as _submission_extra_params,
+)
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    from .validate_pre_submit_request import (
+        optional_decimal,
+    )
+
+    return optional_decimal(value)
 
 
 class _OrderExecutorSubmissionMethods:
@@ -754,5 +764,26 @@ def _decision_state_payload(decision: StrategyDecision) -> dict[str, Any]:
         else None,
     }
 
+
+# Public aliases used by split-module consumers.
+coerce_json = _coerce_json
+coerce_string_list = _coerce_string_list
+decision_state_payload = _decision_state_payload
+extract_sizing_debug = _extract_sizing_debug
+merge_decision_metadata = _merge_decision_metadata
+merge_unique_strings = _merge_unique_strings
+normalize_reject_reasons = _normalize_reject_reasons
+normalize_submission_block_reasons = _normalize_submission_block_reasons
+NormalizedRejectReason = _NormalizedRejectReason
+OrderExecutorSubmissionMethods = _OrderExecutorSubmissionMethods
+copy_mapping = _copy_mapping
+first_mapping_text = _first_mapping_text
+first_mapping_value = _first_mapping_value
+first_param_mapping = _first_param_mapping
+first_param_text = _first_param_text
+first_param_value = _first_param_value
+json_default = _json_default
+normalize_reject_reason = _normalize_reject_reason
+stable_payload_hash = _stable_payload_hash
 
 __all__ = [name for name in globals() if not name.startswith("__")]

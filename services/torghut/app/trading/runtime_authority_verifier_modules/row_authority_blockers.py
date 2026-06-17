@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Read-only H-PAIRS runtime authority proof verifier.
 
 This module deliberately only reads durable runtime-ledger buckets and turns them
@@ -79,13 +79,13 @@ from .shared_context import (
     DEFAULT_HPAIRS_RUNTIME_STRATEGY,
     HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION,
     RuntimeAuthorityEvidenceRow,
-    _DailyAccumulator,
-    _PROMOTION_GRADE_LEDGER_SCHEMAS,
-    _aggregate,
-    _authority_blockers,
-    _daily_rows,
-    _normalize_row,
-    _row_from_bucket,
+    DailyAccumulator as _DailyAccumulator,
+    PROMOTION_GRADE_LEDGER_SCHEMAS as _PROMOTION_GRADE_LEDGER_SCHEMAS,
+    aggregate as _aggregate,
+    authority_blockers as _authority_blockers,
+    daily_rows as _daily_rows,
+    normalize_row as _normalize_row,
+    row_from_bucket as _row_from_bucket,
     build_runtime_authority_report,
     load_runtime_authority_rows,
     runtime_authority_report_json,
@@ -604,6 +604,33 @@ def _decimal_text(value: Decimal | None) -> str:
         return "0"
     text = format(value.normalize(), "f")
     return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+row_authority_blockers = _row_authority_blockers
+promotion_payload = _promotion_payload
+explicit_costs_present = _explicit_costs_present
+daily_payload = _daily_payload
+authority_targets = _authority_targets
+authority_gaps = _authority_gaps
+blocker_counts = _blocker_counts
+next_actions = _next_actions
+mean = _mean
+median = _median
+p10 = _p10
+max_drawdown = _max_drawdown
+ref_count = _ref_count
+source_offset_count = _source_offset_count
+as_mapping = _as_mapping
+as_sequence = _as_sequence
+string_tuple = _string_tuple
+text_value = _text
+int_value = _int
+decimal_value = _decimal
+optional_decimal = _optional_decimal
+required_datetime = _required_datetime
+utc = _utc
+isoformat = _isoformat
+decimal_text = _decimal_text
 
 
 __all__ = [

@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 #!/usr/bin/env python3
 """Run an autoresearch-style outer loop for Torghut strategy discovery."""
 
@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
@@ -87,14 +88,6 @@ import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
 )
-from scripts.materialize_replay_tape import (
-    _DEFAULT_MAX_COVERAGE_SPREAD_BPS,
-    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
-    _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
-    _DEFAULT_MIN_QUOTE_VALID_RATIO,
-    _select_effective_window as _select_effective_replay_tape_window,
-)
-
 # ruff: noqa: F401,F403,F405,F811,F821
 
 from .shared_context import (
@@ -102,6 +95,10 @@ from .shared_context import (
     WorkItem,
     _CAPITAL_LIMIT_SAFETY_MULTIPLIER,
     _DEFAULT_CLICKHOUSE_HTTP_URL,
+    _DEFAULT_MAX_COVERAGE_SPREAD_BPS,
+    _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS,
+    _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY,
+    _DEFAULT_MIN_QUOTE_VALID_RATIO,
     _REPO_ROOT,
     _apply_exact_replay_guidance_to_next_sweep,
     _apply_objective_capital_limits,
@@ -127,6 +124,7 @@ from .shared_context import (
     _promotion_readiness_payload,
     _runtime_missing_candidate_payload,
     _runtime_missing_frontier_payload,
+    _select_effective_replay_tape_window,
     _slug,
     _snapshot_symbols,
     _string,
@@ -170,6 +168,13 @@ from .write_results_tsv import (
     _summary_promotion_readiness_for_outputs,
     _write_results_tsv,
 )
+
+
+def _strategy_root_export(name: str, fallback: Any) -> Any:
+    root_module = sys.modules.get("scripts.run_strategy_autoresearch_loop")
+    if root_module is None:
+        return fallback
+    return getattr(root_module, name, fallback)
 
 
 def _write_portfolio_outputs(
@@ -615,14 +620,22 @@ def _persist_run_outputs(
         proposal_scores=proposal_scores,
         history=history,
     )
-    mlx_exports = write_mlx_notebook_exports(
+    mlx_export_writer = _strategy_root_export(
+        "write_mlx_notebook_exports",
+        write_mlx_notebook_exports,
+    )
+    mlx_exports = mlx_export_writer(
         run_root=run_root,
         manifest=manifest,
         descriptors=descriptors,
         proposal_scores=proposal_scores,
         proposal_diagnostics=proposal_diagnostics,
     )
-    notebook_paths = write_autoresearch_notebooks(run_root)
+    notebook_writer = _strategy_root_export(
+        "write_autoresearch_notebooks",
+        write_autoresearch_notebooks,
+    )
+    notebook_paths = notebook_writer(run_root)
     exact_replay_ledger_ranking = _write_exact_replay_ledger_ranking(
         run_root=run_root,
         program=program,
@@ -674,7 +687,11 @@ def _persist_run_outputs(
         ),
     }
     best_candidate = cast(dict[str, Any] | None, summary["best_candidate"])
-    portfolio, portfolio_outputs = _write_portfolio_outputs(
+    portfolio_writer = _strategy_root_export(
+        "_write_portfolio_outputs",
+        _write_portfolio_outputs,
+    )
+    portfolio, portfolio_outputs = portfolio_writer(
         run_root=run_root,
         program=program,
     )
@@ -682,7 +699,11 @@ def _persist_run_outputs(
     summary["best_portfolio_candidate"] = (
         portfolio.to_payload() if portfolio is not None else None
     )
-    runtime_closure = write_runtime_closure_bundle(
+    runtime_closure_writer = _strategy_root_export(
+        "write_runtime_closure_bundle",
+        write_runtime_closure_bundle,
+    )
+    runtime_closure = runtime_closure_writer(
         run_root=run_root,
         runner_run_id=runner_run_id,
         program=program,
