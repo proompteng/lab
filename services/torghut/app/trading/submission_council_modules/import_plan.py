@@ -296,6 +296,12 @@ def _runtime_ledger_import_target(
 def _runtime_ledger_base_import_target(
     candidate: _RuntimeLedgerImportCandidate,
 ) -> dict[str, object]:
+    bounded_probe_payload = _bounded_paper_route_probe_collection_payload(
+        authorized=candidate.paper_probation_satisfied or candidate.source_collection
+    )
+    bounded_probe_authorized = bool(
+        bounded_probe_payload.get("bounded_evidence_collection_authorized")
+    )
     return {
         "hypothesis_id": candidate.hypothesis_id,
         "candidate_id": candidate.candidate_id,
@@ -338,13 +344,8 @@ def _runtime_ledger_base_import_target(
         "proof_mode": "probation",
         "evidence_collection_ok": True,
         "canary_collection_authorized": candidate.paper_probation_satisfied,
-        "bounded_live_paper_collection_authorized": candidate.paper_probation_satisfied,
-        **_bounded_paper_route_probe_collection_payload(
-            authorized=(
-                candidate.paper_probation_satisfied
-                or candidate.profit_target_source_collection
-            )
-        ),
+        "bounded_live_paper_collection_authorized": bounded_probe_authorized,
+        **bounded_probe_payload,
         "capital_promotion_allowed": False,
         "final_authority_ok": False,
         "evidence_collection_stage": "paper",

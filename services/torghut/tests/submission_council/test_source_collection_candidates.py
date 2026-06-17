@@ -232,7 +232,13 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
         )
         plan = _runtime_ledger_paper_probation_import_plan(source_candidates)
         self.assertEqual(plan["source_collection_profit_target_count"], 0)
-        self.assertEqual(plan["targets"][0]["max_notional"], "0")
+        target = plan["targets"][0]
+        self.assertTrue(target["bounded_live_paper_collection_authorized"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
+        self.assertEqual(target["max_notional"], "25")
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
 
     def test_htsmom_runtime_candidate_alias_unlocks_paper_probation_only(
         self,
@@ -537,7 +543,15 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
         self.assertEqual(plan["target_count"], 1)
         target = plan["targets"][0]
         self.assertTrue(target["source_collection_authorized"])
-        self.assertFalse(target["bounded_evidence_collection_authorized"])
+        self.assertTrue(target["bounded_live_paper_collection_authorized"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            target["bounded_evidence_collection_scope"],
+            "paper_route_probe_next_session_only",
+        )
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
+        self.assertEqual(target["max_notional"], "25")
+        self.assertFalse(target["promotion_allowed"])
         self.assertTrue(target["runtime_ledger_source_collection_window_defaulted"])
         self.assertEqual(
             target["runtime_ledger_source_collection_window_source"],
