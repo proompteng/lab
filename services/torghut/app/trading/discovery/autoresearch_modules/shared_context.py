@@ -19,7 +19,7 @@ from app.trading.discovery.family_templates import (
     load_family_template,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 
 _SCHEMA_VERSION = "torghut.strategy-autoresearch.v1"

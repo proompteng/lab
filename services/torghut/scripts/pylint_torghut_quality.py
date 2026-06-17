@@ -74,6 +74,11 @@ FORBIDDEN_TEXT_RULES: tuple[TextRule, ...] = (
         "file-level Ruff suppression",
     ),
     TextRule(
+        re.compile(r"^\s*#\s*ruff:\s*noqa:.*\bF(?:403|405)\b"),
+        "torghut-wildcard-ruff-noqa",
+        "wildcard-import Ruff suppression",
+    ),
+    TextRule(
         re.compile(r"^\s*#\s*pylint:\s*disable=.*(?:too-many-lines|all)"),
         "torghut-blanket-pylint-disable",
         "blanket Pylint suppression",
@@ -163,6 +168,11 @@ class TorghutQualityChecker(BaseChecker):
             "%s: %s",
             "torghut-private-pyright-suppression",
             "Used when a file-level Pyright suppression disables private-usage checks.",
+        ),
+        "C9017": (
+            "%s: %s",
+            "torghut-wildcard-ruff-noqa",
+            "Used when a file-level Ruff suppression keeps wildcard-import checks disabled.",
         ),
     }
 

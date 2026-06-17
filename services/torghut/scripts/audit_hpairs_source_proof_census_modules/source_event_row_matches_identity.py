@@ -71,7 +71,7 @@ from app.trading.runtime_ledger_source_authority import (
     RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 from .shared_context import (
     AUTHORITY_CANDIDATE_READY,

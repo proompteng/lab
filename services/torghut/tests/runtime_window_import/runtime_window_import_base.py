@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
+# ruff: noqa: F401
 from tests.runtime_window_import.runtime_window_import_support import (
     Base,
     Decimal,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
+# ruff: noqa: F401
 from tests.historical_simulation.start_historical_simulation_support import (
     Any,
     ArgocdAutomationConfig,

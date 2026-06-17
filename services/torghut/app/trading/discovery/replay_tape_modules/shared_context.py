@@ -20,7 +20,7 @@ from app.trading.session_context import (
     regular_session_open_utc_for,
 )
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 
 REPLAY_TAPE_SCHEMA_VERSION = "torghut.replay-tape.v1"

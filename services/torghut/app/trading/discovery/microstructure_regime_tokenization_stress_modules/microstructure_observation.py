@@ -25,7 +25,7 @@ from typing import Any, cast
 
 from app.trading.models import SignalEnvelope
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 
 from .shared_context import (
     MICROSTRUCTURE_REGIME_TOKENIZATION_STRESS_CONTRACT_SCHEMA_VERSION,

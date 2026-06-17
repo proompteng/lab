@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F403,F405,F811
+# ruff: noqa: F811
 from .common import (
     Any,
     FOUNDATION_ROUTER_PARITY_CONTRACT_SCHEMA_VERSION,

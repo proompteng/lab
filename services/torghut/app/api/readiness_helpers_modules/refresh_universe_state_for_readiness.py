@@ -1,14 +1,14 @@
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Extracted Torghut API route and support functions."""
 
-# ruff: noqa: F401,F403,F405,F811,F821
+# ruff: noqa: F401,F811,F821
 from __future__ import annotations
 
 from fastapi import APIRouter
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
-# ruff: noqa: F401,F403,F405,F821,F821,F821
+# ruff: noqa: F401,F821,F821,F821
 
 from .shared_context import (
     BLOCKER_RECONCILIATION_STALE,

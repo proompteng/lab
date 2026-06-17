@@ -34,6 +34,7 @@ def test_parse_changed_lines_tracks_new_hunk_lines() -> None:
 def test_default_diff_gate_rules_include_cleanup_guard_rules() -> None:
     assert "torghut-test-compat-wrapper" in CUSTOM_RULES
     assert "torghut-private-pyright-suppression" in CUSTOM_RULES
+    assert "torghut-wildcard-ruff-noqa" in CUSTOM_RULES
 
 
 def test_filter_messages_keeps_only_changed_line_violations() -> None:
