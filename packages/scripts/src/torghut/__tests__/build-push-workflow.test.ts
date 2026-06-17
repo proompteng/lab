@@ -19,6 +19,10 @@ const pullRequestWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/pull-request.yml', import.meta.url),
   'utf8',
 )
+const arcApplication = readFileSync(
+  new URL('../../../../../argocd/applications/arc/application.yaml', import.meta.url),
+  'utf8',
+)
 
 const pathPatternIndex = (pattern: string): number =>
   workflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
@@ -35,7 +39,7 @@ describe('torghut build-push workflow', () => {
   })
 
   it('does not use actions/cache on the ARC-backed build runner', () => {
-    const buildJob = workflow.indexOf('build-and-push:')
+    const buildJob = workflow.indexOf('build-platform:')
     const cacheStep = workflow.indexOf('uses: actions/cache@v4', buildJob)
 
     expect(buildJob).toBeGreaterThan(-1)
@@ -43,10 +47,11 @@ describe('torghut build-push workflow', () => {
   })
 
   it('waits for the private registry before building the release image', () => {
-    const buildJob = workflow.indexOf('build-and-push:')
+    const buildJob = workflow.indexOf('build-platform:')
     const registryWaitStep = workflow.indexOf('name: Wait for private registry', buildJob)
     const buildStep = workflow.indexOf('name: Build and push torghut image', buildJob)
 
+    expect(buildJob).toBeGreaterThan(-1)
     expect(workflow).toContain('timeout-minutes: 180')
     expect(registryWaitStep).toBeGreaterThan(buildJob)
     expect(buildStep).toBeGreaterThan(registryWaitStep)
@@ -55,8 +60,15 @@ describe('torghut build-push workflow', () => {
   })
 
   it('publishes and contracts the core Torghut image as amd64 and arm64', () => {
-    expect(workflow).toContain('TORGHUT_IMAGE_PLATFORMS: linux/amd64,linux/arm64')
+    expect(workflow).toContain('runner: arc-amd64')
+    expect(workflow).toContain('runner: arc-arm64')
+    expect(workflow).toContain('runs-on: ${{ matrix.runner }}')
+    expect(workflow).toContain('TORGHUT_IMAGE_TAG: ${{ steps.meta.outputs.tag }}-${{ matrix.arch }}')
+    expect(workflow).toContain('TORGHUT_IMAGE_PLATFORMS: ${{ matrix.platform }}')
     expect(workflow).not.toContain('docker/setup-qemu-action')
+    expect(workflow).toContain('name: Create multi-arch image index')
+    expect(workflow).toContain('"${IMAGE}:${TAG}-amd64"')
+    expect(workflow).toContain('"${IMAGE}:${TAG}-arm64"')
     expect(workflow).toContain('name: Verify multi-arch image manifest')
     expect(workflow).toContain('for platform in linux/amd64 linux/arm64; do')
     expect(workflow).toContain("--platforms 'linux/amd64,linux/arm64'")
@@ -69,8 +81,16 @@ describe('torghut build-push workflow', () => {
       expect(serviceWorkflow).toContain('push:')
       expect(serviceWorkflow).toContain("- 'services/dorvud/**'")
       expect(serviceWorkflow).toContain("github.event_name == 'push'")
+      expect(serviceWorkflow).toContain('runner: arc-amd64')
+      expect(serviceWorkflow).toContain('runner: arc-arm64')
+      expect(serviceWorkflow).toContain('runs-on: ${{ matrix.runner }}')
       expect(serviceWorkflow).not.toContain('docker/setup-qemu-action')
-      expect(serviceWorkflow).toContain('platforms: linux/amd64,linux/arm64')
+      expect(serviceWorkflow).toContain('platforms: ${{ matrix.platform }}')
+      expect(serviceWorkflow).toContain(':${{ steps.meta.outputs.tag }}-${{ matrix.arch }}')
+      expect(serviceWorkflow).toContain(':latest-${{ matrix.arch }}')
+      expect(serviceWorkflow).toContain('name: Create multi-arch image index')
+      expect(serviceWorkflow).toContain('"${IMAGE}:${TAG}-amd64"')
+      expect(serviceWorkflow).toContain('"${IMAGE}:${TAG}-arm64"')
       expect(serviceWorkflow).toContain('name: Verify multi-arch image manifest')
       expect(serviceWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
       expect(serviceWorkflow).toContain("--platforms 'linux/amd64,linux/arm64'")
@@ -81,6 +101,15 @@ describe('torghut build-push workflow', () => {
         "--platform-digest 'linux/arm64=${{ steps.digest.outputs.platform_digest_arm64 }}'",
       )
     }
+  })
+
+  it('defines native amd64 and arm64 GitHub runner scale sets for Torghut image builds', () => {
+    expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
+    expect(arcApplication).toContain('- arc-amd64')
+    expect(arcApplication).toContain('kubernetes.io/arch: amd64')
+    expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
+    expect(arcApplication).toContain('- arc-arm64')
+    expect(arcApplication).toContain('kubernetes.io/arch: arm64')
   })
 
   it('caches Bun downloads before manifest-only CI installs script dependencies', () => {
