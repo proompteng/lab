@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false
 # ruff: noqa: F401,F403,F405,F811,F821
 from typing import Any
 import logging
@@ -27,51 +27,49 @@ from ..runtime_decision_authority import (
     source_decision_mode_is_profit_proof_eligible,
 )
 from ..session_context import regular_session_open_utc_for
-from .target_plan_helpers import (
-    _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
-    _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS,
-    _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS,
-    _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON,
-    _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS,
-    _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK,
-    _REGULAR_SESSION_MINUTES,
-    _bounded_sim_collection_blockers,
-    _bounded_sim_collection_reserves_account,
-    _bounded_sim_collection_target_with_runtime_account_audit,
-    _lineage_text_values,
-    _merge_paper_route_probe_lineage,
-    _optional_decimal,
-    _paper_route_probe_lineage_from_params,
-    _safe_text,
-    _strategy_lookup_names,
-    _target_active_in_window,
-    _target_bool,
-    _target_bounded_collection_authorized,
-    _target_has_bounded_sim_collection_source_kind,
-    _target_has_bounded_source_collection_authorization,
-    _target_lookup_names,
-    _target_missing_explicit_probe_window,
-    _target_owns_bounded_sim_collection_account,
-    _target_pair_balance_state,
-    _target_plan_has_active_bounded_sim_collection_owner,
-    _target_plan_lineage,
-    _target_probe_action,
-    _target_probe_cap,
-    _target_probe_exit_minute_after_open,
-    _target_probe_symbol_actions,
-    _target_probe_symbol_quantities,
-    _target_probe_window,
-    _target_requires_bounded_sim_collection_gate,
-    _target_runtime_account_matches,
-    _target_symbols,
-    _target_truthy,
-)
 
 logger: Any
+_BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL: Any
+_BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS: Any
+_BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS: Any
+_BOUNDED_SIM_COLLECTION_LINEAGE_KEYS: Any
+_BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS: Any
+_PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON: Any
+_PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS: Any
+_PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS: Any
+_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS: Any
+_PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK: Any
+_REGULAR_SESSION_MINUTES: Any
+_bounded_sim_collection_blockers: Any
+_bounded_sim_collection_reserves_account: Any
+_bounded_sim_collection_target_with_runtime_account_audit: Any
+_lineage_text_values: Any
+_merge_paper_route_probe_lineage: Any
+_optional_decimal: Any
+_paper_route_probe_lineage_from_params: Any
+_safe_text: Any
+_strategy_lookup_names: Any
+_target_active_in_window: Any
+_target_bool: Any
+_target_bounded_collection_authorized: Any
+_target_has_bounded_sim_collection_source_kind: Any
+_target_has_bounded_source_collection_authorization: Any
+_target_lookup_names: Any
+_target_missing_explicit_probe_window: Any
+_target_owns_bounded_sim_collection_account: Any
+_target_pair_balance_state: Any
+_target_plan_has_active_bounded_sim_collection_owner: Any
+_target_plan_lineage: Any
+_target_probe_action: Any
+_target_probe_cap: Any
+_target_probe_exit_minute_after_open: Any
+_target_probe_symbol_actions: Any
+_target_probe_symbol_quantities: Any
+_target_probe_window: Any
+_target_requires_bounded_sim_collection_gate: Any
+_target_runtime_account_matches: Any
+_target_symbols: Any
+_target_truthy: Any
 
 class SimplePipelineSourceCollectionMixin:
     def __init__(*args: Any, **kwargs: Any) -> None: ...
