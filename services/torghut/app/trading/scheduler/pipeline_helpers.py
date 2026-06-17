@@ -366,7 +366,7 @@ def _resolve_decision_regime_label_with_source(
     return regime_label, "legacy", None if regime_label is not None else "missing"
 
 
-def _resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:  # pyright: ignore[reportUnusedFunction]
+def _resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:
     # kept for backwards compatibility with existing tests and callers
     regime_label, _, _ = _resolve_decision_regime_label_with_source(decision)
     return regime_label
@@ -975,8 +975,10 @@ __all__ = [
     "_select_strictest_runtime_uncertainty_gate",
     "_uncertainty_gate_staleness_reason",
     "build_llm_policy_resolution",
+    "resolve_decision_regime_label",
 ]
 
 # Public aliases used by split modules.
 extract_json_error_payload = _extract_json_error_payload
 price_snapshot_payload = _price_snapshot_payload
+resolve_decision_regime_label = _resolve_decision_regime_label

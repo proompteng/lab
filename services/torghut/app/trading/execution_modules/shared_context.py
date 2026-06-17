@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, NamedTuple, Optional, cast
+from typing import Any, NamedTuple, Optional, Protocol, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +28,7 @@ from ..route_metadata import resolve_order_route_metadata
 from ..execution_policy import should_retry_order_error
 from ..models import ExecutionRequest, StrategyDecision, decision_hash
 from ..quantity_rules import (
+    QuantityResolution,
     min_qty_for_symbol,
     quantize_qty_for_symbol,
     qty_has_valid_increment,
@@ -203,6 +204,85 @@ def _target_plan_source_decision_needs_refresh(
 class _OrderExecutorFields:
     """Submit orders to a broker adapter with idempotency guards."""
 
+    _account_metadata_cache: dict[str, Any] | None
+    _account_metadata_cached_at_monotonic: float | None
+    _asset_metadata_cache: dict[str, tuple[dict[str, Any] | None, float]]
+    _shorting_metadata_status: dict[str, Any]
+
+
+class _OrderExecutorContract(Protocol):
+    _account_metadata_cache: dict[str, Any] | None
+    _account_metadata_cached_at_monotonic: float | None
+    _asset_metadata_cache: dict[str, tuple[dict[str, Any] | None, float]]
+    _shorting_metadata_status: dict[str, Any]
+
+    def _retry_sell_inventory_conflict_after_cancel(
+        self,
+        *,
+        execution_client: Any,
+        request: ExecutionRequest,
+        conflict: Mapping[str, Any],
+        fractional_equities_enabled: bool,
+    ) -> tuple[
+        ExecutionRequest,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+    ]: ...
+
+    @classmethod
+    def _remaining_order_qty(cls, order: Mapping[str, Any]) -> Decimal: ...
+
+    def _quantity_resolution_for_request(
+        self,
+        execution_client: Any,
+        request: ExecutionRequest,
+    ) -> QuantityResolution: ...
+
+    def _validate_short_sell_constraints(
+        self,
+        execution_client: Any,
+        request: ExecutionRequest,
+    ) -> dict[str, Any] | None: ...
+
+    @classmethod
+    def _position_qty_for_symbol(
+        cls,
+        execution_client: Any,
+        symbol: str,
+    ) -> Decimal | None: ...
+
+    @staticmethod
+    def _list_open_orders(execution_client: Any) -> list[dict[str, Any]]: ...
+
+    def _get_account(
+        self,
+        execution_client: Any,
+        *,
+        force_refresh: bool = False,
+    ) -> dict[str, Any] | None: ...
+
+    @classmethod
+    def _find_sell_inventory_conflict(
+        cls,
+        execution_client: Any,
+        request: ExecutionRequest,
+        open_orders: list[dict[str, Any]],
+    ) -> dict[str, Any] | None: ...
+
+    @classmethod
+    def _resolve_sell_inventory_conflict(
+        cls,
+        request: ExecutionRequest,
+        *,
+        conflict: Mapping[str, Any],
+        fractional_equities_enabled: bool,
+    ) -> tuple[
+        ExecutionRequest,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+    ]: ...
+
 
 # Public aliases used by split-module consumers.
 BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE = (
@@ -214,6 +294,7 @@ EXECUTION_POLICY_HASH_KEYS = _EXECUTION_POLICY_HASH_KEYS
 LINEAGE_HASH_KEYS = _LINEAGE_HASH_KEYS
 LINEAGE_PAYLOAD_KEYS = _LINEAGE_PAYLOAD_KEYS
 OrderExecutorFields = _OrderExecutorFields
+OrderExecutorContract = _OrderExecutorContract
 RUNTIME_COST_AMOUNT_KEYS = _RUNTIME_COST_AMOUNT_KEYS
 RUNTIME_COST_BASIS_KEYS = _RUNTIME_COST_BASIS_KEYS
 RUNTIME_COST_PAYLOAD_KEYS = _RUNTIME_COST_PAYLOAD_KEYS
@@ -236,6 +317,7 @@ __all__ = (
     "LINEAGE_HASH_KEYS",
     "LINEAGE_PAYLOAD_KEYS",
     "OrderExecutorFields",
+    "OrderExecutorContract",
     "RUNTIME_COST_AMOUNT_KEYS",
     "RUNTIME_COST_BASIS_KEYS",
     "RUNTIME_COST_PAYLOAD_KEYS",
@@ -258,6 +340,7 @@ __all__: tuple[str, ...] = (
     "COST_MODEL_HASH_KEYS",
     "COST_MODEL_PAYLOAD_KEYS",
     "Decimal",
+    "OrderExecutorContract",
     "EXECUTION_POLICY_HASH_KEYS",
     "Execution",
     "ExecutionRequest",

@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportUnnecessaryCast=false
 """Deterministic autonomous lane: research -> gate evaluation -> paper candidate patch."""
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, cast
+from typing import Any, Callable, Iterable, Mapping, Sequence, cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -167,14 +166,6 @@ _STAGE_PROFITABILITY = "profitability_stage_manifest"
 _V6_08_GOVERNING_DESIGN_DOC = "docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md"
 
 
-def _extract_report_slices(report_payload: dict[str, Any]) -> dict[str, dict[str, str]]:
-    from ..evaluation_modules.build_simulation_calibration_report_v1 import (
-        extract_report_slices,
-    )
-
-    return extract_report_slices(report_payload)
-
-
 @dataclass(frozen=True)
 class _StageManifestRecord:
     stage: str
@@ -187,7 +178,7 @@ class _StageManifestRecord:
     created_by: str = "run_autonomous_lane"
     parent_lineage_hash: str | None = None
     parent_stage: str | None = None
-    inputs: dict[str, str] = field(default_factory=dict)
+    inputs: dict[str, str] = field(default_factory=lambda: cast(dict[str, str], {}))
 
 
 def _coerce_evidence_bool(value: object) -> bool | None:
@@ -211,21 +202,23 @@ def _normalize_strategy_artifacts(value: object) -> object | None:
     if not isinstance(value, dict):
         return value
 
-    kind = str(value.get("kind", "")).strip().lower()
+    payload = cast(dict[str, object], value)
+    kind = str(payload.get("kind", "")).strip().lower()
     if kind == "configmap":
-        data = value.get("data")
+        data = payload.get("data")
         if not isinstance(data, dict):
             return None
-        strategies_yaml = data.get("strategies.yaml")
+        data_payload = cast(dict[str, object], data)
+        strategies_yaml = data_payload.get("strategies.yaml")
         if not isinstance(strategies_yaml, str):
             return None
         try:
-            nested_payload = yaml.safe_load(strategies_yaml)
+            nested_payload = cast(object, yaml.safe_load(strategies_yaml))
         except Exception:
             return None
         return _normalize_strategy_artifacts(nested_payload)
 
-    return value
+    return payload
 
 
 def _is_runbook_valid(strategy_configmap_path: Path | None) -> bool:
@@ -234,7 +227,9 @@ def _is_runbook_valid(strategy_configmap_path: Path | None) -> bool:
         return False
 
     try:
-        raw_payload = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+        raw_payload = cast(
+            object, yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+        )
     except Exception:
         return False
 
@@ -244,16 +239,20 @@ def _is_runbook_valid(strategy_configmap_path: Path | None) -> bool:
         return False
 
     if isinstance(normalized_payload, dict):
-        strategies = normalized_payload.get("strategies")
+        payload = cast(dict[str, object], normalized_payload)
+        strategies = payload.get("strategies")
     elif isinstance(normalized_payload, list):
-        strategies = normalized_payload
+        strategies = cast(list[object], normalized_payload)
     else:
         return False
 
     if not isinstance(strategies, list):
         return False
 
-    return bool(strategies) and all(isinstance(item, dict) for item in strategies)
+    strategy_items = cast(list[object], strategies)
+    return bool(strategy_items) and all(
+        isinstance(item, dict) for item in strategy_items
+    )
 
 
 def _build_candidate_state_payload(
@@ -370,7 +369,9 @@ class AutonomousLaneResult:
     evaluation_manifest_path: Path
     recommendation_manifest_path: Path
     profitability_manifest_path: Path
-    stage_trace_ids: dict[str, str] = field(default_factory=dict)
+    stage_trace_ids: dict[str, str] = field(
+        default_factory=lambda: cast(dict[str, str], {})
+    )
     stage_lineage_root: str | None = None
 
 
@@ -654,9 +655,10 @@ def _safe_int(value: Any) -> int:
 
 
 def _as_object_dict(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         return {}
-    return {str(key): item for key, item in value.items()}
+    mapping = cast(Mapping[object, object], value)
+    return {str(key): item for key, item in mapping.items()}
 
 
 def _stable_hash(payload: object) -> str:
@@ -1923,7 +1925,7 @@ def _build_profitability_stage_manifest(
     )
     governance_pass = all(item["status"] == "pass" for item in governance_checks)
 
-    stage_payloads: dict[str, Any] = {
+    stage_payloads: dict[str, dict[str, Any]] = {
         "research": {
             "status": "pass" if research_pass else "fail",
             "checks": research_checks,
@@ -1970,16 +1972,16 @@ def _build_profitability_stage_manifest(
     ]
     replay_contract_artifact_hashes: dict[str, str] = {}
     for stage_payload in stage_payloads.values():
-        if not isinstance(stage_payload, dict):
-            continue
         artifacts_raw = stage_payload.get("artifacts")
         if not isinstance(artifacts_raw, dict):
             continue
-        for artifact_payload_raw in artifacts_raw.values():
+        artifacts = cast(dict[str, object], artifacts_raw)
+        for artifact_payload_raw in artifacts.values():
             if not isinstance(artifact_payload_raw, dict):
                 continue
-            artifact_ref = str(artifact_payload_raw.get("path", "")).strip()
-            artifact_sha = str(artifact_payload_raw.get("sha256", "")).strip()
+            artifact_payload = cast(dict[str, object], artifact_payload_raw)
+            artifact_ref = str(artifact_payload.get("path", "")).strip()
+            artifact_sha = str(artifact_payload.get("sha256", "")).strip()
             if not artifact_ref or not artifact_sha:
                 continue
             replay_contract_artifact_hashes[artifact_ref] = artifact_sha
@@ -2075,7 +2077,10 @@ def _extract_janus_q_metrics(
     reasons_raw = summary.get("reasons")
     reasons: list[str] = []
     if isinstance(reasons_raw, list):
-        reasons = [str(reason).strip() for reason in reasons_raw if str(reason).strip()]
+        reason_values = cast(list[object], reasons_raw)
+        reasons = [
+            str(reason).strip() for reason in reason_values if str(reason).strip()
+        ]
     return (
         _safe_int(event_car.get("event_count", 0)),
         _safe_int(hgrm_reward.get("reward_count", 0)),
@@ -2143,16 +2148,15 @@ def run_autonomous_lane(
     now = evaluated_at or datetime.now(timezone.utc)
     runtime = StrategyRuntime(default_runtime_registry())
     walk_decisions: list[WalkForwardDecision] = []
-    baseline_walk_decisions: list[WalkForwardDecision] = []
     runtime_errors: list[str] = []
     baseline_runtime_errors: list[str] = []
     patch_path: Path | None = None
-    walk_results: WalkForwardResults | None = None
-    report: EvaluationReport | None = None
-    gate_report: GateEvaluationReport | None = None
+    walk_results: Any = None
+    report: Any = None
+    gate_report: Any = None
     gate_report_trace_id: str | None = None
     recommendation_trace_id: str | None = None
-    promotion_recommendation: PromotionRecommendation | None = None
+    promotion_recommendation: Any = None
     gate_report_path = gates_dir / "gate-evaluation.json"
     promotion_check_path = gates_dir / "promotion-prerequisites.json"
     rollback_check_path = gates_dir / "rollback-readiness.json"
@@ -2222,6 +2226,61 @@ def run_autonomous_lane(
     strategy_factory_reasons: list[str] = []
     strategy_factory_summary: dict[str, Any] = {}
     strategy_factory_artifact_refs: list[str] = []
+    ordered_signals: list[SignalEnvelope] = []
+    advisor_fallback_slo_report: dict[str, Any] = {}
+    advisor_fallback_slo_artifact_ref = ""
+    baseline_candidate_id = ""
+    benchmark: Any = None
+    benchmark_parity_artifact_ref = ""
+    candidate_alpha_readiness_payload: dict[str, Any] = {}
+    candidate_dependency_quorum_payload: dict[str, Any] = {}
+    candidate_generation_stage_record: Any = None
+    candidate_spec_path = research_dir / "candidate-spec.json"
+    candidate_state_payload: dict[str, Any] = {}
+    contamination_registry_artifact_ref = ""
+    contamination_registry_payload: dict[str, Any] = {}
+    deeplob_bdlob_artifact_ref = ""
+    drift_gate_check: dict[str, Any] = {}
+    evaluation_report_path = backtest_dir / "evaluation-report.json"
+    expert_router_registry_artifact_ref = ""
+    fold_evidence: list[dict[str, Any]] = []
+    fold_metrics_artifact_ref = ""
+    fold_metrics_count = 0
+    foundation_router_parity_artifact_ref = ""
+    gate_report_payload: dict[str, Any] = {}
+    gate_policy_payload: dict[str, Any] = {}
+    hmm_state_posterior_artifact_ref = ""
+    janus_event_count = 0
+    janus_evidence_complete = False
+    janus_q_summary: dict[str, object] = {}
+    janus_reasons: list[str] = []
+    janus_reward_count = 0
+    profitability_validation: Any = None
+    promotion_allowed = False
+    promotion_check: Any = None
+    promotion_reasons: list[str] = []
+    raw_gate_policy: dict[str, Any] = {}
+    recommended_mode = promotion_target
+    replay_artifacts: dict[str, Path | None] = {}
+    research_spec: dict[str, Any] = {}
+    rollback_check: Any = None
+    shadow_live_deviation_artifact_ref = ""
+    shadow_live_deviation_report_payload: dict[str, Any] = {}
+    simulation_calibration_artifact_ref = ""
+    simulation_calibration_report_payload: dict[str, Any] = {}
+    stage_lineage_payload: dict[str, Any] = {}
+    strategy_family = ""
+    stress_evidence: list[dict[str, Any]] = []
+    stress_metrics_artifact_ref = ""
+    stress_metrics_count = 0
+    router_artifact_ref = ""
+    profitability_run_context: dict[str, Any] = {}
+    walk_results_path = backtest_dir / "walkforward-results.json"
+
+    def _write_profitability_manifest() -> None:
+        raise RuntimeError("profitability_manifest_writer_not_initialized")
+
+    actuation_intent_path = output_dir / _ACTUATION_INTENT_PATH
 
     factory = session_factory or SessionLocal
     if persist_results:
@@ -2236,7 +2295,34 @@ def run_autonomous_lane(
             code_version=code_version,
             now=now,
         )
-    try:
+
+    def _run_candidate_generation_phase() -> None:
+        nonlocal \
+            advisor_fallback_slo_report, \
+            baseline_candidate_id, \
+            baseline_runtime_errors, \
+            benchmark
+        nonlocal \
+            candidate_generation_stage_record, \
+            evaluation_report_path, \
+            expert_router_registry_payload
+        nonlocal gate_policy_payload, hmm_state_posterior_payload, janus_event_count
+        nonlocal \
+            janus_evidence_complete, \
+            janus_q_summary, \
+            janus_reasons, \
+            janus_reward_count
+        nonlocal ordered_signals, report, runtime_errors, strategy_factory_allowed
+        nonlocal \
+            strategy_factory_artifact_refs, \
+            strategy_factory_bridge, \
+            strategy_factory_reasons
+        nonlocal \
+            strategy_factory_summary, \
+            strategy_family, \
+            router_artifact_ref, \
+            walk_decisions
+        nonlocal walk_results, walk_results_path
         strategy_factory_bridge = _build_strategy_factory_bridge(
             output_dir=output_dir,
             notes_artifact_root=notes_artifact_root,
@@ -2512,6 +2598,25 @@ def run_autonomous_lane(
             encoding="utf-8",
         )
 
+    def _run_profitability_validation_phase() -> None:
+        nonlocal advisor_fallback_slo_artifact_ref, benchmark_parity_artifact_ref
+        nonlocal candidate_alpha_readiness_payload, candidate_dependency_quorum_payload
+        nonlocal candidate_state_payload, contamination_registry_artifact_ref
+        nonlocal contamination_registry_payload, deeplob_bdlob_artifact_ref
+        nonlocal \
+            expert_router_registry_artifact_ref, \
+            fold_evidence, \
+            fold_metrics_artifact_ref
+        nonlocal foundation_router_parity_artifact_ref, gate_report, gate_report_payload
+        nonlocal hmm_state_posterior_artifact_ref, profitability_validation
+        nonlocal \
+            shadow_live_deviation_artifact_ref, \
+            shadow_live_deviation_report_payload
+        nonlocal \
+            simulation_calibration_artifact_ref, \
+            simulation_calibration_report_payload, \
+            stress_evidence
+        nonlocal stress_metrics_artifact_ref, stress_metrics_count
         confidence_values = _collect_confidence_values(walk_decisions)
         reproducibility_hashes = {
             "signals": _sha256_path(signals_path),
@@ -2730,7 +2835,7 @@ def run_autonomous_lane(
             "rollbackReadiness", {}
         )
         candidate_state_readiness = (
-            candidate_state_readiness_raw
+            cast(dict[str, Any], candidate_state_readiness_raw)
             if isinstance(candidate_state_readiness_raw, dict)
             else {}
         )
@@ -2879,6 +2984,14 @@ def run_autonomous_lane(
             )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
+
+    def _run_gate_report_spec_phase() -> None:
+        nonlocal candidate_spec_path, drift_gate_check, gate_report_trace_id, patch_path
+        nonlocal \
+            profitability_run_context, \
+            raw_gate_policy, \
+            research_spec, \
+            rollback_check
         gate_report_payload["throughput"] = {
             "signal_count": len(signals),
             "decision_count": report.metrics.decision_count,
@@ -3084,7 +3197,7 @@ def run_autonomous_lane(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
 
-        research_spec: dict[str, Any] = {
+        research_spec = {
             "run_id": run_id,
             "candidate_id": candidate_id,
             "promotion_target": promotion_target,
@@ -3155,9 +3268,7 @@ def run_autonomous_lane(
                     {
                         "strategy_id": strategy.strategy_id,
                         "feature_view_spec_ref": str(
-                            cast(dict[str, Any], strategy.strategy_spec).get(
-                                "feature_view_spec_ref", ""
-                            )
+                            strategy.strategy_spec.get("feature_view_spec_ref", "")
                         ).strip()
                         if strategy.strategy_spec
                         else "",
@@ -3169,12 +3280,8 @@ def run_autonomous_lane(
                     {
                         "strategy_id": strategy.strategy_id,
                         "model_ref": str(
-                            cast(dict[str, Any], strategy.strategy_spec).get(
-                                "model_ref"
-                            )
-                            or cast(dict[str, Any], strategy.strategy_spec).get(
-                                "deterministic_rule_ref", ""
-                            )
+                            strategy.strategy_spec.get("model_ref")
+                            or strategy.strategy_spec.get("deterministic_rule_ref", "")
                         ).strip(),
                     }
                     for strategy in runtime_strategies
@@ -3301,7 +3408,7 @@ def run_autonomous_lane(
                 ).to_payload()
         candidate_spec_path = research_dir / "candidate-spec.json"
 
-        patch_path: Path | None = None
+        patch_path = None
 
         raw_gate_policy = gate_policy_payload
         patch_path = _resolve_paper_patch_path(
@@ -3336,6 +3443,19 @@ def run_autonomous_lane(
             "design_doc": str(resolved_design_doc or ""),
             "priority_id": str(resolved_governance_priority_id or ""),
         }
+
+    def _run_promotion_recommendation_phase() -> None:
+        nonlocal \
+            _write_profitability_manifest, \
+            fold_metrics_count, \
+            patch_path, \
+            promotion_allowed
+        nonlocal \
+            promotion_check, \
+            promotion_reasons, \
+            promotion_recommendation, \
+            recommendation_trace_id
+        nonlocal recommended_mode
 
         def _write_profitability_manifest() -> None:
             profitability_manifest_payload = _build_profitability_stage_manifest(
@@ -3537,7 +3657,7 @@ def run_autonomous_lane(
         candidate_spec_path.write_text(
             json.dumps(research_spec, indent=2), encoding="utf-8"
         )
-        promotion_gate_payload = {
+        promotion_gate_payload: dict[str, Any] = {
             "allowed": promotion_allowed,
             "recommended_mode": recommended_mode,
             "reasons": promotion_reasons,
@@ -3605,15 +3725,19 @@ def run_autonomous_lane(
             ),
         }
         if strategy_factory_bridge is not None:
-            promotion_gate_payload["checks"]["strategy_factory"] = dict(
-                strategy_factory_summary
+            promotion_gate_checks = cast(
+                dict[str, Any], promotion_gate_payload["checks"]
             )
+            promotion_gate_checks["strategy_factory"] = dict(strategy_factory_summary)
         promotion_gate_path.write_text(
             json.dumps(promotion_gate_payload, indent=2), encoding="utf-8"
         )
         gate_report_payload["promotion_recommendation"] = (
             promotion_recommendation.to_payload()
         )
+
+    def _run_lineage_replay_phase() -> None:
+        nonlocal replay_artifacts, stage_lineage_payload
         gate_report_payload["promotion_evidence"] = {
             "fold_metrics": {
                 "count": len(fold_evidence),
@@ -4086,6 +4210,11 @@ def run_autonomous_lane(
         candidate_spec_path.write_text(
             json.dumps(research_spec, indent=2), encoding="utf-8"
         )
+
+    def _run_actuation_persistence_phase() -> None:
+        nonlocal actuation_intent_path
+        if recommendation_trace_id is None or gate_report_trace_id is None:
+            raise RuntimeError("autonomous_lane_trace_ids_missing")
         candidate_spec_replay_artifacts: dict[str, Path | None] = {
             key: value
             for key, value in replay_artifacts.items()
@@ -4259,6 +4388,15 @@ def run_autonomous_lane(
             recommendation_trace_id=recommendation_trace_id,
         )
 
+    try:
+        _run_candidate_generation_phase()
+        _run_profitability_validation_phase()
+        _run_gate_report_spec_phase()
+        _run_promotion_recommendation_phase()
+        _run_lineage_replay_phase()
+        _run_actuation_persistence_phase()
+        if gate_report_trace_id is None or recommendation_trace_id is None:
+            raise RuntimeError("autonomous_lane_trace_ids_missing")
         return AutonomousLaneResult(
             run_id=run_id,
             candidate_id=candidate_id,
@@ -4310,16 +4448,25 @@ def _prepare_lane_output_dirs(output_dir: Path) -> tuple[Path, Path, Path, Path,
 def _normalize_governance_inputs(
     governance_inputs: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    raw = governance_inputs if isinstance(governance_inputs, Mapping) else {}
-    execution_context = raw.get("execution_context", {})
-    if not isinstance(execution_context, Mapping):
-        execution_context = {}
-    runtime = raw.get("runtime_governance", {})
-    if not isinstance(runtime, Mapping):
-        runtime = {}
-    rollback = raw.get("rollback_proof", {})
-    if not isinstance(rollback, Mapping):
-        rollback = {}
+    raw: Mapping[str, Any] = (
+        governance_inputs if isinstance(governance_inputs, Mapping) else {}
+    )
+    execution_context_raw = raw.get("execution_context", {})
+    execution_context: Mapping[str, Any] = (
+        cast(Mapping[str, Any], execution_context_raw)
+        if isinstance(execution_context_raw, Mapping)
+        else {}
+    )
+    runtime_raw = raw.get("runtime_governance", {})
+    runtime: Mapping[str, Any] = (
+        cast(Mapping[str, Any], runtime_raw) if isinstance(runtime_raw, Mapping) else {}
+    )
+    rollback_raw = raw.get("rollback_proof", {})
+    rollback: Mapping[str, Any] = (
+        cast(Mapping[str, Any], rollback_raw)
+        if isinstance(rollback_raw, Mapping)
+        else {}
+    )
     return {
         "execution_context": {
             "repository": _coerce_str(
@@ -4356,18 +4503,27 @@ def _coalesce_governance_context(
     priority_id: str | None,
     now: datetime,
 ) -> dict[str, Any]:
-    raw = governance_inputs if isinstance(governance_inputs, Mapping) else {}
-    execution_context = raw.get("execution_context", {})
-    if not isinstance(execution_context, Mapping):
-        execution_context = {}
-    runtime = raw.get("runtime_governance", {})
-    if not isinstance(runtime, Mapping):
-        runtime = {}
-    rollback = raw.get("rollback_proof", {})
-    if not isinstance(rollback, Mapping):
-        rollback = {}
+    raw: Mapping[str, Any] = (
+        governance_inputs if isinstance(governance_inputs, Mapping) else {}
+    )
+    execution_context_raw = raw.get("execution_context", {})
+    execution_context: Mapping[str, Any] = (
+        cast(Mapping[str, Any], execution_context_raw)
+        if isinstance(execution_context_raw, Mapping)
+        else {}
+    )
+    runtime_raw = raw.get("runtime_governance", {})
+    runtime: Mapping[str, Any] = (
+        cast(Mapping[str, Any], runtime_raw) if isinstance(runtime_raw, Mapping) else {}
+    )
+    rollback_raw = raw.get("rollback_proof", {})
+    rollback: Mapping[str, Any] = (
+        cast(Mapping[str, Any], rollback_raw)
+        if isinstance(rollback_raw, Mapping)
+        else {}
+    )
 
-    fallback_head = execution_context.get("head") or (
+    fallback_head = _coerce_str(execution_context.get("head")) or (
         f"agentruns/torghut-autonomy-{now.strftime('%Y%m%dT%H%M%S')}"
     )
     resolved_repository = _coerce_str(governance_repository)
@@ -4434,13 +4590,13 @@ def _build_phase_manifest(
 ) -> dict[str, Any]:
     phase_timestamp = evaluated_at.isoformat()
     governance = _normalize_governance_inputs(governance_inputs)
-    execution_context = governance["execution_context"]
+    execution_context = cast(Mapping[str, Any], governance["execution_context"])
     artifact_path = _coerce_str(
         execution_context.get("artifactPath"),
         default=str(output_dir),
     )
-    runtime_governance = governance["runtime_governance"]
-    rollback_proof = governance["rollback_proof"]
+    runtime_governance = cast(Mapping[str, Any], governance["runtime_governance"])
+    rollback_proof = cast(Mapping[str, Any], governance["rollback_proof"])
     gate_status = "pass" if gate_report.promotion_allowed else "fail"
     prerequisite_status = "pass" if promotion_check.allowed else "fail"
     rollback_ready_status = "pass" if rollback_check.ready else "fail"
@@ -4458,25 +4614,27 @@ def _build_phase_manifest(
         else ("fail" if requested_promotion_target == "paper" else "skipped")
     )
     gate_payload_gates = gate_report_payload.get("gates")
-    gate_entries = gate_payload_gates if isinstance(gate_payload_gates, list) else []
+    gate_entries = (
+        cast(list[object], gate_payload_gates)
+        if isinstance(gate_payload_gates, list)
+        else []
+    )
     slo_gates = _coerce_gate_phase_gates(gate_entries)
     throughput_payload = cast(
         Mapping[str, Any], gate_report_payload.get("throughput", {})
     )
     signal_count = _coerce_int(throughput_payload.get("signal_count"), default=0)
     decision_count = _coerce_int(throughput_payload.get("decision_count"), default=0)
+    drift_refs_raw = drift_gate_check.get("artifact_refs")
     drift_artifacts = _coerce_path_strings(
-        drift_gate_check.get("artifact_refs", [])
-        if isinstance(drift_gate_check.get("artifact_refs", []), list)
-        else []
+        drift_refs_raw if isinstance(drift_refs_raw, list) else []
     )
     runtime_gate_status = coerce_phase_status(
         runtime_governance.get("governance_status", "skipped")
     )
+    runtime_refs_raw = runtime_governance.get("artifact_refs")
     runtime_artifact_refs = _coerce_path_strings(
-        runtime_governance.get("artifact_refs", [])
-        if isinstance(runtime_governance.get("artifact_refs", []), list)
-        else []
+        runtime_refs_raw if isinstance(runtime_refs_raw, list) else []
     )
     rollback_triggered = bool(
         runtime_governance.get("rollback_triggered", False)
@@ -4494,19 +4652,15 @@ def _build_phase_manifest(
         if (not rollback_triggered)
         else ("pass" if rollback_proof_path else "fail")
     )
+    drift_evidence: Mapping[str, Any] = drift_promotion_evidence or {}
+    drift_evidence_refs_raw = drift_evidence.get("evidence_artifact_refs")
+    drift_evidence_refs = (
+        cast(list[object], drift_evidence_refs_raw)
+        if isinstance(drift_evidence_refs_raw, list)
+        else []
+    )
     drift_gate_artifacts = sorted(
-        {
-            str(item)
-            for item in (
-                (drift_promotion_evidence or {}).get("evidence_artifact_refs", [])
-                if isinstance(
-                    (drift_promotion_evidence or {}).get("evidence_artifact_refs", []),
-                    list,
-                )
-                else []
-            )
-            if str(item).strip()
-        }
+        {str(item) for item in drift_evidence_refs if str(item).strip()}
     )
 
     phase_summaries: list[dict[str, Any]] = [
@@ -4827,14 +4981,15 @@ def _coerce_int(raw: Any, default: int = 0) -> int:
 def _coerce_path_strings(values: Any) -> list[str]:
     if not isinstance(values, (list, tuple, set)):
         return []
-    return sorted({_coerce_str(value) for value in values if _coerce_str(value)})
+    value_items = cast(Iterable[object], values)
+    return sorted({_coerce_str(value) for value in value_items if _coerce_str(value)})
 
 
 def _coerce_gate_phase_gates(raw_gates: Any) -> list[dict[str, Any]]:
     gates: list[dict[str, Any]] = []
     if not isinstance(raw_gates, list):
         return gates
-    for item in raw_gates:
+    for item in cast(list[object], raw_gates):
         if not isinstance(item, dict):
             continue
         payload = cast(dict[str, Any], item)
@@ -4946,7 +5101,7 @@ def _build_actuation_intent_payload(
     )
     candidate_state_readiness_raw = candidate_state_payload.get("rollbackReadiness", {})
     candidate_state_readiness = (
-        candidate_state_readiness_raw
+        cast(dict[str, Any], candidate_state_readiness_raw)
         if isinstance(candidate_state_readiness_raw, dict)
         else {}
     )
@@ -5043,7 +5198,7 @@ def _resolve_confidence_calibration(
         "confidence_calibration"
     )
     confidence_calibration = (
-        dict(confidence_calibration_raw)
+        dict(cast(Mapping[str, Any], confidence_calibration_raw))
         if isinstance(confidence_calibration_raw, dict)
         else {}
     )
@@ -6936,30 +7091,37 @@ def _build_stress_bundle(report: EvaluationReport, stress_case: str) -> dict[str
 def load_runtime_strategy_config(path: Path) -> list[StrategyRuntimeConfig]:
     raw = path.read_text(encoding="utf-8")
     if path.suffix.lower() in {".yaml", ".yml"}:
-        payload = yaml.safe_load(raw)
+        payload_raw: object = yaml.safe_load(raw)
     else:
-        payload = json.loads(raw)
+        payload_raw = json.loads(raw)
 
-    if isinstance(payload, dict):
-        payload = payload.get("strategies", payload)
+    if isinstance(payload_raw, Mapping):
+        payload_mapping = cast(Mapping[str, Any], payload_raw)
+        payload: object = payload_mapping.get("strategies", payload_raw)
+    else:
+        payload = payload_raw
     if not isinstance(payload, list):
         raise ValueError("strategy config must be a list or include strategies key")
 
     strategies: list[StrategyRuntimeConfig] = []
-    for index, item in enumerate(payload):
-        if not isinstance(item, dict):
+    for index, item_raw in enumerate(cast(list[object], payload)):
+        if not isinstance(item_raw, Mapping):
             raise ValueError(f"invalid strategy entry at index {index}")
+        item = cast(Mapping[str, Any], item_raw)
         strategy_id = str(
             item.get("strategy_id") or item.get("name") or f"strategy-{index + 1}"
         )
-        if isinstance(item.get("strategy_spec_v2"), dict):
-            strategy_spec = load_strategy_spec_v2_payload(item["strategy_spec_v2"])
-            strategy_params = item.get("params", {})
-            if isinstance(strategy_params, dict) and strategy_params:
+        strategy_spec_raw = item.get("strategy_spec_v2")
+        if isinstance(strategy_spec_raw, Mapping):
+            strategy_spec = load_strategy_spec_v2_payload(
+                dict(cast(Mapping[str, Any], strategy_spec_raw))
+            )
+            strategy_params_raw = item.get("params", {})
+            if isinstance(strategy_params_raw, Mapping) and strategy_params_raw:
                 strategy_spec_payload = strategy_spec.to_payload()
                 strategy_spec_payload["runtime_parameters"] = {
                     **dict(strategy_spec.runtime_parameters),
-                    **cast(dict[str, Any], strategy_params),
+                    **dict(cast(Mapping[str, Any], strategy_params_raw)),
                 }
                 strategy_spec = load_strategy_spec_v2_payload(strategy_spec_payload)
             compiled = compile_strategy_spec_v2(strategy_spec)
@@ -6998,14 +7160,16 @@ def load_runtime_strategy_config(path: Path) -> list[StrategyRuntimeConfig]:
 
         strategy_type = str(item.get("strategy_type", "legacy_macd_rsi"))
         version = str(item.get("version", "1.0.0"))
-        params = item.get("params")
-        if params is None:
+        params_raw = item.get("params")
+        if params_raw is None:
             params = {
                 "buy_rsi_threshold": item.get("buy_rsi_threshold", 35),
                 "sell_rsi_threshold": item.get("sell_rsi_threshold", 65),
                 "qty": item.get("qty", 1),
             }
-        if not isinstance(params, dict):
+        elif isinstance(params_raw, Mapping):
+            params = dict(cast(Mapping[str, Any], params_raw))
+        else:
             raise ValueError(f"params for strategy {strategy_id} must be an object")
         config = StrategyRuntimeConfig(
             strategy_id=strategy_id,
@@ -7024,10 +7188,12 @@ def load_runtime_strategy_config(path: Path) -> list[StrategyRuntimeConfig]:
 
 
 def _load_signals(path: Path) -> list[SignalEnvelope]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload: object = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
         raise ValueError("signals payload must be a list")
-    signals = [SignalEnvelope.model_validate(item) for item in payload]
+    signals = [
+        SignalEnvelope.model_validate(item) for item in cast(list[object], payload)
+    ]
     return sorted(signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0))
 
 
@@ -7062,15 +7228,20 @@ def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
     missing = 0
     total = 0
     for signal in signals:
-        payload = signal.payload or {}
+        payload = dict(signal.payload or {})
         for key in required_keys:
             total += 1
             if key == "macd":
                 macd_block = payload.get("macd")
+                macd_payload: dict[str, Any] = (
+                    dict(cast(Mapping[str, Any], macd_block))
+                    if isinstance(macd_block, Mapping)
+                    else {}
+                )
                 if (
-                    not isinstance(macd_block, dict)
-                    or macd_block.get("macd") is None
-                    or macd_block.get("signal") is None
+                    not macd_payload
+                    or macd_payload.get("macd") is None
+                    or macd_payload.get("signal") is None
                 ):
                     missing += 1
             elif key == "rsi":
@@ -7170,9 +7341,17 @@ def _resolve_gate_fragility_inputs(
     for item in decisions:
         params = item.decision.params
         allocator_payload = params.get("allocator")
-        allocator = allocator_payload if isinstance(allocator_payload, dict) else {}
+        allocator: dict[str, Any] = (
+            dict(cast(Mapping[str, Any], allocator_payload))
+            if isinstance(allocator_payload, Mapping)
+            else {}
+        )
         snapshot_payload = params.get("fragility_snapshot")
-        snapshot = snapshot_payload if isinstance(snapshot_payload, dict) else {}
+        snapshot: dict[str, Any] = (
+            dict(cast(Mapping[str, Any], snapshot_payload))
+            if isinstance(snapshot_payload, Mapping)
+            else {}
+        )
 
         raw_state = allocator.get("fragility_state")
         if raw_state is None:
@@ -7334,7 +7513,8 @@ def _resolve_gate_llm_metrics(
             metrics_payload = payload.get("metrics")
             if not isinstance(metrics_payload, dict):
                 return {}
-            error_rate = _to_finite_float(metrics_payload.get("error_rate"))
+            metrics = cast(Mapping[str, Any], metrics_payload)
+            error_rate = _to_finite_float(metrics.get("error_rate"))
             if error_rate is None or error_rate < 0 or error_rate > 1:
                 return {}
             return {"error_ratio": str(Decimal(str(error_rate)))}
@@ -7429,8 +7609,8 @@ def _collect_confidence_values(decisions: list[WalkForwardDecision]) -> list[Dec
         raw_value = item.decision.params.get("confidence")
         if raw_value is None:
             runtime_payload = item.decision.params.get("runtime")
-            if isinstance(runtime_payload, dict):
-                raw_value = runtime_payload.get("confidence")
+            if isinstance(runtime_payload, Mapping):
+                raw_value = cast(Mapping[str, Any], runtime_payload).get("confidence")
         if raw_value is None:
             continue
         try:
@@ -7496,7 +7676,11 @@ def _evaluate_drift_promotion_gate(
     evidence = drift_promotion_evidence or {}
     artifact_refs_raw = evidence.get("evidence_artifact_refs")
     artifact_refs = (
-        [str(item) for item in artifact_refs_raw if str(item).strip()]
+        [
+            str(item)
+            for item in cast(list[object], artifact_refs_raw)
+            if str(item).strip()
+        ]
         if isinstance(artifact_refs_raw, list)
         else []
     )
@@ -7520,7 +7704,7 @@ def _evaluate_drift_promotion_gate(
 
     reasons_raw = evidence.get("reasons")
     reasons = (
-        [str(item) for item in reasons_raw if str(item).strip()]
+        [str(item) for item in cast(list[object], reasons_raw) if str(item).strip()]
         if isinstance(reasons_raw, list)
         else []
     )
@@ -7549,9 +7733,12 @@ def _write_paper_candidate_patch(
     candidate_id: str,
     output_path: Path,
 ) -> Path:
-    configmap_payload = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
-    if not isinstance(configmap_payload, dict):
+    configmap_payload_raw: object = yaml.safe_load(
+        configmap_path.read_text(encoding="utf-8")
+    )
+    if not isinstance(configmap_payload_raw, Mapping):
         raise ValueError("invalid configmap payload")
+    configmap_payload = cast(Mapping[str, Any], configmap_payload_raw)
 
     candidate_strategies: list[dict[str, Any]] = []
     for strategy in runtime_strategies:
@@ -7571,16 +7758,18 @@ def _write_paper_candidate_patch(
 
     candidate_strategies.sort(key=lambda item: str(item["name"]))
 
-    patch_payload = {
+    metadata_raw = configmap_payload.get("metadata", {})
+    metadata: dict[str, Any] = (
+        dict(cast(Mapping[str, Any], metadata_raw))
+        if isinstance(metadata_raw, Mapping)
+        else {}
+    )
+    patch_payload: dict[str, Any] = {
         "apiVersion": "v1",
         "kind": "ConfigMap",
         "metadata": {
-            "name": configmap_payload.get("metadata", {}).get(
-                "name", "torghut-strategy-config"
-            ),
-            "namespace": configmap_payload.get("metadata", {}).get(
-                "namespace", "torghut"
-            ),
+            "name": metadata.get("name", "torghut-strategy-config"),
+            "namespace": metadata.get("namespace", "torghut"),
             "annotations": {
                 "torghut.proompteng.ai/candidate-id": candidate_id,
                 "torghut.proompteng.ai/recommended-mode": "paper",
@@ -7596,14 +7785,6 @@ def _write_paper_candidate_patch(
         yaml.safe_dump(patch_payload, sort_keys=False), encoding="utf-8"
     )
     return output_path
-
-
-__all__ = [
-    "AutonomousLaneResult",
-    "load_runtime_strategy_config",
-    "run_autonomous_lane",
-    "upsert_autonomy_no_signal_run",
-]
 
 
 __all__ = [

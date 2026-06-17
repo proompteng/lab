@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
@@ -7,7 +6,7 @@ import json
 import re
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping, Optional, cast
+from typing import TYPE_CHECKING, Any, Mapping, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,6 +22,7 @@ from ..time_source import trading_now
 
 from .shared_context import (
     SIMULATION_CURSOR_BASELINE,
+    ClickHouseSignalIngestorContract as _ClickHouseSignalIngestorContract,
     ClickHouseSignalIngestorFields as _ClickHouseSignalIngestorFields,
     logger,
 )
@@ -41,7 +41,15 @@ def _ingest_root_export(name: str, fallback: Any) -> Any:
     return getattr(root_module, name, fallback)
 
 
-class _ClickHouseSignalIngestorPersistenceMethods:
+if TYPE_CHECKING:
+    _ClickHouseSignalIngestorPersistenceBase = _ClickHouseSignalIngestorContract
+else:
+    _ClickHouseSignalIngestorPersistenceBase = object
+
+
+class _ClickHouseSignalIngestorPersistenceMethods(
+    _ClickHouseSignalIngestorPersistenceBase
+):
     def _resolve_time_column(self) -> str:
         if self._time_column:
             return self._time_column

@@ -1,11 +1,10 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Signal ingestion from ClickHouse."""
 
 from __future__ import annotations
 
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +21,7 @@ from ..time_source import trading_now
 
 from .shared_context import (
     FLAT_CURSOR_OVERLAP,
+    ClickHouseSignalIngestorContract as _ClickHouseSignalIngestorContract,
     SignalBatch,
     simulation_fetch_window as _simulation_fetch_window,
     logger,
@@ -104,7 +104,13 @@ def _quote_literal(value: str) -> str:
     return quote_literal(value)
 
 
-class _ClickHouseSignalIngestorCoreMethods:
+if TYPE_CHECKING:
+    _ClickHouseSignalIngestorCoreBase = _ClickHouseSignalIngestorContract
+else:
+    _ClickHouseSignalIngestorCoreBase = object
+
+
+class _ClickHouseSignalIngestorCoreMethods(_ClickHouseSignalIngestorCoreBase):
     def __init__(
         self,
         url: Optional[str] = None,

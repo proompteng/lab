@@ -309,6 +309,37 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _optional_json(value: Any) -> Any:
+    if value is None:
+        return None
+    return coerce_json_payload(value)
+
+
 def _normalize_identifier(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
     return normalized or "unknown"
@@ -668,6 +699,10 @@ int_env = _int_env
 MAX_SEMANTIC_RELEVANT_DISTANCE = _MAX_SEMANTIC_RELEVANT_DISTANCE
 mounted_or_env_value = _mounted_or_env_value
 normalize_identifier = _normalize_identifier
+optional_decimal = _optional_decimal
+optional_int = _optional_int
+optional_json = _optional_json
+optional_text = _optional_text
 PASS_GATE_STATUSES = _PASS_GATE_STATUSES
 read_text_file = _read_text_file
 REJECT_VERDICTS = _REJECT_VERDICTS
@@ -741,6 +776,10 @@ __all__: tuple[str, ...] = (
     "_int_env",
     "_mounted_or_env_value",
     "_normalize_identifier",
+    "_optional_decimal",
+    "_optional_int",
+    "_optional_json",
+    "_optional_text",
     "_read_text_file",
     "_sorted_unique",
     "_str_env",
@@ -783,6 +822,10 @@ __all__: tuple[str, ...] = (
     "normalize_attachment_url",
     "normalize_github_issue_event",
     "normalize_identifier",
+    "optional_decimal",
+    "optional_int",
+    "optional_json",
+    "optional_text",
     "os",
     "parse_marker_block",
     "parse_marker_tags",

@@ -1,5 +1,3 @@
-# pyright: reportUnusedImport=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportAttributeAccessIssue=false
-
 from __future__ import annotations
 
 import logging
@@ -10,6 +8,7 @@ from typing import Any, cast
 from sqlalchemy.orm import Session
 
 from ...config import settings
+from .pipeline_modules.shared import TradingPipelineBase
 from .target_plan_helpers import (
     PAPER_ROUTE_PROBE_REASONS as _PAPER_ROUTE_PROBE_REASONS,
     PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS as _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
@@ -21,7 +20,7 @@ from .target_plan_helpers import (
 logger = logging.getLogger(__name__)
 
 
-class SimplePipelineProofFloorMixin:
+class SimplePipelineProofFloorMixin(TradingPipelineBase):
     def _profitability_proof_floor(self, *, session: Session) -> Mapping[str, object]:
         try:
             self._refresh_market_context_for_proof_floor()

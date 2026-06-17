@@ -6,11 +6,20 @@ import hashlib
 import hmac
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping, Protocol
 from urllib.parse import quote, urlparse
 
+from sqlalchemy.orm import Session
+
+from ...models import (
+    WhitepaperAnalysisRun,
+    WhitepaperEngineeringTrigger,
+    WhitepaperRolloutTransition,
+)
 
 from .shared_context import (
+    GithubIssueEvent,
+    ManualApprovalPayload,
     WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR as _WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
     WHITEPAPER_CEPH_DEFAULT_SECRET_DIR as _WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
     bool_env as _bool_env,
@@ -291,13 +300,247 @@ class _PdfStorageOutcome:
 class _WhitepaperWorkflowServiceFields:
     """State transitions and persistence for whitepaper analysis workflow."""
 
+    ceph_client: Any | None
+    inngest_client: Any | None
+
+
+class _WhitepaperWorkflowServiceContract(Protocol):
+    ceph_client: Any | None
+    inngest_client: Any | None
+
+    def _structured_output_list(
+        self, payload: Mapping[str, Any], *, key: str
+    ) -> list[dict[str, Any]]: ...
+
+    def _build_chunks(
+        self, text_content: str, *, source_scope: str
+    ) -> list[dict[str, Any]]: ...
+
+    @staticmethod
+    def _build_whitepaper_prompt(
+        *,
+        run_id: str,
+        repository: str,
+        issue_url: str,
+        issue_title: str,
+        attachment_url: str,
+        ceph_uri: str,
+        subject: str | None,
+        tags: list[str],
+        analysis_mode: str,
+    ) -> str: ...
+
+    @staticmethod
+    def _coerce_string_list(value: Any) -> list[str]: ...
+
+    def _coerce_tag_list(self, value: Any) -> list[str]: ...
+
+    def _complete_run(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        payload: Mapping[str, Any],
+    ) -> None: ...
+
+    @staticmethod
+    def _download_pdf(url: str) -> bytes: ...
+
+    def _enqueue_finalized_inngest_event(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+    ) -> bool: ...
+
+    def _enqueue_requested_inngest_event(
+        self,
+        session: Session,
+        *,
+        run_row: WhitepaperAnalysisRun,
+    ) -> bool: ...
+
+    def _evaluate_and_process_engineering_trigger(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        *,
+        manual_approval: ManualApprovalPayload | None,
+    ) -> dict[str, Any]: ...
+
+    def _extract_pdf_text(self, pdf_bytes: bytes) -> dict[str, Any]: ...
+
+    def _ingest_artifacts(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        artifact_payload_raw: Any,
+    ) -> None: ...
+
+    @staticmethod
+    def _is_retryable_agentrun_status(status: str | None) -> bool: ...
+
+    def _next_step_attempt(
+        self,
+        session: Session,
+        *,
+        analysis_run_id: Any,
+        step_name: str,
+    ) -> int: ...
+
+    def _persist_semantic_chunks_and_embeddings(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        source_scope: str,
+        chunks: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
+
+    def _submit_agents_agentrun(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]: ...
+
+    def _sync_structured_research_outputs(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        payload: Mapping[str, Any],
+    ) -> None: ...
+
+    def _upsert_design_pull_requests(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        pr_payload_raw: Any,
+    ) -> None: ...
+
+    def _upsert_steps(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        steps_raw: Any,
+    ) -> None: ...
+
+    def _upsert_synthesis(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        synthesis_payload_raw: Any,
+    ) -> None: ...
+
+    def _upsert_verdict(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        verdict_payload_raw: Any,
+    ) -> None: ...
+
+    def _upsert_whitepaper_content(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        full_text: str,
+        extraction_meta: Mapping[str, Any] | None,
+    ) -> None: ...
+
+    @staticmethod
+    def _build_search_snippet(content: str, query: str) -> str: ...
+
+    def _embed_texts(self, texts: list[str]) -> tuple[str, int, list[list[float]]]: ...
+
+    @staticmethod
+    def _vector_to_text(values: list[float]) -> str: ...
+
+    @staticmethod
+    def _as_json_record(value: Any) -> dict[str, Any] | None: ...
+
+    def _build_engineering_trigger_payload(
+        self,
+        trigger: WhitepaperEngineeringTrigger,
+        rollout_transitions: list[WhitepaperRolloutTransition],
+    ) -> dict[str, Any]: ...
+
+    @staticmethod
+    def _compute_json_hash(payload: dict[str, Any] | None) -> str | None: ...
+
+    def _derive_hypothesis_id(self, run: WhitepaperAnalysisRun) -> str | None: ...
+
+    def _dispatch_engineering_agentrun(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        trigger: WhitepaperEngineeringTrigger,
+        manual_approval: ManualApprovalPayload | None,
+    ) -> dict[str, Any]: ...
+
+    def _extract_gate_statuses(
+        self, gate_snapshot: dict[str, Any] | None
+    ) -> dict[str, str]: ...
+
+    @staticmethod
+    def _first_blocking_gate_id(reason_codes: list[str]) -> str | None: ...
+
+    def _gating_blocking_reason_codes(
+        self,
+        gate_snapshot: dict[str, Any] | None,
+        gate_statuses: dict[str, str],
+    ) -> list[str]: ...
+
+    def _manual_approval_allowed(self, rollout_profile: str) -> bool: ...
+
+    def _missing_gate_reason_codes(
+        self,
+        gate_statuses: dict[str, str],
+        *,
+        required: tuple[str, ...],
+    ) -> list[str]: ...
+
+    def _normalize_rollout_profile(self, value: str | None) -> str: ...
+
+    def _required_gate_failures(
+        self,
+        gate_statuses: dict[str, str],
+        *,
+        required: tuple[str, ...],
+    ) -> list[str]: ...
+
+    @staticmethod
+    def _rollback_target_stage(stage: str) -> str: ...
+
+    def _requeue_existing_run(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        issue_event: GithubIssueEvent,
+        attachment_url: str,
+        marker: Mapping[str, Any],
+        source: str,
+    ) -> IssueKickoffResult: ...
+
+    def dispatch_codex_agentrun(
+        self,
+        session: Session,
+        run_id: str,
+        *,
+        force: bool = False,
+        allow_retry: bool = False,
+    ) -> dict[str, Any]: ...
+
 
 __all__ = (
     "CephS3Client",
     "IssueKickoffResult",
+    "WhitepaperWorkflowServiceContract",
 )
 
 # Public aliases used by split modules.
 IssueRunIdentity = _IssueRunIdentity
 PdfStorageOutcome = _PdfStorageOutcome
+WhitepaperWorkflowServiceContract = _WhitepaperWorkflowServiceContract
 WhitepaperWorkflowServiceFields = _WhitepaperWorkflowServiceFields

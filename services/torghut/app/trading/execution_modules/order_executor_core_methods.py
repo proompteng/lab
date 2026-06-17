@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Order execution and idempotency helpers."""
 
 from __future__ import annotations
@@ -8,7 +7,7 @@ import sys
 import time
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -36,6 +35,7 @@ from ..tca import upsert_execution_tca_metric
 
 
 from .shared_context import (
+    OrderExecutorContract as _OrderExecutorContract,
     SHORTING_METADATA_CACHE_TTL_SECONDS as _SHORTING_METADATA_CACHE_TTL_SECONDS,
     target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
     logger,
@@ -77,7 +77,13 @@ def _execution_root_export(name: str, fallback: Any) -> Any:
     return getattr(root_module, name, fallback)
 
 
-class _OrderExecutorCoreMethods:
+if TYPE_CHECKING:
+    _OrderExecutorCoreBase = _OrderExecutorContract
+else:
+    _OrderExecutorCoreBase = object
+
+
+class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
     def __init__(self) -> None:
         self._account_metadata_cache: dict[str, Any] | None = None
         self._account_metadata_cached_at_monotonic: float | None = None

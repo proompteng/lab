@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, Optional, Protocol, cast
 
 from ....config import settings
 from ...autonomy import (
@@ -147,6 +147,36 @@ class _TradingSchedulerGovernanceMixinFields:
     _pipelines: list[TradingPipeline]
 
 
+class _TradingSchedulerGovernanceMixinContract(Protocol):
+    state: TradingState
+    _pipeline: Optional[TradingPipeline]
+    _pipelines: list[TradingPipeline]
+
+    def _append_runtime_governance_to_phase_manifest(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+
+    def _apply_autonomy_lane_result(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def _current_drift_gate_evidence(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def _emit_autonomy_domain_telemetry(self, *args: Any, **kwargs: Any) -> None: ...
+
+    def _evaluate_drift_governance(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def _evaluate_safety_controls(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def _governance_now(self, *args: Any, **kwargs: Any) -> datetime: ...
+
+    def _is_market_session_open(self, *args: Any, **kwargs: Any) -> bool: ...
+
+    def _update_autonomy_recommendation_state(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+
+    def _update_autonomy_throughput_state(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
 resolve_autonomy_artifact_root = _resolve_autonomy_artifact_root
 
 __all__ = (
@@ -159,6 +189,7 @@ incident_payload_complete = _incident_payload_complete
 int_from_mapping = _int_from_mapping
 parse_iso_datetime = _parse_iso_datetime
 TradingSchedulerGovernanceMixinFields = _TradingSchedulerGovernanceMixinFields
+TradingSchedulerGovernanceMixinContract = _TradingSchedulerGovernanceMixinContract
 
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.

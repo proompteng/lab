@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Trading scheduler governance, autonomy, and safety workflows."""
 
 from __future__ import annotations
@@ -7,7 +6,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from ....config import settings
 from ...autonomy.phase_manifest_contract import (
@@ -18,9 +17,9 @@ from ...models import SignalEnvelope
 
 
 from .shared_context import (
+    TradingSchedulerGovernanceMixinContract as _TradingSchedulerGovernanceMixinContract,
     TradingSchedulerGovernanceMixinFields as _TradingSchedulerGovernanceMixinFields,
     int_from_mapping as _int_from_mapping,
-    resolve_autonomy_artifact_root as _resolve_autonomy_artifact_root,
     logger,
 )
 from .governance_mixin_lifecycle_methods import (
@@ -31,7 +30,15 @@ from .governance_mixin_decision_methods import (
 )
 
 
-class _TradingSchedulerGovernanceRuntimeMethods:
+if TYPE_CHECKING:
+    _TradingSchedulerGovernanceRuntimeBase = _TradingSchedulerGovernanceMixinContract
+else:
+    _TradingSchedulerGovernanceRuntimeBase = object
+
+
+class _TradingSchedulerGovernanceRuntimeMethods(
+    _TradingSchedulerGovernanceRuntimeBase,
+):
     def _apply_autonomy_lane_result(
         self,
         *,
@@ -489,9 +496,6 @@ class TradingSchedulerGovernanceMixin(
     object,
 ):
     pass
-
-
-__all__ = ["TradingSchedulerGovernanceMixin", "_resolve_autonomy_artifact_root"]
 
 
 __all__ = ("TradingSchedulerGovernanceMixin",)

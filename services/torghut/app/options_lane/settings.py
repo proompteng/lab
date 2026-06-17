@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Callable, cast
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -228,4 +228,5 @@ class OptionsLaneSettings(BaseSettings):
 def get_options_lane_settings() -> OptionsLaneSettings:
     """Return the cached options-lane settings singleton."""
 
-    return OptionsLaneSettings()  # pyright: ignore[reportCallIssue]
+    settings_factory = cast(Callable[[], OptionsLaneSettings], OptionsLaneSettings)
+    return settings_factory()
