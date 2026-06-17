@@ -132,6 +132,10 @@ Batch `20260616f` has not produced runner Jobs yet and is not promotable. Curren
 - Ceph is `HEALTH_WARN` with `141 pgs down`, `141 pgs inactive`, `osd.3`, `osd.4`, and `osd.5` down on
   `talos-192-168-1-85`, and `mon.e` pending/down. Do not treat the prompt eval as failed or complete until the Agents DB
   dependency is healthy enough for the controller to materialize Jobs.
+- Read-only Talos checks show `talos-192-168-1-85` is reachable at `100.100.244.142`, but `MachineStatus` is
+  `stage=upgrading`, `NodeStatus` is `ready=false unschedulable=true`, kubelet is `Failed` with `service not running`,
+  etcd has no active member/static pod on that node, and the 24 TB OSD disks are still visible. Any recovery action for
+  those OSDs is an explicit storage/node operation, not a prompt-eval step.
 - The Argo CD `agents` Application remains `OutOfSync`/`Progressing` with stale operation state waiting for hook Job
   `agents-smoke-run`.
 
