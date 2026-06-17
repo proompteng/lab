@@ -498,6 +498,8 @@ class _ClickHouseSignalIngestorCoreMethods:
         latest_signal_at: Optional[datetime],
     ) -> tuple[datetime, Optional[int], Optional[str], bool]:
         cursor_at, cursor_seq, cursor_symbol = self._get_cursor(session)
+        if session.in_transaction():
+            session.commit()
         if cursor_at.tzinfo is None:
             cursor_at = cursor_at.replace(tzinfo=timezone.utc)
         if not self.fast_forward_stale_cursor:
