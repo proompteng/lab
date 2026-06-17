@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportPrivateUsage=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportUnusedClass=false, reportUnusedFunction=false, reportUnusedVariable=false, reportUndefinedVariable=false, reportUnsupportedDunderAll=false, reportAttributeAccessIssue=false, reportUntypedBaseClass=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportReturnType=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportCallIssue=false, reportUnnecessaryComparison=false, reportMissingTypeStubs=false, reportUnnecessaryCast=false
 """Extracted Torghut API route and support functions."""
 
 # ruff: noqa: F401,F403,F405,F811,F821
@@ -9,6 +9,7 @@ from typing import Any, TYPE_CHECKING
 
 # ruff: noqa: F401,F403,F405,F821,F821,F821
 
+from . import shared_context as shared_context_api
 from .shared_context import (
     BLOCKER_RECONCILIATION_STALE,
     BUILD_ARGO_HEALTH,
@@ -84,51 +85,6 @@ from .shared_context import (
     WhitepaperKafkaWorker,
     WhitepaperRolloutTransition,
     WhitepaperWorkflowService,
-    _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
-    _ALPACA_HEALTH_CACHE_LOCK,
-    _ALPACA_HEALTH_STATE,
-    _OPTIONS_CATALOG_FRESHNESS_CACHE,
-    _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
-    _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
-    _READINESS_PROMOTION_AUTHORITY_KEYS,
-    _RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
-    _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-    _TRADING_DEPENDENCY_HEALTH_CACHE,
-    _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
-    _TRADING_HEALTH_SURFACE_EVALUATIONS,
-    _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
-    _TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
-    _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
-    _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
-    _TRADING_STATUS_READ_BUDGET_SECONDS,
-    _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
-    _append_unique_reason,
-    _cache_completed_trading_health_surface_payload,
-    _cached_readiness_dependencies_for_health_surface,
-    _cached_trading_health_surface_payload,
-    _core_readiness_live_submission_gate,
-    _evaluate_core_readiness_payload,
-    _fail_closed_health_evaluation_gate,
-    _guard_live_submission_gate_for_readiness,
-    _health_surface_timeout_dependency_placeholder,
-    _health_surface_timeout_fallback_payload,
-    _minimal_health_surface_timeout_live_submission_gate,
-    _minimal_health_surface_timeout_payload,
-    _minimal_health_surface_timeout_proof_floor,
-    _paper_route_target_plan_success_cache,
-    _readiness_authority_truthy,
-    _readiness_dependency_cache_key,
-    _readiness_dependency_checks,
-    _readiness_dependency_degradation_reason_codes,
-    _readiness_dependency_snapshot,
-    _record_trading_health_surface_completion,
-    _retryable_tca_recompute_error,
-    _shared_mapping_items,
-    _shared_paper_route_target_plan_from_payload,
-    _strip_promotion_authority_claims_for_readiness,
-    _trading_health_surface_cache_key,
     active_simulation_runtime_context,
     assert_runtime_gate_policy_contract,
     asynccontextmanager,
@@ -242,6 +198,135 @@ from .shared_context import (
     whitepaper_workflow_enabled,
 )
 
+_SHARED_CONTEXT_PRIVATE_EXPORTS = shared_context_api.__dict__
+_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS"
+]
+_ALPACA_HEALTH_CACHE_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS["_ALPACA_HEALTH_CACHE_LOCK"]
+_ALPACA_HEALTH_STATE = _SHARED_CONTEXT_PRIVATE_EXPORTS["_ALPACA_HEALTH_STATE"]
+_OPTIONS_CATALOG_FRESHNESS_CACHE = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_OPTIONS_CATALOG_FRESHNESS_CACHE"
+]
+_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK"
+]
+_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL"
+]
+_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS"
+]
+_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK"
+]
+_READINESS_PROMOTION_AUTHORITY_KEYS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_READINESS_PROMOTION_AUTHORITY_KEYS"
+]
+_RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_RETRYABLE_TCA_RECOMPUTE_SQLSTATES"
+]
+_SIMPLE_LANE_ALLOWED_REJECT_REASONS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_SIMPLE_LANE_ALLOWED_REJECT_REASONS"
+]
+_TRADING_DEPENDENCY_HEALTH_CACHE = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_TRADING_DEPENDENCY_HEALTH_CACHE"
+]
+_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK"
+]
+_TRADING_HEALTH_SURFACE_EVALUATIONS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_EVALUATIONS"
+]
+_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR"
+]
+_TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_EVALUATION_LOCK"
+]
+_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE"
+]
+_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS"
+]
+_TRADING_STATUS_READ_BUDGET_SECONDS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_TRADING_STATUS_READ_BUDGET_SECONDS"
+]
+_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS"
+]
+_append_unique_reason = _SHARED_CONTEXT_PRIVATE_EXPORTS["_append_unique_reason"]
+_cache_completed_trading_health_surface_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_cache_completed_trading_health_surface_payload"
+]
+_cached_readiness_dependencies_for_health_surface = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_cached_readiness_dependencies_for_health_surface"
+]
+_cached_trading_health_surface_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_cached_trading_health_surface_payload"
+]
+_core_readiness_live_submission_gate = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_core_readiness_live_submission_gate"
+]
+_evaluate_core_readiness_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_evaluate_core_readiness_payload"
+]
+_fail_closed_health_evaluation_gate = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_fail_closed_health_evaluation_gate"
+]
+_guard_live_submission_gate_for_readiness = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_guard_live_submission_gate_for_readiness"
+]
+_health_surface_timeout_dependency_placeholder = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_health_surface_timeout_dependency_placeholder"
+]
+_health_surface_timeout_fallback_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_health_surface_timeout_fallback_payload"
+]
+_minimal_health_surface_timeout_live_submission_gate = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_minimal_health_surface_timeout_live_submission_gate"
+]
+_minimal_health_surface_timeout_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_minimal_health_surface_timeout_payload"
+]
+_minimal_health_surface_timeout_proof_floor = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_minimal_health_surface_timeout_proof_floor"
+]
+_paper_route_target_plan_success_cache = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_paper_route_target_plan_success_cache"
+]
+_readiness_authority_truthy = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_readiness_authority_truthy"
+]
+_readiness_dependency_cache_key = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_readiness_dependency_cache_key"
+]
+_readiness_dependency_checks = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_readiness_dependency_checks"
+]
+_readiness_dependency_degradation_reason_codes = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_readiness_dependency_degradation_reason_codes"
+]
+_readiness_dependency_snapshot = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_readiness_dependency_snapshot"
+]
+_record_trading_health_surface_completion = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_record_trading_health_surface_completion"
+]
+_retryable_tca_recompute_error = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_retryable_tca_recompute_error"
+]
+_shared_mapping_items = _SHARED_CONTEXT_PRIVATE_EXPORTS["_shared_mapping_items"]
+_shared_paper_route_target_plan_from_payload = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_shared_paper_route_target_plan_from_payload"
+]
+_strip_promotion_authority_claims_for_readiness = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_strip_promotion_authority_claims_for_readiness"
+]
+_trading_health_surface_cache_key = _SHARED_CONTEXT_PRIVATE_EXPORTS[
+    "_trading_health_surface_cache_key"
+]
+
 
 def _evaluate_trading_health_payload_bounded(
     *,
@@ -313,8 +398,10 @@ def _evaluate_trading_health_payload_bounded(
         )
 
     def _start_refresh_locked() -> Future[tuple[dict[str, object], int]]:
+        from . import evaluate_trading_health_payload as trading_health_payload_api
+
         refresh_future = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
-            _evaluate_trading_health_payload,
+            trading_health_payload_api.__dict__["_evaluate_trading_health_payload"],
             include_database_contract=include_database_contract,
             allow_stale_dependency_cache=allow_stale_dependency_cache,
         )

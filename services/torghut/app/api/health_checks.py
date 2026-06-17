@@ -104,6 +104,10 @@ _build_live_submission_gate_payload: Any = getattr(
 _build_simple_lane_status_payload: Any = getattr(
     _health_checks_modules, "_build_simple_lane_status_payload"
 )
+check_alpaca_dependency = _check_alpaca
+check_clickhouse_dependency = _check_clickhouse
+check_postgres_dependency = _check_postgres
+build_tigerbeetle_ledger_status = _build_tigerbeetle_ledger_status
 
 __all__ = (
     "_check_postgres",
@@ -146,6 +150,10 @@ __all__ = (
     "_build_hypothesis_runtime_payload",
     "_build_live_submission_gate_payload",
     "_build_simple_lane_status_payload",
+    "check_alpaca_dependency",
+    "check_clickhouse_dependency",
+    "check_postgres_dependency",
+    "build_tigerbeetle_ledger_status",
 )
 
 capture_module_exports(globals(), __all__)

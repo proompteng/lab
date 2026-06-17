@@ -19,6 +19,47 @@ from tests.api.trading_api_support import (
     timezone,
 )
 
+HEALTH_CHECKS_API = "app.api.health_checks"
+READINESS_CONTRACT_API = (
+    "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness"
+)
+PATCH_ACCOUNT_SCOPE = (
+    f"{READINESS_CONTRACT_API}._check_account_scope_invariants_bounded"
+)
+PATCH_ALPACA = f"{HEALTH_CHECKS_API}.check_alpaca_dependency"
+PATCH_CLICKHOUSE = f"{HEALTH_CHECKS_API}.check_clickhouse_dependency"
+PATCH_DATABASE_CONTRACT = f"{READINESS_CONTRACT_API}._evaluate_database_contract"
+PATCH_POSTGRES = f"{HEALTH_CHECKS_API}.check_postgres_dependency"
+PATCH_SCHEMA_CURRENT = f"{READINESS_CONTRACT_API}.check_schema_current"
+PATCH_TIGERBEETLE = f"{HEALTH_CHECKS_API}.build_tigerbeetle_ledger_status"
+OK_DEPENDENCY = {"ok": True, "detail": "ok"}
+POSTGRES_DOWN = {"ok": False, "detail": "down"}
+ACCOUNT_SCOPE_OK = {"account_scope_ready": True, "account_scope_errors": []}
+DATABASE_CONTRACT_OK = {
+    "ok": True,
+    "schema_current": True,
+    "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+    "expected_heads": ["0011_execution_tca_simulator_divergence"],
+    "schema_head_signature": "7f8e4d0",
+    "checked_at": "2026-03-04T00:00:00+00:00",
+    "account_scope_ready": True,
+    "account_scope_errors": [],
+}
+SCHEMA_CURRENT_OK = {
+    "schema_current": True,
+    "current_heads": ["0011_execution_tca_simulator_divergence"],
+    "expected_heads": ["0011_execution_tca_simulator_divergence"],
+    "schema_head_signature": "7f8e4d0",
+}
+
+
+def database_contract_ok(_session: object) -> dict[str, object]:
+    return dict(DATABASE_CONTRACT_OK)
+
+
+def tigerbeetle_ok(_session: object) -> dict[str, object]:
+    return dict(OK_DEPENDENCY)
+
 
 class TestTradingApiHealthCache(TradingApiTestCaseBase):
     def test_trading_health_evaluation_timeout_returns_fail_closed_quickly(
@@ -36,7 +77,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
                 side_effect=_slow_health_payload,
             ):
                 started_at = time.monotonic()
@@ -99,7 +140,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
                 side_effect=_slow_health_payload,
             ):
                 response = self.client.get("/trading/health")
@@ -181,7 +222,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
                 side_effect=_refresh_health_payload,
             ):
                 response = self.client.get("/trading/health")
@@ -313,7 +354,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
                 side_effect=_refresh_health_payload,
             ):
                 started_at = time.monotonic()
@@ -373,7 +414,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
                 side_effect=_refresh_health_payload,
             ):
                 response = self.client.get("/trading/health")
@@ -473,7 +514,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
                 side_effect=_slow_health_payload,
             ):
                 response = self.client.get("/trading/health")
@@ -507,22 +548,11 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
         self.assertFalse(live_submission_gate["final_promotion_allowed"])
         self.assertTrue(live_submission_gate["readiness_dependency_guard_active"])
 
-    @patch(
-        "app.main._evaluate_database_contract",
-        return_value={
-            "ok": True,
-            "schema_current": True,
-            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
-            "expected_heads": ["0011_execution_tca_simulator_divergence"],
-            "schema_head_signature": "7f8e4d0",
-            "checked_at": "2026-03-04T00:00:00+00:00",
-            "account_scope_ready": True,
-            "account_scope_errors": [],
-        },
-    )
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch(PATCH_DATABASE_CONTRACT, side_effect=database_contract_ok)
+    @patch(PATCH_POSTGRES, return_value=OK_DEPENDENCY)
+    @patch(PATCH_CLICKHOUSE, return_value=OK_DEPENDENCY)
+    @patch(PATCH_TIGERBEETLE, new=tigerbeetle_ok)
+    @patch(PATCH_ALPACA, return_value=OK_DEPENDENCY)
     def test_trading_health_refreshes_stale_readiness_cache_without_tolerance(
         self,
         _mock_alpaca: object,
@@ -577,22 +607,11 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             settings.trading_universe_source = original_source
             _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
 
-    @patch(
-        "app.main._evaluate_database_contract",
-        return_value={
-            "ok": True,
-            "schema_current": True,
-            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
-            "expected_heads": ["0011_execution_tca_simulator_divergence"],
-            "schema_head_signature": "7f8e4d0",
-            "checked_at": "2026-03-04T00:00:00+00:00",
-            "account_scope_ready": True,
-            "account_scope_errors": [],
-        },
-    )
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch(PATCH_DATABASE_CONTRACT, side_effect=database_contract_ok)
+    @patch(PATCH_POSTGRES, return_value=OK_DEPENDENCY)
+    @patch(PATCH_CLICKHOUSE, return_value=OK_DEPENDENCY)
+    @patch(PATCH_TIGERBEETLE, new=tigerbeetle_ok)
+    @patch(PATCH_ALPACA, return_value=OK_DEPENDENCY)
     def test_readyz_allows_startup_grace_window(
         self,
         _mock_alpaca: object,
@@ -628,22 +647,11 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             settings.trading_startup_readiness_grace_seconds = original_grace
             _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
 
-    @patch(
-        "app.main._evaluate_database_contract",
-        return_value={
-            "ok": True,
-            "schema_current": True,
-            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
-            "expected_heads": ["0011_execution_tca_simulator_divergence"],
-            "schema_head_signature": "7f8e4d0",
-            "checked_at": "2026-03-04T00:00:00+00:00",
-            "account_scope_ready": True,
-            "account_scope_errors": [],
-        },
-    )
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch(PATCH_DATABASE_CONTRACT, side_effect=database_contract_ok)
+    @patch(PATCH_POSTGRES, return_value=OK_DEPENDENCY)
+    @patch(PATCH_CLICKHOUSE, return_value=OK_DEPENDENCY)
+    @patch(PATCH_TIGERBEETLE, new=tigerbeetle_ok)
+    @patch(PATCH_ALPACA, return_value=OK_DEPENDENCY)
     def test_readyz_rejects_after_startup_grace_expires(
         self,
         _mock_alpaca: object,
@@ -677,21 +685,11 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             settings.trading_startup_readiness_grace_seconds = original_grace
             _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
 
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_postgres", return_value={"ok": False, "detail": "down"})
-    @patch(
-        "app.main._check_account_scope_invariants_bounded",
-        return_value={"account_scope_ready": True, "account_scope_errors": []},
-    )
-    @patch(
-        "app.main.check_schema_current",
-        return_value={
-            "schema_current": True,
-            "current_heads": ["0011_execution_tca_simulator_divergence"],
-            "expected_heads": ["0011_execution_tca_simulator_divergence"],
-            "schema_head_signature": "7f8e4d0",
-        },
-    )
+    @patch(PATCH_TIGERBEETLE, new=tigerbeetle_ok)
+    @patch(PATCH_ALPACA, return_value=OK_DEPENDENCY)
+    @patch(PATCH_POSTGRES, return_value=POSTGRES_DOWN)
+    @patch(PATCH_ACCOUNT_SCOPE, return_value=ACCOUNT_SCOPE_OK)
+    @patch(PATCH_SCHEMA_CURRENT, return_value=SCHEMA_CURRENT_OK)
     def test_readyz_returns_503_when_dependency_degraded(
         self,
         _mock_schema: object,
@@ -739,12 +737,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 original_require_non_empty
             )
 
+    @patch(PATCH_ACCOUNT_SCOPE, return_value=ACCOUNT_SCOPE_OK)
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
-        return_value={"account_scope_ready": True, "account_scope_errors": []},
-    )
-    @patch(
-        "app.main.check_schema_current",
+        PATCH_SCHEMA_CURRENT,
         return_value={
             "schema_current": False,
             "current_heads": ["0010_execution_provenance_and_governance_trace"],
@@ -759,9 +754,10 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             "schema_head_delta_count": 2,
         },
     )
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch(PATCH_TIGERBEETLE, new=tigerbeetle_ok)
+    @patch(PATCH_ALPACA, return_value=OK_DEPENDENCY)
+    @patch(PATCH_CLICKHOUSE, return_value=OK_DEPENDENCY)
+    @patch(PATCH_POSTGRES, return_value=OK_DEPENDENCY)
     def test_readyz_returns_503_when_schema_contract_fails(
         self,
         _mock_postgres: object,
@@ -810,10 +806,11 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
         finally:
             settings.trading_enabled = original
 
-    @patch("app.main._evaluate_database_contract")
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch(PATCH_DATABASE_CONTRACT)
+    @patch(PATCH_TIGERBEETLE, new=tigerbeetle_ok)
+    @patch(PATCH_ALPACA, return_value=OK_DEPENDENCY)
+    @patch(PATCH_CLICKHOUSE, return_value=OK_DEPENDENCY)
+    @patch(PATCH_POSTGRES, return_value=OK_DEPENDENCY)
     def test_readyz_surface_schema_head_drift_fields(
         self,
         _mock_postgres: object,
@@ -872,24 +869,17 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             settings.trading_enabled = original
 
     @patch(
-        "app.main._check_account_scope_invariants_bounded",
+        PATCH_ACCOUNT_SCOPE,
         return_value={
             "account_scope_ready": False,
             "account_scope_errors": ["legacy unique index detected"],
         },
     )
-    @patch(
-        "app.main.check_schema_current",
-        return_value={
-            "schema_current": True,
-            "current_heads": ["0011_execution_tca_simulator_divergence"],
-            "expected_heads": ["0011_execution_tca_simulator_divergence"],
-            "schema_head_signature": "7f8e4d0",
-        },
-    )
-    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch(PATCH_SCHEMA_CURRENT, return_value=SCHEMA_CURRENT_OK)
+    @patch(PATCH_TIGERBEETLE, new=tigerbeetle_ok)
+    @patch(PATCH_ALPACA, return_value=OK_DEPENDENCY)
+    @patch(PATCH_CLICKHOUSE, return_value=OK_DEPENDENCY)
+    @patch(PATCH_POSTGRES, return_value=OK_DEPENDENCY)
     def test_readyz_returns_503_when_account_scope_contract_fails(
         self,
         _mock_postgres: object,

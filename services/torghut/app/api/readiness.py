@@ -14,9 +14,9 @@ from .common import (
     JSONResponse,
     jsonable_encoder,
 )
-from .proxy import MainAttrProxy, capture_module_exports
+from . import readiness_helpers
+from .proxy import capture_module_exports
 
-_evaluate_core_readiness_payload = MainAttrProxy("_evaluate_core_readiness_payload")
 router = APIRouter()
 
 
@@ -24,7 +24,7 @@ router = APIRouter()
 def readyz() -> JSONResponse:
     """Readiness endpoint with dependency-aware status for rollout safety."""
 
-    payload, status_code = _evaluate_core_readiness_payload(
+    payload, status_code = readiness_helpers.evaluate_core_readiness_payload(
         include_database_contract=True,
         allow_stale_dependency_cache=True,
     )

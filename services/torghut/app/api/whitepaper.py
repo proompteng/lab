@@ -37,18 +37,21 @@ from .common import (
     whitepaper_semantic_indexing_enabled,
     whitepaper_workflow_enabled,
 )
-from .proxy import MainAttrProxy, capture_module_exports
+from ..bootstrap import (
+    require_whitepaper_control_token as _require_whitepaper_control_token,
+)
+from .proxy import capture_module_exports
 
-_require_whitepaper_control_token = MainAttrProxy("_require_whitepaper_control_token")
-app = MainAttrProxy("app")
 router = APIRouter()
 
 
 @router.get("/whitepapers/status")
-def whitepaper_status() -> dict[str, object]:
+def whitepaper_status(request: Request) -> dict[str, object]:
     """Return whitepaper workflow enablement and runtime status."""
 
-    worker: WhitepaperKafkaWorker | None = getattr(app.state, "whitepaper_worker", None)
+    worker: WhitepaperKafkaWorker | None = getattr(
+        request.app.state, "whitepaper_worker", None
+    )
     task = getattr(worker, "_task", None) if worker is not None else None
     worker_running = bool(task is not None and not task.done())
     control_token = (
@@ -62,7 +65,7 @@ def whitepaper_status() -> dict[str, object]:
         "kafka_enabled": whitepaper_kafka_enabled(),
         "inngest_enabled": whitepaper_inngest_enabled(),
         "inngest_registered": bool(
-            getattr(app.state, "whitepaper_inngest_registered", False)
+            getattr(request.app.state, "whitepaper_inngest_registered", False)
         ),
         "inngest_event_name": os.getenv(
             "WHITEPAPER_INNGEST_EVENT_NAME",
