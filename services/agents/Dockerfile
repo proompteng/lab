@@ -10,6 +10,50 @@ ARG NODE24_VERSION=24.11.1
 ARG KUBECTL_VERSION=1.34.3
 ARG NATSCLI_VERSION=v0.4.0
 
+FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-build-tools
+ARG BUILDARCH
+ARG NODE24_VERSION
+WORKDIR /app
+
+ENV BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache
+
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+  --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
+  set -eux; \
+  export DEBIAN_FRONTEND=noninteractive; \
+  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
+  apt-get install -y --no-install-recommends \
+  build-essential \
+  ca-certificates \
+  curl \
+  git \
+  python3 \
+  xz-utils; \
+  rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+  ARCH="${BUILDARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) NODE_ARCH=x64 ;; \
+  arm64|aarch64) NODE_ARCH=arm64 ;; \
+  ppc64le) NODE_ARCH=ppc64le ;; \
+  s390x) NODE_ARCH=s390x ;; \
+  *) NODE_ARCH="$ARCH" ;; \
+  esac; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://nodejs.org/dist/v${NODE24_VERSION}/node-v${NODE24_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+    -o /tmp/node.tar.xz; \
+  tar -xJf /tmp/node.tar.xz -C /tmp; \
+  rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/bin /usr/local/; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/include /usr/local/; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/lib /usr/local/; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/share /usr/local/; \
+  rm -rf /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH} /tmp/node.tar.xz; \
+  node --version
+
+COPY tsconfig.base.json ./
+
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-tools
 ARG NODE24_VERSION
 ARG KUBECTL_VERSION
@@ -91,9 +135,7 @@ RUN set -eux; \
   rm -rf "${NATS_ARCHIVE}" "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}"; \
   nats --version
 
-COPY tsconfig.base.json ./
-
-FROM agents-tools AS agents-workspace-deps
+FROM agents-build-tools AS agents-workspace-deps
 WORKDIR /app
 ENV NODE_ENV=development
 COPY json/ .
