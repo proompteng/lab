@@ -7,7 +7,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base
+from app.models import Base, TradeCursor
 from app.trading.ingest import ClickHouseSignalIngestor
 from app.trading.ingest import (
     _normalized_signal_symbols,
@@ -53,6 +53,67 @@ class ScopedLatestResponsesIngestor(ClickHouseSignalIngestor):
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class CursorTransactionProbeIngestor(ClickHouseSignalIngestor):
+    def __init__(self, *args: Any, latest_signal_ts: datetime, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.latest_signal_ts = latest_signal_ts
+        self.session: Any | None = None
+        self.transaction_open_during_signal_query: bool | None = None
+        self._columns = {
+            "event_ts",
+            "symbol",
+            "payload",
+            "window_size",
+            "seq",
+            "source",
+        }
+        self._time_column = "event_ts"
+
+    def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+        if "latest_signal_ts" in query:
+            return [{"latest_signal_ts": self.latest_signal_ts.isoformat()}]
+        assert self.session is not None
+        self.transaction_open_during_signal_query = self.session.in_transaction()
+        return []
+
+
+def test_fetch_signals_closes_cursor_transaction_before_clickhouse_query() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    now = datetime(2026, 6, 17, 13, 51, tzinfo=timezone.utc)
+
+    with session_local() as session:
+        session.add(
+            TradeCursor(
+                source="clickhouse",
+                account_label="PA3SX7FYNUTF",
+                cursor_at=now - timedelta(seconds=30),
+                cursor_seq=None,
+                cursor_symbol=None,
+            )
+        )
+        session.commit()
+
+    ingestor = CursorTransactionProbeIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="http://clickhouse.test",
+        latest_signal_ts=now,
+        fast_forward_stale_cursor=False,
+        account_label="PA3SX7FYNUTF",
+    )
+
+    with (
+        session_local() as session,
+        patch("app.trading.ingest.trading_now", return_value=now),
+    ):
+        ingestor.session = session
+        ingestor.fetch_signals(session)
+
+    assert ingestor.transaction_open_during_signal_query is False
 
 
 def test_scoped_timeout_returns_only_non_authority_last_good_fallback() -> None:
