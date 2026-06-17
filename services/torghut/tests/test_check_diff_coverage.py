@@ -628,3 +628,205 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         exit_code = main()
 
         self.assertEqual(exit_code, 0)
+
+    def test_format_summary_json_includes_all_required_fields(self) -> None:
+        from scripts.check_diff_coverage import _format_summary_json
+
+        summary = [
+            FileDiffCoverage(
+                filename="app/trading/foo.py",
+                executable_changed_lines=3,
+                covered_lines=2,
+                missing_lines=(12,),
+            ),
+            FileDiffCoverage(
+                filename="scripts/check_diff_coverage.py",
+                executable_changed_lines=2,
+                covered_lines=1,
+                missing_lines=(20,),
+                missing_from_coverage=True,
+            ),
+        ]
+
+        json_output = _format_summary_json(
+            summary=summary,
+            threshold=90.0,
+            coverage_pct=60.0,
+            passed=False,
+        )
+
+        import json
+
+        data = json.loads(json_output)
+
+        self.assertEqual(data["threshold"], 90.0)
+        self.assertEqual(data["coverage_ratio"], 0.6)
+        self.assertEqual(data["passed"], False)
+        self.assertEqual(data["total_executable_changed_lines"], 5)
+        self.assertEqual(data["total_covered_lines"], 3)
+        self.assertEqual(len(data["files"]), 2)
+
+        files_by_name = {f["filename"]: f for f in data["files"]}
+        self.assertIn("app/trading/foo.py", files_by_name)
+        self.assertIn("scripts/check_diff_coverage.py", files_by_name)
+
+        foo_file = files_by_name["app/trading/foo.py"]
+        self.assertEqual(foo_file["executable_changed_lines"], 3)
+        self.assertEqual(foo_file["covered_lines"], 2)
+        self.assertEqual(foo_file["uncovered_line_numbers"], [12])
+        self.assertEqual(foo_file["missing_from_coverage"], False)
+
+        script_file = files_by_name["scripts/check_diff_coverage.py"]
+        self.assertEqual(script_file["executable_changed_lines"], 2)
+        self.assertEqual(script_file["covered_lines"], 1)
+        self.assertEqual(script_file["uncovered_line_numbers"], [20])
+        self.assertEqual(script_file["missing_from_coverage"], True)
+
+    def test_format_summary_json_stable_ordering_for_files_and_lines(self) -> None:
+        from scripts.check_diff_coverage import _format_summary_json
+
+        summary = [
+            FileDiffCoverage(
+                filename="scripts/b.py",
+                executable_changed_lines=2,
+                covered_lines=1,
+                missing_lines=(5, 2, 8),
+            ),
+            FileDiffCoverage(
+                filename="app/a.py",
+                executable_changed_lines=3,
+                covered_lines=0,
+                missing_lines=(10, 1, 5),
+            ),
+        ]
+
+        json_output = _format_summary_json(
+            summary=summary,
+            threshold=80.0,
+            coverage_pct=50.0,
+            passed=False,
+        )
+
+        import json
+
+        data = json.loads(json_output)
+
+        files = data["files"]
+        self.assertEqual(len(files), 2)
+        self.assertEqual(files[0]["filename"], "app/a.py")
+        self.assertEqual(files[1]["filename"], "scripts/b.py")
+
+        self.assertEqual(files[0]["uncovered_line_numbers"], [1, 5, 10])
+        self.assertEqual(files[1]["uncovered_line_numbers"], [2, 5, 8])
+
+    def test_format_summary_json_empty_summary(self) -> None:
+        from scripts.check_diff_coverage import _format_summary_json
+
+        json_output = _format_summary_json(
+            summary=[],
+            threshold=90.0,
+            coverage_pct=100.0,
+            passed=True,
+        )
+
+        import json
+
+        data = json.loads(json_output)
+
+        self.assertEqual(data["threshold"], 90.0)
+        self.assertEqual(data["coverage_ratio"], 1.0)
+        self.assertEqual(data["passed"], True)
+        self.assertEqual(data["total_executable_changed_lines"], 0)
+        self.assertEqual(data["total_covered_lines"], 0)
+        self.assertEqual(data["files"], [])
+
+    @patch("scripts.check_diff_coverage._parse_args")
+    @patch("scripts.check_diff_coverage._repo_root")
+    @patch("scripts.check_diff_coverage._resolve_diff_base")
+    @patch("scripts.check_diff_coverage._git")
+    @patch("scripts.check_diff_coverage._load_coverage_index")
+    @patch("scripts.check_diff_coverage._include_untracked_python_files")
+    def test_main_json_output_format_passed(
+        self,
+        include_untracked: object,
+        load_coverage: object,
+        git_mock: object,
+        resolve_diff_base: object,
+        repo_root: object,
+        parse_args: object,
+    ) -> None:
+        with patch.object(sys, "argv", ["check_diff_coverage.py", "--format", "json"]):
+            parse_args.return_value = Mock(
+                coverage_xml="coverage.xml", threshold=90.0, base_ref=""
+            )
+            repo_root.return_value = Path("/tmp/repo")
+            resolve_diff_base.return_value = "base"
+            git_mock.return_value = ""
+            load_coverage.return_value = {"app/trading/foo.py": {11: 1, 12: 1}}
+            include_untracked.return_value = {"app/trading/foo.py": {11, 12}}
+
+            exit_code = main()
+
+            self.assertEqual(exit_code, 0)
+
+    @patch("scripts.check_diff_coverage._parse_args")
+    @patch("scripts.check_diff_coverage._repo_root")
+    @patch("scripts.check_diff_coverage._resolve_diff_base")
+    @patch("scripts.check_diff_coverage._git")
+    @patch("scripts.check_diff_coverage._load_coverage_index")
+    @patch("scripts.check_diff_coverage._include_untracked_python_files")
+    def test_main_json_output_format_missing_from_coverage(
+        self,
+        include_untracked: object,
+        load_coverage: object,
+        git_mock: object,
+        resolve_diff_base: object,
+        repo_root: object,
+        parse_args: object,
+    ) -> None:
+        with patch.object(sys, "argv", ["check_diff_coverage.py", "--format", "json"]):
+            parse_args.return_value = Mock(
+                coverage_xml="coverage.xml", threshold=90.0, base_ref=""
+            )
+            repo_root.return_value = Path("/tmp/repo")
+            resolve_diff_base.return_value = "base"
+            git_mock.return_value = ""
+            load_coverage.return_value = {}
+            include_untracked.return_value = {"scripts/new_module.py": {10, 11}}
+
+            exit_code = main()
+
+            self.assertEqual(exit_code, 1)
+
+    @patch("scripts.check_diff_coverage._parse_args")
+    @patch("scripts.check_diff_coverage._repo_root")
+    @patch("scripts.check_diff_coverage._resolve_diff_base")
+    @patch("scripts.check_diff_coverage._git")
+    @patch("scripts.check_diff_coverage._load_coverage_index")
+    @patch("scripts.check_diff_coverage._include_untracked_python_files")
+    def test_main_json_output_format_threshold_not_met(
+        self,
+        include_untracked: object,
+        load_coverage: object,
+        git_mock: object,
+        resolve_diff_base: object,
+        repo_root: object,
+        parse_args: object,
+    ) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["check_diff_coverage.py", "--format", "json", "--threshold", "95"],
+        ):
+            parse_args.return_value = Mock(
+                coverage_xml="coverage.xml", threshold=95.0, base_ref=""
+            )
+            repo_root.return_value = Path("/tmp/repo")
+            resolve_diff_base.return_value = "base"
+            git_mock.return_value = ""
+            load_coverage.return_value = {"app/trading/foo.py": {11: 1, 12: 0}}
+            include_untracked.return_value = {"app/trading/foo.py": {11, 12}}
+
+            exit_code = main()
+
+            self.assertEqual(exit_code, 1)
