@@ -18,6 +18,7 @@ export type AgentRunKubeOperation =
   | 'get-existing-run'
   | 'get-idempotent-run'
   | 'get-agent'
+  | 'get-agent-provider'
   | 'get-implementation-spec'
   | 'get-vcs-provider'
   | 'evaluate-admission-limits'

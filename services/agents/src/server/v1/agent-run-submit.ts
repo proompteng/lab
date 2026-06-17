@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { Context, Effect, Layer } from 'effect'
 
 import { resolveAgentRunAdmissionConfig } from '../agents-controller/controller-config'
+import { resolveAgentRunnerDefaultsConfig } from '../agents-controller/runtime-config'
+import { resolveWorkloadImage } from '../agents-controller/workload-image'
 import { parseJsonBody, requireIdempotencyKey } from '../http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { asRecord, asString, normalizeNamespace, readNested } from '../primitives'
@@ -54,6 +56,11 @@ type AgentRunKubernetesServiceDefinition = {
     namespace: string,
   ) => Effect.Effect<AgentRunKubernetesResource | null, AgentRunKubeError>
   readonly getAgent: (
+    kube: KubernetesClient,
+    name: string,
+    namespace: string,
+  ) => Effect.Effect<AgentRunKubernetesResource | null, AgentRunKubeError>
+  readonly getAgentProvider: (
     kube: KubernetesClient,
     name: string,
     namespace: string,
@@ -134,6 +141,7 @@ export type AgentRunSubmissionConfig = {
 
 type AgentRunRuntimeConfigServiceDefinition = {
   readonly resolveSubmissionConfig: (namespace: string) => Effect.Effect<AgentRunSubmissionConfig>
+  readonly resolveDefaultRunnerImage: () => Effect.Effect<string | null>
   readonly isIdempotencyReservationStale: (
     createdAt: unknown,
     config: Pick<AgentRunSubmissionConfig, 'idempotencyReservationTtlSeconds'>,
@@ -267,6 +275,7 @@ export const makeAgentRunRuntimeConfigService = (
           rate: config.rate,
         }
       }),
+    resolveDefaultRunnerImage: () => Effect.sync(() => resolveAgentRunnerDefaultsConfig(env).defaultRunnerImage),
     isIdempotencyReservationStale: (createdAt, config) =>
       Effect.sync(() => {
         const ttlSeconds = config.idempotencyReservationTtlSeconds
@@ -759,6 +768,10 @@ export const makeAgentRunSubmitLayer = (deps: AgentRunsApiDependencies) =>
         kubeEffect(operation, RESOURCE_MAP.AgentRun, namespace, () => kube.get(RESOURCE_MAP.AgentRun, name, namespace)),
       getAgent: (kube, name, namespace) =>
         kubeEffect('get-agent', RESOURCE_MAP.Agent, namespace, () => kube.get(RESOURCE_MAP.Agent, name, namespace)),
+      getAgentProvider: (kube, name, namespace) =>
+        kubeEffect('get-agent-provider', RESOURCE_MAP.AgentProvider, namespace, () =>
+          kube.get(RESOURCE_MAP.AgentProvider, name, namespace),
+        ),
       getImplementationSpec: (kube, name, namespace) =>
         kubeEffect('get-implementation-spec', RESOURCE_MAP.ImplementationSpec, namespace, () =>
           kube.get(RESOURCE_MAP.ImplementationSpec, name, namespace),
@@ -806,6 +819,15 @@ type IdempotencyReservationState = {
   idempotencyKey: string
   agentName: string
   namespace: string
+}
+
+const parseDryRunQuery = (request: Request) => {
+  const raw = new URL(request.url).searchParams.get('dryRun')
+  if (raw == null) return false
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === 'true' || normalized === 'all') return true
+  if (normalized === 'false') return false
+  throw new Error('dryRun must be true, false, or All')
 }
 
 export const createAgentRunResource = (
@@ -917,6 +939,14 @@ export const submitAgentRunWithServicesEffect = (
           cause,
         }),
     })
+    const dryRun = yield* Effect.try({
+      try: () => parseDryRunQuery(request),
+      catch: (cause) =>
+        new AgentRunInvalidPayloadError({
+          message: toErrorMessage(cause),
+          cause,
+        }),
+    })
     const submissionConfig = yield* runtimeConfig.resolveSubmissionConfig(parsed.namespace)
 
     return yield* Effect.acquireUseRelease(
@@ -1005,6 +1035,19 @@ export const submitAgentRunWithServicesEffect = (
           }
 
           const agentSpec = (agent.spec ?? {}) as Record<string, unknown>
+          const providerName = asString(readNested(agentSpec, ['providerRef', 'name']))
+          const provider = providerName
+            ? yield* kubernetes.getAgentProvider(kube, providerName, parsed.namespace)
+            : null
+          if (providerName && !provider) {
+            return yield* Effect.fail(
+              new AgentRunNotFoundError({
+                resource: 'agent provider',
+                name: providerName,
+                namespace: parsed.namespace,
+              }),
+            )
+          }
           const allowedServiceAccounts = extractAllowedServiceAccounts(agentSpec)
           const runtimeServiceAccount = extractRuntimeServiceAccount({ runtime: parsed.runtime })
           const effectiveServiceAccount = runtimeServiceAccount
@@ -1104,31 +1147,35 @@ export const submitAgentRunWithServicesEffect = (
           const policyDecision = yield* policies.validate(parsed.namespace, policyChecks, kube).pipe(Effect.either)
 
           if (policyDecision._tag === 'Left') {
-            const auditEventId = yield* ids.next
-            yield* stores
-              .createAuditEvent(activeStore, {
-                entityType: 'PolicyDecision',
-                entityId: auditEventId,
-                eventType: 'policy.denied',
-                context: auditContext,
-                details: {
-                  subject: policyChecks.subject,
-                  checks: policyChecks,
-                  reason: describeAgentRunSubmitError(policyDecision.left),
-                },
-              })
-              .pipe(Effect.catchAll(() => Effect.void))
+            if (!dryRun) {
+              const auditEventId = yield* ids.next
+              yield* stores
+                .createAuditEvent(activeStore, {
+                  entityType: 'PolicyDecision',
+                  entityId: auditEventId,
+                  eventType: 'policy.denied',
+                  context: auditContext,
+                  details: {
+                    subject: policyChecks.subject,
+                    checks: policyChecks,
+                    reason: describeAgentRunSubmitError(policyDecision.left),
+                  },
+                })
+                .pipe(Effect.catchAll(() => Effect.void))
+            }
             return yield* Effect.fail(policyDecision.left)
           }
 
-          const auditEventId = yield* ids.next
-          yield* stores.createAuditEvent(activeStore, {
-            entityType: 'PolicyDecision',
-            entityId: auditEventId,
-            eventType: 'policy.allowed',
-            context: auditContext,
-            details: { subject: policyChecks.subject, checks: policyChecks },
-          })
+          if (!dryRun) {
+            const auditEventId = yield* ids.next
+            yield* stores.createAuditEvent(activeStore, {
+              entityType: 'PolicyDecision',
+              entityId: auditEventId,
+              eventType: 'policy.allowed',
+              context: auditContext,
+              details: { subject: policyChecks.subject, checks: policyChecks },
+            })
+          }
 
           const admissionRepository = resolveRepositoryFromParams(parsed.parameters) || null
           const admissionNow = yield* runtimeConfig.now()
@@ -1148,6 +1195,33 @@ export const submitAgentRunWithServicesEffect = (
                 details: admission.details,
               }),
             )
+          }
+
+          if (dryRun) {
+            const resource = createAgentRunResource(parsed, deliveryId, runIdempotencyKey)
+            const defaultRunnerImage = yield* runtimeConfig.resolveDefaultRunnerImage()
+            const resolvedWorkloadImage = resolveWorkloadImage({
+              workload: parsed.workload ?? null,
+              provider,
+              defaultRunnerImage,
+            })
+            return {
+              status: 200,
+              body: {
+                ok: true,
+                dryRun: true,
+                idempotent: false,
+                namespace: parsed.namespace,
+                agentName: parsed.agentRef.name,
+                providerName: providerName ?? null,
+                idempotencyKey: runIdempotencyKey,
+                resource,
+                resolvedWorkloadImage: resolvedWorkloadImage.image,
+                resolvedWorkloadImageSource: resolvedWorkloadImage.source,
+                policy: policyChecks,
+                admission: { ok: true },
+              },
+            }
           }
 
           let idempotencyReservation: IdempotencyReservationState | null = null
@@ -1255,7 +1329,7 @@ export const submitAgentRunWithServicesEffect = (
           const applied = appliedResult.right
           const metadata = (applied.metadata ?? {}) as Record<string, unknown>
           const externalRunId = asString(metadata.name)
-          const provider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
+          const runtimeProvider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
 
           if (idempotencyReservation && externalRunId) {
             yield* stores.assignIdempotencyKey(activeStore, {
@@ -1271,7 +1345,7 @@ export const submitAgentRunWithServicesEffect = (
           const record = yield* stores.createRun(activeStore, {
             agentName: parsed.agentRef.name,
             deliveryId,
-            provider,
+            provider: runtimeProvider,
             status: statusPhase,
             externalRunId,
             payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
@@ -1286,7 +1360,7 @@ export const submitAgentRunWithServicesEffect = (
               agentRunId: record.id,
               agentRunName: externalRunId,
               agentRunUid: asString(asRecord(applied.metadata)?.uid),
-              provider,
+              provider: runtimeProvider,
             },
           })
           return { status: 201, body: { ok: true, agentRun: record, resource: applied } }

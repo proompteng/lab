@@ -110,11 +110,10 @@ needs credentials, also pass `secretBindingRef` or set
 ## Dry run behavior
 
 `create_agent_run` has an optional `dryRun` parameter that is forwarded to the
-Agents API. Do not assume it is side-effect free until the API behavior is
-verified in the target environment; a 2026-05-31 live check with
-`dryRun: true` returned success while still materializing an AgentRun resource.
-Use a short TTL and delete any verification resource explicitly when testing
-create behavior.
+Agents API. `dryRun: true` and `dryRun: "All"` validate the request and return
+the normalized AgentRun preview, policy/admission result, and resolved workload
+image without creating an AgentRun resource, projection record, Job, audit row,
+or idempotency reservation.
 
 ## Smoke sequence
 
@@ -123,7 +122,7 @@ create behavior.
    should have no token budget.
 2. Call `get_agent_run` with the returned projection id.
 3. Call `list_agent_runs` with `statuses: ["Pending", "Running", "Succeeded",
-   "Failed"]` or `agentName`, plus a small `limit`. The backing API requires at
+"Failed"]` or `agentName`, plus a small `limit`. The backing API requires at
    least one of `statuses` or `agentName`; `limit` alone is not enough.
 4. Call `get_agent_run_logs` with the live AgentRun resource name and
    `tailLines: 5`.

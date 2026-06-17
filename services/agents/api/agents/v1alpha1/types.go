@@ -318,10 +318,17 @@ type AgentProviderSpec struct {
 	InputFiles      []InputFile              `json:"inputFiles,omitempty"`
 	OutputArtifacts []Artifact               `json:"outputArtifacts,omitempty"`
 	Health          *AgentProviderHealthSpec `json:"health,omitempty"`
+	// Workload contains provider-owned defaults for AgentRuns that use this provider.
+	Workload *AgentProviderWorkloadSpec `json:"workload,omitempty"`
 	// Adapter is the normalized runner contract consumed by agents-codex-runner.
 	// Existing binary/argsTemplate/envTemplate fields remain valid for exec-style providers.
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Adapter map[string]apiextensionsv1.JSON `json:"adapter,omitempty"`
+}
+
+type AgentProviderWorkloadSpec struct {
+	// Image is the default runner image for AgentRuns that omit spec.workload.image.
+	Image string `json:"image,omitempty"`
 }
 
 type AgentProviderHealthSpec struct {

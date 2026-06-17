@@ -329,12 +329,14 @@ Invalid combinations fail at render time, including empty scope lists, wildcard 
 
 ### Runner Defaults
 
-The controller passes runner image defaults to AgentRun Jobs through `AGENTS_AGENT_RUNNER_IMAGE`.
+The controller resolves AgentRun Job images from per-run, provider, and chart defaults.
 
 Precedence:
 
-1. `env.vars.AGENTS_AGENT_RUNNER_IMAGE`
-2. `runner.image.*`
+1. `AgentRun.spec.workload.image`
+2. `AgentProvider.spec.workload.image`
+3. `env.vars.AGENTS_AGENT_RUNNER_IMAGE`
+4. `runner.image.*`
 
 Use `env.vars.AGENTS_AGENT_RUNNER_IMAGE` for an explicit runner image override.
 
@@ -531,7 +533,7 @@ Frequent render failures:
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `image.repository`, `image.tag`, `image.digest`                      | Default Agents image used by the control-plane and controllers.           |
 | `controlPlane.image.*`, `controllers.image.*`                        | Optional per-deployment overrides when those images differ.               |
-| `runner.image.repository`, `runner.image.tag`, `runner.image.digest` | Default image for AgentRun Jobs.                                          |
+| `runner.image.repository`, `runner.image.tag`, `runner.image.digest` | Global fallback image for AgentRun Jobs.                                  |
 | `imagePolicy.requireDigest`                                          | Require immutable image digests for chart-managed images.                 |
 | `database.secretRef.*`                                               | Existing database URL Secret.                                             |
 | `database.caSecret.*`                                                | Optional Postgres CA certificate Secret.                                  |
