@@ -23,7 +23,7 @@ spec:
           serviceAccountName: torghut-runtime
           containers:
             - name: repair-source-windows
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:2756fc8d7e6991b6cfdf78018635ac3e91b4c9c58949b7f13a247d1799444879
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:28a013befd67a45311c6494776d6321a90e06537506efbc2f76baecd3724efbe
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
