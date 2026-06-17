@@ -11,6 +11,7 @@ from typing import Any, Protocol, cast
 from sqlalchemy.orm import Session
 
 from ....config import settings
+from ...promotion_authority import source_collection_authority
 from ...runtime_decision_authority import source_decision_mode_is_profit_proof_eligible
 from ..target_plan_helpers_modules import (
     PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON as _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON,
@@ -243,10 +244,9 @@ def source_collection_params(
         "paper_route_probe_symbols": metadata.get("paper_route_probe_symbols"),
         "observed_stage": _safe_text(context.target.get("observed_stage")) or "paper",
         "bounded_collection_stage": "bounded_paper_collection",
-        "promotion_allowed": False,
-        "final_promotion_authorized": False,
-        "final_authority_ok": False,
-        "final_promotion_allowed": False,
+        **source_collection_authority(
+            blockers=["runtime_ledger_source_collection_pending"],
+        ).as_target_fields(),
         "live_capital_routing_enabled": False,
         **mode.execution_metadata,
         **source_collection_bounded_execution_params(mode.execution_metadata),

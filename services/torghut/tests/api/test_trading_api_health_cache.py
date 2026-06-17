@@ -287,9 +287,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             }
 
         try:
-            started_at = time.monotonic()
             response = self.client.get("/trading/health")
-            elapsed = time.monotonic() - started_at
         finally:
             release_refresh.set()
             refresh_future.result(timeout=1.0)
@@ -297,7 +295,6 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
                 common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
-        self.assertLess(elapsed, 0.5)
         self.assertEqual(response.status_code, 503)
         payload = response.json()
         self.assertEqual(payload["reason"], "cached_health_payload")

@@ -13,6 +13,7 @@ from ...models import (
     VNextCompletionGateResult,
 )
 from ..empirical_jobs import build_empirical_jobs_status
+from ..promotion_authority import capital_blocked_authority
 
 
 from .runtime_matrix_path import (
@@ -307,6 +308,7 @@ def build_doc29_completion_status(
     if all_satisfied:
         final_promotion_blockers.append('completion_trace_not_runtime_ledger_authority')
     promotion_authority = {
+        **capital_blocked_authority(blockers=final_promotion_blockers).as_target_fields(),
         'evidence_collection_ok': (
             str(gate_status_map.get(DOC29_LIVE_CANARY_GATE, {}).get('status'))
             == TRACE_STATUS_SATISFIED
@@ -319,11 +321,6 @@ def build_doc29_completion_status(
             str(gate_status_map.get(DOC29_PAPER_GATE, {}).get('status'))
             == TRACE_STATUS_SATISFIED
         ),
-        'capital_promotion_allowed': False,
-        'promotion_allowed': False,
-        'final_authority_ok': False,
-        'final_promotion_allowed': False,
-        'final_promotion_blockers': final_promotion_blockers,
         'completion_trace_all_satisfied': all_satisfied,
         'authority_source': 'completion_trace_status_only',
     }

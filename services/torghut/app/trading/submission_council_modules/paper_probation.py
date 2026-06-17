@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
 
+from app.trading.promotion_authority import (
+    paper_probation_authority,
+    source_collection_authority,
+)
+
 from .common import (
     POST_COST_PNL_BASIS,
     RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER,
@@ -271,13 +276,12 @@ def _runtime_ledger_paper_probation_candidates(
             "paper_probation_eligible": True,
             "paper_probation_scope": "evidence_collection_only",
             "proof_mode": "probation",
-            "evidence_collection_ok": True,
             "canary_collection_authorized": True,
-            "bounded_live_paper_collection_authorized": True,
             "paper_probation_satisfied_for_bounded_live_paper_collection": True,
-            "capital_promotion_allowed": False,
-            "final_authority_ok": False,
-            "final_promotion_allowed": False,
+            **paper_probation_authority(
+                blockers=_RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS,
+                bounded_live_paper_collection_authorized=True,
+            ).as_target_fields(),
             "paper_probation_reason_codes": [_RUNTIME_LEDGER_PAPER_PROBATION_REASON],
             "paper_probation_target_capital_stage": "shadow",
             **_bounded_paper_route_probe_collection_payload(authorized=True),
@@ -413,13 +417,12 @@ def _runtime_ledger_source_collection_candidates(
             "source_collection_authorized": True,
             "source_collection_scope": "source_window_evidence_collection_only",
             "proof_mode": "probation",
-            "evidence_collection_ok": True,
             "paper_probation_satisfied_for_bounded_live_paper_collection": False,
             "canary_collection_authorized": False,
-            "bounded_live_paper_collection_authorized": False,
-            "capital_promotion_allowed": False,
-            "final_authority_ok": False,
-            "final_promotion_allowed": False,
+            **source_collection_authority(
+                blockers=_RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS,
+                bounded_live_paper_collection_authorized=False,
+            ).as_target_fields(),
             **_bounded_paper_route_probe_collection_payload(
                 authorized=_runtime_ledger_source_collection_profit_target_candidate(
                     candidate

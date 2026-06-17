@@ -12,6 +12,7 @@ from typing import Any, cast
 from urllib.parse import SplitResult, urlsplit
 
 from ...config import settings
+from ..promotion_authority import capital_blocked_authority
 
 
 PAPER_ROUTE_MATERIALIZATION_SCHEMA_VERSION = (
@@ -69,9 +70,14 @@ def _target_plan_from_proofs_payload(payload: Mapping[str, Any]) -> dict[str, An
         target = _target_from_proof_identity(proof)
         if not target:
             continue
-        target.setdefault("promotion_allowed", False)
-        target.setdefault("final_promotion_allowed", False)
-        target.setdefault("final_promotion_authorized", False)
+        for key, value in (
+            capital_blocked_authority(
+                blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
+            )
+            .as_target_fields()
+            .items()
+        ):
+            target.setdefault(key, value)
         targets.append(target)
     if not targets:
         return {}
@@ -79,8 +85,9 @@ def _target_plan_from_proofs_payload(payload: Mapping[str, Any]) -> dict[str, An
         "schema_version": "torghut.paper-route-target-plan.v1",
         "source": "trading_proofs_endpoint",
         "purpose": "runtime_window_proof_target_materialization",
-        "promotion_allowed": False,
-        "final_promotion_allowed": False,
+        **capital_blocked_authority(
+            blockers=PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS,
+        ).as_target_fields(),
         "target_count": len(targets),
         "targets": targets,
     }

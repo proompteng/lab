@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any, Literal, TypeAlias, cast
 
 
+from ...promotion_authority import target_capital_promotion_allowed
 from ...runtime_strategy_resolution import strategy_names_from_strategy_id
 
 
@@ -471,12 +472,7 @@ def _bounded_sim_collection_authorization_blockers(
     if not _target_truthy(target.get("evidence_collection_ok")):
         blockers.append("bounded_sim_collection_evidence_collection_not_ready")
     blockers.extend(_bounded_sim_collection_account_audit_blockers(target))
-    if (
-        _target_truthy(target.get("promotion_allowed"))
-        or _target_truthy(target.get("final_promotion_allowed"))
-        or _target_truthy(target.get("final_promotion_authorized"))
-        or _target_truthy(target.get("capital_promotion_allowed"))
-    ):
+    if target_capital_promotion_allowed(target):
         blockers.append("bounded_sim_collection_non_final_state_required")
     if _safe_text(target.get("bounded_evidence_collection_scope")) not in {
         None,

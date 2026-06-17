@@ -20,6 +20,11 @@ from ...paper_route_target_plan import (
     paper_route_target_plan_probe_symbols,
     paper_route_target_plan_targets,
 )
+from ...promotion_authority import (
+    capital_blocked_authority,
+    source_collection_authority,
+    target_capital_promotion_allowed,
+)
 from ...runtime_decision_authority import (
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
 )
@@ -668,10 +673,12 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
                 or "paper_route_probe_next_session_only"
             ),
             "bounded_evidence_collection_max_notional": str(context.target_cap),
-            "promotion_allowed": False,
-            "final_promotion_authorized": False,
-            "final_authority_ok": False,
-            "final_promotion_allowed": False,
+            **source_collection_authority(
+                blockers=["runtime_ledger_source_collection_pending"],
+                bounded_live_paper_collection_authorized=(
+                    bounded_collection_authorized
+                ),
+            ).as_target_fields(),
             **lineage,
         }
         for key in (
@@ -754,7 +761,7 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
             or target_account_label
         )
         source_account_label = _safe_text(target.get("source_account_label"))
-        execution_policy = {
+        execution_policy: dict[str, Any] = {
             "schema_version": "torghut.bounded-paper-route-execution-policy.v1",
             "authority": "bounded_paper_route_collection_only",
             "live_capital_routing_enabled": False,
@@ -773,6 +780,14 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
                 "client_order_id",
             ],
         }
+        if "promotion_stage" not in execution_policy:
+            execution_policy.update(
+                capital_blocked_authority(
+                    blockers=["execution_policy_not_capital_promotion_authority"],
+                ).as_target_fields()
+            )
+        if target_capital_promotion_allowed(execution_policy):
+            execution_policy["promotion_stage"] = "capital_allowed"
         return {
             "execution_lane": "simple",
             "submit_path": "bounded_paper_route_collection",

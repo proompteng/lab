@@ -287,7 +287,7 @@ def test_bounded_sim_collection_authorizes_non_final_hpairs_target_only() -> Non
     )
     assert "bounded_sim_collection_non_final_state_required" in (
         _bounded_sim_collection_blockers(
-            _bounded_hpairs_target(final_promotion_allowed=True),
+            _bounded_hpairs_target(capital_promotion_allowed=True),
             account_label="TORGHUT_SIM",
         )
     )
