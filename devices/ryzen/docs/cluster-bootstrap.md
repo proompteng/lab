@@ -21,7 +21,7 @@ Node-level patches:
 - `devices/ryzen/manifests/tailscale-extension-service.template.yaml` (Tailscale extension service template)
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generated from template; gitignored)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml` (prefer MagicDNS for tailnet hostnames)
-- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic: tailscale + AMD GPU + kernel args)
+- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic: Kata, glibc, Tailscale, AMD GPU, and kernel args)
 
 Related docs:
 
@@ -94,7 +94,7 @@ If you need to re-layout these volumes on an already-installed node, follow:
 
 Image Factory schematic (boot assets, not a config patch):
 
-- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (tailscale + AMD GPU + kernel args)
+- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Kata, glibc, Tailscale, AMD GPU, and kernel args)
 
 ### 2.4.1 Generate the Tailscale extension service patch
 
@@ -137,7 +137,7 @@ talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
 ## 2.6 System extensions (Image Factory)
 
 The Ryzen Talos node uses Image Factory to embed the required system extensions and
-kernel args (Tailscale + AMD GPU support). The schematic is tracked in-repo:
+kernel args (Kata, glibc, Tailscale, and AMD GPU support). The schematic is tracked in-repo:
 
 - `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml`
 

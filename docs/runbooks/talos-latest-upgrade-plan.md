@@ -12,7 +12,7 @@ is degraded.
 - Cluster: `ryzen` / Kubernetes `galactic`.
 - Primary Kubernetes context: `galactic-lan`.
 
-Sources checked on 2026-06-16:
+Sources checked on 2026-06-17:
 
 - Talos releases: <https://github.com/siderolabs/talos/releases>
 - Talos upgrade guide:
@@ -28,27 +28,24 @@ Kubernetes minor versions as part of this runbook.
 
 ## Live snapshot
 
-Read-only checks run on 2026-06-16 showed this state:
+Read-only checks run on 2026-06-17 showed this state:
 
 | Kubernetes node        | IP              | Talos | Kubernetes | Role          | Upgrade action |
 | ---------------------- | --------------- | ----- | ---------- | ------------- | -------------- |
 | `talos-192-168-1-194`  | `100.100.244.141` | `v1.12.4` | Ready | control plane | Upgrade to `v1.13.4` after gates pass |
-| `talos-192-168-1-85`   | `100.100.244.142` | `v1.12.4` | NotReady, SchedulingDisabled | control plane, OSD host | Blocked until recovered |
+| `talos-192-168-1-85`   | `100.100.244.142` | `v1.12.4` | Ready | control plane, OSD host | Upgrade to `v1.13.4` after gates pass |
 | `turin`                | `100.100.244.171` | `v1.13.4` | Ready | control plane, OSD host | Already at target; validate only |
 
 Current hard blockers:
 
-1. `talos-192-168-1-85` is `NotReady`, unschedulable, and carries
-   `node.kubernetes.io/unreachable` taints.
-1. `talos-192-168-1-85` reports Talos `MachineStatus.spec.stage: upgrading`
-   while still serving Talos `v1.12.4`.
-1. Rook-Ceph is `HEALTH_WARN`: `noout` is set, one OSD host is down, three OSDs
-   are down, 141 PGs are down/inactive, and data redundancy is degraded.
+1. Rook-Ceph is `HEALTH_WARN`: `noout` is set and data redundancy is degraded
+   while recovery/backfill is still running.
 1. Several PDBs currently allow zero disruptions, including Rook-Ceph, Kafka,
    Tempo, ClickHouse/Keeper, and multiple database primaries.
 
 Do not run `talosctl upgrade` on any node until those blockers are either fixed
-or explicitly accepted in a maintenance decision record.
+or explicitly accepted in a maintenance decision record. The plan is complete as
+documentation; the operational window is still gated by live cluster state.
 
 ## Version and image policy
 
@@ -65,14 +62,13 @@ extensions:
 
 | Node profile | Source schematic | Required extensions | Target image form |
 | ------------ | ---------------- | ------------------- | ----------------- |
-| Ryzen / `talos-192-168-1-194` | `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` | Tailscale, AMD GPU, AMD ucode | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
-| Altra / `talos-192-168-1-85` | live schematic currently contains Tailscale only | Tailscale | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
+| Ryzen / `talos-192-168-1-194` | `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` | Kata Containers, glibc, Tailscale, AMD GPU, AMD ucode | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
+| Altra / `talos-192-168-1-85` | `devices/altra/manifests/altra-tailscale-schematic.yaml` | Tailscale | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
 | Turin / `turin` | `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml` | Tailscale, NVIDIA open LTS kernel modules, NVIDIA toolkit LTS | already `v1.13.4` |
 
-Before upgrading `talos-192-168-1-85`, add or identify a durable Image Factory
-schematic source for its live Tailscale-only image. Do not downgrade it to a
-vanilla installer image, because that would remove node-level Tailscale on the
-next install/upgrade path.
+Do not downgrade Altra or Ryzen to a vanilla installer image. Altra depends on
+node-level Tailscale, and Ryzen depends on Kata Containers, glibc, Tailscale,
+AMD GPU/ucode extensions, and kernel args.
 
 Use a `talosctl` version matching the source node version for issuing the
 upgrade when practical. Keep `talosctl v1.13.4` available for post-upgrade
@@ -128,10 +124,11 @@ talosctl -n 100.100.244.171 -e 100.100.244.171 etcd snapshot \
   /tmp/galactic-etcd-before-talos-v1.13.4-$(date -u +%Y%m%dT%H%M%SZ).db
 ```
 
-## Blocker recovery lane
+## Pre-execution recovery lane
 
 Do this before the Talos upgrade window. Keep it read-only until the actual
-repair action is known.
+repair action is known. This lane is a verification gate, not part of the normal
+Talos upgrade.
 
 For `talos-192-168-1-85`:
 
@@ -174,8 +171,7 @@ Preferred order after all gates pass:
 1. Upgrade `talos-192-168-1-194` from `v1.12.4` to `v1.13.4`.
 1. Wait for Kubernetes, Talos, etcd, and Rook-Ceph to return to the acceptance
    criteria.
-1. Upgrade `talos-192-168-1-85` only after its current `stage: upgrading` and
-   NotReady state are resolved.
+1. Upgrade `talos-192-168-1-85` from `v1.12.4` to `v1.13.4`.
 1. Re-run full acceptance criteria.
 
 If a historical `talos-192-168-1-203` node appears again, stop and update the
@@ -185,6 +181,8 @@ old docs alone.
 ## Build target installer images
 
 Build or refresh Image Factory schematics before the window:
+
+### Ryzen image
 
 ```bash
 RYZEN_SCHEMATIC_ID="$(
@@ -197,6 +195,22 @@ RYZEN_SCHEMATIC_ID="$(
 RYZEN_IMAGE="factory.talos.dev/metal-installer/${RYZEN_SCHEMATIC_ID}:v1.13.4"
 printf '%s\n' "$RYZEN_IMAGE"
 ```
+
+### Altra image
+
+```bash
+ALTRA_SCHEMATIC_ID="$(
+  curl -sS -X POST \
+    --data-binary @devices/altra/manifests/altra-tailscale-schematic.yaml \
+    https://factory.talos.dev/schematics \
+    | jq -r .id
+)"
+
+ALTRA_IMAGE="factory.talos.dev/metal-installer/${ALTRA_SCHEMATIC_ID}:v1.13.4"
+printf '%s\n' "$ALTRA_IMAGE"
+```
+
+### Turin image
 
 For Turin validation only:
 
@@ -212,17 +226,16 @@ TURIN_IMAGE="factory.talos.dev/metal-installer/${TURIN_SCHEMATIC_ID}:v1.13.4"
 printf '%s\n' "$TURIN_IMAGE"
 ```
 
-For Altra, identify the live Tailscale-only schematic source before execution.
-If no source file exists, create one in a separate change and verify it matches
-the live extension set.
+The Altra source is tracked at
+`devices/altra/manifests/altra-tailscale-schematic.yaml`.
 
-## Upgrade command pattern
+## Node upgrade commands
 
 For each node, persist the installer image in machine config, then perform the
 upgrade with the same image. This keeps the installed state and future reset
 path aligned.
 
-Example for `talos-192-168-1-194`:
+### Ryzen: `talos-192-168-1-194`
 
 ```bash
 cat >/tmp/ryzen-v1.13.4-installer.patch.yaml <<EOF
@@ -246,11 +259,44 @@ talosctl upgrade \
   --timeout 45m
 ```
 
+Expected post-upgrade extension set includes:
+
+1. `kata-containers`
+1. `glibc`
+1. `tailscale`
+1. `amdgpu`
+1. `amd-ucode`
+
+### Altra: `talos-192-168-1-85`
+
+```bash
+cat >/tmp/altra-v1.13.4-installer.patch.yaml <<EOF
+machine:
+  install:
+    image: ${ALTRA_IMAGE}
+EOF
+
+talosctl patch machineconfig \
+  -n 100.100.244.142 \
+  -e 100.100.244.142 \
+  --patch @/tmp/altra-v1.13.4-installer.patch.yaml \
+  --mode=no-reboot
+
+talosctl upgrade \
+  -n 100.100.244.142 \
+  -e 100.100.244.142 \
+  --image "$ALTRA_IMAGE" \
+  --wait \
+  --progress plain \
+  --timeout 45m
+```
+
+Expected post-upgrade extension set includes:
+
+1. `tailscale`
+
 Do not pass deprecated upgrade flags. For `v1.13`, prefer the streaming upgrade
 API used by current `talosctl upgrade`.
-
-Use the same shape for `talos-192-168-1-85` only after its blocker lane is
-closed and its Altra target image has been confirmed.
 
 ## Per-node acceptance checks
 

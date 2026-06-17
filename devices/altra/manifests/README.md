@@ -13,3 +13,6 @@ Files:
 - `devices/altra/manifests/local-path-extra.patch.yaml`
 - `devices/altra/manifests/vfio-modules.patch.yaml`
 - `devices/altra/manifests/kubelet-maxpods.patch.yaml`
+- `devices/altra/manifests/tailscale-extension-service.template.yaml`
+- `devices/altra/manifests/tailscale-dns.patch.yaml`
+- `devices/altra/manifests/altra-tailscale-schematic.yaml`
