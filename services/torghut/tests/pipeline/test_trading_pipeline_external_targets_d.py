@@ -352,6 +352,136 @@ class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
         self.assertEqual(batch.signals, [])
         self.assertEqual(ingestor.calls, 1)
 
+    def test_live_bounded_collection_fallback_scopes_signal_fetch_to_static_universe(
+        self,
+    ) -> None:
+        from app import config
+
+        class ScopedIngestor:
+            def __init__(self) -> None:
+                self.calls: list[tuple[set[str] | None, set[str] | None]] = []
+
+            def fetch_signals(
+                self,
+                session: Session,
+                *,
+                symbols: set[str] | None = None,
+                timeframes: set[str] | None = None,
+            ) -> SignalBatch:
+                self.calls.append((symbols, timeframes))
+                return SignalBatch(
+                    signals=[],
+                    cursor_at=None,
+                    cursor_seq=None,
+                    cursor_symbol=None,
+                )
+
+        original = {
+            "trading_mode": config.settings.trading_mode,
+            "trading_simple_paper_route_probe_enabled": (
+                config.settings.trading_simple_paper_route_probe_enabled
+            ),
+            "trading_simple_paper_route_probe_allow_live_mode": (
+                config.settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        try:
+            config.settings.trading_mode = "live"
+            config.settings.trading_simple_paper_route_probe_enabled = True
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = True
+            config.settings.trading_static_symbols_raw = "AAPL,AMZN,INTC,NVDA"
+            ingestor = ScopedIngestor()
+            pipeline = object.__new__(SimpleTradingPipeline)
+            setattr(pipeline, "account_label", "PA3SX7FYNUTF")
+            setattr(pipeline, "ingestor", ingestor)
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+            )
+
+            with self.session_local() as session:
+                batch = pipeline._fetch_signal_batch(
+                    session,
+                    signal_scope=None,
+                    strategies=[strategy],
+                )
+
+            self.assertEqual(batch.signals, [])
+            self.assertEqual(
+                ingestor.calls,
+                [({"AAPL", "AMZN", "INTC", "NVDA"}, {"1Sec"})],
+            )
+        finally:
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_simple_paper_route_probe_enabled = original[
+                "trading_simple_paper_route_probe_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = original[
+                "trading_simple_paper_route_probe_allow_live_mode"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
+    def test_live_bounded_collection_fallback_respects_disabled_and_empty_scopes(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_mode": config.settings.trading_mode,
+            "trading_simple_paper_route_probe_enabled": (
+                config.settings.trading_simple_paper_route_probe_enabled
+            ),
+            "trading_simple_paper_route_probe_allow_live_mode": (
+                config.settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        pipeline = object.__new__(SimpleTradingPipeline)
+        dynamic_strategy = Strategy(
+            name="dynamic-universe",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="dynamic",
+            universe_symbols=[],
+        )
+        try:
+            config.settings.trading_mode = "live"
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = True
+            config.settings.trading_simple_paper_route_probe_enabled = False
+            config.settings.trading_static_symbols_raw = "AAPL"
+
+            self.assertIsNone(
+                pipeline._live_bounded_collection_fallback_signal_scope(
+                    [dynamic_strategy]
+                )
+            )
+
+            config.settings.trading_simple_paper_route_probe_enabled = True
+            config.settings.trading_static_symbols_raw = ""
+
+            self.assertIsNone(
+                pipeline._live_bounded_collection_fallback_signal_scope(
+                    [dynamic_strategy]
+                )
+            )
+        finally:
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_simple_paper_route_probe_enabled = original[
+                "trading_simple_paper_route_probe_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = original[
+                "trading_simple_paper_route_probe_allow_live_mode"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+
     def test_bounded_signal_scope_skips_unusable_targets_before_valid_target(
         self,
     ) -> None:

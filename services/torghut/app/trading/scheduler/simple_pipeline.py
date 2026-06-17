@@ -157,7 +157,11 @@ class SimpleTradingPipeline(
                 strategies,
                 session=session,
             )
-            batch = self._fetch_signal_batch(session, signal_scope=signal_scope)
+            batch = self._fetch_signal_batch(
+                session,
+                signal_scope=signal_scope,
+                strategies=strategies,
+            )
             self._record_ingest_window(batch)
             if self._signal_ingest_unavailable(batch):
                 self._prepare_batch_for_decisions(
@@ -303,7 +307,12 @@ class SimpleTradingPipeline(
         session: Session,
         *,
         signal_scope: tuple[set[str], set[str]] | None,
+        strategies: Sequence[Strategy] | None = None,
     ) -> SignalBatch:
+        if signal_scope is None:
+            signal_scope = self._live_bounded_collection_fallback_signal_scope(
+                strategies or ()
+            )
         if signal_scope is None:
             return self.ingestor.fetch_signals(session)
         symbols, timeframes = signal_scope
@@ -323,6 +332,38 @@ class SimpleTradingPipeline(
                 ",".join(sorted(timeframes)) or "*",
             )
             return self.ingestor.fetch_signals(session)
+
+    def _live_bounded_collection_fallback_signal_scope(
+        self,
+        strategies: Sequence[Strategy],
+    ) -> tuple[set[str], set[str]] | None:
+        if settings.trading_mode != "live":
+            return None
+        if not settings.trading_simple_paper_route_probe_allow_live_mode:
+            return None
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return None
+        symbols = {
+            str(symbol).strip().upper()
+            for symbol in settings.trading_static_symbols
+            if str(symbol).strip()
+        }
+        timeframes = {
+            str(strategy.base_timeframe).strip()
+            for strategy in strategies
+            if str(strategy.base_timeframe).strip()
+        }
+        for strategy in strategies:
+            if strategy.universe_type != "static":
+                continue
+            symbols.update(
+                str(symbol).strip().upper()
+                for symbol in strategy.universe_symbols or ()
+                if str(symbol).strip()
+            )
+        if not symbols:
+            return None
+        return symbols, timeframes
 
     @staticmethod
     def _signal_ingest_unavailable(batch: SignalBatch) -> bool:
