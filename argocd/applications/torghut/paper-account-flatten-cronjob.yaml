@@ -24,7 +24,7 @@ spec:
           serviceAccountName: torghut-runtime
           containers:
             - name: flatten-paper-account
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:9897318daa75644144263d9ee70ce7d35a5bfa79586846442b535ce40dd804bf
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:271deba72f7be0eb0325a98bfd46ff6b10ac40e5ba7b470d4674c602cc6d65bb
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
