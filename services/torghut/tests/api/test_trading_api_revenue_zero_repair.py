@@ -138,10 +138,10 @@ class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
         }
         with (
             patch(
-                "app.main._evaluate_trading_health_payload",
+                "app.api.maintenance._evaluate_trading_health_payload",
                 return_value=(readyz_payload, 503),
             ),
-            patch("app.main.trading_status", return_value=status_payload),
+            patch("app.api.maintenance.trading_status", return_value=status_payload),
         ):
             response = self.client.get("/trading/revenue-repair")
 
@@ -328,7 +328,7 @@ class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
                 ],
             },
         }
-        with patch("app.main.trading_status", return_value=status_payload):
+        with patch("app.api.maintenance.trading_status", return_value=status_payload):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair"
             )
@@ -400,7 +400,7 @@ class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
             "expected_gate_delta": 1,
             "rollback_target": "keep Torghut max_notional=0",
         }
-        with patch("app.main.trading_status", return_value=status_payload):
+        with patch("app.api.maintenance.trading_status", return_value=status_payload):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair?execute=true",
                 json=repair_lot_dispatch_ticket,
@@ -465,7 +465,7 @@ class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
                 ],
             },
         }
-        with patch("app.main.trading_status", return_value=status_payload):
+        with patch("app.api.maintenance.trading_status", return_value=status_payload):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair"
                 "?action=recompute_route_tca_and_fill_quality"
@@ -523,10 +523,10 @@ class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
         }
 
         with (
-            patch("app.main.trading_status", return_value=status_payload),
-            patch("app.main.time.sleep") as sleep,
+            patch("app.api.maintenance.trading_status", return_value=status_payload),
+            patch("app.api.maintenance.time.sleep") as sleep,
             patch(
-                "app.main.refresh_execution_tca_metrics",
+                "app.api.maintenance.refresh_execution_tca_metrics",
                 side_effect=[
                     OperationalError("UPDATE execution_tca_metrics", {}, _Deadlock()),
                     {
@@ -628,9 +628,9 @@ class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
         }
 
         with (
-            patch("app.main.trading_status", return_value=status_payload),
+            patch("app.api.maintenance.trading_status", return_value=status_payload),
             patch(
-                "app.main.refresh_execution_tca_metrics",
+                "app.api.maintenance.refresh_execution_tca_metrics",
                 side_effect=OperationalError(
                     "UPDATE execution_tca_metrics",
                     {},

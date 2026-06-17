@@ -425,6 +425,8 @@ def _load_trading_status_hypothesis_runtime(
 
 
 TradingStatusReadBudget = _TradingStatusReadBudget
+rollback_status_read_session = _rollback_status_read_session
+apply_status_read_statement_timeout = _apply_status_read_statement_timeout
 budget_unavailable_hypothesis_runtime_payload = (
     _budget_unavailable_hypothesis_runtime_payload
 )
@@ -444,6 +446,9 @@ load_trading_status_runtime_ledger_portfolio_summary = (
     _load_trading_status_runtime_ledger_portfolio_summary
 )
 load_trading_status_hypothesis_runtime = _load_trading_status_hypothesis_runtime
+unavailable_runtime_ledger_portfolio_summary = (
+    _unavailable_runtime_ledger_portfolio_summary
+)
 
 
 __all__ = [
@@ -463,6 +468,8 @@ __all__ = [
     "_load_trading_status_runtime_ledger_portfolio_summary",
     "_load_trading_status_hypothesis_runtime",
     "TradingStatusReadBudget",
+    "rollback_status_read_session",
+    "apply_status_read_statement_timeout",
     "budget_unavailable_hypothesis_runtime_payload",
     "budget_unavailable_llm_evaluation_payload",
     "budget_unavailable_tca_summary_payload",
@@ -474,5 +481,6 @@ __all__ = [
     "load_trading_status_tigerbeetle_ledger",
     "load_trading_status_runtime_ledger_portfolio_summary",
     "load_trading_status_hypothesis_runtime",
+    "unavailable_runtime_ledger_portfolio_summary",
 ]
 capture_module_exports(globals(), __all__)

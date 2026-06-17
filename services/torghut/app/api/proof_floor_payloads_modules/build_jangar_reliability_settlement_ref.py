@@ -832,6 +832,10 @@ def _load_route_provenance_summary(session: Session) -> dict[str, object]:
     }
 
 
+build_jangar_reliability_settlement_ref = _build_jangar_reliability_settlement_ref
+build_torghut_stage_clearance_packet_ref = _build_torghut_stage_clearance_packet_ref
+
+
 __all__ = [
     "_build_profitability_proof_floor_payload",
     "_build_renewal_bond_profit_escrow_payload",
@@ -868,6 +872,8 @@ __all__ = [
     "_build_rejected_signal_outcome_learning_payload",
     "_load_rejected_signal_outcome_learning_summary",
     "_load_route_provenance_summary",
+    "build_jangar_reliability_settlement_ref",
+    "build_torghut_stage_clearance_packet_ref",
 ]
 
 capture_module_exports(globals(), __all__)

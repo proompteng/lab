@@ -25,34 +25,17 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
-import app.main as main_module
+from app import bootstrap as app_bootstrap
+from app.api import common as common_api
+from app.api import health_checks as health_checks_api
+from app.api import maintenance as maintenance_api
+from app.api import proof_floor_payloads as proof_floor_payloads_api
+from app.api import proofs as proofs_api
+from app.api import readiness_helpers as readiness_helpers_api
+from app.api import status_helpers as status_helpers_api
+from app.api import trading_misc as trading_misc_api
 from app.db import get_session
-from app.main import (
-    _ALPACA_HEALTH_STATE,
-    _OPTIONS_CATALOG_FRESHNESS_CACHE,
-    _TRADING_DEPENDENCY_HEALTH_CACHE,
-    _build_hypothesis_runtime_payload,
-    _assert_dspy_cutover_migration_guard,
-    _build_live_submission_gate_payload,
-    _build_route_image_proof_summary,
-    _check_alpaca,
-    _daily_runtime_ledger_portfolio_summary,
-    _decimal_or_none,
-    _fetch_paper_route_target_plan_url,
-    _forecast_service_status,
-    _load_external_paper_route_target_plan,
-    _paper_route_target_plan_from_payload,
-    _load_rejected_signal_outcome_learning_summary,
-    healthz,
-    _load_options_catalog_freshness_summary,
-    _merge_external_paper_route_target_plan,
-    _readiness_dependency_cache_key,
-    _readiness_dependency_checks,
-    _retryable_tca_recompute_error,
-    _route_continuity_packet_for_proof_floor,
-    _route_claim_symbols,
-    app,
-)
+from app.main import app
 from app.trading.paper_route_target_plan import (
     fetch_paper_route_target_plan_url as shared_fetch_paper_route_target_plan_url,
     paper_route_target_plan_probe_symbols,
@@ -87,6 +70,46 @@ from app.models import (
     TradeDecision,
     VNextEmpiricalJobRun,
 )
+
+_ALPACA_HEALTH_STATE = common_api._ALPACA_HEALTH_STATE
+_OPTIONS_CATALOG_FRESHNESS_CACHE = common_api._OPTIONS_CATALOG_FRESHNESS_CACHE
+_TRADING_DEPENDENCY_HEALTH_CACHE = common_api._TRADING_DEPENDENCY_HEALTH_CACHE
+_assert_dspy_cutover_migration_guard = app_bootstrap.assert_dspy_cutover_migration_guard
+_build_hypothesis_runtime_payload = health_checks_api._build_hypothesis_runtime_payload
+_build_live_submission_gate_payload = (
+    health_checks_api._build_live_submission_gate_payload
+)
+_build_route_image_proof_summary = (
+    proof_floor_payloads_api._build_route_image_proof_summary
+)
+_check_alpaca = health_checks_api._check_alpaca
+_daily_runtime_ledger_portfolio_summary = (
+    trading_misc_api.daily_runtime_ledger_portfolio_summary
+)
+_decimal_or_none = health_checks_api._decimal_or_none
+_fetch_paper_route_target_plan_url = proofs_api._fetch_paper_route_target_plan_url
+_forecast_service_status = health_checks_api._forecast_service_status
+_load_external_paper_route_target_plan = (
+    proofs_api._load_external_paper_route_target_plan
+)
+_load_options_catalog_freshness_summary = (
+    health_checks_api._load_options_catalog_freshness_summary
+)
+_load_rejected_signal_outcome_learning_summary = (
+    proof_floor_payloads_api._load_rejected_signal_outcome_learning_summary
+)
+_merge_external_paper_route_target_plan = (
+    proofs_api._merge_external_paper_route_target_plan
+)
+_paper_route_target_plan_from_payload = proofs_api._paper_route_target_plan_from_payload
+_readiness_dependency_cache_key = readiness_helpers_api._readiness_dependency_cache_key
+_readiness_dependency_checks = readiness_helpers_api._readiness_dependency_checks
+_retryable_tca_recompute_error = common_api._retryable_tca_recompute_error
+_route_claim_symbols = health_checks_api._route_claim_symbols
+_route_continuity_packet_for_proof_floor = (
+    proof_floor_payloads_api._route_continuity_packet_for_proof_floor
+)
+healthz = app_bootstrap.healthz
 
 
 def _truthful_empirical_payload(
@@ -511,9 +534,18 @@ class TradingApiTestCaseBase(TestCase):
             bind=engine, expire_on_commit=False, future=True
         )
         for session_local_target in (
-            "app.main.SessionLocal",
+            "app.api.common.SessionLocal",
+            "app.api.health_checks_modules.shared_context.SessionLocal",
+            "app.api.health_checks_modules.load_options_catalog_freshness_summary.SessionLocal",
+            "app.api.health_checks_modules.remember_alpaca_success.SessionLocal",
+            "app.api.maintenance.SessionLocal",
+            "app.api.proofs.SessionLocal",
+            "app.api.readiness_helpers_modules.evaluate_trading_health_payload.SessionLocal",
+            "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.SessionLocal",
             "app.api.trading_status.SessionLocal",
             "app.api.status_helpers.SessionLocal",
+            "app.api.trading_misc_modules.shared_context.SessionLocal",
+            "app.api.vnext_helpers.SessionLocal",
         ):
             session_local_patch = patch(session_local_target, self.session_local)
             session_local_patch.start()
@@ -636,12 +668,12 @@ class TradingApiTestCaseBase(TestCase):
             del app.state.trading_scheduler
 
     def _clear_trading_health_surface_cache(self) -> None:
-        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
             refresh_futures = list(
-                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.values()
+                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.values()
             )
-            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
         for refresh_future in refresh_futures:
             refresh_future.cancel()
 

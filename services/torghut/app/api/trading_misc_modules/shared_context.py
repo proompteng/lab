@@ -4,6 +4,42 @@
 # ruff: noqa: F401,F403,F405,F811,F821
 from __future__ import annotations
 
+from ..health_checks import (
+    build_api_live_submission_gate_payload as _build_live_submission_gate_payload,
+    build_control_plane_contract as _build_control_plane_contract,
+    build_hypothesis_runtime_payload as _build_hypothesis_runtime_payload,
+    build_shadow_first_runtime_payload as _build_shadow_first_runtime_payload,
+    build_simple_lane_status_payload as _build_simple_lane_status_payload,
+    empirical_jobs_status as _empirical_jobs_status,
+    forecast_service_status as _forecast_service_status,
+    lean_authority_status as _lean_authority_status,
+    load_clickhouse_ta_status as _load_clickhouse_ta_status,
+    load_options_catalog_freshness_summary as _load_options_catalog_freshness_summary,
+    load_tca_summary as _load_tca_summary,
+    route_claim_symbols as _route_claim_symbols,
+)
+from ..proof_floor_payloads import (
+    build_capital_reentry_cohort_ledger_payload as _build_capital_reentry_cohort_ledger_payload,
+    build_capital_replay_projection_payload as _build_capital_replay_projection_payload,
+    build_clock_settlement_payload as _build_clock_settlement_payload,
+    build_evidence_clock_payloads as _build_evidence_clock_payloads,
+    build_freshness_carry_ledger_payload as _build_freshness_carry_ledger_payload,
+    build_profit_carry_passport_ledger_payload as _build_profit_carry_passport_ledger_payload,
+    build_profit_freshness_frontier_payload as _build_profit_freshness_frontier_payload,
+    build_profit_repair_settlement_ledger_payload as _build_profit_repair_settlement_ledger_payload,
+    build_profit_signal_quorum_payload as _build_profit_signal_quorum_payload,
+    build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
+    build_quality_adjusted_profit_frontier_payload as _build_quality_adjusted_profit_frontier_payload,
+    build_repair_bid_settlement_payload as _build_repair_bid_settlement_payload,
+    build_repair_outcome_dividend_ledger_payload as _build_repair_outcome_dividend_ledger_payload,
+    build_repair_receipt_frontier_payload as _build_repair_receipt_frontier_payload,
+    build_route_evidence_clearinghouse_payload as _build_route_evidence_clearinghouse_payload,
+    build_route_image_proof_summary as _build_route_image_proof_summary,
+    build_route_warrant_exchange_payload as _build_route_warrant_exchange_payload,
+    build_routeability_repair_acceptance_ledger_payload as _build_routeability_repair_acceptance_ledger_payload,
+    build_source_serving_repair_receipt_payload as _build_source_serving_repair_receipt_payload,
+    consumer_evidence_jangar_continuity_packet as _consumer_evidence_jangar_continuity_packet,
+)
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
@@ -226,8 +262,24 @@ from ..common import (
 from ..common import main_runtime_value
 
 from ..proxy import capture_module_exports
+from ..trading_scheduler_state import get_trading_scheduler
 
 router = APIRouter()
+
+
+def _readiness_dependency_snapshot(
+    session: Session,
+    *,
+    include_database_contract: bool,
+    allow_stale_dependency_cache: bool = False,
+) -> tuple[dict[str, object], datetime, bool]:
+    from .. import readiness_helpers
+
+    return readiness_helpers.readiness_dependency_snapshot(
+        session,
+        include_database_contract=include_database_contract,
+        allow_stale_dependency_cache=allow_stale_dependency_cache,
+    )
 
 
 def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
@@ -306,10 +358,7 @@ def _revenue_repair_topline_fields(
 def _build_trading_consumer_evidence_payload(
     *, summary: bool = False
 ) -> dict[str, object]:
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
     state = scheduler.state
     dependency_quorum = _consumer_evidence_dependency_quorum()
     empirical_jobs = _empirical_jobs_status()
@@ -780,10 +829,7 @@ def trading_consumer_evidence(
 def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object]:
     """Expose trading metrics counters."""
 
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
     metrics = scheduler.state.metrics
     market_context_status = scheduler.market_context_status()
     tca_summary = _load_tca_summary(session, scheduler=scheduler)

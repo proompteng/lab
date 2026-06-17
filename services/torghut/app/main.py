@@ -1,53 +1,37 @@
 """torghut FastAPI application entrypoint."""
 
-# pyright: reportUnusedFunction=false
-# ruff: noqa: F401,F403,F405
 from __future__ import annotations
 
-import sys
-
 from . import bootstrap as app_bootstrap
-from .api.proxy import export_api_symbols, install_main_compat_proxies
 from .api import common as common_api
-from .api import status_helpers as status_helpers_api
-from .api import readiness_helpers as readiness_helpers_api
-from .api import readiness as readiness_api
-from .api import maintenance as maintenance_api
-from .api import whitepaper as whitepaper_api
-from .api import trading_status as trading_status_api
-from .api import trading_misc as trading_misc_api
-from .api import runtime_profitability as runtime_profitability_api
-from .api import proofs as proofs_api
-from .api import trading_health as trading_health_api
 from .api import health_checks as health_checks_api
+from .api import maintenance as maintenance_api
 from .api import proof_floor_payloads as proof_floor_payloads_api
+from .api import proofs as proofs_api
+from .api import readiness as readiness_api
+from .api import readiness_helpers as readiness_helpers_api
+from .api import runtime_profitability as runtime_profitability_api
 from .api import runtime_profitability_helpers as runtime_profitability_helpers_api
+from .api import status_helpers as status_helpers_api
+from .api import trading_health as trading_health_api
+from .api import trading_misc as trading_misc_api
+from .api import trading_status as trading_status_api
 from .api import vnext_helpers as vnext_helpers_api
+from .api import whitepaper as whitepaper_api
+from .api.application import register_app
 
-
-_assert_dspy_cutover_migration_guard = app_bootstrap.assert_dspy_cutover_migration_guard
-_env_csv = app_bootstrap.env_csv
-_env_json_string_list = app_bootstrap.env_json_string_list
-_env_or_none = app_bootstrap.env_or_none
-_evaluate_scheduler_status = app_bootstrap.evaluate_scheduler_status
-_extract_bearer_token = app_bootstrap.extract_bearer_token
-_register_whitepaper_inngest_routes = app_bootstrap.register_whitepaper_inngest_routes
-_require_whitepaper_control_token = app_bootstrap.require_whitepaper_control_token
 create_app = app_bootstrap.create_app
-healthz = app_bootstrap.healthz
-lifespan = app_bootstrap.lifespan
-sqlalchemy_exception_handler = app_bootstrap.sqlalchemy_exception_handler
 
-app = create_app()
+app = register_app(create_app())
 
 API_MODULES = (
     common_api,
     status_helpers_api,
     readiness_helpers_api,
     readiness_api,
-    maintenance_api,
     whitepaper_api,
     trading_status_api,
+    maintenance_api,
     trading_misc_api,
     runtime_profitability_api,
     proofs_api,
@@ -57,275 +41,12 @@ API_MODULES = (
     runtime_profitability_helpers_api,
     vnext_helpers_api,
 )
-export_api_symbols(sys.modules[__name__], API_MODULES)
-install_main_compat_proxies(
-    API_MODULES,
-    [
-        "app",
-        "HTTPConnection",
-        "HTTPSConnection",
-        "SessionLocal",
-        "TorghutAlpacaClient",
-        "_TRADING_STATUS_READ_BUDGET_SECONDS",
-        "_TradingStatusReadBudget",
-        "_active_runtime_revision",
-        "_aggregate_tca_rows",
-        "_alpaca_cached_last_good",
-        "_alpaca_endpoint_class",
-        "_alpaca_failure_status",
-        "_alpaca_probe_account",
-        "_append_unique_reason",
-        "_apply_status_read_statement_timeout",
-        "_assert_dspy_cutover_migration_guard",
-        "_budget_exhausted_live_submission_gate_payload",
-        "_budget_exhausted_options_catalog_freshness_payload",
-        "_budget_unavailable_hypothesis_runtime_payload",
-        "_budget_unavailable_llm_evaluation_payload",
-        "_budget_unavailable_tca_summary_payload",
-        "_budget_unavailable_tigerbeetle_ledger_payload",
-        "_build_autonomy_bridge_status",
-        "_build_autonomy_capital_replay_projection",
-        "_build_capital_reentry_cohort_ledger_payload",
-        "_build_capital_replay_projection_payload",
-        "_build_clock_settlement_payload",
-        "_build_consumer_evidence_receipt_projection",
-        "_build_control_plane_contract",
-        "_build_current_evidence_epoch",
-        "_build_evidence_clock_payloads",
-        "_build_freshness_carry_ledger_payload",
-        "_build_hypothesis_runtime_payload",
-        "_build_jangar_contract_graduation_ref",
-        "_build_jangar_execution_trust_admission_ref",
-        "_build_jangar_material_verdict_ref",
-        "_build_jangar_reliability_settlement_ref",
-        "_build_live_submission_gate_payload",
-        "_build_persisted_vnext_status",
-        "_build_profit_carry_passport_ledger_payload",
-        "_build_profit_freshness_frontier_payload",
-        "_build_profit_repair_settlement_ledger_payload",
-        "_build_profit_signal_quorum_payload",
-        "_build_profitability_proof_floor_payload",
-        "_build_quality_adjusted_profit_frontier_payload",
-        "_build_rejected_signal_outcome_learning_payload",
-        "_build_renewal_bond_profit_escrow_payload",
-        "_build_repair_bid_settlement_payload",
-        "_build_repair_outcome_dividend_ledger_payload",
-        "_build_repair_receipt_frontier_payload",
-        "_build_route_evidence_clearinghouse_payload",
-        "_build_route_image_proof_summary",
-        "_build_route_reacquisition_board_payload",
-        "_build_route_warrant_exchange_payload",
-        "_build_routeability_repair_acceptance_ledger_payload",
-        "_build_shadow_first_runtime_payload",
-        "_build_shadow_first_toggle_parity",
-        "_build_simple_lane_status_payload",
-        "_build_source_serving_repair_receipt_payload",
-        "_build_tigerbeetle_ledger_status",
-        "_build_torghut_routeability_admission_ref",
-        "_build_torghut_stage_clearance_packet_ref",
-        "_build_trading_consumer_evidence_payload",
-        "_build_trading_proofs_payload",
-        "_cache_completed_trading_health_surface_payload",
-        "_cached_external_paper_route_target_plan_success",
-        "_cached_readiness_dependencies_for_health_surface",
-        "_cached_trading_health_surface_payload",
-        "_check_account_scope_invariants_bounded",
-        "_check_alpaca",
-        "_check_clickhouse",
-        "_check_postgres",
-        "_check_tigerbeetle_protocol_health",
-        "_consumer_evidence_dependency_quorum",
-        "_consumer_evidence_jangar_continuity_packet",
-        "_consumer_evidence_summary_view",
-        "_core_readiness_live_submission_gate",
-        "_daily_runtime_ledger_portfolio_summary",
-        "_decimal_average",
-        "_decimal_or_none",
-        "_decimal_percentile",
-        "_decimal_to_string",
-        "_deferred_hypothesis_payload_for_live_submission_gate",
-        "_empirical_jobs_status",
-        "_empty_tigerbeetle_ref_counts",
-        "_ensure_utc_datetime",
-        "_env_csv",
-        "_env_json_string_list",
-        "_env_or_none",
-        "_evaluate_core_readiness_payload",
-        "_evaluate_database_contract",
-        "_evaluate_scheduler_status",
-        "_evaluate_trading_health_payload",
-        "_evaluate_trading_health_payload_bounded",
-        "_evaluate_universe_dependency",
-        "_execute_readiness_account_scope_query",
-        "_extract_bearer_token",
-        "_extract_gate_result",
-        "_fail_closed_health_evaluation_gate",
-        "_fetch_paper_route_target_plan_url",
-        "_finalize_tca_aggregates",
-        "_forecast_service_status",
-        "_guard_live_submission_gate_for_readiness",
-        "_health_surface_timeout_dependency_placeholder",
-        "_health_surface_timeout_fallback_payload",
-        "_hypothesis_payload_read_model_unavailable",
-        "_latest_reconciliation_ref_counts",
-        "_lean_authority_status",
-        "_load_bounded_options_catalog_freshness_summary",
-        "_load_cached_options_catalog_freshness_summary",
-        "_load_clickhouse_ta_status",
-        "_load_external_paper_route_target_plan",
-        "_load_jangar_dependency_quorum_payload",
-        "_load_jangar_verify_trust_foreclosure_board",
-        "_load_json_artifact_payload",
-        "_load_last_decision_at",
-        "_load_llm_evaluation",
-        "_load_options_catalog_freshness_summary",
-        "_load_rejected_signal_outcome_learning_summary",
-        "_load_route_provenance_summary",
-        "_load_runtime_profitability_decisions",
-        "_load_runtime_profitability_executions",
-        "_load_runtime_profitability_gate_rollback_attribution",
-        "_load_runtime_profitability_realized_pnl_summary",
-        "_load_tca_summary",
-        "_load_trading_status_hypothesis_runtime",
-        "_load_trading_status_llm_evaluation",
-        "_load_trading_status_runtime_ledger_portfolio_summary",
-        "_load_trading_status_tca_summary",
-        "_load_trading_status_tigerbeetle_ledger",
-        "_mapping_items",
-        "_merge_external_paper_route_target_plan",
-        "_minimal_health_surface_timeout_live_submission_gate",
-        "_minimal_health_surface_timeout_payload",
-        "_minimal_health_surface_timeout_proof_floor",
-        "_new_tca_aggregate",
-        "_normalized_adapter_name",
-        "_normalized_paper_route_text",
-        "_paper_route_mapping_targets_sim_account",
-        "_paper_route_probe_book_from_target_plan",
-        "_paper_route_probe_symbol_values_from_mapping",
-        "_paper_route_probe_symbols_from_target_plan_strategies",
-        "_paper_route_source_collection_target_cache_safe",
-        "_paper_route_target_account_audit_available",
-        "_paper_route_target_plan_audit_mode_value",
-        "_paper_route_target_plan_cache_safe_for_live",
-        "_paper_route_target_plan_from_payload",
-        "_paper_route_target_plan_probe_notional",
-        "_paper_route_target_plan_probe_symbols",
-        "_paper_route_target_plan_success_cache",
-        "_paper_route_target_plan_targets",
-        "_paper_route_target_plan_truthy",
-        "_paper_route_target_plan_url_points_to_self",
-        "_paper_route_target_strategy_lookup_names",
-        "_proof_kind_value",
-        "_proof_window_value",
-        "_readiness_authority_truthy",
-        "_readiness_dependency_cache_key",
-        "_readiness_dependency_checks",
-        "_readiness_dependency_degradation_reason_codes",
-        "_readiness_dependency_snapshot",
-        "_record_trading_health_surface_completion",
-        "_refresh_universe_state_for_readiness",
-        "_register_whitepaper_inngest_routes",
-        "_remember_alpaca_success",
-        "_remember_external_paper_route_target_plan_success",
-        "_require_whitepaper_control_token",
-        "_resolve_active_capital_stage",
-        "_resolve_tca_scope_symbols",
-        "_resolve_universe_resolver_for_readiness",
-        "_retryable_tca_recompute_error",
-        "_revenue_repair_topline_fields",
-        "_rollback_status_read_session",
-        "_route_claim_symbols",
-        "_route_continuity_packet_for_proof_floor",
-        "_runtime_ledger_bucket_evidence_grade",
-        "_safe_float",
-        "_safe_int",
-        "_simple_lane_reject_reason_totals",
-        "_simulation_cache_status_payload",
-        "_sqlalchemy_error_indicates_statement_timeout",
-        "_store_options_catalog_freshness_summary",
-        "_strip_promotion_authority_claims_for_readiness",
-        "_tca_as_float",
-        "_tca_as_int",
-        "_tca_row_payload",
-        "_tigerbeetle_status_int",
-        "_to_str_map",
-        "_trading_health_surface_cache_key",
-        "_trading_scheduler_for_proofs",
-        "_unavailable_runtime_ledger_portfolio_summary",
-        "_unavailable_tigerbeetle_reconciliation_payload",
-        "_update_tca_aggregate",
-        "approve_whitepaper_for_engineering",
-        "build_capital_replay_projection",
-        "build_empirical_jobs_status",
-        "build_hypothesis_runtime_summary",
-        "build_live_submission_gate_payload",
-        "build_llm_evaluation_metrics",
-        "build_profit_signal_quorum",
-        "build_profitability_proof_floor_receipt",
-        "build_quality_adjusted_profit_frontier",
-        "build_renewal_bond_profit_escrow",
-        "build_revenue_repair_digest",
-        "build_tca_gate_inputs",
-        "check_schema_current",
-        "check_tigerbeetle_health",
-        "db_check",
-        "dispatch_whitepaper_agentrun",
-        "evaluate_feature_batch_quality",
-        "finalize_whitepaper_run",
-        "get_lean_backtest",
-        "get_lean_shadow_parity",
-        "get_whitepaper_run",
-        "healthz",
-        "hypothesis_registry_requires_dependency_capability",
-        "ingest_whitepaper_github_issue",
-        "latest_tigerbeetle_reconciliation_payload",
-        "lifespan",
-        "load_hypothesis_registry",
-        "load_jangar_dependency_quorum",
-        "load_jangar_route_continuity_packet",
-        "load_quant_evidence_status",
-        "persist_evidence_epoch",
-        "prometheus_metrics",
-        "readyz",
-        "refresh_execution_tca_metrics",
-        "resolve_hypothesis_dependency_quorum",
-        "root",
-        "search_whitepapers",
-        "sqlalchemy_exception_handler",
-        "submit_lean_backtest",
-        "tigerbeetle_ref_counts",
-        "trading_autonomy",
-        "trading_autonomy_evidence_continuity",
-        "trading_completion_doc29",
-        "trading_completion_doc29_gate",
-        "trading_consumer_evidence",
-        "trading_decisions",
-        "trading_empirical_jobs",
-        "trading_evidence_epoch_detail",
-        "trading_evidence_epoch_latest",
-        "trading_executions",
-        "trading_health",
-        "trading_llm_evaluation",
-        "trading_metrics",
-        "trading_paper_route_evidence",
-        "trading_paper_route_target_plan",
-        "trading_profit_freshness_zero_notional_repair",
-        "trading_proofs",
-        "trading_revenue_repair",
-        "trading_runtime_profitability",
-        "trading_simulation_progress",
-        "trading_status",
-        "trading_tca",
-        "whitepaper_kafka_enabled",
-        "whitepaper_semantic_indexing_enabled",
-        "whitepaper_status",
-        "whitepaper_workflow_enabled",
-    ],
-)
 
 for api_module in API_MODULES:
     router = getattr(api_module, "router", None)
     if router is not None:
         app.include_router(router)
 
-_register_whitepaper_inngest_routes(app)
+app_bootstrap.register_whitepaper_inngest_routes(app)
+
+__all__ = ("app", "create_app")

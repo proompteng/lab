@@ -43,12 +43,14 @@ from .common import (
     timezone,
 )
 from .common import main_runtime_value
-from .proxy import MainAttrProxy, capture_module_exports
+from .application import get_app
+from .proxy import capture_module_exports
+from .readiness_helpers import (
+    evaluate_database_contract as _evaluate_database_contract,
+    evaluate_trading_health_payload as _evaluate_trading_health_payload,
+)
+from .trading_status import trading_status
 
-_evaluate_database_contract = MainAttrProxy("_evaluate_database_contract")
-_evaluate_trading_health_payload = MainAttrProxy("_evaluate_trading_health_payload")
-app = MainAttrProxy("app")
-trading_status = MainAttrProxy("trading_status")
 router = APIRouter()
 
 
@@ -223,8 +225,9 @@ def trading_profit_freshness_zero_notional_repair(
         }
 
     def run_drift_check_replay(repair: Mapping[str, Any]) -> Mapping[str, object]:
+        current_app = get_app()
         scheduler: TradingScheduler | None = getattr(
-            app.state, "trading_scheduler", None
+            current_app.state, "trading_scheduler", None
         )
         pipeline = getattr(scheduler, "_pipeline", None) if scheduler else None
         ingestor = getattr(pipeline, "ingestor", None)
@@ -343,8 +346,9 @@ def trading_profit_freshness_zero_notional_repair(
         }
 
     def run_feature_coverage_replay(repair: Mapping[str, Any]) -> Mapping[str, object]:
+        current_app = get_app()
         scheduler: TradingScheduler | None = getattr(
-            app.state, "trading_scheduler", None
+            current_app.state, "trading_scheduler", None
         )
         pipeline = getattr(scheduler, "_pipeline", None) if scheduler else None
         ingestor = getattr(pipeline, "ingestor", None)

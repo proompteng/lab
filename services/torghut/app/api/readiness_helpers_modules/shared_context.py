@@ -210,6 +210,7 @@ from .. import health_checks as health_checks_api
 from ..common import main_runtime_value
 
 from ..proxy import capture_module_exports
+from ..trading_scheduler_state import get_trading_scheduler
 
 _COMMON_PRIVATE_EXPORTS = common_api.__dict__
 ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _COMMON_PRIVATE_EXPORTS[
@@ -276,6 +277,11 @@ shared_mapping_items = _COMMON_PRIVATE_EXPORTS["shared_mapping_items"]
 shared_paper_route_target_plan_from_payload = _COMMON_PRIVATE_EXPORTS[
     "shared_paper_route_target_plan_from_payload"
 ]
+
+
+def _active_runtime_revision() -> str | None:
+    revision = os.getenv("K_REVISION", "").strip()
+    return revision or None
 
 
 def readiness_dependency_cache_key(include_database_contract: bool) -> str:
@@ -620,10 +626,7 @@ def _evaluate_core_readiness_payload(
     include_database_contract: bool = False,
     allow_stale_dependency_cache: bool = False,
 ) -> tuple[dict[str, object], int]:
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
     scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
 
     now = datetime.now(timezone.utc)
@@ -892,10 +895,7 @@ def _minimal_health_surface_timeout_payload(
         "detail": detail,
         "reason_codes": [reason_code],
     }
-    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
-    if scheduler is None:
-        scheduler = TradingScheduler()
-        app.state.trading_scheduler = scheduler
+    scheduler = get_trading_scheduler()
     _scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
     live_submission_gate = minimal_health_surface_timeout_live_submission_gate(
         reason_code=reason_code,

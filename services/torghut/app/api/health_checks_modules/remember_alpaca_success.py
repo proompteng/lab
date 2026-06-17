@@ -241,6 +241,71 @@ from .shared_context import (
 )
 
 
+def _rollback_status_read_session(session: Session, *, context: str) -> None:
+    from ..status_helpers import rollback_status_read_session as rollback
+
+    rollback(session, context=context)
+
+
+def _apply_status_read_statement_timeout(
+    session: Session,
+    *,
+    milliseconds: int,
+) -> None:
+    from ..status_helpers import (
+        apply_status_read_statement_timeout as apply_statement_timeout,
+    )
+
+    apply_statement_timeout(session, milliseconds=milliseconds)
+
+
+def _ensure_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _resolve_tca_scope_symbols(
+    scheduler: TradingScheduler | None,
+) -> tuple[str, ...] | None:
+    if scheduler is None:
+        return None
+    from ..readiness_helpers import resolve_universe_resolver_for_readiness
+
+    resolver = resolve_universe_resolver_for_readiness(scheduler)
+    if resolver is None:
+        return None
+    try:
+        resolution = resolver.get_resolution()
+    except Exception:  # pragma: no cover - diagnostic scope should not break routes
+        logger.exception("Failed to resolve universe symbols for TCA scope")
+        return None
+    raw_symbols = getattr(resolution, "symbols", None)
+    if not isinstance(raw_symbols, set):
+        return None
+    raw_symbol_set = cast(set[object], raw_symbols)
+    symbols = tuple(
+        sorted(
+            {
+                str(symbol).strip().upper()
+                for symbol in raw_symbol_set
+                if str(symbol).strip()
+            }
+        )
+    )
+    return symbols or None
+
+
+def _budget_unavailable_tca_summary_payload(reason: str) -> dict[str, object]:
+    from ..status_helpers import (
+        budget_unavailable_tca_summary_payload as unavailable_payload,
+    )
+
+    return unavailable_payload(reason)
+
+
 def _remember_alpaca_success(
     *,
     account: Mapping[str, Any],

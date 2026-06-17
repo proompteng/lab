@@ -123,6 +123,7 @@ lean_authority_status = _lean_authority_status
 empirical_jobs_status = _empirical_jobs_status
 load_tca_summary = _load_tca_summary
 load_clickhouse_ta_status = _load_clickhouse_ta_status
+tca_row_payload = _tca_row_payload
 budget_exhausted_live_submission_gate_payload = (
     _budget_exhausted_live_submission_gate_payload
 )
@@ -131,6 +132,7 @@ budget_exhausted_options_catalog_freshness_payload = (
 )
 route_claim_symbols = _route_claim_symbols
 load_options_catalog_freshness_summary = _load_options_catalog_freshness_summary
+decimal_or_none = _decimal_or_none
 sqlalchemy_error_indicates_statement_timeout = (
     _sqlalchemy_error_indicates_statement_timeout
 )
@@ -197,10 +199,12 @@ __all__ = (
     "empirical_jobs_status",
     "load_tca_summary",
     "load_clickhouse_ta_status",
+    "tca_row_payload",
     "budget_exhausted_live_submission_gate_payload",
     "budget_exhausted_options_catalog_freshness_payload",
     "route_claim_symbols",
     "load_options_catalog_freshness_summary",
+    "decimal_or_none",
     "sqlalchemy_error_indicates_statement_timeout",
     "load_last_decision_at",
     "build_hypothesis_runtime_payload",
