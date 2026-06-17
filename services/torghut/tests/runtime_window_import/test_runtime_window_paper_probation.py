@@ -108,7 +108,7 @@ class TestRuntimeWindowPaperProbation(_TestRuntimeWindowImportBase):
             summary["promotion_blocking_reasons"],
         )
         self.assertIn(
-            "final_promotion_not_authorized",
+            "capital_promotion_not_allowed",
             summary["promotion_blocking_reasons"],
         )
         self.assertEqual(decision.allowed, False)
