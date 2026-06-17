@@ -431,6 +431,9 @@ def _load_llm_evaluation(session: Session) -> dict[str, object]:
         return _budget_unavailable_llm_evaluation_payload(reason)
 
 
+load_llm_evaluation = _load_llm_evaluation
+
+
 __all__ = [
     "_build_autonomy_bridge_status",
     "_build_persisted_vnext_status",
@@ -444,5 +447,6 @@ __all__ = [
     "_safe_int",
     "_safe_float",
     "_load_llm_evaluation",
+    "load_llm_evaluation",
 ]
 capture_module_exports(globals(), __all__)

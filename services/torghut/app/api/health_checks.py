@@ -107,7 +107,37 @@ _build_simple_lane_status_payload: Any = getattr(
 check_alpaca_dependency = _check_alpaca
 check_clickhouse_dependency = _check_clickhouse
 check_postgres_dependency = _check_postgres
+check_tigerbeetle_protocol_health = _check_tigerbeetle_protocol_health
+tigerbeetle_status_int = _tigerbeetle_status_int
+empty_tigerbeetle_ref_counts = _empty_tigerbeetle_ref_counts
+latest_reconciliation_ref_counts = _latest_reconciliation_ref_counts
+unavailable_tigerbeetle_reconciliation_payload = (
+    _unavailable_tigerbeetle_reconciliation_payload
+)
 build_tigerbeetle_ledger_status = _build_tigerbeetle_ledger_status
+build_control_plane_contract = _build_control_plane_contract
+build_shadow_first_runtime_payload = _build_shadow_first_runtime_payload
+check_clickhouse = _check_clickhouse
+forecast_service_status = _forecast_service_status
+lean_authority_status = _lean_authority_status
+empirical_jobs_status = _empirical_jobs_status
+load_tca_summary = _load_tca_summary
+load_clickhouse_ta_status = _load_clickhouse_ta_status
+budget_exhausted_live_submission_gate_payload = (
+    _budget_exhausted_live_submission_gate_payload
+)
+budget_exhausted_options_catalog_freshness_payload = (
+    _budget_exhausted_options_catalog_freshness_payload
+)
+route_claim_symbols = _route_claim_symbols
+load_options_catalog_freshness_summary = _load_options_catalog_freshness_summary
+sqlalchemy_error_indicates_statement_timeout = (
+    _sqlalchemy_error_indicates_statement_timeout
+)
+load_last_decision_at = _load_last_decision_at
+build_hypothesis_runtime_payload = _build_hypothesis_runtime_payload
+build_api_live_submission_gate_payload = _build_live_submission_gate_payload
+build_simple_lane_status_payload = _build_simple_lane_status_payload
 
 __all__ = (
     "_check_postgres",
@@ -153,7 +183,29 @@ __all__ = (
     "check_alpaca_dependency",
     "check_clickhouse_dependency",
     "check_postgres_dependency",
+    "check_tigerbeetle_protocol_health",
+    "tigerbeetle_status_int",
+    "empty_tigerbeetle_ref_counts",
+    "latest_reconciliation_ref_counts",
+    "unavailable_tigerbeetle_reconciliation_payload",
     "build_tigerbeetle_ledger_status",
+    "build_control_plane_contract",
+    "build_shadow_first_runtime_payload",
+    "check_clickhouse",
+    "forecast_service_status",
+    "lean_authority_status",
+    "empirical_jobs_status",
+    "load_tca_summary",
+    "load_clickhouse_ta_status",
+    "budget_exhausted_live_submission_gate_payload",
+    "budget_exhausted_options_catalog_freshness_payload",
+    "route_claim_symbols",
+    "load_options_catalog_freshness_summary",
+    "sqlalchemy_error_indicates_statement_timeout",
+    "load_last_decision_at",
+    "build_hypothesis_runtime_payload",
+    "build_api_live_submission_gate_payload",
+    "build_simple_lane_status_payload",
 )
 
 capture_module_exports(globals(), __all__)

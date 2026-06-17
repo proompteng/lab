@@ -115,6 +115,9 @@ _build_rejected_signal_outcome_learning_payload: Any = getattr(
 _load_rejected_signal_outcome_learning_summary: Any = getattr(
     _proof_floor_payloads_modules, "_load_rejected_signal_outcome_learning_summary"
 )
+load_rejected_signal_outcome_learning_summary = (
+    _load_rejected_signal_outcome_learning_summary
+)
 _load_route_provenance_summary: Any = getattr(
     _proof_floor_payloads_modules, "_load_route_provenance_summary"
 )
@@ -154,6 +157,7 @@ __all__ = (
     "_simple_lane_reject_reason_totals",
     "_build_rejected_signal_outcome_learning_payload",
     "_load_rejected_signal_outcome_learning_summary",
+    "load_rejected_signal_outcome_learning_summary",
     "_load_route_provenance_summary",
 )
 

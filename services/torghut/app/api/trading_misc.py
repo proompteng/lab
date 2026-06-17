@@ -45,6 +45,7 @@ _runtime_ledger_bucket_evidence_grade: Any = getattr(
 _daily_runtime_ledger_portfolio_summary: Any = getattr(
     _trading_misc_modules, "_daily_runtime_ledger_portfolio_summary"
 )
+daily_runtime_ledger_portfolio_summary = _daily_runtime_ledger_portfolio_summary
 _build_current_evidence_epoch: Any = getattr(
     _trading_misc_modules, "_build_current_evidence_epoch"
 )
@@ -85,6 +86,7 @@ __all__ = (
     "trading_autonomy",
     "_runtime_ledger_bucket_evidence_grade",
     "_daily_runtime_ledger_portfolio_summary",
+    "daily_runtime_ledger_portfolio_summary",
     "_build_current_evidence_epoch",
     "trading_evidence_epoch_latest",
     "trading_evidence_epoch_detail",

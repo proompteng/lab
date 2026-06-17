@@ -24,14 +24,65 @@ from .common import (
     trading_time_status,
 )
 from .common import main_runtime_value
-from .proxy import MainAttrProxy, capture_module_exports
-
-_TradingStatusReadBudget = MainAttrProxy("_TradingStatusReadBudget")
-_budget_exhausted_live_submission_gate_payload = MainAttrProxy(
-    "_budget_exhausted_live_submission_gate_payload"
+from .health_checks import (
+    budget_exhausted_live_submission_gate_payload,
+    budget_exhausted_options_catalog_freshness_payload,
+    build_api_live_submission_gate_payload,
+    build_control_plane_contract,
+    build_shadow_first_runtime_payload,
+    build_simple_lane_status_payload,
+    empirical_jobs_status,
+    forecast_service_status,
+    lean_authority_status,
+    load_clickhouse_ta_status,
+    load_last_decision_at,
+    load_options_catalog_freshness_summary,
+    route_claim_symbols,
 )
-_budget_exhausted_options_catalog_freshness_payload = MainAttrProxy(
-    "_budget_exhausted_options_catalog_freshness_payload"
+from .proof_floor_payloads import load_rejected_signal_outcome_learning_summary
+from .proxy import MainAttrProxy, capture_module_exports
+from .status_helpers import (
+    TradingStatusReadBudget,
+    deferred_hypothesis_payload_for_live_submission_gate,
+    hypothesis_payload_read_model_unavailable,
+    load_trading_status_hypothesis_runtime,
+    load_trading_status_llm_evaluation,
+    load_trading_status_runtime_ledger_portfolio_summary,
+    load_trading_status_tca_summary,
+    load_trading_status_tigerbeetle_ledger,
+)
+
+_TradingStatusReadBudget = TradingStatusReadBudget
+_budget_exhausted_live_submission_gate_payload = (
+    budget_exhausted_live_submission_gate_payload
+)
+_budget_exhausted_options_catalog_freshness_payload = (
+    budget_exhausted_options_catalog_freshness_payload
+)
+_build_control_plane_contract = build_control_plane_contract
+_build_live_submission_gate_payload = build_api_live_submission_gate_payload
+_build_shadow_first_runtime_payload = build_shadow_first_runtime_payload
+_build_simple_lane_status_payload = build_simple_lane_status_payload
+_empirical_jobs_status = empirical_jobs_status
+_forecast_service_status = forecast_service_status
+_lean_authority_status = lean_authority_status
+_load_clickhouse_ta_status = load_clickhouse_ta_status
+_load_last_decision_at = load_last_decision_at
+_load_options_catalog_freshness_summary = load_options_catalog_freshness_summary
+_route_claim_symbols = route_claim_symbols
+_deferred_hypothesis_payload_for_live_submission_gate = (
+    deferred_hypothesis_payload_for_live_submission_gate
+)
+_hypothesis_payload_read_model_unavailable = hypothesis_payload_read_model_unavailable
+_load_trading_status_hypothesis_runtime = load_trading_status_hypothesis_runtime
+_load_trading_status_llm_evaluation = load_trading_status_llm_evaluation
+_load_trading_status_runtime_ledger_portfolio_summary = (
+    load_trading_status_runtime_ledger_portfolio_summary
+)
+_load_trading_status_tca_summary = load_trading_status_tca_summary
+_load_trading_status_tigerbeetle_ledger = load_trading_status_tigerbeetle_ledger
+_load_rejected_signal_outcome_learning_summary = (
+    load_rejected_signal_outcome_learning_summary
 )
 _build_autonomy_bridge_status = MainAttrProxy("_build_autonomy_bridge_status")
 _build_capital_reentry_cohort_ledger_payload = MainAttrProxy(
@@ -44,13 +95,9 @@ _build_clock_settlement_payload = MainAttrProxy("_build_clock_settlement_payload
 _build_consumer_evidence_receipt_projection = MainAttrProxy(
     "_build_consumer_evidence_receipt_projection"
 )
-_build_control_plane_contract = MainAttrProxy("_build_control_plane_contract")
 _build_evidence_clock_payloads = MainAttrProxy("_build_evidence_clock_payloads")
 _build_freshness_carry_ledger_payload = MainAttrProxy(
     "_build_freshness_carry_ledger_payload"
-)
-_build_live_submission_gate_payload = MainAttrProxy(
-    "_build_live_submission_gate_payload"
 )
 _build_profit_freshness_frontier_payload = MainAttrProxy(
     "_build_profit_freshness_frontier_payload"
@@ -95,44 +142,9 @@ _build_route_warrant_exchange_payload = MainAttrProxy(
 _build_routeability_repair_acceptance_ledger_payload = MainAttrProxy(
     "_build_routeability_repair_acceptance_ledger_payload"
 )
-_build_shadow_first_runtime_payload = MainAttrProxy(
-    "_build_shadow_first_runtime_payload"
-)
-_build_simple_lane_status_payload = MainAttrProxy("_build_simple_lane_status_payload")
 _build_source_serving_repair_receipt_payload = MainAttrProxy(
     "_build_source_serving_repair_receipt_payload"
 )
-_deferred_hypothesis_payload_for_live_submission_gate = MainAttrProxy(
-    "_deferred_hypothesis_payload_for_live_submission_gate"
-)
-_empirical_jobs_status = MainAttrProxy("_empirical_jobs_status")
-_forecast_service_status = MainAttrProxy("_forecast_service_status")
-_hypothesis_payload_read_model_unavailable = MainAttrProxy(
-    "_hypothesis_payload_read_model_unavailable"
-)
-_lean_authority_status = MainAttrProxy("_lean_authority_status")
-_load_clickhouse_ta_status = MainAttrProxy("_load_clickhouse_ta_status")
-_load_last_decision_at = MainAttrProxy("_load_last_decision_at")
-_load_options_catalog_freshness_summary = MainAttrProxy(
-    "_load_options_catalog_freshness_summary"
-)
-_load_rejected_signal_outcome_learning_summary = MainAttrProxy(
-    "_load_rejected_signal_outcome_learning_summary"
-)
-_load_trading_status_hypothesis_runtime = MainAttrProxy(
-    "_load_trading_status_hypothesis_runtime"
-)
-_load_trading_status_llm_evaluation = MainAttrProxy(
-    "_load_trading_status_llm_evaluation"
-)
-_load_trading_status_runtime_ledger_portfolio_summary = MainAttrProxy(
-    "_load_trading_status_runtime_ledger_portfolio_summary"
-)
-_load_trading_status_tca_summary = MainAttrProxy("_load_trading_status_tca_summary")
-_load_trading_status_tigerbeetle_ledger = MainAttrProxy(
-    "_load_trading_status_tigerbeetle_ledger"
-)
-_route_claim_symbols = MainAttrProxy("_route_claim_symbols")
 _simple_lane_reject_reason_totals = MainAttrProxy("_simple_lane_reject_reason_totals")
 app = MainAttrProxy("app")
 router = APIRouter()

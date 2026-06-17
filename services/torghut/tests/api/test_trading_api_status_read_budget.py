@@ -4,9 +4,13 @@ from tests.api.trading_api_support import (
     Session,
     TradingApiTestCaseBase,
     datetime,
-    main_module,
     patch,
     timezone,
+)
+from app.trading.hypotheses import JangarDependencyQuorumStatus
+from app.api.status_helpers import (
+    TradingStatusReadBudget,
+    budget_unavailable_hypothesis_runtime_payload,
 )
 
 
@@ -35,16 +39,19 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
             return {"allowed": True, "reason": "ready", "blocked_reasons": []}
 
         with (
-            patch("app.main._load_llm_evaluation", side_effect=_load_llm_evaluation),
-            patch("app.main._load_tca_summary", side_effect=_load_tca),
             patch(
-                "app.main._load_last_decision_at", side_effect=_load_last_decision_at
+                "app.api.status_helpers._load_llm_evaluation",
+                side_effect=_load_llm_evaluation,
+            ),
+            patch("app.api.status_helpers._load_tca_summary", side_effect=_load_tca),
+            patch(
+                "app.api.trading_status._load_last_decision_at",
+                side_effect=_load_last_decision_at,
             ),
             patch(
-                "app.main._build_live_submission_gate_payload",
+                "app.api.trading_status._build_live_submission_gate_payload",
                 side_effect=_build_live_submission_gate,
             ),
-            patch("app.main.SessionLocal", self.session_local),
         ):
             response = self.client.get("/trading/status")
 
@@ -56,7 +63,7 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
 
     def test_trading_status_reuses_clickhouse_signal_status_once(self) -> None:
         with patch(
-            "app.main._load_clickhouse_ta_status",
+            "app.api.trading_status._load_clickhouse_ta_status",
             return_value={
                 "state": "current",
                 "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
@@ -76,16 +83,18 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         self,
     ) -> None:
         with (
-            patch("app.main._TRADING_STATUS_READ_BUDGET_SECONDS", 0.0),
+            patch("app.api.status_helpers.TRADING_STATUS_READ_BUDGET_SECONDS", 0.0),
             patch(
-                "app.main._load_clickhouse_ta_status",
+                "app.api.trading_status._load_clickhouse_ta_status",
                 return_value={
                     "state": "current",
                     "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
                     "source_ref": "clickhouse:ta_signals",
                 },
             ),
-            patch("app.main._build_live_submission_gate_payload") as live_gate,
+            patch(
+                "app.api.trading_status._build_live_submission_gate_payload"
+            ) as live_gate,
         ):
             response = self.client.get("/trading/status")
 
@@ -111,7 +120,7 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
     def test_trading_status_prioritizes_live_gate_before_late_reads_when_budget_is_low(
         self,
     ) -> None:
-        class ManualBudget(main_module._TradingStatusReadBudget):
+        class ManualBudget(TradingStatusReadBudget):
             def __init__(self) -> None:
                 super().__init__(max_seconds=10.0)
                 self.current_elapsed = 1.0
@@ -138,25 +147,29 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
             return live_submission_gate_payload
 
         with (
-            patch("app.main._TradingStatusReadBudget", return_value=budget),
             patch(
-                "app.main._load_clickhouse_ta_status",
+                "app.api.trading_status._TradingStatusReadBudget", return_value=budget
+            ),
+            patch(
+                "app.api.trading_status._load_clickhouse_ta_status",
                 return_value={
                     "state": "current",
                     "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
                     "source_ref": "clickhouse:ta_signals",
                 },
             ),
-            patch("app.main._build_tigerbeetle_ledger_status") as tigerbeetle_status,
             patch(
-                "app.main._daily_runtime_ledger_portfolio_summary"
+                "app.api.status_helpers._build_tigerbeetle_ledger_status"
+            ) as tigerbeetle_status,
+            patch(
+                "app.api.status_helpers._daily_runtime_ledger_portfolio_summary"
             ) as portfolio_summary,
-            patch("app.main._load_last_decision_at") as last_decision,
+            patch("app.api.trading_status._load_last_decision_at") as last_decision,
             patch(
-                "app.main._load_rejected_signal_outcome_learning_summary"
+                "app.api.trading_status._load_rejected_signal_outcome_learning_summary"
             ) as rejected_signal_learning,
             patch(
-                "app.main._build_live_submission_gate_payload",
+                "app.api.trading_status._build_live_submission_gate_payload",
                 side_effect=_build_live_submission_gate,
             ) as live_gate,
         ):
@@ -194,7 +207,7 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
     def test_trading_status_skips_live_gate_when_gate_dependencies_consume_budget(
         self,
     ) -> None:
-        class ManualBudget(main_module._TradingStatusReadBudget):
+        class ManualBudget(TradingStatusReadBudget):
             def __init__(self) -> None:
                 super().__init__(max_seconds=10.0)
                 self.current_elapsed = 1.0
@@ -219,17 +232,19 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         ) -> tuple[
             dict[str, object],
             dict[str, object],
-            main_module.JangarDependencyQuorumStatus,
+            JangarDependencyQuorumStatus,
         ]:
             budget.current_elapsed = 8.5
-            return main_module._budget_unavailable_hypothesis_runtime_payload(
+            return budget_unavailable_hypothesis_runtime_payload(
                 reason="hypothesis_runtime_test_budget_marker"
             )
 
         with (
-            patch("app.main._TradingStatusReadBudget", return_value=budget),
             patch(
-                "app.main._load_clickhouse_ta_status",
+                "app.api.trading_status._TradingStatusReadBudget", return_value=budget
+            ),
+            patch(
+                "app.api.trading_status._load_clickhouse_ta_status",
                 return_value={
                     "state": "current",
                     "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
@@ -237,11 +252,11 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
                 },
             ),
             patch(
-                "app.main._load_trading_status_hypothesis_runtime",
+                "app.api.trading_status._load_trading_status_hypothesis_runtime",
                 side_effect=_load_hypothesis_runtime,
             ),
             patch(
-                "app.main._build_live_submission_gate_payload",
+                "app.api.trading_status._build_live_submission_gate_payload",
                 return_value=live_submission_gate_payload,
             ) as live_gate,
         ):
@@ -279,7 +294,7 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
     def test_trading_status_skips_early_expensive_reads_when_budget_remaining_is_low(
         self,
     ) -> None:
-        class ManualBudget(main_module._TradingStatusReadBudget):
+        class ManualBudget(TradingStatusReadBudget):
             def __init__(self) -> None:
                 super().__init__(max_seconds=10.0)
                 self.current_elapsed = 1.0
@@ -303,23 +318,29 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
             return {}
 
         with (
-            patch("app.main._TradingStatusReadBudget", return_value=budget),
             patch(
-                "app.main._load_clickhouse_ta_status",
+                "app.api.trading_status._TradingStatusReadBudget", return_value=budget
+            ),
+            patch(
+                "app.api.trading_status._load_clickhouse_ta_status",
                 return_value={
                     "state": "current",
                     "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
                     "source_ref": "clickhouse:ta_signals",
                 },
             ),
-            patch("app.main._load_tca_summary", side_effect=_load_tca),
-            patch("app.main._build_tigerbeetle_ledger_status") as tigerbeetle_status,
+            patch("app.api.status_helpers._load_tca_summary", side_effect=_load_tca),
             patch(
-                "app.main._daily_runtime_ledger_portfolio_summary"
+                "app.api.status_helpers._build_tigerbeetle_ledger_status"
+            ) as tigerbeetle_status,
+            patch(
+                "app.api.status_helpers._daily_runtime_ledger_portfolio_summary"
             ) as portfolio_summary,
-            patch("app.main._build_hypothesis_runtime_payload") as hypothesis_runtime,
             patch(
-                "app.main._build_live_submission_gate_payload",
+                "app.api.status_helpers._build_hypothesis_runtime_payload"
+            ) as hypothesis_runtime,
+            patch(
+                "app.api.trading_status._build_live_submission_gate_payload",
                 return_value=live_submission_gate_payload,
             ) as live_gate,
         ):

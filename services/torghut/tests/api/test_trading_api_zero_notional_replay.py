@@ -723,7 +723,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
                     return_value=SimpleNamespace(items=[registry_item]),
                 ),
                 patch(
-                    "app.main._empirical_jobs_status",
+                    "app.api.trading_status._empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(

@@ -881,7 +881,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                     },
                 ),
                 patch(
-                    "app.main._build_live_submission_gate_payload",
+                    "app.api.trading_status._build_live_submission_gate_payload",
                     return_value={
                         "allowed": True,
                         "reason": "ready",
@@ -890,7 +890,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                     },
                 ),
                 patch(
-                    "app.main._empirical_jobs_status",
+                    "app.api.trading_status._empirical_jobs_status",
                     return_value={"ready": False, "status": "degraded"},
                 ),
                 patch(

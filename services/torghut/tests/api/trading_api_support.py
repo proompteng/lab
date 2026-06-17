@@ -497,6 +497,9 @@ class TradingApiTestCaseBase(TestCase):
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
         _OPTIONS_CATALOG_FRESHNESS_CACHE.clear()
+        if hasattr(app.state, "trading_scheduler"):
+            del app.state.trading_scheduler
+        self.addCleanup(self._clear_trading_scheduler_state)
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -507,9 +510,14 @@ class TradingApiTestCaseBase(TestCase):
         self.session_local = sessionmaker(
             bind=engine, expire_on_commit=False, future=True
         )
-        session_local_patch = patch("app.main.SessionLocal", self.session_local)
-        session_local_patch.start()
-        self.addCleanup(session_local_patch.stop)
+        for session_local_target in (
+            "app.main.SessionLocal",
+            "app.api.trading_status.SessionLocal",
+            "app.api.status_helpers.SessionLocal",
+        ):
+            session_local_patch = patch(session_local_target, self.session_local)
+            session_local_patch.start()
+            self.addCleanup(session_local_patch.stop)
 
         def _override_session() -> Session:
             with self.session_local() as session:
@@ -622,6 +630,10 @@ class TradingApiTestCaseBase(TestCase):
                 )
             )
             session.commit()
+
+    def _clear_trading_scheduler_state(self) -> None:
+        if hasattr(app.state, "trading_scheduler"):
+            del app.state.trading_scheduler
 
     def _clear_trading_health_surface_cache(self) -> None:
         with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
