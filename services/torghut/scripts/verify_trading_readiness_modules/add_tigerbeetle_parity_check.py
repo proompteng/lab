@@ -468,4 +468,15 @@ def _add_execution_tca_lineage_check(
 
 readiness_next_action = _readiness_next_action
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "DOC29_LIVE_SCALE_GATE",
+    "NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION",
+    "REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS",
+    "ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION",
+    "ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION",
+    "RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION",
+    "SCHEMA_VERSION",
+    "TIGERBEETLE_PARITY_STATUS_PASS",
+    "TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION",
+    "readiness_next_action",
+)

@@ -688,7 +688,13 @@ def resolve_active_capital_stage(
     return "shadow" if totals else None
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "resolve_quant_health_url",
+    "load_quant_evidence_status",
+    "critical_trading_toggle_snapshot",
+    "build_shadow_first_toggle_parity",
+    "resolve_active_capital_stage",
+)
 
 # Public aliases used by split modules.
 autoresearch_portfolio_current_oracle_passed = (

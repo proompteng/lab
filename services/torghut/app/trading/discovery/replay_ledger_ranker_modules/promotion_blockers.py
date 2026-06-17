@@ -815,4 +815,33 @@ row_event_ts = _row_event_ts
 row_ingest_ts = _row_ingest_ts
 string_list = _string_list
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "candidate_id",
+    "capacity_lineage_summary",
+    "daily_bucket_ranges",
+    "dedupe_source_papers",
+    "execution_quality_summary",
+    "lob_reality_gap_stress_summary",
+    "lob_signal_rows",
+    "mapping",
+    "microstructure_stress_summary",
+    "parse_window_datetime",
+    "payload_object",
+    "promotion_blockers",
+    "stress_penalty_bps",
+    "utc",
+    "average_decimal",
+    "candidate_identity_blockers",
+    "cost_lineage_blockers",
+    "count_texts",
+    "decimal",
+    "evidence_present",
+    "first_decimal",
+    "first_evidence",
+    "first_text",
+    "normalized_order_type",
+    "order_type_for_row",
+    "row_event_ts",
+    "row_ingest_ts",
+    "string_list",
+)

@@ -528,4 +528,4 @@ class TradingSchedulerGovernanceMixin(
 __all__ = ["TradingSchedulerGovernanceMixin", "_resolve_autonomy_artifact_root"]
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("TradingSchedulerGovernanceMixin",)

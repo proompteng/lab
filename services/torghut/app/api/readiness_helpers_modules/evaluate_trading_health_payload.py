@@ -865,7 +865,7 @@ def _evaluate_trading_health_payload(
     return response_payload, status_code
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 evaluate_trading_health_payload = _evaluate_trading_health_payload

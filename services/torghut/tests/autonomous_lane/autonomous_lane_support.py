@@ -118,4 +118,4 @@ class AutonomousLaneTestCaseBase(TestCase):
         return train_path, test_path
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("AutonomousLaneTestCaseBase",)

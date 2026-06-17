@@ -373,7 +373,10 @@ class _WhitepaperWorkflowServiceFields:
     """State transitions and persistence for whitepaper analysis workflow."""
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "CephS3Client",
+    "IssueKickoffResult",
+)
 
 # Public aliases used by split modules.
 IssueRunIdentity = _IssueRunIdentity

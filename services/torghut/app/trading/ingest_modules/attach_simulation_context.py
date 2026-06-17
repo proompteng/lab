@@ -171,4 +171,8 @@ attach_simulation_context_payload = _attach_simulation_context
 qualified_table_name = _qualified_table_name
 safe_identifier = _safe_identifier
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "attach_simulation_context_payload",
+    "qualified_table_name",
+    "safe_identifier",
+)

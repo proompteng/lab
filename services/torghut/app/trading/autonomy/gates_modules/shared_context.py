@@ -717,7 +717,17 @@ def _gate6_profitability_evidence(
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "GateStatus",
+    "UncertaintyGateAction",
+    "PromotionTarget",
+    "GateResult",
+    "GateInputs",
+    "GatePolicyMatrix",
+    "GateEvaluationReport",
+    "UncertaintyGateOutcome",
+    "evaluate_gate_matrix",
+)
 
 # Public aliases used by split modules.
 empty_artifact_refs = _empty_artifact_refs

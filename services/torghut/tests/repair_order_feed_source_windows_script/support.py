@@ -169,4 +169,4 @@ def _seed_live_source_window(
     return source_window
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()

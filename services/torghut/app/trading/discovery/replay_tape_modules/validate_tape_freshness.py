@@ -774,4 +774,22 @@ ofi_regime_bucket = _ofi_regime_bucket
 replay_tape_cache_identity_mismatch_reasons = (
     _replay_tape_cache_identity_mismatch_reasons
 )
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "validate_tape_freshness",
+    "slice_tape_by_window",
+    "slice_tape_by_symbols",
+    "signal_to_tape_payload",
+    "signal_from_tape_payload",
+    "hpairs_replay_tape_features",
+    "canonical_row_json",
+    "cluster_lob_behavior_bucket",
+    "horizon_key_matches_token",
+    "hpairs_cluster_lob_payload",
+    "hpairs_ofi_decay_memory",
+    "hpairs_ofi_horizons",
+    "hpairs_ofi_memory_regime_slices",
+    "mean_decimal_for_keys",
+    "mean_decimal_for_token",
+    "ofi_regime_bucket",
+    "replay_tape_cache_identity_mismatch_reasons",
+)

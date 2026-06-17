@@ -992,4 +992,10 @@ class WhitepaperWorkflowVerdictMethods:
         return int(existing_count or 0) + 1
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "EmbeddingRequestConfig",
+    "EngineeringDecisionPolicy",
+    "EngineeringDecisionSignals",
+    "EngineeringDecisionOutcome",
+    "WhitepaperWorkflowVerdictMethods",
+)

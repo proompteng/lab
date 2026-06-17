@@ -660,7 +660,7 @@ def _build_profit_live_controls(state: object) -> dict[str, object]:
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 build_profit_data_readiness_summary = _build_profit_data_readiness_summary

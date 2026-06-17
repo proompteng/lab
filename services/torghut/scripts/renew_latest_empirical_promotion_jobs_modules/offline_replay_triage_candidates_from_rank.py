@@ -798,4 +798,16 @@ runtime_window_source_collection_materialization_blocked_result = (
     _runtime_window_source_collection_materialization_blocked_result
 )
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "offline_replay_triage_candidates_from_ranking",
+    "offline_replay_triage_for_deferred_imports",
+    "offline_replay_triage_source_reports",
+    "run_runtime_window_source_window_repair",
+    "runtime_window_import_blocker_ladder",
+    "runtime_window_import_health_gate_args",
+    "runtime_window_import_ladder_step",
+    "runtime_window_import_needs_source_window_repair",
+    "runtime_window_import_next_blocker",
+    "runtime_window_import_payload_proof_blockers",
+    "runtime_window_source_collection_materialization_blocked_result",
+)

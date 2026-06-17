@@ -810,4 +810,29 @@ runtime_window_target_plan_without_paper_route_source_collection_only = (
 target_strategy_names = _target_strategy_names
 target_text = _target_text
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "extend_unique_text_items",
+    "hpairs_source_proof_census_attachment_blockers",
+    "hpairs_source_proof_census_status",
+    "latest_closed_runtime_window_target_plan_from_payload",
+    "parse_runtime_window_target_spec",
+    "read_json_mapping",
+    "read_runtime_window_target_plan",
+    "runtime_window_audit_target_blocker_matches",
+    "runtime_window_gate_allows_source_collection_merge",
+    "runtime_window_import_audit_blockers",
+    "runtime_window_plan_target_items",
+    "runtime_window_source_collection_target_allowed",
+    "runtime_window_source_collection_target_has_materializable_lineage",
+    "runtime_window_target_plan_from_payload",
+    "runtime_window_target_plan_is_source_collection_only",
+    "runtime_window_target_plan_positive_mapping_count",
+    "runtime_window_target_plan_source_collection_targets",
+    "runtime_window_target_plan_target_key",
+    "runtime_window_target_plan_target_truthy",
+    "runtime_window_target_plan_with_import_audit_blockers",
+    "runtime_window_target_plan_with_live_gate_source_collection",
+    "runtime_window_target_plan_without_paper_route_source_collection_only",
+    "target_strategy_names",
+    "target_text",
+)

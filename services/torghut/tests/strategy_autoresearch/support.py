@@ -200,4 +200,4 @@ class StrategyAutoresearchTestCase(TestCase):
         return program_path, family_dir
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("StrategyAutoresearchTestCase",)

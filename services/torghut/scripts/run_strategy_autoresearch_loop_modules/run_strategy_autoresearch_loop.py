@@ -836,4 +836,4 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("run_strategy_autoresearch_loop",)

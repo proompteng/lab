@@ -438,4 +438,16 @@ upsert_order_feed_consumer_cursor_from_source = (
     _upsert_order_feed_consumer_cursor_from_source
 )
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "commit_consumer",
+    "consumer_commit_enabled",
+    "flatten_poll_records",
+    "is_stale_by_seq",
+    "is_stale_by_ts",
+    "kafka_consumer_group_id",
+    "latest_persisted_source_offsets",
+    "order_feed_cursor_consumer_group",
+    "update_trade_decision_from_execution",
+    "upsert_cursor_and_count",
+    "upsert_order_feed_consumer_cursor_from_source",
+)

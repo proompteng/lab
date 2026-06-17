@@ -830,7 +830,16 @@ def _conformal_tail_loss_buffer(values: Sequence[Decimal]) -> Decimal:
     return max(losses[-tail_count:], default=Decimal("0"))
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "MAX_ALLOWED_PAIRWISE_CORRELATION",
+    "CONFORMAL_TAIL_RISK_ALPHA",
+    "PORTFOLIO_SEARCH_BEAM_WIDTH",
+    "PORTFOLIO_WEIGHTING_EQUAL_COUNT",
+    "PORTFOLIO_WEIGHTING_GROSS_EXPOSURE_BUDGET",
+    "PORTFOLIO_WEIGHTING_EDGE_RISK_GROSS_EXPOSURE_BUDGET",
+    "PORTFOLIO_RUNTIME_LEDGER_PNL_SOURCE",
+    "PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES",
+)
 
 # Public aliases used by split modules.
 ACCEPTED_LEDGER_PNL_SOURCES = _ACCEPTED_LEDGER_PNL_SOURCES

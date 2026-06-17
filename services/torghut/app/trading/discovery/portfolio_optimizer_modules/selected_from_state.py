@@ -463,4 +463,4 @@ def optimize_portfolio_candidate(
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("optimize_portfolio_candidate",)

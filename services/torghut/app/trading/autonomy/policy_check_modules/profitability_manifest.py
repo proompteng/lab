@@ -909,7 +909,7 @@ def _append_benchmark_parity_evidence_reasons(
         )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 append_benchmark_parity_evidence_reasons = _append_benchmark_parity_evidence_reasons

@@ -728,7 +728,7 @@ def _certificate_runtime_ledger_payload(
     return _runtime_ledger_payload_from_runtime_item(runtime_item)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("build_hypothesis_runtime_summary",)
 
 # Public aliases used by split modules.
 certificate_runtime_ledger_payload = _certificate_runtime_ledger_payload

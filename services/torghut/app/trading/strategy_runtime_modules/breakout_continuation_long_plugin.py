@@ -715,4 +715,12 @@ class WashoutReboundLongPlugin:
         )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "BreakoutContinuationLongPlugin",
+    "MeanReversionReboundLongPlugin",
+    "MeanReversionExhaustionShortPlugin",
+    "MicrobarCrossSectionalLongPlugin",
+    "MicrobarCrossSectionalShortPlugin",
+    "MicrobarCrossSectionalPairsPlugin",
+    "WashoutReboundLongPlugin",
+)

@@ -206,6 +206,3 @@ __all__ = [
     "validate_profitability_evidence_v4",
     "write_walk_forward_results",
 ]
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

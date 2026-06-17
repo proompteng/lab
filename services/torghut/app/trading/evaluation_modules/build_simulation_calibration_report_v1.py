@@ -806,7 +806,12 @@ def _significance_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, obje
 # Public aliases used by split-module consumers.
 extract_report_slices = _extract_report_slices
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "build_simulation_calibration_report_v1",
+    "build_shadow_live_deviation_report_v1",
+    "build_fill_price_error_budget_report_v1",
+    "extract_report_slices",
+)
 
 # Public aliases used by split modules.
 append_profitability_reason = _append_profitability_reason

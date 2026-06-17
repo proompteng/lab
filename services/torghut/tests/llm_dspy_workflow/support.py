@@ -120,4 +120,4 @@ def _write_dspy_promotion_eval_snapshot(
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()

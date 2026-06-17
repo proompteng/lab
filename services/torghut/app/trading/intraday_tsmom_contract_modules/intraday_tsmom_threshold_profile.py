@@ -878,4 +878,17 @@ optional_decimal_param = _optional_decimal_param
 price_within_entry_band = _price_within_entry_band
 profile_for_timeframe = _profile_for_timeframe
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "IntradayTsmomThresholdProfile",
+    "IntradayTsmomEvaluation",
+    "validate_intraday_tsmom_params",
+    "resolve_intraday_tsmom_thresholds",
+    "evaluate_intraday_tsmom_signal",
+    "DEFAULT_PROFILE",
+    "ONE_SECOND_PROFILE",
+    "decimal_param",
+    "normalize_timeframe",
+    "optional_decimal_param",
+    "price_within_entry_band",
+    "profile_for_timeframe",
+)

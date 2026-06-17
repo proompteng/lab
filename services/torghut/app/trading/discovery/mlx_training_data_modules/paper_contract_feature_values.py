@@ -679,4 +679,22 @@ post_cost_efficiency_penalty = _post_cost_efficiency_penalty
 proof_target_shortfall = _proof_target_shortfall
 scalar_float = _scalar_float
 std = _std
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "candidate_spec_capital_features",
+    "capital_budget_penalty",
+    "configured_daily_notional_capacity_penalty",
+    "observed_capital_penalty",
+    "capital_rank_count_floor",
+    "deployable_lower_bound_failed_gate_count",
+    "deployable_lower_bound_proof_penalty",
+    "deployable_lower_bound_target_shortfall",
+    "family_code",
+    "historical_proof_penalty",
+    "net_pnl_per_100k_filled_notional",
+    "observed_replay_viability_penalty",
+    "paper_contract_feature_values",
+    "post_cost_efficiency_penalty",
+    "proof_target_shortfall",
+    "scalar_float",
+    "std",
+)

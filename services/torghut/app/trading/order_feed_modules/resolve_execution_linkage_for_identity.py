@@ -835,4 +835,26 @@ extract_trade_update_payload = _extract_trade_update_payload
 isoformat_datetime = _isoformat_datetime
 normalize_decoded_payload = _normalize_decoded_payload
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "create_execution_backfill_source_window",
+    "create_historical_source_window_for_event",
+    "ensure_aware_utc",
+    "execution_backfill_order_event",
+    "find_existing_source_window_for_event",
+    "order_event_has_failed_unhandled_source_window",
+    "refresh_source_window_linkage_counts",
+    "resolve_execution_linkage_for_identity",
+    "resolve_trade_decision_linkage_for_identity",
+    "retry_failed_duplicate_order_event_application",
+    "source_offset_in_use",
+    "stable_execution_source_offset",
+    "cross_dsn_linkage_counts_for_source_window",
+    "decode_json_payload",
+    "decode_json_text_payload",
+    "event_timestamp_for_source_window",
+    "execution_backfill_event_type",
+    "execution_backfill_raw_event",
+    "extract_trade_update_payload",
+    "isoformat_datetime",
+    "normalize_decoded_payload",
+)

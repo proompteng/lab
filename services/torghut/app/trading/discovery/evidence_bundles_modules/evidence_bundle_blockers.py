@@ -175,4 +175,7 @@ def evidence_bundle_is_valid(bundle: CandidateEvidenceBundle) -> bool:
     return not evidence_bundle_blockers(bundle)
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "evidence_bundle_blockers",
+    "evidence_bundle_is_valid",
+)

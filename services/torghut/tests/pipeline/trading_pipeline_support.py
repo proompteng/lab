@@ -844,4 +844,26 @@ def _set_llm_guardrails(config, *, adjustment_approved: bool = False) -> None:
     config.settings.llm_adjustment_approved = adjustment_approved
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "FakeIngestor",
+    "NoSignalReasonIngestor",
+    "CursorAdvancingFakeIngestor",
+    "WarmupIngestor",
+    "CursorErrorWarmupIngestor",
+    "FetchErrorWarmupIngestor",
+    "TransactionAwareWarmupIngestor",
+    "RecordingDecisionEngine",
+    "RaisingObserveDecisionEngine",
+    "FakeAlpacaClient",
+    "RejectingAlpacaClient",
+    "SellInventoryConflictAlpacaClient",
+    "CountingAlpacaClient",
+    "PositionedAlpacaClient",
+    "OpenOrderAlpacaClient",
+    "SellInventoryConflictRetryClient",
+    "FakeLLMReviewEngine",
+    "CountingLLMReviewEngine",
+    "FakePriceFetcher",
+    "TimelinePriceFetcher",
+    "FakeCircuitBreaker",
+)

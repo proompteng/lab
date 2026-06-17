@@ -772,4 +772,27 @@ runtime_window_targets_from_plan = _runtime_window_targets_from_plan
 strategy_lookup_names = _strategy_lookup_names
 strategy_name_from_strategy_id = _strategy_name_from_strategy_id
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "canonical_runtime_strategy_name",
+    "latest_autoresearch_runtime_window_targets",
+    "looks_like_uuid_text",
+    "raise_if_runtime_window_target_plan_import_blocked",
+    "read_runtime_window_target_plan_url",
+    "read_runtime_window_target_plan_url_once",
+    "registry_runtime_window_targets",
+    "runtime_family_harnesses",
+    "runtime_window_target_plan_import_blocked_result",
+    "runtime_window_autoresearch_statuses",
+    "runtime_window_plan_targets",
+    "runtime_window_target_artifact_refs",
+    "runtime_window_target_identity",
+    "runtime_window_target_metadata",
+    "runtime_window_target_plan_has_targets",
+    "runtime_window_target_plan_ref_count",
+    "runtime_window_target_plan_transient_empty_reason",
+    "runtime_window_target_plan_url_error_retryable",
+    "runtime_window_targets_from_autoresearch_epochs",
+    "runtime_window_targets_from_plan",
+    "strategy_lookup_names",
+    "strategy_name_from_strategy_id",
+)

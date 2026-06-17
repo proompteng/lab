@@ -119,4 +119,4 @@ def _healthy_forecast_metrics_payload() -> dict[str, str]:
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()

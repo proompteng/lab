@@ -207,4 +207,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("main",)

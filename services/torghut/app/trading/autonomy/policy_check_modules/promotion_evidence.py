@@ -491,7 +491,7 @@ def _extract_evidence_authority_payload(payload: dict[str, Any]) -> dict[str, An
     return {}
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()
 
 # Public aliases used by split modules.
 evaluate_alpha_readiness_summary = _evaluate_alpha_readiness_summary

@@ -536,7 +536,10 @@ def evidence_bundle_id_for_payload(payload: Mapping[str, Any]) -> str:
     return f"ev-{_stable_hash(payload)[:24]}"
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "CandidateEvidenceBundle",
+    "evidence_bundle_id_for_payload",
+)
 
 # Public aliases used by split modules.
 decomposition_activity_counts = _decomposition_activity_counts

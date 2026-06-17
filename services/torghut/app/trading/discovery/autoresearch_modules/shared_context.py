@@ -486,7 +486,18 @@ def _load_runtime_closure_policy(payload: Mapping[str, Any]) -> RuntimeClosurePo
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "StrategyObjective",
+    "SnapshotPolicy",
+    "ProposalModelPolicy",
+    "ReplayBudget",
+    "RuntimeClosurePolicy",
+    "ResearchClaim",
+    "ResearchSource",
+    "MutationSpace",
+    "FamilyAutoresearchPlan",
+    "StrategyAutoresearchProgram",
+)
 
 # Public aliases used by split modules.
 coerce_decimal = _coerce_decimal

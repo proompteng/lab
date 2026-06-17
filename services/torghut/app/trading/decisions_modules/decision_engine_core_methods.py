@@ -848,4 +848,4 @@ class _DecisionEngineCoreMethods:
 # Public aliases used by split-module consumers.
 DecisionEngineCoreMethods = _DecisionEngineCoreMethods
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = ("DecisionEngineCoreMethods",)

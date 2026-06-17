@@ -470,4 +470,6 @@ __all__ = [
 ]
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "build_doc29_completion_status",
+)

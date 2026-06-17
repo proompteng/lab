@@ -997,4 +997,11 @@ LatestSignalCacheLookup = _LatestSignalCacheLookup
 column_names_from_rows = _column_names_from_rows
 latest_signal_timestamp_from_rows = _latest_signal_timestamp_from_rows
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "logger",
+    "ClickHouseRequest",
+    "ClickHouseSignalIngestorMarketMethods",
+    "LatestSignalCacheLookup",
+    "column_names_from_rows",
+    "latest_signal_timestamp_from_rows",
+)

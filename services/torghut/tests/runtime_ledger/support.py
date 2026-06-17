@@ -160,4 +160,4 @@ def _source_authority_lifecycle_rows(
     return rows
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__: tuple[str, ...] = ()

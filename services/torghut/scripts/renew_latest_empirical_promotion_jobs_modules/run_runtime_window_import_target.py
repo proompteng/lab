@@ -529,4 +529,7 @@ if __name__ == "__main__":
 # Public aliases used by split-module consumers.
 run_runtime_window_import_target = _run_runtime_window_import_target
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = (
+    "main",
+    "run_runtime_window_import_target",
+)
