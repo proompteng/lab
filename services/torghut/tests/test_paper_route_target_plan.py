@@ -34,7 +34,7 @@ from app.trading.paper_route_target_plan import (
 from app.trading.runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
 )
-from app.trading.scheduler.simple_pipeline import (
+from app.trading.scheduler.target_plan_helpers import (
     _bounded_paper_route_collection_entry_metadata,
 )
 

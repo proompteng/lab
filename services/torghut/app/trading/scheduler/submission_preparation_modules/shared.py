@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+
+from ..pipeline_modules.contexts import OrderSubmissionRequest
+
+OrderSubmitRequest: TypeAlias = OrderSubmissionRequest
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -42,16 +46,6 @@ class TradingSubmissionRequest:
     session: Session
     decision: StrategyDecision
     decision_row: TradeDecision
-
-
-@dataclass(frozen=True)
-class OrderSubmitRequest:
-    session: Session
-    execution_client: Any
-    decision: StrategyDecision
-    decision_row: TradeDecision
-    selected_adapter_name: str
-    retry_delays: list[int]
 
 
 @dataclass(frozen=True)
