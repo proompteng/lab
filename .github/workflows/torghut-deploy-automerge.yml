@@ -28,6 +28,8 @@ on:
       - 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
       - 'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
       - 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
+      - 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
+      - 'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
       - 'argocd/applications/torghut-options/catalog/deployment.yaml'
       - 'argocd/applications/torghut-options/enricher/deployment.yaml'
       - '.github/workflows/torghut-deploy-automerge.yml'
@@ -86,6 +88,8 @@ jobs:
             'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
             'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
             'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
+            'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
+            'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
             'argocd/applications/torghut-options/catalog/deployment.yaml'
             'argocd/applications/torghut-options/enricher/deployment.yaml'
           )
