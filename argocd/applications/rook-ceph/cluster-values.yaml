@@ -30,18 +30,6 @@ cephClusterSpec:
       osd_pool_default_size: "2"
       osd_pool_default_min_size: "1"
       mon_data_avail_warn: "20"
-    osd:
-      # Use Ceph's mClock recovery-biased profile while Turin rebuilds
-      # the recreated 24 TB OSDs.
-      osd_mclock_profile: "high_recovery_ops"
-      # Allow the temporary recovery/backfill limits below to take effect
-      # while the OSDs run with the mClock scheduler.
-      osd_mclock_override_recovery_settings: "true"
-      # Temporarily raise recovery/backfill concurrency while Turin rebuilds
-      # the recreated 24 TB OSDs.
-      osd_max_backfills: "3"
-      osd_recovery_max_single_start: "3"
-      osd_recovery_max_active: "3"
 
   dataDirHostPath: /var/lib/rook
 
