@@ -175,11 +175,11 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
             with (
                 patch(
-                    "app.api.readiness_helpers.shared_context._evaluate_scheduler_status",
+                    "app.api.readiness_helpers.readiness_surface._evaluate_scheduler_status",
                     return_value=(True, {"ok": True, "running": True}),
                 ),
                 patch(
-                    "app.api.readiness_helpers.shared_context.readiness_dependency_snapshot",
+                    "app.api.readiness_helpers.readiness_surface.readiness_dependency_snapshot",
                     return_value=(
                         {
                             "postgres": {"ok": True, "detail": "ok"},

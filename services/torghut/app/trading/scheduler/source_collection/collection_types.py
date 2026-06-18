@@ -153,7 +153,7 @@ class SourceCollectionRuntime(Protocol):
 
     def _paper_route_target_quantity_resolution(
         self,
-        **resolution_args: Any,
+        **_resolution_args: Any,
     ) -> SourceCollectionQuantityResolution | None: ...
 
 

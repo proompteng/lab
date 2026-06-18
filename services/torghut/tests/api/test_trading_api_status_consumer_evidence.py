@@ -735,7 +735,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 "app.api.trading_misc.shared_context.load_jangar_route_continuity_packet"
             ) as continuity_fetch,
             patch(
-                "app.api.trading_misc.shared_context.load_jangar_dependency_quorum",
+                "app.api.trading_misc.consumer_evidence_payload.load_jangar_dependency_quorum",
                 return_value=JangarDependencyQuorumStatus(
                     decision="allow",
                     reasons=[],

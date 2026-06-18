@@ -629,6 +629,15 @@ def _build_simple_lane_status_payload() -> dict[str, object]:
     }
 
 
+ensure_utc_datetime = _ensure_utc_datetime
+load_last_decision_at = _load_last_decision_at
+load_options_catalog_freshness_summary = _load_options_catalog_freshness_summary
+raw_hypothesis_runtime_payload = _build_hypothesis_runtime_payload
+api_live_submission_gate_payload = _build_live_submission_gate_payload
+resolve_tca_scope_symbols = _resolve_tca_scope_symbols
+simple_lane_status_payload = _build_simple_lane_status_payload
+
+
 __all__ = [
     "_check_postgres",
     "_check_tigerbeetle_protocol_health",
@@ -670,6 +679,13 @@ __all__ = [
     "_build_hypothesis_runtime_payload",
     "_build_live_submission_gate_payload",
     "_build_simple_lane_status_payload",
+    "api_live_submission_gate_payload",
     "build_hypothesis_runtime_payload",
     "build_live_submission_gate_payload",
+    "ensure_utc_datetime",
+    "load_last_decision_at",
+    "load_options_catalog_freshness_summary",
+    "raw_hypothesis_runtime_payload",
+    "resolve_tca_scope_symbols",
+    "simple_lane_status_payload",
 ]

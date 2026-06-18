@@ -541,8 +541,10 @@ class TradingApiTestCaseBase(TestCase):
             "app.api.proofs.SessionLocal",
             "app.api.readiness_helpers.evaluate_trading_health_payload.SessionLocal",
             "app.api.readiness_helpers.refresh_universe_state_for_readiness.SessionLocal",
+            "app.api.readiness_helpers.readiness_surface.SessionLocal",
             "app.api.trading_status.SessionLocal",
             "app.api.status_helpers.SessionLocal",
+            "app.api.trading_misc.consumer_evidence_payload.SessionLocal",
             "app.api.trading_misc.shared_context.SessionLocal",
             "app.api.vnext_helpers.SessionLocal",
         ):

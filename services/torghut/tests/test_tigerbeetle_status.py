@@ -16,7 +16,7 @@ from app.api.health_checks import (
     check_tigerbeetle_protocol_health,
     tigerbeetle_status_int,
 )
-from app.api.health_checks import shared_context as health_checks_context
+from app.api.health_checks import tigerbeetle_health as health_checks_context
 from app.models import (
     Base,
     StrategyRuntimeLedgerBucket,
