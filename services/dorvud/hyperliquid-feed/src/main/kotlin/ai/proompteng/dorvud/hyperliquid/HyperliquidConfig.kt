@@ -20,6 +20,7 @@ data class HyperliquidTopics(
 
 data class ClickHouseConfig(
   val enabled: Boolean,
+  val requiredForReadiness: Boolean,
   val httpUrl: String,
   val database: String,
   val username: String,
@@ -158,6 +159,7 @@ data class HyperliquidConfig(
       val clickHouse =
         ClickHouseConfig(
           enabled = mergedEnv["CLICKHOUSE_ENABLED"]?.toBooleanStrictOrNull() ?: true,
+          requiredForReadiness = mergedEnv["CLICKHOUSE_REQUIRED_FOR_READINESS"]?.toBooleanStrictOrNull() ?: true,
           httpUrl = mergedEnv["CLICKHOUSE_HTTP_URL"] ?: "http://torghut-clickhouse.torghut.svc.cluster.local:8123",
           database = mergedEnv["CLICKHOUSE_DATABASE"] ?: "torghut",
           username = mergedEnv["CLICKHOUSE_USERNAME"] ?: "torghut",

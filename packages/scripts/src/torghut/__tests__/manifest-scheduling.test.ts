@@ -163,11 +163,13 @@ describe('Torghut manifest scheduling', () => {
     expect(readyTables).toEqual(['hyperliquid_candles'])
     expect(readyTables.every((table) => enabledTables.includes(table))).toBe(true)
     expect(data.CLICKHOUSE_REQUEST_TIMEOUT_MS).toBe('30000')
+    expect(data.CLICKHOUSE_ENABLED).toBe('true')
+    expect(data.CLICKHOUSE_REQUIRED_FOR_READINESS).toBe('false')
 
     const deployment = parseManifest('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-clickhouse-timeout-20260618a')
+    ).toBe('hyperliquid-feed-clickhouse-optional-20260618b')
   })
 
   it('keeps Hyperliquid runtime shadow mode free of optional execution secret drift', () => {

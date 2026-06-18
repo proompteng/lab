@@ -310,7 +310,15 @@ class HyperliquidFeedApp(
   }
 
   private fun updateReady() {
-    val isReady = wsReady.get() && kafkaReady.get() && clickHouseFresh() && marketDataFresh() && catalogReady.get()
+    val isReady =
+      hyperliquidReadinessReady(
+        wsReady = wsReady.get(),
+        kafkaReady = kafkaReady.get(),
+        clickHouseFresh = clickHouseFresh(),
+        clickHouseRequiredForReadiness = config.clickHouse.requiredForReadiness,
+        marketDataFresh = marketDataFresh(),
+        catalogReady = catalogReady.get(),
+      )
     markReady(isReady)
   }
 
@@ -363,6 +371,20 @@ class HyperliquidFeedApp(
     metrics.setMarketDataReady(eventFreshnessSnapshot().fresh)
   }
 }
+
+internal fun hyperliquidReadinessReady(
+  wsReady: Boolean,
+  kafkaReady: Boolean,
+  clickHouseFresh: Boolean,
+  clickHouseRequiredForReadiness: Boolean,
+  marketDataFresh: Boolean,
+  catalogReady: Boolean,
+): Boolean =
+  wsReady &&
+    kafkaReady &&
+    (!clickHouseRequiredForReadiness || clickHouseFresh) &&
+    marketDataFresh &&
+    catalogReady
 
 fun main() =
   runBlocking {

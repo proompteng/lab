@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-feed-clickhouse-timeout-20260618a
+        proompteng.ai/config-revision: hyperliquid-feed-clickhouse-optional-20260618b
       labels:
         app: torghut-hyperliquid-feed
     spec:
