@@ -339,6 +339,9 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
                     session=context.session,
                     decision=decision,
                     decision_row=decision_row,
+                    strategy=strategy,
+                    account=context.account,
+                    positions=context.positions,
                 )
                 or not self._submit_decision_execution(
                     session=context.session,

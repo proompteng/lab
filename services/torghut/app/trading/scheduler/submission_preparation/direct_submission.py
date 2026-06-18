@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import timezone
 from decimal import Decimal
 from typing import Any, cast
 
@@ -30,6 +31,7 @@ from .shared import (
     SubmissionDecisionContext,
     SubmitRejectionRequest,
     TradingSubmissionRequest,
+    logger,
 )
 from .quote_sizing import SimplePipelineSubmissionQuoteSizingMixin
 from .quote_routeability import SimplePipelineSubmissionQuoteRouteabilityMixin
@@ -50,6 +52,8 @@ _LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS = frozenset(
         "runtime_ledger_source_window_evidence_pending",
     }
 )
+
+_BOUNDED_PAPER_ROUTE_CLOSE_SOURCE = "filled_bounded_paper_route_collection_executions"
 
 
 class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
@@ -149,6 +153,9 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             session=legacy_kwargs["session"],
             decision=legacy_kwargs["decision"],
             decision_row=legacy_kwargs["decision_row"],
+            strategy=legacy_kwargs.get("strategy"),
+            account=legacy_kwargs.get("account"),
+            positions=legacy_kwargs.get("positions"),
         )
 
     def _trading_enabled_submission_allowed(
@@ -189,8 +196,8 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         if settings.trading_mode == "live":
             live_submission_gate = self._live_submission_gate(session=request.session)
             if not bool(live_submission_gate.get("allowed", False)):
-                if self._bounded_live_paper_route_probe_submission_allowed(
-                    request.decision,
+                if self._bounded_live_paper_route_probe_request_allowed(
+                    request,
                     live_submission_gate,
                 ):
                     return True
@@ -208,6 +215,31 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
                 return False
         return True
 
+    def _bounded_live_paper_route_probe_request_allowed(
+        self,
+        request: TradingSubmissionRequest,
+        live_submission_gate: Mapping[str, Any],
+    ) -> bool:
+        if self._bounded_live_paper_route_probe_submission_allowed(
+            request.decision,
+            live_submission_gate,
+        ):
+            return True
+        close_metadata = self._bounded_live_paper_route_close_metadata(request)
+        if close_metadata is None:
+            return False
+        if not self._bounded_live_paper_route_collection_gate_allows(
+            live_submission_gate
+        ):
+            return False
+        request.decision.params.update(close_metadata)
+        self.executor.update_decision_params(
+            request.session,
+            request.decision_row,
+            close_metadata,
+        )
+        return True
+
     def _bounded_live_paper_route_probe_submission_allowed(
         self,
         decision: StrategyDecision,
@@ -215,6 +247,14 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
     ) -> bool:
         if not self._bounded_live_paper_route_probe_decision_applies(decision):
             return False
+        return self._bounded_live_paper_route_collection_gate_allows(
+            live_submission_gate
+        )
+
+    @staticmethod
+    def _bounded_live_paper_route_collection_gate_allows(
+        live_submission_gate: Mapping[str, Any],
+    ) -> bool:
         collection_gate = live_submission_gate.get("bounded_live_paper_collection_gate")
         if isinstance(collection_gate, Mapping):
             collection_gate_mapping = cast(Mapping[str, Any], collection_gate)
@@ -230,6 +270,124 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         if not blocked_reasons:
             return False
         return blocked_reasons.issubset(_LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS)
+
+    def _bounded_live_paper_route_close_metadata(
+        self,
+        request: TradingSubmissionRequest,
+    ) -> dict[str, Any] | None:
+        if not self._bounded_live_paper_route_close_mode_enabled(request.decision):
+            return None
+        exposure = self._bounded_live_paper_route_close_exposure(request)
+        if exposure is None:
+            return None
+        lineage = dict(cast(Mapping[str, Any], getattr(exposure, "lineage", {}) or {}))
+        exit_metadata = {
+            "mode": "paper_route_exit",
+            "source": _BOUNDED_PAPER_ROUTE_CLOSE_SOURCE,
+            "symbol": getattr(exposure, "symbol"),
+            "strategy_id": str(getattr(getattr(exposure, "strategy"), "id")),
+            "db_open_qty": str(getattr(exposure, "exit_qty")),
+            "db_open_signed_qty": str(getattr(exposure, "net_qty")),
+            "db_open_side": "long" if getattr(exposure, "net_qty") > 0 else "short",
+            "exit_minute_after_open": getattr(exposure, "exit_minute_after_open", None),
+            "session_open": getattr(exposure, "session_open").isoformat(),
+            "latest_entry_at": (
+                getattr(exposure, "latest_entry_at").isoformat()
+                if getattr(exposure, "latest_entry_at", None) is not None
+                else None
+            ),
+            "live_bounded_paper_route_close": True,
+            **lineage,
+        }
+        simple_lane = request.decision.params.get("simple_lane")
+        if isinstance(simple_lane, Mapping):
+            simple_lane_payload = dict(cast(Mapping[str, Any], simple_lane))
+        else:
+            simple_lane_payload = {}
+        simple_lane_payload.update(
+            {
+                "bounded_live_paper_route_close": True,
+                "submit_path": "bounded_paper_route_collection",
+            }
+        )
+        metadata: dict[str, Any] = {
+            "paper_route_probe_exit": exit_metadata,
+            "simple_lane": simple_lane_payload,
+            "bounded_live_paper_route_close": True,
+            "bounded_paper_route_submit_path": "bounded_paper_route_collection",
+        }
+        for key in ("source_decision_mode", "profit_proof_eligible"):
+            if key in lineage:
+                metadata[key] = lineage[key]
+        return metadata
+
+    def _bounded_live_paper_route_close_mode_enabled(
+        self,
+        decision: StrategyDecision,
+    ) -> bool:
+        return (
+            settings.trading_mode == "live"
+            and settings.trading_simple_submit_enabled
+            and settings.trading_simple_paper_route_probe_enabled
+            and settings.trading_simple_paper_route_probe_allow_live_mode
+            and self._paper_route_probe_exit_metadata(decision) is None
+            and bounded_paper_route_collection_entry_metadata(decision.params) is None
+            and decision.action in {"buy", "sell"}
+            and decision.qty > 0
+        )
+
+    def _bounded_live_paper_route_close_exposure(
+        self,
+        request: TradingSubmissionRequest,
+    ) -> Any | None:
+        exposures_fn = getattr(self, "_paper_route_probe_exit_exposures", None)
+        if not callable(exposures_fn):
+            return None
+        try:
+            exposures = exposures_fn(
+                session=request.session,
+                now=self._trading_now().astimezone(timezone.utc),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to inspect bounded paper-route close exposure "
+                "decision_id=%s symbol=%s",
+                request.decision_row.id,
+                request.decision.symbol,
+            )
+            return None
+        if not isinstance(exposures, Mapping):
+            return None
+        exposure_mapping = cast(Mapping[Any, Any], exposures)
+        for exposure in exposure_mapping.values():
+            if not self._bounded_live_paper_route_close_matches_exposure(
+                request.decision,
+                exposure,
+            ):
+                continue
+            return exposure
+        return None
+
+    @staticmethod
+    def _bounded_live_paper_route_close_matches_exposure(
+        decision: StrategyDecision,
+        exposure: Any,
+    ) -> bool:
+        strategy = getattr(exposure, "strategy", None)
+        if str(getattr(strategy, "id", "")).strip() != str(decision.strategy_id):
+            return False
+        if str(getattr(exposure, "symbol", "")).strip().upper() != decision.symbol:
+            return False
+        if str(getattr(exposure, "exit_source", "") or "").strip() != (
+            _BOUNDED_PAPER_ROUTE_CLOSE_SOURCE
+        ):
+            return False
+        if getattr(exposure, "exit_action", None) != decision.action:
+            return False
+        exit_qty = getattr(exposure, "exit_qty", Decimal("0"))
+        if not isinstance(exit_qty, Decimal):
+            exit_qty = Decimal(str(exit_qty))
+        return decision.qty <= exit_qty
 
     def _bounded_live_paper_route_probe_profit_floor_allowed(
         self,
