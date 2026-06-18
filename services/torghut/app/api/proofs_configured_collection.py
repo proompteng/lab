@@ -57,6 +57,10 @@ def configured_strategy_paper_collection_symbols(strategy: Strategy) -> list[str
     return static_symbols
 
 
+def configured_strategy_paper_collection_hypothesis_id(strategy_name: str) -> str:
+    return f"configured-paper-collection:{strategy_name}"
+
+
 def configured_strategy_paper_collection_targets(
     session: Session,
     *,
@@ -74,7 +78,9 @@ def configured_strategy_paper_collection_targets(
         if not strategy_name:
             continue
         target = {
-            "hypothesis_id": None,
+            "hypothesis_id": configured_strategy_paper_collection_hypothesis_id(
+                strategy_name
+            ),
             "candidate_id": f"configured:{strategy_name}",
             "strategy_name": strategy_name,
             "runtime_strategy_name": strategy_name,
@@ -162,6 +168,7 @@ __all__ = [
     "strategy_universe_symbol_values",
     "configured_static_symbol_allowlist",
     "configured_strategy_paper_collection_symbols",
+    "configured_strategy_paper_collection_hypothesis_id",
     "configured_strategy_paper_collection_targets",
     "configured_paper_collection_target_plan",
 ]

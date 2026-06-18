@@ -322,6 +322,10 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
         self.assertNotIn("disabled-paper-collector", targets_by_name)
         target = targets_by_name["enabled-paper-collector"]
         self.assertEqual(target["account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            target["hypothesis_id"],
+            "configured-paper-collection:enabled-paper-collector",
+        )
         self.assertEqual(target["paper_route_probe_symbols"], ["AAPL", "NVDA"])
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "100")
         self.assertTrue(target["paper_data_collection_authorized"])
