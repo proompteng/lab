@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from importlib import import_module
 from typing import Any, Mapping, Sequence, cast
 
 from app.trading.discovery.autoresearch import ProposalModelPolicy
@@ -109,9 +110,7 @@ def _candidate_target(row: Mapping[str, Any]) -> float:
 
 
 def _import_mlx_backend() -> tuple[str, Any]:
-    import mlx.core as mx  # type: ignore[import-not-found]
-
-    return "mlx", mx
+    return "mlx", cast(Any, import_module("mlx.core"))
 
 
 def _import_numpy_backend() -> tuple[str, Any]:

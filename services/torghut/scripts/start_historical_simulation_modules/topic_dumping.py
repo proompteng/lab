@@ -174,7 +174,7 @@ def _dump_topics(
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
 
-    from kafka import TopicPartition  # type: ignore[import-not-found]
+    TopicPartition = cast(Any, importlib.import_module("kafka").TopicPartition)
 
     consumer = _consumer_for_dump(kafka_config, resources.run_token)
     count = 0

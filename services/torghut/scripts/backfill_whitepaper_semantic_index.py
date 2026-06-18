@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -165,7 +166,14 @@ def _process_run(
             run_row.synthesis.synthesis_json if run_row.synthesis is not None else None
         )
         if include_claim_graph and isinstance(synthesis_json, dict):
-            workflow._sync_structured_research_outputs(  # type: ignore[attr-defined]
+            sync_structured_outputs = cast(
+                Callable[
+                    [Session, WhitepaperAnalysisRun, Mapping[str, Any]],
+                    None,
+                ],
+                getattr(workflow, "_sync_structured_research_outputs"),
+            )
+            sync_structured_outputs(
                 session,
                 run_row,
                 {

@@ -169,7 +169,9 @@ def _runtime_verify(
 
 
 def _kafka_admin_client(config: KafkaRuntimeConfig) -> Any:
-    from kafka.admin import KafkaAdminClient  # type: ignore[import-not-found]
+    KafkaAdminClient = cast(
+        Any, importlib.import_module("kafka.admin").KafkaAdminClient
+    )
 
     kwargs = config.kafka_client_kwargs()
     kwargs["client_id"] = f"torghut-sim-admin-{int(time.time())}"
@@ -210,7 +212,7 @@ def _ensure_topics(
     config: KafkaRuntimeConfig,
     manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
-    from kafka.admin import NewTopic  # type: ignore[import-not-found]
+    NewTopic = cast(Any, importlib.import_module("kafka.admin").NewTopic)
 
     kafka = _as_mapping(manifest.get("kafka"))
     default_partitions = int(kafka.get("default_partitions") or 6)
@@ -403,7 +405,7 @@ def _ensure_simulation_schema_subjects(
 
 
 def _consumer_for_dump(config: KafkaRuntimeConfig, run_token: str) -> Any:
-    from kafka import KafkaConsumer  # type: ignore[import-not-found]
+    KafkaConsumer = cast(Any, importlib.import_module("kafka").KafkaConsumer)
 
     kwargs = config.kafka_client_kwargs()
     kwargs.update(
@@ -425,7 +427,7 @@ def _producer_for_replay(
     *,
     profile: str | None = None,
 ) -> Any:
-    from kafka import KafkaProducer  # type: ignore[import-not-found]
+    KafkaProducer = cast(Any, importlib.import_module("kafka").KafkaProducer)
 
     resolved_profile = (profile or DEFAULT_SIMULATION_REPLAY_PROFILE).strip().lower()
     if resolved_profile not in REPLAY_PROFILE_DEFAULTS:

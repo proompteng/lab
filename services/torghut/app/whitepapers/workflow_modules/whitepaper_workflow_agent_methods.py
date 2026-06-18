@@ -9,6 +9,7 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timezone
+from importlib import import_module
 from subprocess import CalledProcessError, run
 from typing import TYPE_CHECKING, Any, Mapping, cast
 
@@ -389,7 +390,7 @@ class _WhitepaperWorkflowAgentMethods(_WhitepaperWorkflowAgentBase):
     @staticmethod
     def _extract_pdf_text_with_pypdf(pdf_bytes: bytes) -> dict[str, Any] | None:
         try:
-            from pypdf import PdfReader  # type: ignore[import-not-found]
+            PdfReader = import_module("pypdf").PdfReader
         except Exception:
             return None
 

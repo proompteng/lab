@@ -6,6 +6,7 @@ import json
 from json import JSONDecodeError
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
+from importlib import import_module
 from urllib.parse import urlsplit
 from typing import Any, Protocol, cast
 
@@ -20,7 +21,7 @@ from ...market_context_domains import (
 )
 
 try:
-    import dspy as _dspy  # type: ignore[import-not-found]
+    _dspy = import_module("dspy")
 except Exception:  # pragma: no cover - optional runtime dependency in local test envs
     _dspy = None
 
@@ -177,7 +178,7 @@ class LiveDSPyCommitteeProgram:
         input_field = getattr(dspy, "InputField")
         output_field = getattr(dspy, "OutputField")
 
-        class TradeReviewSignature(dspy.Signature):  # type: ignore[name-defined,misc]
+        class TradeReviewSignature(dspy.Signature):
             request_json = input_field(desc="JSON-encoded Torghut trade review request")
             response_json = output_field(
                 desc="JSON object matching the DSPyTradeReviewOutput schema"

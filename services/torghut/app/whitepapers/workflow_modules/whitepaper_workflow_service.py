@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from importlib import import_module
 import json
 from typing import Any, Mapping, cast
 
@@ -160,7 +161,7 @@ class WhitepaperKafkaIssueIngestor:
 
     @staticmethod
     def _build_consumer() -> Any:
-        from kafka import KafkaConsumer  # type: ignore[import-not-found]
+        KafkaConsumer = import_module("kafka").KafkaConsumer
 
         bootstrap = (
             _str_env("WHITEPAPER_KAFKA_BOOTSTRAP_SERVERS")
