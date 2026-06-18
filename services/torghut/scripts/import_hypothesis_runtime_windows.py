@@ -85,6 +85,29 @@ RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing
 RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER = (
     "runtime_ledger_execution_tca_refs_missing"
 )
+CONFIGURED_PAPER_COLLECTION_HYPOTHESIS_PREFIX = "configured-paper-collection:"
+CONFIGURED_SIMPLE_LANE_PAPER_SOURCE_KIND = (
+    "configured_simple_lane_paper_data_collection"
+)
+
+
+def _manifest_strategy_family_for_resolution(
+    *,
+    hypothesis_id: str,
+    strategy_family: str,
+    source_kind: str,
+    source_manifest_ref: str,
+) -> str | None:
+    normalized_strategy_family = strategy_family.strip() or None
+    if (
+        hypothesis_id.startswith(CONFIGURED_PAPER_COLLECTION_HYPOTHESIS_PREFIX)
+        and source_kind == CONFIGURED_SIMPLE_LANE_PAPER_SOURCE_KIND
+        and source_manifest_ref.strip()
+    ):
+        return None
+    return normalized_strategy_family
+
+
 RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER = (
     "runtime_ledger_authority_class_missing"
 )
@@ -7510,9 +7533,19 @@ def main() -> int:
     ]
     window_start = _parse_dt(args.window_start)
     window_end = _parse_dt(args.window_end)
+    source_kind = args.source_kind.strip() or (
+        "simulation_paper_runtime" if args.observed_stage == "paper" else "live_runtime"
+    )
+    manifest_strategy_family = _manifest_strategy_family_for_resolution(
+        hypothesis_id=args.hypothesis_id,
+        strategy_family=args.strategy_family,
+        source_kind=source_kind,
+        source_manifest_ref=args.source_manifest_ref,
+    )
     _, manifest = resolve_hypothesis_manifest(
         hypothesis_id=args.hypothesis_id,
-        strategy_family=args.strategy_family.strip() or None,
+        strategy_family=manifest_strategy_family,
+        source_manifest_ref=args.source_manifest_ref.strip() or None,
     )
     target_metadata = _parse_target_metadata(
         str(getattr(args, "target_metadata_json", "") or "")
@@ -7525,9 +7558,6 @@ def main() -> int:
         getattr(manifest, "strategy_id", None),
     )
     source_activity_symbols = _target_metadata_source_symbols(target_metadata)
-    source_kind = args.source_kind.strip() or (
-        "simulation_paper_runtime" if args.observed_stage == "paper" else "live_runtime"
-    )
     allow_authoritative_runtime_ledger_materialization = (
         _source_kind_allows_runtime_ledger_materialization(
             source_kind=source_kind,
@@ -8122,5 +8152,6 @@ __all__ = [
     "_retarget_runtime_ledger_tca_rows",
     "_query_timestamps",
     "_source_activity_missing_summary",
+    "_manifest_strategy_family_for_resolution",
     "main",
 ]
