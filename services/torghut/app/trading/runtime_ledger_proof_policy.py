@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 
 RuntimeLedgerProofMode = Literal["smoke", "probation", "authority"]
@@ -240,7 +240,7 @@ def runtime_ledger_proof_policy_from_env(
     environ: Mapping[str, str] | None = None,
 ) -> RuntimeLedgerProofPolicy:
     source = os.environ if environ is None else environ
-    values = DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.__dict__.copy()
+    values: dict[str, Any] = asdict(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY)
     raw_mode = source.get("TORGHUT_RUNTIME_LEDGER_PROOF_MODE")
     if raw_mode is not None and raw_mode.strip():
         values["proof_mode"] = normalize_runtime_ledger_proof_mode(raw_mode)

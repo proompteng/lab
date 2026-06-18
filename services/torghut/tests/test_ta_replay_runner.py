@@ -116,16 +116,16 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         }
 
     def _coverage(self) -> dict[str, object]:
-        return argparse.Namespace(
-            status="insufficient_ta_signal_days",
-            summary={
+        return {
+            "status": "insufficient_ta_signal_days",
+            "summary": {
                 "required_trading_days": 25,
                 "ta_signals_days": 9,
                 "ta_microbars_days": 19,
                 "missing_signal_days_vs_required": 16,
                 "microbar_only_day_count": 2,
             },
-        ).__dict__
+        }
 
     def _complete_coverage(self) -> dict[str, object]:
         return {

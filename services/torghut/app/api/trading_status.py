@@ -747,7 +747,7 @@ def trading_status() -> dict[str, object]:
             "event_total": dict(state.metrics.domain_telemetry_event_total),
             "dropped_total": dict(state.metrics.domain_telemetry_dropped_total),
         },
-        "metrics": state.metrics.__dict__,
+        "metrics": state.metrics.to_payload(),
         "llm": scheduler.llm_status(),
         "llm_evaluation": llm_evaluation,
         "tca": tca_summary,

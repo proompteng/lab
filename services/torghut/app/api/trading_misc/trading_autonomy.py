@@ -697,7 +697,7 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
     )
     payload = render_trading_metrics(
         {
-            **metrics.__dict__,
+            **metrics.to_payload(),
             "tca_summary": tca_summary,
             "route_provenance": _load_route_provenance_summary(session),
             "hypothesis_state_total": hypothesis_summary.get("state_totals", {}),

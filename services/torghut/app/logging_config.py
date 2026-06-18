@@ -100,7 +100,7 @@ class JsonFormatter(logging.Formatter):
         }
         extras = {
             key: value
-            for key, value in record.__dict__.items()
+            for key, value in vars(record).items()
             if key not in _STANDARD_RECORD_FIELDS and not key.startswith("_")
         }
         if extras:

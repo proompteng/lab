@@ -22,6 +22,13 @@ class DummyModel:
         return self._data
 
 
+class AttributeOnlyModel:
+    def __init__(self) -> None:
+        self.equity = "12000"
+        self.cash = "3000"
+        self._internal_cache = "hidden"
+
+
 class DummyTradingClient:
     def __init__(self) -> None:
         self.cancelled: list[str] = []
@@ -115,6 +122,43 @@ class TestAlpacaClient(TestCase):
 
         cancelled = firewall.cancel_all_orders()
         self.assertEqual(len(cancelled), 2)
+
+    def test_attribute_only_model_payload_uses_public_vars(self) -> None:
+        class AttributeOnlyTradingClient(DummyTradingClient):
+            def get_account(self) -> AttributeOnlyModel:
+                return AttributeOnlyModel()
+
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=AttributeOnlyTradingClient(),
+            data_client=DummyDataClient(),
+        )
+
+        self.assertEqual(
+            client.get_account(),
+            {
+                "cash": "3000",
+                "equity": "12000",
+            },
+        )
+
+    def test_unsupported_model_payload_raises_type_error(self) -> None:
+        class UnsupportedAccountTradingClient(DummyTradingClient):
+            def get_account(self) -> object:
+                return object()
+
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=UnsupportedAccountTradingClient(),
+            data_client=DummyDataClient(),
+        )
+
+        with self.assertRaisesRegex(TypeError, "Unsupported model type"):
+            client.get_account()
 
     def test_get_order_by_client_order_id_falls_back_to_client_id(self) -> None:
         class TradingClientWithClientId(DummyTradingClient):
