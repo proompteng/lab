@@ -64,6 +64,55 @@ def test_pending_clean_window_baseline_still_reserves_paper_account(
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
 
 
+def test_configured_collection_target_reserves_account_with_source_plan_ref(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        now = datetime(2026, 6, 18, 13, 45, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            candidate_id="configured:microbar-cross-sectional-pairs-v1",
+            hypothesis_id=(
+                "configured-paper-collection:microbar-cross-sectional-pairs-v1"
+            ),
+            source_kind="configured_simple_lane_paper_data_collection",
+            source_manifest_ref=None,
+            source_plan_ref="configured-simple-lane-paper-data-collection",
+            bounded_evidence_collection_scope=None,
+            paper_route_probe_window_start="2026-06-18T13:30:00+00:00",
+            paper_route_probe_window_end="2026-06-18T20:00:00+00:00",
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            {"AAPL", "AMZN"},
+            None,
+            [target],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        blockers = _bounded_sim_collection_blockers(
+            target,
+            account_label="TORGHUT_SIM",
+        )
+
+        assert "bounded_sim_collection_source_kind_required" not in blockers
+        assert "bounded_sim_collection_source_manifest_missing" not in blockers
+        assert pipeline._paper_route_target_plan_reserves_account(
+            allowed_symbols={"AAPL", "AMZN"},
+        )
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+
+
 def test_target_runtime_account_and_window_helpers_cover_identity_edges() -> None:
     target = {
         "account_label": "OTHER",

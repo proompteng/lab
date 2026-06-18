@@ -79,6 +79,7 @@ _BOUNDED_SIM_COLLECTION_SOURCE_KIND = "paper_route_probe_runtime_observed"
 _BOUNDED_SIM_COLLECTION_SOURCE_KINDS = frozenset(
     {
         _BOUNDED_SIM_COLLECTION_SOURCE_KIND,
+        "configured_simple_lane_paper_data_collection",
         "runtime_ledger_source_collection_candidate",
     }
 )
@@ -465,7 +466,10 @@ def _bounded_sim_collection_authorization_blockers(
     target: Mapping[str, Any],
 ) -> list[str]:
     blockers: list[str] = []
-    if _safe_text(target.get("source_manifest_ref")) is None:
+    if (
+        _safe_text(target.get("source_manifest_ref")) is None
+        and _safe_text(target.get("source_plan_ref")) is None
+    ):
         blockers.append("bounded_sim_collection_source_manifest_missing")
     if not _target_bounded_collection_authorized(target):
         blockers.append("bounded_sim_collection_authorization_missing")

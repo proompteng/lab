@@ -124,6 +124,7 @@ def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
         or identity.get("strategy_name"),
         "account_label": identity.get("account_label"),
         "source_account_label": identity.get("source_account_label"),
+        "observed_stage": identity.get("observed_stage") or "paper",
         "source_kind": identity.get("source_kind"),
         "source_plan_ref": identity.get("source_plan_ref"),
         "target_notional": identity.get("target_notional"),
