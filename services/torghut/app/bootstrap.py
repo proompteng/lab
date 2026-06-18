@@ -32,7 +32,7 @@ from .api.common import (
     whitepaper_semantic_indexing_enabled,
     whitepaper_workflow_enabled,
 )
-from .trading import TradingScheduler
+from .trading.scheduler import TradingScheduler
 
 logger = logging.getLogger(__name__)
 

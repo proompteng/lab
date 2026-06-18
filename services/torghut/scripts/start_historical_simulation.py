@@ -351,361 +351,42 @@ from scripts.start_historical_simulation_modules import (  # noqa: F401
     _render_report,
     _monitor_snapshot,
     _signal_snapshot,
+    _clickhouse_query_configs,
+    _apply,
+    _assert_required_simulation_metadata_tables,
+    _configure_torghut_service_for_simulation,
+    _dump_topics,
+    _ensure_argocd_manual_before_runtime_mutation,
+    _ensure_clickhouse_database,
+    _ensure_clickhouse_runtime_tables,
+    _ensure_simulation_schema_subjects,
+    _ensure_topics,
+    _ensure_postgres_runtime_permissions,
+    _http_clickhouse_query,
+    _monitor_run_completion,
+    _prepare_argocd_for_run,
+    _replay_dump,
+    _resolve_warm_lane_runtime_postgres_config,
+    _restore_argocd_after_run,
+    _restore_ta_configuration,
+    _restore_torghut_env,
+    _reset_postgres_runtime_state,
+    _run_full_lifecycle,
+    _run_migrations,
+    _run_rollouts_analysis,
+    _runtime_verify,
+    _seed_simulation_trade_cursor,
+    _set_argocd_application_ignore_differences,
+    _set_argocd_application_sync_policy,
+    _set_argocd_automation_mode,
+    _simulation_schema_registry_subject_specs,
+    _teardown,
+    _upload_dump_to_cache,
+    _wait_for_clickhouse_database,
+    _wait_for_clickhouse_table,
+    _wait_for_torghut_service_revision_ready,
+    main,
 )
-
-from scripts.start_historical_simulation_modules import (
-    argocd_rollouts as _argocd_rollouts_module,
-    cli as _cli_module,
-    kafka_runtime as _kafka_runtime_module,
-    kubernetes_argocd as _kubernetes_argocd_module,
-    lifecycle as _lifecycle_module,
-    proof_artifacts as _proof_artifacts_module,
-    replay_execution as _replay_execution_module,
-    resource_planning as _resource_planning_module,
-    runtime_migrations as _runtime_migrations_module,
-    service_environment as _service_environment_module,
-    state_and_cache as _state_and_cache_module,
-    storage_and_database as _storage_and_database_module,
-    topic_dumping as _topic_dumping_module,
-)
-
-_ORIGINAL_APPLY = _replay_execution_module._apply
-_ORIGINAL_CLICKHOUSE_QUERY_CONFIGS = (
-    _storage_and_database_module._clickhouse_query_configs
-)
-_ORIGINAL_ASSERT_REQUIRED_SIMULATION_METADATA_TABLES = (
-    _runtime_migrations_module._assert_required_simulation_metadata_tables
-)
-_ORIGINAL_CONFIGURE_TA_FOR_SIMULATION = (
-    _runtime_migrations_module._configure_ta_for_simulation
-)
-_ORIGINAL_CONFIGURE_TORGHUT_SERVICE_FOR_SIMULATION = (
-    _runtime_migrations_module._configure_torghut_service_for_simulation
-)
-_ORIGINAL_DESIRED_TA_SIMULATION_CONFIG = (
-    _runtime_migrations_module._desired_ta_simulation_config
-)
-_ORIGINAL_DUMP_TOPICS = _topic_dumping_module._dump_topics
-_ORIGINAL_ENSURE_ARGOCD_MANUAL_BEFORE_RUNTIME_MUTATION = (
-    _argocd_rollouts_module._ensure_argocd_manual_before_runtime_mutation
-)
-_ORIGINAL_ENSURE_CLICKHOUSE_DATABASE = (
-    _storage_and_database_module._ensure_clickhouse_database
-)
-_ORIGINAL_ENSURE_CLICKHOUSE_RUNTIME_TABLES = (
-    _storage_and_database_module._ensure_clickhouse_runtime_tables
-)
-_ORIGINAL_ENSURE_POSTGRES_DATABASE = (
-    _storage_and_database_module._ensure_postgres_database
-)
-_ORIGINAL_ENSURE_POSTGRES_RUNTIME_PERMISSIONS = (
-    _storage_and_database_module._ensure_postgres_runtime_permissions
-)
-_ORIGINAL_ENSURE_SIMULATION_SCHEMA_SUBJECTS = (
-    _kafka_runtime_module._ensure_simulation_schema_subjects
-)
-_ORIGINAL_ENSURE_TOPICS = _kafka_runtime_module._ensure_topics
-_ORIGINAL_HTTP_CLICKHOUSE_QUERY = _storage_and_database_module._http_clickhouse_query
-_ORIGINAL_MAIN = _cli_module.main
-_ORIGINAL_MONITOR_RUN_COMPLETION = _lifecycle_module._monitor_run_completion
-_ORIGINAL_PREPARE_ARGOCD_FOR_RUN = _argocd_rollouts_module._prepare_argocd_for_run
-_ORIGINAL_REPLAY_DUMP = _replay_execution_module._replay_dump
-_ORIGINAL_REPORT_SIMULATION = _argocd_rollouts_module._report_simulation
-_ORIGINAL_RESOLVE_WARM_LANE_RUNTIME_POSTGRES_CONFIG = (
-    _service_environment_module._resolve_warm_lane_runtime_postgres_config
-)
-_ORIGINAL_RESTORE_ARGOCD_AFTER_RUN = _argocd_rollouts_module._restore_argocd_after_run
-_ORIGINAL_RESTORE_TA_CONFIGURATION = (
-    _runtime_migrations_module._restore_ta_configuration
-)
-_ORIGINAL_RESTORE_TORGHUT_ENV = _runtime_migrations_module._restore_torghut_env
-_ORIGINAL_RESET_POSTGRES_RUNTIME_STATE = (
-    _runtime_migrations_module._reset_postgres_runtime_state
-)
-_ORIGINAL_RUN_FULL_LIFECYCLE = _lifecycle_module._run_full_lifecycle
-_ORIGINAL_RUN_MIGRATIONS = _runtime_migrations_module._run_migrations
-_ORIGINAL_RUN_ROLLOUTS_ANALYSIS = _argocd_rollouts_module._run_rollouts_analysis
-_ORIGINAL_RUNTIME_VERIFY = _kafka_runtime_module._runtime_verify
-_ORIGINAL_SEED_SIMULATION_TRADE_CURSOR = (
-    _runtime_migrations_module._seed_simulation_trade_cursor
-)
-_ORIGINAL_SET_ARGOCD_APPLICATION_IGNORE_DIFFERENCES = (
-    _service_environment_module._set_argocd_application_ignore_differences
-)
-_ORIGINAL_SET_ARGOCD_APPLICATION_SYNC_POLICY = (
-    _kubernetes_argocd_module._set_argocd_application_sync_policy
-)
-_ORIGINAL_SET_ARGOCD_AUTOMATION_MODE = (
-    _kubernetes_argocd_module._set_argocd_automation_mode
-)
-_ORIGINAL_SIMULATION_SCHEMA_REGISTRY_SUBJECT_SPECS = (
-    _kafka_runtime_module._simulation_schema_registry_subject_specs
-)
-_ORIGINAL_TEARDOWN = _replay_execution_module._teardown
-_ORIGINAL_TORGHUT_SERVICE_ENV_FOR_SIMULATION = (
-    _runtime_migrations_module._torghut_service_env_for_simulation
-)
-_ORIGINAL_UPLOAD_DUMP_TO_CACHE = _state_and_cache_module._upload_dump_to_cache
-_ORIGINAL_WAIT_FOR_CLICKHOUSE_DATABASE = (
-    _storage_and_database_module._wait_for_clickhouse_database
-)
-_ORIGINAL_WAIT_FOR_CLICKHOUSE_TABLE = (
-    _storage_and_database_module._wait_for_clickhouse_table
-)
-_ORIGINAL_WAIT_FOR_TORGHUT_SERVICE_REVISION_READY = (
-    _argocd_rollouts_module._wait_for_torghut_service_revision_ready
-)
-
-
-def _bind(module: Any, **attrs: Any) -> None:
-    for name, value in attrs.items():
-        setattr(module, name, value)
-
-
-def _sync_patch_targets() -> None:
-    _bind(
-        _cli_module,
-        _apply=_apply,
-        _report_simulation=_report_simulation,
-        _run_full_lifecycle=_run_full_lifecycle,
-        _teardown=_teardown,
-    )
-    _bind(
-        _lifecycle_module,
-        _apply=_apply,
-        _build_strategy_proof_artifact=_build_strategy_proof_artifact,
-        _ensure_supported_binary=_ensure_supported_binary,
-        _monitor_run_completion=_monitor_run_completion,
-        _prepare_argocd_for_run=_prepare_argocd_for_run,
-        _read_argocd_application_sync_policy=_read_argocd_application_sync_policy,
-        _read_argocd_automation_mode=_read_argocd_automation_mode,
-        _read_named_argocd_application_sync_policy=_read_named_argocd_application_sync_policy,
-        _replay_dump=_replay_dump,
-        _report_simulation=_report_simulation,
-        _restore_argocd_after_run=_restore_argocd_after_run,
-        _run_rollouts_analysis=_run_rollouts_analysis,
-        _runtime_verify=_runtime_verify,
-        _save_json=_save_json,
-        _teardown=_teardown,
-        _update_run_state=_update_run_state,
-        _upsert_simulation_progress_row=_upsert_simulation_progress_row,
-        _wait_for_torghut_service_revision_ready=_wait_for_torghut_service_revision_ready,
-        SessionLocal=SessionLocal,
-        persist_completion_trace=persist_completion_trace,
-    )
-    _bind(
-        _replay_execution_module,
-        _acquire_simulation_runtime_lock=_acquire_simulation_runtime_lock,
-        _capture_cluster_state=_capture_cluster_state,
-        _configure_ta_for_simulation=_configure_ta_for_simulation,
-        _configure_torghut_service_for_simulation=_configure_torghut_service_for_simulation,
-        _dump_topics=_dump_topics,
-        _ensure_argocd_manual_before_runtime_mutation=_ensure_argocd_manual_before_runtime_mutation,
-        _ensure_clickhouse_database=_ensure_clickhouse_database,
-        _ensure_clickhouse_runtime_tables=_ensure_clickhouse_runtime_tables,
-        _ensure_directory=_ensure_directory,
-        _ensure_lz4_codec_available=_ensure_lz4_codec_available,
-        _ensure_postgres_database=_ensure_postgres_database,
-        _ensure_postgres_runtime_permissions=_ensure_postgres_runtime_permissions,
-        _ensure_simulation_schema_subjects=_ensure_simulation_schema_subjects,
-        _ensure_supported_binary=_ensure_supported_binary,
-        _ensure_topics=_ensure_topics,
-        _read_simulation_runtime_lock=_read_simulation_runtime_lock,
-        _producer_for_replay=_producer_for_replay,
-        _release_simulation_runtime_lock=_release_simulation_runtime_lock,
-        _reset_postgres_runtime_state=_reset_postgres_runtime_state,
-        _restart_ta_deployment=_restart_ta_deployment,
-        _restore_ta_configuration=_restore_ta_configuration,
-        _restore_torghut_env=_restore_torghut_env,
-        _run_migrations=_run_migrations,
-        _save_json=_save_json,
-        _seed_simulation_trade_cursor=_seed_simulation_trade_cursor,
-        _ta_runtime_reconfigure_required=_ta_runtime_reconfigure_required,
-        _torghut_service_reconfigure_required=_torghut_service_reconfigure_required,
-        _upsert_simulation_progress_row=_upsert_simulation_progress_row,
-        _upsert_simulation_runtime_context=_upsert_simulation_runtime_context,
-        _validate_dump_coverage=_validate_dump_coverage,
-    )
-    _bind(
-        _topic_dumping_module,
-        _consumer_for_dump=_consumer_for_dump,
-        _materialize_deterministic_dump=_materialize_deterministic_dump,
-        _reusable_dump_report=_reusable_dump_report,
-        _restore_cached_dump_if_available=_restore_cached_dump_if_available,
-        _save_json=_save_json,
-        _simulation_cache_client_from_env=_simulation_cache_client_from_env,
-        time=time,
-        _upload_dump_to_cache=_upload_dump_to_cache,
-        _upsert_simulation_progress_row=_upsert_simulation_progress_row,
-    )
-    _bind(
-        _kafka_runtime_module,
-        _http_request=_http_request,
-        _kafka_admin_client=_kafka_admin_client,
-        _kubectl_json=_kubectl_json,
-        _producer_for_replay=_producer_for_replay,
-        _read_configmap_key_ref=_read_configmap_key_ref,
-        _read_secret_key_ref=_read_secret_key_ref,
-        __file__=__file__,
-    )
-    _bind(
-        _runtime_migrations_module,
-        _assert_required_simulation_metadata_tables=_assert_required_simulation_metadata_tables,
-        _cache_metadata=_cache_metadata,
-        _desired_ta_simulation_config=_desired_ta_simulation_config,
-        _is_vector_extension_create_permission_error=_is_vector_extension_create_permission_error,
-        _kubectl_json=_kubectl_json,
-        _kubectl_patch=_kubectl_patch,
-        _remove_appledouble_sidecars=_remove_appledouble_sidecars,
-        _run_command=_run_command,
-        _run_alembic_upgrade=_run_alembic_upgrade,
-        _run_with_transient_postgres_retry=_run_with_transient_postgres_retry,
-        _torghut_service_env_for_simulation=_torghut_service_env_for_simulation,
-        psycopg=psycopg,
-        shutil=shutil,
-    )
-    _bind(
-        _argocd_rollouts_module,
-        _kubectl_apply=_kubectl_apply,
-        _kubectl_delete_if_exists=_kubectl_delete_if_exists,
-        _kubectl_json=_kubectl_json,
-        _run_command=_run_command,
-        _run_with_transient_postgres_retry=_run_with_transient_postgres_retry,
-        _read_argocd_application_sync_policy=_read_argocd_application_sync_policy,
-        _read_argocd_applicationset_entry=_read_argocd_applicationset_entry,
-        _read_argocd_automation_mode=_read_argocd_automation_mode,
-        _read_named_argocd_application_sync_policy=_read_named_argocd_application_sync_policy,
-        _runtime_verify=_runtime_verify,
-        _save_json=_save_json,
-        _set_argocd_application_ignore_differences=_set_argocd_application_ignore_differences,
-        _set_argocd_application_sync_policy=_set_argocd_application_sync_policy,
-        _set_argocd_automation_mode=_set_argocd_automation_mode,
-        _prepare_argocd_for_run=_prepare_argocd_for_run,
-        _wait_for_argocd_application_mode=_wait_for_argocd_application_mode,
-        _wait_for_torghut_service_revision_ready=_wait_for_torghut_service_revision_ready,
-    )
-    _bind(
-        _proof_artifacts_module,
-        _run_with_transient_postgres_retry=_run_with_transient_postgres_retry,
-        _save_json=_save_json,
-        build_completion_trace=build_completion_trace,
-        build_fill_price_error_budget_report_v1=build_fill_price_error_budget_report_v1,
-    )
-    _bind(
-        _storage_and_database_module,
-        _http_request=_http_request,
-        _http_clickhouse_query=_http_clickhouse_query,
-        _kubectl_json=_kubectl_json,
-        _postgres_extension_exists=_postgres_extension_exists,
-        _run_with_transient_postgres_retry=_run_with_transient_postgres_retry,
-        _save_json=_save_json,
-        HTTPConnection=simulation_verification.HTTPConnection,
-        HTTPSConnection=simulation_verification.HTTPSConnection,
-        psycopg=psycopg,
-    )
-    _bind(
-        _service_environment_module,
-        _kubectl_json=_kubectl_json,
-        _kubectl_patch=_kubectl_patch,
-        _kubectl_patch_json=_kubectl_patch_json,
-        _read_argocd_applicationset_entry=_read_argocd_applicationset_entry,
-        _read_named_argocd_application_sync_policy=_read_named_argocd_application_sync_policy,
-    )
-    _bind(
-        _kubernetes_argocd_module,
-        _kubectl_json=_kubectl_json,
-        _kubectl_json_global=_kubectl_json_global,
-        _kubectl_patch=_kubectl_patch,
-        _kubectl_patch_json=_kubectl_patch_json,
-        _run_command=_run_command,
-        time=time,
-    )
-    _bind(
-        _resource_planning_module,
-        _run_command=_run_command,
-        run_autonomous_lane=run_autonomous_lane,
-    )
-    _bind(
-        _state_and_cache_module,
-        _simulation_cache_client_from_env=_simulation_cache_client_from_env,
-        CephS3Client=CephS3Client,
-        time=time,
-    )
-
-
-def _delegate(target: Callable[..., Any]) -> Callable[..., Any]:
-    def _call(*args: Any, **kwargs: Any) -> Any:
-        _sync_patch_targets()
-        return target(*args, **kwargs)
-
-    return _call
-
-
-_apply = _delegate(_ORIGINAL_APPLY)
-_assert_required_simulation_metadata_tables = _delegate(
-    _ORIGINAL_ASSERT_REQUIRED_SIMULATION_METADATA_TABLES
-)
-_clickhouse_query_configs = _delegate(_ORIGINAL_CLICKHOUSE_QUERY_CONFIGS)
-_configure_ta_for_simulation = _delegate(_ORIGINAL_CONFIGURE_TA_FOR_SIMULATION)
-_configure_torghut_service_for_simulation = _delegate(
-    _ORIGINAL_CONFIGURE_TORGHUT_SERVICE_FOR_SIMULATION
-)
-_desired_ta_simulation_config = _delegate(_ORIGINAL_DESIRED_TA_SIMULATION_CONFIG)
-_dump_topics = _delegate(_ORIGINAL_DUMP_TOPICS)
-_ensure_argocd_manual_before_runtime_mutation = _delegate(
-    _ORIGINAL_ENSURE_ARGOCD_MANUAL_BEFORE_RUNTIME_MUTATION
-)
-_ensure_clickhouse_database = _delegate(_ORIGINAL_ENSURE_CLICKHOUSE_DATABASE)
-_ensure_clickhouse_runtime_tables = _delegate(
-    _ORIGINAL_ENSURE_CLICKHOUSE_RUNTIME_TABLES
-)
-_ensure_postgres_database = _delegate(_ORIGINAL_ENSURE_POSTGRES_DATABASE)
-_ensure_postgres_runtime_permissions = _delegate(
-    _ORIGINAL_ENSURE_POSTGRES_RUNTIME_PERMISSIONS
-)
-_ensure_simulation_schema_subjects = _delegate(
-    _ORIGINAL_ENSURE_SIMULATION_SCHEMA_SUBJECTS
-)
-_ensure_topics = _delegate(_ORIGINAL_ENSURE_TOPICS)
-_http_clickhouse_query = _delegate(_ORIGINAL_HTTP_CLICKHOUSE_QUERY)
-main = _delegate(_ORIGINAL_MAIN)
-_monitor_run_completion = _delegate(_ORIGINAL_MONITOR_RUN_COMPLETION)
-_prepare_argocd_for_run = _delegate(_ORIGINAL_PREPARE_ARGOCD_FOR_RUN)
-_replay_dump = _delegate(_ORIGINAL_REPLAY_DUMP)
-_report_simulation = _delegate(_ORIGINAL_REPORT_SIMULATION)
-_resolve_warm_lane_runtime_postgres_config = _delegate(
-    _ORIGINAL_RESOLVE_WARM_LANE_RUNTIME_POSTGRES_CONFIG
-)
-_reset_postgres_runtime_state = _delegate(_ORIGINAL_RESET_POSTGRES_RUNTIME_STATE)
-_restore_argocd_after_run = _delegate(_ORIGINAL_RESTORE_ARGOCD_AFTER_RUN)
-_restore_ta_configuration = _delegate(_ORIGINAL_RESTORE_TA_CONFIGURATION)
-_restore_torghut_env = _delegate(_ORIGINAL_RESTORE_TORGHUT_ENV)
-_run_full_lifecycle = _delegate(_ORIGINAL_RUN_FULL_LIFECYCLE)
-_run_migrations = _delegate(_ORIGINAL_RUN_MIGRATIONS)
-_run_rollouts_analysis = _delegate(_ORIGINAL_RUN_ROLLOUTS_ANALYSIS)
-_runtime_verify = _delegate(_ORIGINAL_RUNTIME_VERIFY)
-_seed_simulation_trade_cursor = _delegate(_ORIGINAL_SEED_SIMULATION_TRADE_CURSOR)
-_set_argocd_application_ignore_differences = _delegate(
-    _ORIGINAL_SET_ARGOCD_APPLICATION_IGNORE_DIFFERENCES
-)
-_set_argocd_application_sync_policy = _delegate(
-    _ORIGINAL_SET_ARGOCD_APPLICATION_SYNC_POLICY
-)
-_set_argocd_automation_mode = _delegate(_ORIGINAL_SET_ARGOCD_AUTOMATION_MODE)
-_simulation_schema_registry_subject_specs = _delegate(
-    _ORIGINAL_SIMULATION_SCHEMA_REGISTRY_SUBJECT_SPECS
-)
-_teardown = _delegate(_ORIGINAL_TEARDOWN)
-_torghut_service_env_for_simulation = _delegate(
-    _ORIGINAL_TORGHUT_SERVICE_ENV_FOR_SIMULATION
-)
-_upload_dump_to_cache = _delegate(_ORIGINAL_UPLOAD_DUMP_TO_CACHE)
-_wait_for_clickhouse_database = _delegate(_ORIGINAL_WAIT_FOR_CLICKHOUSE_DATABASE)
-_wait_for_clickhouse_table = _delegate(_ORIGINAL_WAIT_FOR_CLICKHOUSE_TABLE)
-_wait_for_torghut_service_revision_ready = _delegate(
-    _ORIGINAL_WAIT_FOR_TORGHUT_SERVICE_REVISION_READY
-)
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

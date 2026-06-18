@@ -9,6 +9,7 @@ from tests.materialize_bounded_paper_route_targets.support import (
     _tsmom_target,
     cli,
     pytest,
+    target_materialization_core,
 )
 
 
@@ -35,7 +36,9 @@ def test_commit_url_nested_plan_with_dynamic_confirmation_writes_targets(
             "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -98,7 +101,9 @@ def test_commit_dynamic_plan_skips_before_active_target_window_without_writes(
             "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -178,7 +183,9 @@ def test_commit_dynamic_source_collection_plan_skips_without_target_window(
             )
         }
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -252,7 +259,9 @@ def test_commit_dynamic_plan_confirms_strategy_lookup_alias_before_skip(
             )
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -322,7 +331,9 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_skips_before_ope
             )
         ),
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -394,7 +405,9 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_writes_when_open
             )
         ),
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -472,7 +485,9 @@ def test_commit_dynamic_plan_prefers_materializable_next_window_over_stale_hpair
             _hpairs_target(target_notional="75000")
         ),
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -535,7 +550,9 @@ def test_commit_dynamic_next_window_plan_filters_to_confirmed_hpairs_target(
             _hpairs_target(target_notional="75000"),
         ),
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -653,7 +670,9 @@ def test_commit_dynamic_source_allowlist_selects_active_next_window_over_closed_
             )
         ),
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -708,7 +727,9 @@ def test_commit_dynamic_next_window_plan_blocks_when_confirmed_target_is_absent(
     payload = {
         "next_paper_route_runtime_window_targets": _plan(_tsmom_target()),
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [

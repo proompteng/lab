@@ -63,7 +63,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                     clear=False,
                 ),
                 patch(
-                    "scripts.start_historical_simulation.subprocess.run",
+                    "scripts.start_historical_simulation_modules.service_environment.subprocess.run",
                     side_effect=_fake_run,
                 ),
             ):
@@ -202,7 +202,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                     },
                 ),
                 patch(
-                    "scripts.start_historical_simulation._consumer_for_dump",
+                    "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
                     return_value=_FakeConsumer(),
                 ),
             ):
@@ -335,7 +335,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                     },
                 ),
                 patch(
-                    "scripts.start_historical_simulation._consumer_for_dump",
+                    "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
                     return_value=fake_consumer,
                 ),
             ):
@@ -482,7 +482,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                     },
                 ),
                 patch(
-                    "scripts.start_historical_simulation._consumer_for_dump",
+                    "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
                     return_value=fake_consumer,
                 ),
             ):
@@ -625,7 +625,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
 
             producer = _FakeProducer()
             with patch(
-                "scripts.start_historical_simulation._producer_for_replay",
+                "scripts.start_historical_simulation_modules.replay_execution._producer_for_replay",
                 return_value=producer,
             ):
                 report = _replay_dump(
@@ -698,7 +698,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
 
             producer = _FakeProducer()
             with patch(
-                "scripts.start_historical_simulation._producer_for_replay",
+                "scripts.start_historical_simulation_modules.replay_execution._producer_for_replay",
                 return_value=producer,
             ):
                 report = _replay_dump(
@@ -787,10 +787,12 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
 
         with (
             patch(
-                "scripts.start_historical_simulation._kubectl_json",
+                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_json",
                 return_value=current_configmap,
             ),
-            patch("scripts.start_historical_simulation._kubectl_patch") as patch_mock,
+            patch(
+                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_patch"
+            ) as patch_mock,
         ):
             _restore_ta_configuration(resources, state)
 
@@ -853,11 +855,11 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
 
         with (
             patch(
-                "scripts.start_historical_simulation._kubectl_json",
+                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_json",
                 return_value=service_payload,
             ),
             patch(
-                "scripts.start_historical_simulation._kubectl_patch",
+                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_patch",
                 side_effect=lambda namespace, kind, name, patch: captured_patch.update(
                     {"namespace": namespace, "kind": kind, "name": name, "patch": patch}
                 ),

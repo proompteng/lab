@@ -10,10 +10,6 @@ from typing import Any, Callable, Iterable, Mapping
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from ...discovery import (
-    build_sequential_trial_summary,
-    build_strategy_factory_evaluation,
-)
 from ..metrics import summarize_equity_curve, to_jsonable
 from ..search import candidate_to_jsonable, run_tsmom_grid_search
 from ..tsmom import TSMOMConfig, backtest_tsmom
@@ -76,6 +72,9 @@ def run_alpha_discovery_lane(
     economic_rationale: str | None = None,
 ) -> AlphaLaneResult:
     """Run deterministic alpha candidate generation, evaluation, and recommendation."""
+
+    from ...discovery.sequential_trials import build_sequential_trial_summary
+    from ...discovery.validation import build_strategy_factory_evaluation
 
     train = _normalize_prices(train_prices, label="train")
     test = _normalize_prices(test_prices, label="test")

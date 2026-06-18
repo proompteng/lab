@@ -20,6 +20,7 @@ from tests.materialize_bounded_paper_route_targets.support import (
     materialize_bounded_paper_route_target_plan,
     pytest,
     select,
+    target_materialization_core,
     timezone,
 )
 
@@ -607,7 +608,9 @@ def test_url_payload_prefers_nested_hpairs_materialization_plan(
             "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -673,7 +676,9 @@ def test_url_payload_accepts_trading_proofs_materialization_plan(
             "final_promotion_allowed": False,
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -726,7 +731,9 @@ def test_url_payload_prefers_bounded_plan_over_larger_source_collection_plan(
             "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -763,7 +770,9 @@ def test_source_collection_only_plan_blocks_materialization_before_db_write(
             ),
         ),
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [

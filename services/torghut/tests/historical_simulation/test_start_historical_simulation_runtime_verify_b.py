@@ -116,7 +116,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
 
         with (
             patch(
-                "scripts.historical_simulation_verification._kubectl_json",
+                "scripts.historical_simulation_verification_modules.runtime_health._kubectl_json",
                 side_effect=[
                     kservice_payload,
                     autonomy_configmap_payload,
@@ -124,7 +124,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                 ],
             ),
             patch(
-                "scripts.historical_simulation_verification._deployment_replica_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._deployment_replica_health",
                 side_effect=[
                     {
                         "name": "torghut-sim-00001-deployment",
@@ -135,7 +135,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                 ],
             ),
             patch(
-                "scripts.historical_simulation_verification._flink_runtime_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",
@@ -249,11 +249,11 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
 
         with (
             patch(
-                "scripts.historical_simulation_verification._kubectl_json",
+                "scripts.historical_simulation_verification_modules.runtime_health._kubectl_json",
                 side_effect=[kservice_payload, ta_configmap_payload],
             ),
             patch(
-                "scripts.historical_simulation_verification._deployment_replica_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._deployment_replica_health",
                 side_effect=[
                     {
                         "name": "torghut-sim-00001-deployment",
@@ -264,7 +264,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                 ],
             ),
             patch(
-                "scripts.historical_simulation_verification._flink_runtime_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",
@@ -378,11 +378,11 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
 
         with (
             patch(
-                "scripts.historical_simulation_verification._kubectl_json",
+                "scripts.historical_simulation_verification_modules.runtime_health._kubectl_json",
                 side_effect=[kservice_payload, ta_configmap_payload],
             ),
             patch(
-                "scripts.historical_simulation_verification._deployment_replica_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._deployment_replica_health",
                 side_effect=[
                     {
                         "name": "torghut-sim-00001-deployment",
@@ -393,7 +393,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                 ],
             ),
             patch(
-                "scripts.historical_simulation_verification._flink_runtime_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",
@@ -506,11 +506,11 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
 
         with (
             patch(
-                "scripts.historical_simulation_verification._kubectl_json",
+                "scripts.historical_simulation_verification_modules.runtime_health._kubectl_json",
                 side_effect=[kservice_payload, ta_configmap_payload],
             ),
             patch(
-                "scripts.historical_simulation_verification._deployment_replica_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._deployment_replica_health",
                 side_effect=[
                     {
                         "name": "torghut-sim-00001-deployment",
@@ -521,7 +521,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                 ],
             ),
             patch(
-                "scripts.historical_simulation_verification._flink_runtime_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",
@@ -634,11 +634,11 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
 
         with (
             patch(
-                "scripts.historical_simulation_verification._kubectl_json",
+                "scripts.historical_simulation_verification_modules.runtime_health._kubectl_json",
                 side_effect=[kservice_payload, ta_configmap_payload],
             ),
             patch(
-                "scripts.historical_simulation_verification._deployment_replica_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._deployment_replica_health",
                 side_effect=[
                     {
                         "name": "torghut-sim-00001-deployment",
@@ -649,7 +649,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                 ],
             ),
             patch(
-                "scripts.historical_simulation_verification._flink_runtime_health",
+                "scripts.historical_simulation_verification_modules.runtime_health._flink_runtime_health",
                 return_value={
                     "name": "torghut-ta-sim",
                     "desired_state": "running",

@@ -20,6 +20,9 @@ from app.trading.paper_route_target_plan import (
     materialize_bounded_paper_route_target_plan,
 )
 from scripts import materialize_bounded_paper_route_targets as cli
+from scripts.materialize_bounded_paper_route_targets_modules import (
+    target_materialization_core,
+)
 
 HPAIRS_DYNAMIC_SELECTED_PLAN_SOURCE_CONFIRMATION = ",".join(
     cli.DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCES
@@ -353,5 +356,6 @@ __all__: tuple[str, ...] = (
     "select",
     "sessionmaker",
     "sqlite_dsn",
+    "target_materialization_core",
     "timezone",
 )

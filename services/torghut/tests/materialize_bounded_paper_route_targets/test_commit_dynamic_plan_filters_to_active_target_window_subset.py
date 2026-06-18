@@ -14,6 +14,7 @@ from tests.materialize_bounded_paper_route_targets.support import (
     cli,
     json,
     pytest,
+    target_materialization_core,
 )
 
 
@@ -36,7 +37,9 @@ def test_commit_dynamic_plan_filters_to_active_target_window_subset(
             )
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -101,7 +104,9 @@ def test_commit_dynamic_plan_requires_active_target_window_without_skip(
             "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -154,7 +159,9 @@ def test_commit_dynamic_confirmation_rejects_wrong_selected_plan_source(
             "runtime_ledger_paper_probation_import_plan": _plan(_hpairs_target())
         },
     }
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload", lambda *_, **__: payload
+    )
 
     exit_code, report = _run_cli(
         [
@@ -316,7 +323,9 @@ def test_plan_url_fetch_requests_json_path_query_and_closes(
         200,
         json.dumps({"targets": [_hpairs_target()]}).encode("utf-8"),
     )
-    monkeypatch.setattr(cli, "HTTPConnection", _CapturingConnection)
+    monkeypatch.setattr(
+        target_materialization_core, "HTTPConnection", _CapturingConnection
+    )
 
     payload = cli._fetch_plan_url_payload_once(
         "http://torghut-sim.torghut.svc.cluster.local:8080/trading/paper-route-target-plan?target_limit=1",
@@ -355,7 +364,9 @@ def test_plan_url_fetch_reports_status_json_and_payload_errors(
 ) -> None:
     _CapturingConnection.instances = []
     _CapturingConnection.response = _FakeResponse(status, body)
-    monkeypatch.setattr(cli, "HTTPConnection", _CapturingConnection)
+    monkeypatch.setattr(
+        target_materialization_core, "HTTPConnection", _CapturingConnection
+    )
 
     payload = cli._fetch_plan_url_payload_once(
         "http://torghut-sim.torghut.svc.cluster.local/plan",
@@ -372,8 +383,12 @@ def test_plan_url_fetch_reports_oversized_response(
 ) -> None:
     _CapturingConnection.instances = []
     _CapturingConnection.response = _FakeResponse(200, b"abcdef")
-    monkeypatch.setattr(cli, "HTTPConnection", _CapturingConnection)
-    monkeypatch.setattr(cli, "TARGET_PLAN_RESPONSE_LIMIT_BYTES", 5)
+    monkeypatch.setattr(
+        target_materialization_core, "HTTPConnection", _CapturingConnection
+    )
+    monkeypatch.setattr(
+        target_materialization_core, "TARGET_PLAN_RESPONSE_LIMIT_BYTES", 5
+    )
 
     payload = cli._fetch_plan_url_payload_once(
         "http://torghut-sim.torghut.svc.cluster.local/plan",
@@ -388,7 +403,9 @@ def test_plan_url_fetch_reports_request_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _RaisingConnection.instances = []
-    monkeypatch.setattr(cli, "HTTPConnection", _RaisingConnection)
+    monkeypatch.setattr(
+        target_materialization_core, "HTTPConnection", _RaisingConnection
+    )
 
     payload = cli._fetch_plan_url_payload_once(
         "http://torghut-sim.torghut.svc.cluster.local/plan",
@@ -416,8 +433,14 @@ def test_plan_url_fetch_retries_and_records_attempt_count(
             return {"load_error": "temporary"}
         return {"targets": [_hpairs_target()]}
 
-    monkeypatch.setattr(cli, "_fetch_plan_url_payload_once", fake_fetch_once)
-    monkeypatch.setattr(cli.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(
+        target_materialization_core, "_fetch_plan_url_payload_once", fake_fetch_once
+    )
+    monkeypatch.setattr(
+        target_materialization_core.time,
+        "sleep",
+        lambda seconds: sleeps.append(seconds),
+    )
 
     payload = cli._fetch_plan_url_payload(
         "http://torghut-sim.torghut.svc.cluster.local/plan",
@@ -435,11 +458,11 @@ def test_plan_url_fetch_records_failed_attempt_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        cli,
+        target_materialization_core,
         "_fetch_plan_url_payload_once",
         lambda *_, **__: {"load_error": "still-down"},
     )
-    monkeypatch.setattr(cli.time, "sleep", lambda _: None)
+    monkeypatch.setattr(target_materialization_core.time, "sleep", lambda _: None)
 
     payload = cli._fetch_plan_url_payload(
         "http://torghut-sim.torghut.svc.cluster.local/plan",
@@ -459,7 +482,9 @@ def test_plan_url_payload_without_materializable_plan_is_reported(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        cli, "_fetch_plan_url_payload", lambda *_, **__: {"targets": []}
+        target_materialization_core,
+        "_fetch_plan_url_payload",
+        lambda *_, **__: {"targets": []},
     )
 
     exit_code, payload = _run_cli(
