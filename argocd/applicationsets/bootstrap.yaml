@@ -24,6 +24,8 @@ spec:
                   automation: manual
                   enabled: "true"
                   managedNamespaceMetadata:
+                    labels:
+                      external-secrets.proompteng.ai/enabled: "true"
                     annotations:
                       # Prevent accidental namespace deletion when an app stops managing the Namespace object.
                       argocd.argoproj.io/sync-options: Prune=false
