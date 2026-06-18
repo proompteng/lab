@@ -162,6 +162,17 @@ describe('Torghut manifest scheduling', () => {
     ).toBe('hyperliquid-feed-critical-clickhouse-20260618b')
   })
 
+  it('keeps Hyperliquid runtime shadow mode free of optional execution secret drift', () => {
+    const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
+    const runtimeData = getAtPath(runtimeConfig, ['data'])
+    expect(runtimeData.HYPERLIQUID_RUNTIME_TRADING_ENABLED).toBe('false')
+
+    const kustomization = parseManifest('argocd/applications/torghut-hyperliquid-runtime/kustomization.yaml')
+    const resources = kustomization.resources
+    expect(resources).toBeArray()
+    expect(resources).not.toContain('externalsecret.yaml')
+  })
+
   it('keeps whitepaper autoresearch off the serving pod resource envelope', () => {
     const manifest = parseManifest('argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml')
     const template = getAtPath(manifest, ['spec', 'templates', 0])

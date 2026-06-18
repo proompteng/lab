@@ -3,7 +3,6 @@ kind: Kustomization
 namespace: torghut
 resources:
   - configmap.yaml
-  - externalsecret.yaml
   - clickhouse-schema-configmap.yaml
   - clickhouse-schema-job.yaml
   - db-migrations-job.yaml
