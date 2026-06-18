@@ -25,7 +25,6 @@ _SOURCE_PAYLOAD_FILE_PREFIX = "source_" + "segment_"
 _TRANSITIONAL_EXTRACTED_SOURCE_MODULES = {
     "app/trading/autonomy/lane.py",
     "app/trading/discovery/candidate_specs.py",
-    "app/trading/research_sleeves.py",
     "scripts/import_hypothesis_runtime_windows.py",
     "scripts/run_whitepaper_autoresearch_profit_target.py",
     "scripts/search_consistent_profitability_frontier.py",
