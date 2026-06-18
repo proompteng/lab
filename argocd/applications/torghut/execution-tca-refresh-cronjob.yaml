@@ -22,7 +22,7 @@ spec:
           serviceAccountName: torghut-runtime
           containers:
             - name: refresh-execution-tca
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:ada764b6921f98eed71dd6d79aecd1547087786e8adb6ed585a523f3f2ade6e4
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:13467bfd6055b504890be30b3d1cc1cc6f83ae2f91732c6dac011a6402839b38
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
