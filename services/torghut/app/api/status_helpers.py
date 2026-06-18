@@ -11,7 +11,6 @@ from .common import (
     JangarDependencyQuorumStatus,
     Mapping,
     SQLAlchemyError,
-    Session,
     SessionLocal,
     TRADING_STATUS_READ_BUDGET_SECONDS,
     TradingScheduler,
@@ -100,7 +99,7 @@ class _TradingStatusReadBudget:
         }
 
 
-def _rollback_status_read_session(session: Session, *, context: str) -> None:
+def _rollback_status_read_session(session: object, *, context: str) -> None:
     rollback = getattr(session, "rollback", None)
     if not callable(rollback):
         return
@@ -111,7 +110,7 @@ def _rollback_status_read_session(session: Session, *, context: str) -> None:
 
 
 def _apply_status_read_statement_timeout(
-    session: Session,
+    session: object,
     *,
     milliseconds: int,
 ) -> None:
@@ -123,7 +122,9 @@ def _apply_status_read_statement_timeout(
         dialect = getattr(getattr(bind, "dialect", None), "name", "")
         if dialect == "postgresql":
             timeout_ms = max(1, int(milliseconds))
-            session.execute(text(f"SET LOCAL statement_timeout = {timeout_ms}"))
+            execute = getattr(session, "execute", None)
+            if callable(execute):
+                execute(text(f"SET LOCAL statement_timeout = {timeout_ms}"))
     except SQLAlchemyError:
         raise
     except Exception:

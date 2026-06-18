@@ -120,7 +120,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _OptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=[" aapl ", "MSFT", "AAPL", ""],
         )
 
@@ -153,7 +153,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _FallbackOptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL", "MSFT"],
         )
 
@@ -185,7 +185,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _OptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
         )
 
         self.assertEqual(payload["scope"], "global")
@@ -245,7 +245,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _PostgresRuntimeLedgerPortfolioSummarySession()
 
         payload = _daily_runtime_ledger_portfolio_summary(
-            session=fake_session,  # type: ignore[arg-type]
+            session=fake_session,
             account_label="TORGHUT_SIM",
             stage_scope="paper",
             observed_at=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
@@ -263,7 +263,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
             return_value={"order_count": 0},
         ) as build_tca:
             payload = health_checks_api._load_tca_summary(
-                fake_session,  # type: ignore[arg-type]
+                fake_session,
                 scheduler=None,
             )
 
@@ -279,7 +279,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
             return_value={"ok": True, "metrics": {"total_reviews": 0}},
         ) as build_llm:
             payload = vnext_helpers_api._load_llm_evaluation(
-                fake_session,  # type: ignore[arg-type]
+                fake_session,
             )
 
         self.assertTrue(payload["ok"])
@@ -303,24 +303,24 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
                 self.calls.append(str(statement))
                 raise SQLAlchemyError("statement timeout")
 
-        status_helpers_api._rollback_status_read_session(  # type: ignore[arg-type]
+        status_helpers_api._rollback_status_read_session(
             SimpleNamespace(),
             context="missing rollback",
         )
-        status_helpers_api._rollback_status_read_session(  # type: ignore[arg-type]
+        status_helpers_api._rollback_status_read_session(
             FailingRollbackSession(),
             context="failing rollback",
         )
-        status_helpers_api._apply_status_read_statement_timeout(  # type: ignore[arg-type]
+        status_helpers_api._apply_status_read_statement_timeout(
             SimpleNamespace(),
             milliseconds=500,
         )
-        status_helpers_api._apply_status_read_statement_timeout(  # type: ignore[arg-type]
+        status_helpers_api._apply_status_read_statement_timeout(
             BrokenBindSession(),
             milliseconds=500,
         )
         with self.assertRaises(SQLAlchemyError):
-            status_helpers_api._apply_status_read_statement_timeout(  # type: ignore[arg-type]
+            status_helpers_api._apply_status_read_statement_timeout(
                 TimeoutSession(),
                 milliseconds=500,
             )
@@ -335,7 +335,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
             ),
         ):
             payload = health_checks_api._load_tca_summary(
-                fake_session,  # type: ignore[arg-type]
+                fake_session,
                 scheduler=None,
             )
 
@@ -355,7 +355,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
             ),
         ):
             payload = vnext_helpers_api._load_llm_evaluation(
-                fake_session,  # type: ignore[arg-type]
+                fake_session,
             )
 
         self.assertFalse(payload["ok"])
@@ -401,11 +401,11 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _FailingOptionsFreshnessSession()
 
         first = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL"],
         )
         second = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL"],
         )
 
@@ -434,7 +434,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _TimedOutAggregateOptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL", "MSFT"],
         )
 
@@ -464,7 +464,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _TimedOutBoundedOptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL", "MSFT"],
         )
 
@@ -514,7 +514,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _OptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL"],
         )
 
@@ -540,7 +540,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _FallbackOptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL", "MSFT"],
         )
 
@@ -577,7 +577,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _FallbackOptionsFreshnessRequiresRollbackSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL"],
         )
 
@@ -597,7 +597,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         fake_session = _FallbackOptionsFreshnessBlankSymbolSession()
 
         payload = _load_options_catalog_freshness_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             route_symbols=["AAPL", "MSFT"],
         )
 
@@ -643,7 +643,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
                 ),
             ):
                 payload = health_checks_api._build_tigerbeetle_ledger_status(
-                    fake_session,  # type: ignore[arg-type]
+                    fake_session,
                 )
         finally:
             settings.tigerbeetle_required = original_required
@@ -697,7 +697,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
                 ),
             ):
                 payload = health_checks_api._build_tigerbeetle_ledger_status(
-                    fake_session,  # type: ignore[arg-type]
+                    fake_session,
                 )
         finally:
             settings.tigerbeetle_required = original_required

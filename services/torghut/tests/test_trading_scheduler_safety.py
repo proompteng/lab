@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import json
@@ -61,6 +62,32 @@ class _OrderFirewallStub:
 class _PipelineStub:
     def __init__(self) -> None:
         self.order_firewall = _OrderFirewallStub()
+
+
+_EmergencyStopReasonCollector = Callable[[], tuple[list[str], float, float | None]]
+
+
+class _TestTradingScheduler(TradingScheduler):
+    def __init__(
+        self,
+        *,
+        market_open: bool = True,
+        emergency_stop_reasons: _EmergencyStopReasonCollector | None = None,
+    ) -> None:
+        super().__init__()
+        self.pipeline_stub = _PipelineStub()
+        self._market_open = market_open
+        self._emergency_stop_reasons = emergency_stop_reasons
+        object.__setattr__(self, "_pipeline", self.pipeline_stub)
+
+    def _is_market_session_open(self, now: datetime | None = None) -> bool:
+        _ = now
+        return self._market_open
+
+    def _collect_emergency_stop_reasons(self) -> tuple[list[str], float, float | None]:
+        if self._emergency_stop_reasons is not None:
+            return self._emergency_stop_reasons()
+        return super()._collect_emergency_stop_reasons()
 
 
 class TestTradingSchedulerSafety(TestCase):
@@ -510,9 +537,7 @@ class TestTradingSchedulerSafety(TestCase):
             config.settings.trading_autonomy_artifact_dir = tmpdir
             config.settings.trading_emergency_stop_enabled = True
             config.settings.trading_rollback_signal_lag_seconds_limit = 5
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
-            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            scheduler = _TestTradingScheduler(market_open=True)
             scheduler.state.metrics.signal_lag_seconds = 7
 
             scheduler._evaluate_safety_controls()
@@ -522,7 +547,7 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertIn(
                 "signal_lag_exceeded", scheduler.state.emergency_stop_reason or ""
             )
-            self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 1)  # type: ignore[union-attr]
+            self.assertEqual(scheduler.pipeline_stub.order_firewall.cancel_all_calls, 1)
             evidence_path = Path(scheduler.state.rollback_incident_evidence_path or "")
             self.assertTrue(evidence_path.exists())
             payload = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -533,16 +558,14 @@ class TestTradingSchedulerSafety(TestCase):
             config.settings.trading_autonomy_artifact_dir = tmpdir
             config.settings.trading_emergency_stop_enabled = True
             config.settings.trading_rollback_signal_lag_seconds_limit = 5
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
-            scheduler._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+            scheduler = _TestTradingScheduler(market_open=False)
             scheduler.state.metrics.signal_lag_seconds = 7
 
             scheduler._evaluate_safety_controls()
 
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertEqual(scheduler.state.rollback_incidents_total, 0)
-            self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 0)  # type: ignore[union-attr]
+            self.assertEqual(scheduler.pipeline_stub.order_firewall.cancel_all_calls, 0)
 
     def test_critical_no_signal_streak_is_suppressed_when_market_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -555,9 +578,7 @@ class TestTradingSchedulerSafety(TestCase):
             config.settings.trading_signal_market_closed_expected_reasons_raw = (
                 "no_signals_in_window,cursor_tail_stable,empty_batch_advanced"
             )
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
-            scheduler._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+            scheduler = _TestTradingScheduler(market_open=False)
             scheduler.state.metrics.no_signal_reason_streak = {
                 "no_signals_in_window": 3
             }
@@ -581,9 +602,7 @@ class TestTradingSchedulerSafety(TestCase):
                 "cursor_tail_stable,empty_batch_advanced"
             )
             config.settings.trading_signal_bootstrap_grace_seconds = 180
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
-            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            scheduler = _TestTradingScheduler(market_open=True)
             scheduler.state.signal_bootstrap_started_at = datetime.now(timezone.utc)
             scheduler.state.signal_bootstrap_completed_at = None
             scheduler.state.metrics.no_signal_reason_streak = {
@@ -609,9 +628,7 @@ class TestTradingSchedulerSafety(TestCase):
                 "cursor_tail_stable,empty_batch_advanced"
             )
             config.settings.trading_signal_bootstrap_grace_seconds = 180
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
-            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            scheduler = _TestTradingScheduler(market_open=True)
             scheduler.state.signal_bootstrap_started_at = datetime.now(
                 timezone.utc
             ) - timedelta(seconds=181)
@@ -636,9 +653,7 @@ class TestTradingSchedulerSafety(TestCase):
             config.settings.trading_emergency_stop_enabled = True
             config.settings.trading_emergency_stop_recovery_cycles = 2
             config.settings.trading_rollback_signal_lag_seconds_limit = 5
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
-            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            scheduler = _TestTradingScheduler(market_open=True)
             scheduler.state.metrics.signal_lag_seconds = 7
 
             scheduler._evaluate_safety_controls()
@@ -662,8 +677,7 @@ class TestTradingSchedulerSafety(TestCase):
             config.settings.trading_autonomy_artifact_dir = tmpdir
             config.settings.trading_emergency_stop_enabled = True
             config.settings.trading_emergency_stop_recovery_cycles = 1
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler = _TestTradingScheduler()
             scheduler.state.emergency_stop_active = True
             scheduler.state.emergency_stop_reason = "max_drawdown_exceeded:0.1200"
             scheduler.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
@@ -688,8 +702,7 @@ class TestTradingSchedulerSafety(TestCase):
             config.settings.trading_autonomy_artifact_dir = tmpdir
             config.settings.trading_emergency_stop_enabled = True
             config.settings.trading_rollback_max_drawdown_limit = 0.08
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler = _TestTradingScheduler()
             scheduler.state.last_autonomy_gates = str(gate_path)
 
             scheduler._evaluate_safety_controls()
@@ -703,8 +716,7 @@ class TestTradingSchedulerSafety(TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             config.settings.trading_autonomy_artifact_dir = tmpdir
             config.settings.trading_emergency_stop_enabled = False
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler = _TestTradingScheduler()
             scheduler.state.emergency_stop_active = True
             scheduler.state.emergency_stop_reason = "signal_lag_exceeded:1234"
             scheduler.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
@@ -715,7 +727,7 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertIsNone(scheduler.state.emergency_stop_reason)
             self.assertIsNone(scheduler.state.emergency_stop_triggered_at)
-            self.assertEqual(scheduler._pipeline.order_firewall.cancel_all_calls, 0)  # type: ignore[union-attr]
+            self.assertEqual(scheduler.pipeline_stub.order_firewall.cancel_all_calls, 0)
 
     def test_split_emergency_stop_reasons_normalizes_and_dedupes(self) -> None:
         reason = (
@@ -768,8 +780,17 @@ class TestTradingSchedulerSafety(TestCase):
             config.settings.trading_autonomy_artifact_dir = tmpdir
             config.settings.trading_emergency_stop_enabled = True
             config.settings.trading_emergency_stop_recovery_cycles = 1
-            scheduler = TradingScheduler()
-            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler = _TestTradingScheduler(
+                emergency_stop_reasons=lambda: (
+                    [
+                        " signal_lag_exceeded:7 ",
+                        "max_drawdown_exceeded:0.1100",
+                        "signal_lag_exceeded:7",
+                    ],
+                    0.0,
+                    None,
+                )
+            )
             scheduler.state.emergency_stop_active = True
             scheduler.state.emergency_stop_reason = (
                 " signal_staleness_streak_exceeded:no_signals_in_window ;"
@@ -777,15 +798,6 @@ class TestTradingSchedulerSafety(TestCase):
             )
             scheduler.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
             scheduler.state.metrics.signal_lag_seconds = 0
-            scheduler._collect_emergency_stop_reasons = lambda: (
-                [
-                    " signal_lag_exceeded:7 ",
-                    "max_drawdown_exceeded:0.1100",
-                    "signal_lag_exceeded:7",
-                ],
-                0.0,
-                None,
-            )
 
             scheduler._evaluate_safety_controls()
 
