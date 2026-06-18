@@ -167,6 +167,7 @@ def test_app_and_script_import_surfaces_do_not_ship_compatibility_stubs() -> Non
         "app.trading.ingest_modules",
         "app.trading.intraday_tsmom_contract_modules",
         "app.trading.llm.dspy_compile.workflow_modules",
+        "app.trading.llm.dspy_programs.modules",
         "app.trading.order_feed_modules",
         "app.trading.paper_route_target_plan_modules",
         "app.trading.portfolio_modules",

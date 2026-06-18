@@ -12,7 +12,7 @@ from ....config import settings
 from ..dspy_compile.hashing import hash_payload
 from ..schema import LLMReviewRequest, LLMReviewResponse
 from .adapters import dspy_output_to_llm_response, review_request_to_dspy_input
-from .modules import (
+from .committee_programs import (
     DSPyCommitteeProgram,
     HeuristicCommitteeProgram,
     LiveDSPyCommitteeProgram,
