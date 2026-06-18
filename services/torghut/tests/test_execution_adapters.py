@@ -11,7 +11,7 @@ from app.trading.execution_adapters import (
     SimulationExecutionAdapter,
     build_execution_adapter,
 )
-from app.trading.execution_adapters_modules.lean_adapter import LeanRequest
+from app.trading.execution_adapters.lean_adapter import LeanRequest
 
 
 class FakeFallbackAdapter:

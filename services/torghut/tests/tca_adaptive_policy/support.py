@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base, Execution, ExecutionTCAMetric, Strategy, TradeDecision
-from app.trading import tca_modules as tca_module
+from app.trading import tca as tca_module
 from app.trading.tca import (
     build_tca_gate_inputs,
     derive_adaptive_execution_policy,

@@ -252,7 +252,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             assert normalized.event is not None
 
             with patch(
-                "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
                 return_value=client,
             ):
                 persisted, is_duplicate = persist_order_event(
@@ -293,7 +293,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
 
             with (
                 patch(
-                    "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
+                    "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
                     return_value=client,
                 ),
                 patch(
@@ -335,7 +335,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             )
             with patch(
                 (
-                    "app.trading.order_feed_modules.shared_context"
+                    "app.trading.order_feed.shared_context"
                     ".reconcile_tigerbeetle_transfers"
                 ),
                 side_effect=RuntimeError("reconcile failed"),
@@ -370,7 +370,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             assert normalized.event is not None
 
             with patch(
-                "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
                 side_effect=RuntimeError("tb unavailable"),
             ):
                 persisted, is_duplicate = persist_order_event(
@@ -405,7 +405,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             assert normalized.event is not None
 
             with patch(
-                "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
                 side_effect=RuntimeError("tb unavailable"),
             ):
                 with self.assertRaisesRegex(RuntimeError, "tb unavailable"):
@@ -638,10 +638,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
             execution = self._seed_execution(session)
 
             with patch(
-                (
-                    "app.trading.order_feed_modules.shared_context"
-                    ".upsert_execution_tca_metric"
-                )
+                ("app.trading.order_feed.shared_context.upsert_execution_tca_metric")
             ) as upsert:
                 counters = ingestor.ingest_once(session)
                 session.refresh(execution)

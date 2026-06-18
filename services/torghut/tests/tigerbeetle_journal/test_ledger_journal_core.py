@@ -142,7 +142,7 @@ class TestLedgerJournalCore(_TestTigerBeetleLedgerJournalBase):
             client = ClosableFakeTigerBeetleClient()
 
             with patch(
-                "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
                 return_value=client,
             ) as factory:
                 with TigerBeetleLedgerJournal(settings_obj=_settings()) as journal:
@@ -175,7 +175,7 @@ class TestLedgerJournalCore(_TestTigerBeetleLedgerJournalBase):
         client = ClosableFakeTigerBeetleClient()
 
         with patch(
-            "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
+            "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
             return_value=client,
         ) as factory:
             with TigerBeetleLedgerJournal(settings_obj=_settings()) as journal:

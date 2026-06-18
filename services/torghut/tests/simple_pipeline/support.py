@@ -13,7 +13,9 @@ from app.config import settings
 from app.models import Base, Execution, Strategy, TradeDecision
 from app.trading.models import StrategyDecision
 from app.trading.prices import MarketSnapshot
-from app.trading.paper_route_target_plan import _blocked_target_readiness
+from app.trading.paper_route_target_plan import (
+    blocked_target_readiness as _blocked_target_readiness,
+)
 from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
 from app.trading.scheduler.target_plan_helpers import (
     _bounded_sim_collection_blockers,
@@ -29,7 +31,7 @@ from app.trading.scheduler.target_plan_helpers import (
     _target_symbols,
 )
 from app.trading.runtime_window_import import resolve_hypothesis_manifest
-from app.trading.runtime_window_import_modules.evidence_gates import (
+from app.trading.runtime_window_import.evidence_gates import (
     RuntimePromotionInputs,
     runtime_promotion_blocking_reasons as _runtime_promotion_blocking_reasons_impl,
 )

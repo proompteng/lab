@@ -213,7 +213,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
             settings.llm_shadow_mode = original_shadow_mode
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -233,7 +233,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_reports_schema_heads(
@@ -262,7 +262,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         self.assertIn("checked_at", payload)
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0017_whitepaper_semantic_indexing"],
@@ -287,7 +287,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_lineage_divergence_returns_503_when_override_disabled(
@@ -315,7 +315,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         self.assertIn("schema_graph_branch_count", payload["detail"])
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0017_whitepaper_semantic_indexing"],
@@ -340,7 +340,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_lineage_warning_returns_200_when_override_enabled(
@@ -378,7 +378,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         )
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": False,
             "current_heads": ["0010_execution_provenance_and_governance_trace"],
@@ -400,7 +400,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_mismatch_returns_503(
@@ -658,7 +658,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         self.assertFalse(payload["execution_order_events_have_account_label"])
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -679,7 +679,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         settings.trading_multi_account_enabled = True
         try:
             with patch(
-                "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
                 side_effect=SQLAlchemyError(
                     "canceling statement due to statement timeout"
                 ),
@@ -694,7 +694,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         self.assertEqual(payload["schema_current"], True)
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -715,7 +715,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         settings.trading_multi_account_enabled = False
         try:
             with patch(
-                "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
                 side_effect=SQLAlchemyError(
                     "canceling statement due to statement timeout"
                 ),
@@ -733,7 +733,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         )
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -754,7 +754,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         settings.trading_multi_account_enabled = True
         try:
             with patch(
-                "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
                 return_value={
                     "account_scope_ready": False,
                     "account_scope_errors": [
@@ -776,7 +776,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         self.assertIn("checked_at", payload["detail"])
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -797,7 +797,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         settings.trading_multi_account_enabled = False
         try:
             with patch(
-                "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
                 return_value={
                     "account_scope_ready": False,
                     "account_scope_errors": ["legacy unique constraint/index detected"],

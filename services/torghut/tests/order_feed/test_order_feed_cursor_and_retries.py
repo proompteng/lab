@@ -46,7 +46,7 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
             first_ingestor = OrderFeedIngestor(consumer_factory=lambda: first_consumer)
             with patch(
                 (
-                    "app.trading.order_feed_modules.shared_context"
+                    "app.trading.order_feed.shared_context"
                     ".apply_order_event_to_execution"
                 ),
                 side_effect=RuntimeError("apply failed"),
@@ -267,7 +267,7 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
 
         with Session(self.engine) as session:
             with patch(
-                ("app.trading.order_feed_modules.shared_context.persist_order_event"),
+                ("app.trading.order_feed.shared_context.persist_order_event"),
                 side_effect=RuntimeError("store failed"),
             ):
                 counters = ingestor.ingest_once(session)

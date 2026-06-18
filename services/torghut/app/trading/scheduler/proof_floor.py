@@ -8,7 +8,7 @@ from typing import Any, cast
 from sqlalchemy.orm import Session
 
 from ...config import settings
-from .pipeline_modules.shared import TradingPipelineBase
+from .pipeline.shared import TradingPipelineBase
 from .target_plan_helpers import (
     PAPER_ROUTE_PROBE_REASONS as _PAPER_ROUTE_PROBE_REASONS,
     PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS as _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,

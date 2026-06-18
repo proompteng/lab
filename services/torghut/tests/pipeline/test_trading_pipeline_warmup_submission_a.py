@@ -139,7 +139,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
         pipeline._is_market_session_open = lambda _now=None: False
 
         with patch(
-            "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+            "app.trading.scheduler.pipeline.run_cycle.trading_now",
             return_value=datetime(2026, 3, 26, 13, 20, tzinfo=timezone.utc),
         ):
             pipeline.run_once()
@@ -190,7 +190,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
             session.commit()
 
             with patch(
-                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                "app.trading.scheduler.pipeline.run_cycle.trading_now",
                 return_value=datetime(2026, 3, 26, 13, 20, tzinfo=timezone.utc),
             ):
                 pipeline._capture_runtime_window_account_snapshot_if_due(session)
@@ -227,11 +227,11 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
 
         with self.session_local() as session:
             with patch(
-                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                "app.trading.scheduler.pipeline.run_cycle.trading_now",
                 return_value=datetime(2026, 3, 26, 13, 20, tzinfo=timezone.utc),
             ):
                 with self.assertLogs(
-                    "app.trading.scheduler.pipeline_modules.run_cycle",
+                    "app.trading.scheduler.pipeline.run_cycle",
                     level="ERROR",
                 ) as logs:
                     pipeline._capture_runtime_window_account_snapshot_if_due(session)
@@ -328,7 +328,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
         pipeline._is_market_session_open = lambda _now=None: True
 
         with patch(
-            "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+            "app.trading.scheduler.pipeline.run_cycle.trading_now",
             return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
         ):
             pipeline.run_once()
@@ -370,7 +370,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
             pipeline = self._build_warmup_pipeline(ingestor=ingestor)
 
             with patch(
-                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                "app.trading.scheduler.pipeline.run_cycle.trading_now",
                 return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
             ):
                 pipeline._warm_session_context_from_open(session)
@@ -390,7 +390,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
         session.commit.side_effect = RuntimeError("commit failed")
 
         with patch(
-            "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+            "app.trading.scheduler.pipeline.run_cycle.trading_now",
             return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
         ):
             pipeline._warm_session_context_from_open(cast(Session, session))
@@ -411,14 +411,14 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
 
         with self.session_local() as session:
             with patch(
-                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                "app.trading.scheduler.pipeline.run_cycle.trading_now",
                 return_value=datetime(2026, 3, 26, 12, 0, tzinfo=timezone.utc),
             ):
                 pipeline._warm_session_context_from_open(session)
 
             ingestor.cursor_at = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
             with patch(
-                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                "app.trading.scheduler.pipeline.run_cycle.trading_now",
                 return_value=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
             ):
                 pipeline._warm_session_context_from_open(session)
@@ -441,7 +441,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
             pipeline = self._build_warmup_pipeline(ingestor=ingestor)
             with self.session_local() as session:
                 with patch(
-                    "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                    "app.trading.scheduler.pipeline.run_cycle.trading_now",
                     return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
                 ):
                     pipeline._warm_session_context_from_open(session)
@@ -471,7 +471,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
 
         with self.session_local() as session:
             with patch(
-                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                "app.trading.scheduler.pipeline.run_cycle.trading_now",
                 return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
             ):
                 pipeline._warm_session_context_from_open(session)

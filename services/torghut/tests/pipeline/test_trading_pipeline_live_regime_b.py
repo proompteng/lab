@@ -109,15 +109,15 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
 
             with (
                 patch(
-                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_hypothesis_runtime_summary",
+                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
                     return_value=allowed_summary,
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_empirical_jobs_status",
+                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.load_quant_evidence_status",
+                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
                     return_value={
                         "required": True,
                         "ok": False,

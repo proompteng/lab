@@ -108,7 +108,7 @@ class TestTradingPipelineDspyGateD(TradingPipelineTestCaseBase):
                 error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
             )
             with patch(
-                "app.trading.scheduler.pipeline_modules.llm_review.DSPyReviewRuntime.from_settings",
+                "app.trading.scheduler.pipeline.llm_review.DSPyReviewRuntime.from_settings",
                 return_value=_UnavailableLiveRuntime(),
             ):
                 pipeline = TradingPipeline(

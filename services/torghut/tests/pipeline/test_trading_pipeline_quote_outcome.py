@@ -563,7 +563,7 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         )
 
         with self.assertLogs(
-            "app.trading.scheduler.pipeline_modules.signal_processing", level="ERROR"
+            "app.trading.scheduler.pipeline.signal_processing", level="ERROR"
         ):
             pipeline._persist_rejected_signal_outcome_event(
                 {

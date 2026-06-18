@@ -35,7 +35,7 @@ from ..live_submit_activation import (
 from ..tca import build_tca_gate_inputs
 from ..time_source import trading_now
 from .pipeline import TradingPipeline
-from .pipeline_modules.contexts import (
+from .pipeline.contexts import (
     BatchSignalProcessingContext,
     LiveSubmissionGateInputs,
 )

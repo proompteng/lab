@@ -99,7 +99,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                     False,
                 ),
                 patch(
-                    "app.trading.runtime_window_import_modules.ledger_persistence.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
+                    "app.trading.runtime_window_import.ledger_persistence.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
                     side_effect=RuntimeError("journal failed"),
                 ),
             ):
@@ -135,7 +135,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                     True,
                 ),
                 patch(
-                    "app.trading.runtime_window_import_modules.ledger_persistence.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
+                    "app.trading.runtime_window_import.ledger_persistence.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
                     side_effect=RuntimeError("journal failed"),
                 ),
             ):
@@ -191,7 +191,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                     False,
                 ),
                 patch(
-                    "app.trading.tigerbeetle_journal_modules.ledger_journal.create_tigerbeetle_client",
+                    "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
                     return_value=fake_client,
                 ),
             ):
@@ -325,7 +325,7 @@ class TestRuntimeWindowBucketsAndJournaling(_TestRuntimeWindowImportBase):
                     False,
                 ),
                 patch(
-                    "app.trading.runtime_window_import_modules.ledger_persistence.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
+                    "app.trading.runtime_window_import.ledger_persistence.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
                     return_value=None,
                 ),
             ):

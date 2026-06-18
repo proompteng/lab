@@ -332,15 +332,15 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             self._seed_promotion_certificate_evidence()
             with (
                 patch(
-                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_hypothesis_runtime_summary",
+                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
                     return_value=eligible_summary,
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.build_empirical_jobs_status",
+                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.trading.scheduler.pipeline_modules.decision_lifecycle.load_quant_evidence_status",
+                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
                     return_value=self._healthy_live_quant_status(),
                 ),
             ):

@@ -376,7 +376,7 @@ class TestAdaptivePolicyDerivation(_TestAdaptiveExecutionPolicyDerivationBase):
                 patch.object(tca_module.settings, "tigerbeetle_required", False),
                 patch(
                     (
-                        "app.trading.tca_modules.lineage_read_model"
+                        "app.trading.tca.lineage_read_model"
                         ".TigerBeetleLedgerJournal.journal_execution"
                     ),
                     side_effect=RuntimeError("journal failed"),
@@ -400,7 +400,7 @@ class TestAdaptivePolicyDerivation(_TestAdaptiveExecutionPolicyDerivationBase):
                 patch.object(tca_module.settings, "tigerbeetle_required", True),
                 patch(
                     (
-                        "app.trading.tca_modules.lineage_read_model"
+                        "app.trading.tca.lineage_read_model"
                         ".TigerBeetleLedgerJournal.journal_execution"
                     ),
                     side_effect=RuntimeError("journal failed"),

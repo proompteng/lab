@@ -494,7 +494,7 @@ class TestTradingPipelineRouteExecutionB(TradingPipelineTestCaseBase):
             pipeline._is_market_session_open = lambda _now=None: True
 
             with patch(
-                "app.trading.scheduler.pipeline_modules.decision_lifecycle.signal_bootstrap_grace_active",
+                "app.trading.scheduler.pipeline.decision_lifecycle.signal_bootstrap_grace_active",
                 return_value=True,
             ):
                 pipeline.record_no_signal_batch(
