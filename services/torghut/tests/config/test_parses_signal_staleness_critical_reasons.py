@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.request import Request
+
 from tests.config.support import (
     FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD,
     Path,
@@ -91,7 +93,11 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
         self.assertEqual(settings.trading_drift_rollback_reason_codes, {"x", "y"})
 
     def test_feature_flags_override_runtime_toggles(self) -> None:
-        def _mock_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        def _mock_urlopen(
+            request: Request,
+            _timeout: object,
+        ) -> _MockFlagResponse:
+            assert request.data is not None
             payload = json.loads(request.data.decode("utf-8"))
             key = payload.get("flagKey")
             values = {
@@ -151,7 +157,11 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
     def test_feature_flags_use_flipt_evaluate_contract(self) -> None:
         requests: list[dict[str, object]] = []
 
-        def _mock_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        def _mock_urlopen(
+            request: Request,
+            _timeout: object,
+        ) -> _MockFlagResponse:
+            assert request.data is not None
             requests.append(
                 {
                     "url": request.full_url,
@@ -199,7 +209,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
     def test_feature_flag_failures_short_circuit_remaining_remote_lookups(self) -> None:
         call_count = 0
 
-        def _mock_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        def _mock_urlopen(_request: Request, _timeout: object) -> _MockFlagResponse:
             nonlocal call_count
             call_count += 1
             raise RuntimeError("network")
@@ -234,7 +244,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             def read(self) -> bytes:
                 return b'{"enabled":"yes"}'
 
-        def _mock_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        def _mock_urlopen(_request: Request, _timeout: object) -> _Response:
             nonlocal call_count
             call_count += 1
             return _Response()

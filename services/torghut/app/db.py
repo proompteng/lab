@@ -6,7 +6,7 @@ from collections.abc import Generator
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Optional, Protocol, cast
 
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
@@ -45,6 +45,15 @@ SessionLocal = sessionmaker(
     expire_on_commit=False,
     future=True,
 )
+
+
+class _PingSession(Protocol):
+    def execute(self, statement: Any) -> Any: ...
+
+
+class _SchemaCheckSession(_PingSession, Protocol):
+    def connection(self) -> Any: ...
+
 
 # Simple metadata table to confirm connectivity and seed future migrations.
 metadata = MetaData()
@@ -256,7 +265,7 @@ def ensure_schema() -> None:
     Base.metadata.create_all(bind=engine, checkfirst=True)
 
 
-def ping(session: Session) -> Optional[int]:
+def ping(session: _PingSession) -> Optional[int]:
     """Run a lightweight SELECT 1 for health checks."""
 
     result = session.execute(text("SELECT 1"))
@@ -467,7 +476,7 @@ def _schema_heads_signature(heads: tuple[str, ...]) -> str:
 _POSTGRES_SCHEMA_HEAD_STATEMENT_TIMEOUT_MS = 750
 
 
-def _current_schema_heads(session: Session) -> list[str]:
+def _current_schema_heads(session: _SchemaCheckSession) -> list[str]:
     connection = session.connection()
     dialect_name = str(
         getattr(getattr(connection, "dialect", None), "name", "")
@@ -492,7 +501,7 @@ def _current_schema_heads(session: Session) -> list[str]:
     return sorted(str(head) for head in context.get_current_heads())
 
 
-def check_schema_current(session: Session) -> dict[str, object]:
+def check_schema_current(session: _SchemaCheckSession) -> dict[str, object]:
     """Report Alembic head alignment for readiness and diagnostics."""
 
     ping(session)

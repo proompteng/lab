@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from app.api import readiness_helpers as readiness_helpers_api
 
 from tests.api.trading_api_support import (
@@ -20,6 +22,18 @@ from tests.api.trading_api_support import (
     settings,
     timezone,
 )
+
+
+class _FakeDatabaseContractSession:
+    def execute(
+        self,
+        statement: object,
+        params: Mapping[str, object] | None = None,
+    ) -> object:
+        raise AssertionError(f"unexpected database contract SQL: {statement} {params}")
+
+    def connection(self) -> object:
+        raise AssertionError("unexpected database contract connection")
 
 
 class TestTradingApiDbContract(TradingApiTestCaseBase):
@@ -533,7 +547,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         fake_session = FakeSession()
         payload = readiness_helpers_api._check_account_scope_invariants_bounded(
             fake_session
-        )  # type: ignore[arg-type]
+        )
 
         self.assertTrue(payload["account_scope_ready"])
         self.assertEqual(payload["account_scope_errors"], [])
@@ -634,7 +648,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         try:
             payload = readiness_helpers_api._check_account_scope_invariants_bounded(
                 FakeSession()
-            )  # type: ignore[arg-type]
+            )
         finally:
             settings.trading_multi_account_enabled = original_multi
 
@@ -684,7 +698,9 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
                     "canceling statement due to statement timeout"
                 ),
             ):
-                payload = readiness_helpers_api._evaluate_database_contract(object())  # type: ignore[arg-type]
+                payload = readiness_helpers_api._evaluate_database_contract(
+                    _FakeDatabaseContractSession()
+                )
         finally:
             settings.trading_multi_account_enabled = original_multi
 
@@ -720,7 +736,9 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
                     "canceling statement due to statement timeout"
                 ),
             ):
-                payload = readiness_helpers_api._evaluate_database_contract(object())  # type: ignore[arg-type]
+                payload = readiness_helpers_api._evaluate_database_contract(
+                    _FakeDatabaseContractSession()
+                )
         finally:
             settings.trading_multi_account_enabled = original_multi
 

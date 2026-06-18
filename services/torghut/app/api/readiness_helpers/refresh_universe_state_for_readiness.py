@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 
 from .shared_context import (
     Mapping,
     SQLAlchemyError,
     Sequence,
-    Session,
     SessionLocal,
     TradingScheduler,
     ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS as _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
@@ -68,6 +67,18 @@ class _SchemaGraphLineageStatus:
     @property
     def ready(self) -> bool:
         return not self.errors
+
+
+class _ReadinessAccountScopeSession(Protocol):
+    def execute(
+        self,
+        statement: Any,
+        params: Mapping[str, object] | None = None,
+    ) -> Any: ...
+
+
+class _ReadinessDatabaseSession(_ReadinessAccountScopeSession, Protocol):
+    def connection(self) -> Any: ...
 
 
 def _refresh_universe_state_for_readiness(
@@ -135,7 +146,7 @@ def _resolve_universe_resolver_for_readiness(scheduler: TradingScheduler) -> Any
 
 
 def _execute_readiness_account_scope_query(
-    session: Session,
+    session: _ReadinessAccountScopeSession,
     sql: str,
     *,
     table_names: Sequence[str] | None = None,
@@ -151,7 +162,9 @@ def _execute_readiness_account_scope_query(
     ]
 
 
-def _check_account_scope_invariants_bounded(session: Session) -> dict[str, object]:
+def _check_account_scope_invariants_bounded(
+    session: _ReadinessAccountScopeSession,
+) -> dict[str, object]:
     """Validate account-scope invariants using bounded catalog reads only.
 
     SQLAlchemy's generic inspector can reflect PostgreSQL domains while reading
@@ -200,7 +213,7 @@ def _account_scope_table_names(
 
 
 def _account_scope_catalog_snapshot(
-    session: Session,
+    session: _ReadinessAccountScopeSession,
     *,
     table_names: Sequence[str],
 ) -> _AccountScopeCatalogSnapshot:
@@ -217,7 +230,7 @@ def _account_scope_catalog_snapshot(
 
 
 def _account_scope_columns_by_table(
-    session: Session,
+    session: _ReadinessAccountScopeSession,
     table_names: Sequence[str],
 ) -> dict[str, set[str]]:
     column_rows = _execute_readiness_account_scope_query(
@@ -244,7 +257,7 @@ def _account_scope_columns_by_table(
 
 
 def _account_scope_unique_indexes_by_table(
-    session: Session,
+    session: _ReadinessAccountScopeSession,
     table_names: Sequence[str],
 ) -> dict[str, list[tuple[str, set[str]]]]:
     unique_index_rows = _execute_readiness_account_scope_query(
@@ -281,7 +294,7 @@ def _account_scope_unique_indexes_by_table(
 
 
 def _account_scope_index_names_by_table(
-    session: Session,
+    session: _ReadinessAccountScopeSession,
     table_names: Sequence[str],
 ) -> dict[str, list[str]]:
     all_index_rows = _execute_readiness_account_scope_query(
@@ -308,7 +321,7 @@ def _account_scope_index_names_by_table(
 
 
 def _account_scope_legacy_constraints_by_table(
-    session: Session,
+    session: _ReadinessAccountScopeSession,
     table_names: Sequence[str],
 ) -> dict[str, set[str]]:
     legacy_constraint_rows = _execute_readiness_account_scope_query(
@@ -465,7 +478,9 @@ def _finalize_account_scope_checks(
     return checks
 
 
-def _evaluate_database_contract(session: Session) -> dict[str, object]:
+def _evaluate_database_contract(
+    session: _ReadinessDatabaseSession,
+) -> dict[str, object]:
     """Collect schema and account-scope readiness checks used by /readyz and /db-check."""
     checked_at = datetime.now(timezone.utc).isoformat()
 
@@ -542,7 +557,7 @@ def _database_contract_error(
 
 
 def _database_contract_account_scope(
-    session: Session,
+    session: _ReadinessDatabaseSession,
 ) -> tuple[dict[str, object], list[str]]:
     try:
         account_scope_checks = dict(_check_account_scope_invariants_bounded(session))
