@@ -94,6 +94,20 @@ def _sequence(value: object) -> Sequence[object]:
     return []
 
 
+def _symbol_list(value: object) -> list[str]:
+    symbols: list[str] = []
+    values: Sequence[object]
+    if isinstance(value, str):
+        values = value.split(",")
+    else:
+        values = _sequence(value)
+    for raw_symbol in values:
+        symbol = _text(raw_symbol).upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    return symbols
+
+
 def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return f"{prefix}:{sha256(encoded.encode()).hexdigest()[:20]}"
@@ -517,6 +531,7 @@ def build_route_reacquisition_book(
     paper_route_probe_enabled: bool = False,
     paper_route_probe_allow_live_mode: bool = False,
     paper_route_probe_max_notional: object | None = None,
+    paper_route_probe_target_symbols: Sequence[object] | None = None,
 ) -> dict[str, object]:
     """Build a symbol-level route repair book from proof-floor source refs.
 
@@ -613,6 +628,10 @@ def build_route_reacquisition_book(
         for item in records
         if _paper_route_probe_eligible(item)
     ]
+    target_probe_symbols = _symbol_list(paper_route_probe_target_symbols)
+    for symbol in target_probe_symbols:
+        if symbol not in eligible_probe_symbols:
+            eligible_probe_symbols.append(symbol)
     probe_blockers = _paper_route_probe_blockers(
         trading_mode=trading_mode,
         market_session_open=market_session_open,
@@ -731,6 +750,12 @@ def build_route_reacquisition_book(
             "market_context_state": market_context_dimension.get("state"),
             "quant_ingestion_state": quant_dimension.get("state"),
             "alpha_readiness_state": alpha_dimension.get("state"),
+            "paper_route_probe_target_symbols": target_probe_symbols,
+            "paper_route_probe_target_symbol_source": (
+                "bounded_paper_route_collection_target_plan"
+                if target_probe_symbols
+                else None
+            ),
         },
         "rollback_target": {
             "paper_probe_notional_limit": "0",

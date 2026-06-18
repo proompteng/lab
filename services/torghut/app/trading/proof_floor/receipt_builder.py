@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -49,6 +49,7 @@ def build_profitability_proof_floor_receipt(
     market_context_status: Mapping[str, Any],
     tca_summary: Mapping[str, Any],
     simple_lane_status: Mapping[str, Any] | None = None,
+    paper_route_probe_target_symbols: Sequence[object] | None = None,
     now: datetime | None = None,
     tca_max_age_seconds: int = 86400,
 ) -> dict[str, object]:
@@ -739,6 +740,7 @@ def build_profitability_proof_floor_receipt(
         paper_route_probe_enabled=paper_route_probe_enabled,
         paper_route_probe_allow_live_mode=paper_route_probe_allow_live_mode,
         paper_route_probe_max_notional=paper_route_probe_max_notional,
+        paper_route_probe_target_symbols=paper_route_probe_target_symbols,
     )
     receipt["route_reacquisition_book"] = route_reacquisition_book
     receipt["paper_route_probe"] = route_reacquisition_book.get("paper_route_probe")

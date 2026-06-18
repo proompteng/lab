@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.trading.route_reacquisition import build_route_reacquisition_book
+
 from tests.profitability_proof_floor.support import (
     Any,
     Mapping,
@@ -127,6 +129,84 @@ def test_live_degraded_evidence_routes_to_repair_only() -> None:
             "strategy_family": "intraday_continuation",
         }
     ]
+
+
+def test_bounded_paper_target_symbols_feed_route_probe_without_promotion() -> None:
+    simple_lane_status = {
+        **_simple_lane_status(),
+        "paper_route_probe_enabled": True,
+        "paper_route_probe_allow_live_mode": True,
+        "paper_route_probe_max_notional": "100",
+    }
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="PA3SX7FYNUTF",
+        torghut_revision="torghut-01274",
+        trading_mode="live",
+        market_session_open=False,
+        live_submission_gate={
+            "allowed": False,
+            "reason": "live_submit_activation_expired",
+            "blocked_reasons": ["live_submit_activation_expired"],
+            "capital_stage": "shadow",
+        },
+        hypothesis_payload={
+            "summary": {
+                "hypotheses_total": 0,
+                "promotion_eligible_total": 0,
+                "rollback_required_total": 0,
+                "state_totals": {},
+            },
+            "items": [],
+        },
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            "order_count": 0,
+            "last_computed_at": None,
+            "filled_execution_count": 0,
+        },
+        simple_lane_status=simple_lane_status,
+        paper_route_probe_target_symbols=["aapl", "NVDA", "AAPL"],
+        now=NOW,
+    )
+
+    route_book = cast(Mapping[str, Any], receipt["route_reacquisition_book"])
+    probe = cast(Mapping[str, Any], route_book["paper_route_probe"])
+    summary = cast(Mapping[str, Any], route_book["summary"])
+    source_refs = cast(Mapping[str, Any], route_book["source_refs"])
+
+    assert receipt["capital_state"] == "zero_notional"
+    assert receipt["route_state"] == "repair_only"
+    assert probe["promotion_authority"] is False
+    assert probe["active"] is False
+    assert probe["next_session_max_notional"] == "100"
+    assert probe["eligible_symbols"] == ["AAPL", "NVDA"]
+    assert probe["blocking_reasons"] == ["session_closed"]
+    assert summary["paper_route_probe_eligible_symbols"] == ["AAPL", "NVDA"]
+    assert source_refs["paper_route_probe_target_symbols"] == ["AAPL", "NVDA"]
+    assert source_refs["paper_route_probe_target_symbol_source"] == (
+        "bounded_paper_route_collection_target_plan"
+    )
+
+
+def test_route_probe_accepts_comma_separated_target_symbols() -> None:
+    route_book = build_route_reacquisition_book(
+        proof_floor_receipt={
+            "account_label": "PA3SX7FYNUTF",
+            "generated_at": NOW,
+            "proof_dimensions": [],
+        },
+        trading_mode="live",
+        market_session_open=True,
+        paper_route_probe_enabled=True,
+        paper_route_probe_allow_live_mode=True,
+        paper_route_probe_max_notional="100",
+        paper_route_probe_target_symbols="msft,TSLA,MSFT",
+    )
+
+    probe = cast(Mapping[str, Any], route_book["paper_route_probe"])
+    assert probe["eligible_symbols"] == ["MSFT", "TSLA"]
 
 
 def test_alpha_repair_targets_flow_to_route_reacquisition_records() -> None:
