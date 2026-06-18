@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from .models import CycleResult
+from .optimizer import OptimizerGateResult
 
 
 @dataclass
@@ -17,6 +18,9 @@ class HyperliquidRuntimeMetrics:
     orders_submitted_total: int = 0
     blocked_decisions_total: int = 0
     signals_written_total: int = 0
+    optimizer_runs_total: int = 0
+    optimizer_promoted_total: int = 0
+    optimizer_errors_total: int = 0
     last_cycle_at: datetime | None = None
     last_error: str | None = None
 
@@ -30,6 +34,15 @@ class HyperliquidRuntimeMetrics:
 
     def record_error(self, error: BaseException) -> None:
         self.cycle_errors_total += 1
+        self.last_error = f"{type(error).__name__}:{error}"
+
+    def record_optimizer(self, result: OptimizerGateResult) -> None:
+        self.optimizer_runs_total += 1
+        if result.promoted:
+            self.optimizer_promoted_total += 1
+
+    def record_optimizer_error(self, error: BaseException) -> None:
+        self.optimizer_errors_total += 1
         self.last_error = f"{type(error).__name__}:{error}"
 
     def render(self, namespace: str) -> str:
@@ -52,6 +65,15 @@ class HyperliquidRuntimeMetrics:
             f"# HELP {namespace}_signals_written_total Signals persisted.",
             f"# TYPE {namespace}_signals_written_total counter",
             f"{namespace}_signals_written_total {self.signals_written_total}",
+            f"# HELP {namespace}_optimizer_runs_total Offline optimizer runs persisted.",
+            f"# TYPE {namespace}_optimizer_runs_total counter",
+            f"{namespace}_optimizer_runs_total {self.optimizer_runs_total}",
+            f"# HELP {namespace}_optimizer_promoted_total Offline optimizer runs passing promotion gates.",
+            f"# TYPE {namespace}_optimizer_promoted_total counter",
+            f"{namespace}_optimizer_promoted_total {self.optimizer_promoted_total}",
+            f"# HELP {namespace}_optimizer_errors_total Offline optimizer errors.",
+            f"# TYPE {namespace}_optimizer_errors_total counter",
+            f"{namespace}_optimizer_errors_total {self.optimizer_errors_total}",
             f"# HELP {namespace}_last_cycle_ts_seconds Last completed cycle Unix timestamp.",
             f"# TYPE {namespace}_last_cycle_ts_seconds gauge",
             f"{namespace}_last_cycle_ts_seconds {last_cycle_seconds}",

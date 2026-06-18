@@ -21,6 +21,9 @@ def _config(**overrides: object) -> HyperliquidRuntimeConfig:
     env = {
         "HYPERLIQUID_RUNTIME_TRADING_ENABLED": "false",
         "HYPERLIQUID_RUNTIME_EXECUTION_NETWORK": "testnet",
+        "TORGHUT_TIGERBEETLE_ENABLED": "true",
+        "TORGHUT_TIGERBEETLE_REQUIRED": "true",
+        "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
     }
     env.update({key: str(value) for key, value in overrides.items()})
     return HyperliquidRuntimeConfig.from_env(env)
@@ -62,6 +65,8 @@ def test_signal_and_risk_build_tiny_ioc_intent() -> None:
     state = RiskState(
         gross_exposure_usd=Decimal("90"),
         daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
         open_order_markets=frozenset(),
         dependencies=(
             RuntimeDependencyStatus("clickhouse", True),
@@ -87,6 +92,8 @@ def test_risk_blocks_shadow_mode_before_order_path() -> None:
     state = RiskState(
         gross_exposure_usd=Decimal("0"),
         daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
         open_order_markets=frozenset(),
         dependencies=(
             RuntimeDependencyStatus("clickhouse", True),
@@ -106,6 +113,8 @@ def test_risk_blocks_mainnet_execution_config() -> None:
     state = RiskState(
         gross_exposure_usd=Decimal("0"),
         daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
         open_order_markets=frozenset(),
         dependencies=(RuntimeDependencyStatus("clickhouse", True),),
     )
@@ -132,6 +141,8 @@ def test_risk_blocks_stale_dependency_and_duplicate_market() -> None:
     state = RiskState(
         gross_exposure_usd=Decimal("0"),
         daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
         open_order_markets=frozenset({signal.market_id}),
         dependencies=(RuntimeDependencyStatus("clickhouse", False, reason="stale"),),
     )

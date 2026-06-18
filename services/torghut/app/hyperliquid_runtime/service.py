@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Protocol
 
 from .clickhouse import ClickHouseStatus
@@ -25,6 +24,12 @@ from .models import (
     RuntimeDependencyStatus,
     Signal,
     RiskVerdict,
+)
+from .optimizer import (
+    OptimizerGateResult,
+    build_optimizer_candidate,
+    evaluate_optimizer_candidate,
+    persist_optimizer_run,
 )
 from .repository import HyperliquidRuntimeRepository
 from .risk import build_order_intent, evaluate_signal_risk
@@ -46,6 +51,10 @@ class HyperliquidRuntimeClickHouse(Protocol):
 
     def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]:
         """Load latest feature rows for selected markets."""
+        ...
+
+    def load_optimizer_history_summary(self) -> dict[str, object]:
+        """Load bounded ClickHouse market history for offline optimizer input."""
         ...
 
 
@@ -70,6 +79,10 @@ class HyperliquidRuntimeJournal(Protocol):
         events: Sequence[HyperliquidJournalEvent],
     ) -> int:
         """Persist journal event references."""
+        ...
+
+    def dependency_status(self) -> RuntimeDependencyStatus:
+        """Return TigerBeetle journal readiness."""
         ...
 
 
@@ -110,6 +123,22 @@ class HyperliquidRuntimeService:
             dependency_statuses=context.dependencies,
         )
 
+    def run_optimizer_once(
+        self,
+        session: RuntimeSession,
+    ) -> OptimizerGateResult | None:
+        if not self._config.optimizer_enabled:
+            return None
+        candidate = build_optimizer_candidate(
+            session,
+            config=self._config,
+            history_summary=self._clickhouse.load_optimizer_history_summary(),
+        )
+        result = evaluate_optimizer_candidate(candidate, self._config)
+        persist_optimizer_run(session, candidate, result)
+        session.commit()
+        return result
+
     def _load_cycle_context(
         self,
         session: RuntimeSession,
@@ -134,15 +163,31 @@ class HyperliquidRuntimeService:
             if execution_markets
             else []
         )
-        fills = self._exchange.reconcile_fills(
-            {market.coin: market.market_id for market in execution_markets}
+        feature_status = _feature_readiness_status(
+            execution_markets=execution_markets,
+            features=features,
+            clickhouse_ready=clickhouse_status.ready,
         )
+        market_id_by_coin = {
+            market.coin: market.market_id for market in execution_markets
+        }
+        journal_status = self._journal.dependency_status()
+        if self._config.trading_enabled:
+            self._exchange.schedule_dead_man_cancel(
+                seconds_from_now=max(60, self._config.poll_interval_seconds * 4)
+            )
+        fills = self._exchange.reconcile_fills(market_id_by_coin)
         fill_count = repository.upsert_fills(fills)
-        for fill in fills:
-            self._journal.persist_refs(session, self._journal.fill_events(fill))
+        if journal_status.ready:
+            for fill in fills:
+                self._journal.persist_refs(session, self._journal.fill_events(fill))
+        account_state = self._exchange.reconcile_account(market_id_by_coin)
+        repository.upsert_account_state(account_state)
         exchange_status = self._exchange.dependency_status()
         dependencies = clickhouse_status.statuses + (
             execution_universe_status,
+            feature_status,
+            journal_status,
             exchange_status,
         )
         return _CycleContext(
@@ -154,6 +199,7 @@ class HyperliquidRuntimeService:
             risk_state=repository.risk_state(dependencies=dependencies),
             fill_count=fill_count,
             exchange_ready=exchange_status.ready,
+            journal_ready=journal_status.ready,
         )
 
     def _process_feature(
@@ -190,11 +236,31 @@ class HyperliquidRuntimeService:
             config=self._config,
             decision_id=decision_id,
         )
-        result = self._exchange.submit_ioc_limit(intent)
-        context.repository.insert_order(intent, result)
         self._journal.persist_refs(
-            context.session, self._journal.order_events(intent, result)
+            context.session,
+            self._journal.order_events(
+                intent,
+                OrderResult(
+                    status="submitted",
+                    exchange_order_id=None,
+                    raw_response={"pre_exchange_submit": True},
+                ),
+            ),
         )
+        try:
+            result = self._exchange.submit_ioc_limit(intent)
+        except Exception as exc:
+            result = OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={"error": type(exc).__name__},
+                rejection_reason=f"exchange_submit_failed:{type(exc).__name__}",
+            )
+        context.repository.insert_order(intent, result)
+        if result.status in {"rejected", "cancelled"}:
+            self._journal.persist_refs(
+                context.session, self._journal.order_events(intent, result)
+            )
 
     def _write_performance(
         self,
@@ -207,12 +273,10 @@ class HyperliquidRuntimeService:
                 observed_at=observed_at,
                 gross_exposure_usd=context.risk_state.gross_exposure_usd,
                 realized_pnl_usd=context.risk_state.daily_realized_pnl_usd,
-                unrealized_pnl_usd=Decimal("0"),
-                fees_usd=Decimal("0"),
+                unrealized_pnl_usd=context.risk_state.unrealized_pnl_usd,
+                fees_usd=context.risk_state.daily_fees_usd,
                 trade_count=context.fill_count,
-                reconciliation_status="pass"
-                if context.exchange_ready
-                else "exchange_stale",
+                reconciliation_status=_performance_reconciliation_status(context),
             )
         )
 
@@ -260,6 +324,48 @@ def _decision_record(
     )
 
 
+def _feature_readiness_status(
+    *,
+    execution_markets: tuple[HyperliquidMarket, ...],
+    features: list[FeatureSnapshot],
+    clickhouse_ready: bool,
+) -> RuntimeDependencyStatus:
+    if not execution_markets:
+        return RuntimeDependencyStatus(
+            name="hyperliquid_execution_features",
+            ready=True,
+            reason=None,
+        )
+    feature_market_ids = {feature.market_id for feature in features}
+    execution_market_ids = {market.market_id for market in execution_markets}
+    if features and feature_market_ids == execution_market_ids:
+        newest = max(feature.event_ts for feature in features)
+        observed_at = datetime.now(timezone.utc)
+        return RuntimeDependencyStatus(
+            name="hyperliquid_execution_features",
+            ready=True,
+            observed_at=newest,
+            lag_seconds=max(0, int((observed_at - newest).total_seconds())),
+        )
+    return RuntimeDependencyStatus(
+        name="hyperliquid_execution_features",
+        ready=False,
+        reason=(
+            "missing_fresh_features_for_execution_markets"
+            if clickhouse_ready
+            else "clickhouse_not_ready_for_execution_features"
+        ),
+    )
+
+
+def _performance_reconciliation_status(context: _CycleContext) -> str:
+    if not context.exchange_ready:
+        return "exchange_stale"
+    if not context.journal_ready:
+        return "tigerbeetle_stale"
+    return "pass"
+
+
 @dataclass(frozen=True)
 class _CycleContext:
     session: RuntimeSession
@@ -270,6 +376,7 @@ class _CycleContext:
     risk_state: RiskState
     fill_count: int
     exchange_ready: bool
+    journal_ready: bool
 
 
 @dataclass(frozen=True)

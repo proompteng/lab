@@ -186,18 +186,25 @@ class HyperliquidInfoClient(
         if (config.includeSpot) addAll(loadSpotMarketVolumeScores())
       }.associateBy({ it.marketId }, { it.dayNotionalVolume })
 
-    val selected =
+    val topVolume =
       markets
         .sortedWith(
           compareByDescending<HyperliquidMarket> { scores[it.marketId] ?: 0.0 }
             .thenBy { it.marketType.name }
             .thenBy { it.marketId },
         ).take(config.topMarketCount)
+    val pinned =
+      markets
+        .filter { market ->
+          market.marketType == HyperliquidMarketType.PERP &&
+            market.coin.uppercase() in config.pinnedPerpCoins
+        }.sortedBy { it.marketId }
+    val selected = (topVolume + pinned).distinctBy { it.marketId }
 
-    val minSelectedVolume = selected.minOfOrNull { scores[it.marketId] ?: 0.0 } ?: 0.0
+    val minSelectedVolume = topVolume.minOfOrNull { scores[it.marketId] ?: 0.0 } ?: 0.0
     infoLogger.info {
       "selected Hyperliquid top-volume markets count=${selected.size} configured=${config.topMarketCount} " +
-        "catalog=${markets.size} scored=${scores.size} min_day_notional_volume=$minSelectedVolume"
+        "pinned=${pinned.size} catalog=${markets.size} scored=${scores.size} min_day_notional_volume=$minSelectedVolume"
     }
     return selected
   }

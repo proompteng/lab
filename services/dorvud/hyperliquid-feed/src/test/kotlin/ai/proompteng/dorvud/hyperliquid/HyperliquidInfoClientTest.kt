@@ -133,6 +133,54 @@ class HyperliquidInfoClientTest {
       )
     }
 
+  @Test
+  fun `keeps pinned perp markets beyond the top volume cutoff`() =
+    runTest {
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            val body = (request.body as TextContent).text
+            when {
+              body.hasType("perpDexs") -> jsonResponse("""[null]""")
+              body.hasType("metaAndAssetCtxs") ->
+                jsonResponse(
+                  """
+                  [
+                    {"universe":[{"name":"BTC","szDecimals":5},{"name":"SPX","szDecimals":1},{"name":"ETH","szDecimals":4}]},
+                    [{"dayNtlVlm":"1000"},{"dayNtlVlm":"1"},{"dayNtlVlm":"900"}]
+                  ]
+                  """.trimIndent(),
+                )
+              body.hasType("meta") ->
+                jsonResponse(
+                  """{"universe":[{"name":"BTC","szDecimals":5},{"name":"SPX","szDecimals":1},{"name":"ETH","szDecimals":4}]}""",
+                )
+              body.hasType("spotMetaAndAssetCtxs") -> jsonResponse("""[{"tokens":[],"universe":[]},[]]""")
+              body.hasType("spotMeta") -> jsonResponse("""{"tokens":[],"universe":[]}""")
+              else -> jsonResponse("""{}""")
+            }
+          },
+        ) {
+          install(ContentNegotiation) { json(json) }
+        }
+      val config =
+        HyperliquidConfig.fromEnv(
+          mapOf(
+            "KAFKA_SASL_PASSWORD" to "secret",
+            "CLICKHOUSE_ENABLED" to "false",
+            "HYPERLIQUID_INCLUDE_SPOT" to "false",
+            "HYPERLIQUID_MARKET_COVERAGE" to "top-volume",
+            "HYPERLIQUID_TOP_MARKET_COUNT" to "1",
+            "HYPERLIQUID_PINNED_PERP_COINS" to "SPX",
+          ),
+        )
+      val infoClient = HyperliquidInfoClient(config, client, MinuteWeightBudget(1000), json)
+
+      val markets = infoClient.loadMarkets()
+
+      assertEquals(listOf("hl:perp:default:BTC", "hl:perp:default:SPX"), markets.map { it.marketId })
+    }
+
   private fun MockRequestHandleScope.jsonResponse(body: String): HttpResponseData =
     respond(
       content = body,

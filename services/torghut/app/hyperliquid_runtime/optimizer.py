@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from decimal import Decimal
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from .config import HyperliquidRuntimeConfig
+from .runtime_session import RuntimeSession
 
 
 @dataclass(frozen=True)
@@ -52,8 +53,75 @@ def evaluate_optimizer_candidate(
     return OptimizerGateResult(promoted=not reasons, reasons=tuple(reasons))
 
 
+def build_optimizer_candidate(
+    session: RuntimeSession,
+    *,
+    config: HyperliquidRuntimeConfig,
+    history_summary: Mapping[str, object],
+) -> OptimizerCandidate:
+    """Build a guarded offline candidate from market history and outcomes."""
+
+    row = (
+        session.execute(
+            text(
+                """
+                WITH fill_summary AS (
+                  SELECT
+                    count(*) AS trade_count,
+                    COALESCE(sum(closed_pnl_usd - fee_usd), 0) AS net_pnl_usd
+                  FROM hyperliquid_runtime_fills
+                  WHERE network = 'testnet'
+                    AND event_ts >= now() - INTERVAL '7 days'
+                ),
+                performance_summary AS (
+                  SELECT
+                    COALESCE(
+                      abs(least(min(realized_pnl_usd + unrealized_pnl_usd - fees_usd), 0)),
+                      0
+                    ) AS max_drawdown_usd,
+                    count(*) FILTER (WHERE reconciliation_status <> 'pass')
+                      AS stale_period_count
+                  FROM hyperliquid_runtime_performance_snapshots
+                  WHERE network = 'testnet'
+                    AND observed_at >= now() - INTERVAL '7 days'
+                ),
+                tigerbeetle_summary AS (
+                  SELECT count(*) AS reconciliation_gap_count
+                  FROM hyperliquid_runtime_tigerbeetle_refs
+                  WHERE status NOT IN ('created', 'exists')
+                )
+                SELECT
+                  fill_summary.trade_count,
+                  fill_summary.net_pnl_usd,
+                  performance_summary.max_drawdown_usd,
+                  performance_summary.stale_period_count,
+                  tigerbeetle_summary.reconciliation_gap_count
+                FROM fill_summary, performance_summary, tigerbeetle_summary
+                """
+            )
+        )
+        .mappings()
+        .one()
+    )
+    return OptimizerCandidate(
+        parameter_version=f"{config.strategy_parameter_version}-offline-v1",
+        trade_count=_int(row["trade_count"]),
+        net_pnl_usd=_decimal(row["net_pnl_usd"]),
+        max_drawdown_usd=_decimal(row["max_drawdown_usd"]),
+        reconciliation_gap_count=_int(row["reconciliation_gap_count"]),
+        stale_period_count=_int(row["stale_period_count"])
+        + _int(history_summary.get("stale_feature_rows")),
+        payload={
+            "schema_version": "torghut.hyperliquid-runtime-optimizer-input.v1",
+            "market_history": dict(history_summary),
+            "outcome_window": "7d",
+            "strategy_parameter_version": config.strategy_parameter_version,
+        },
+    )
+
+
 def persist_optimizer_run(
-    session: Session,
+    session: RuntimeSession,
     candidate: OptimizerCandidate,
     result: OptimizerGateResult,
 ) -> None:
@@ -104,3 +172,15 @@ def persist_optimizer_run(
             "payload": json.dumps(candidate.payload, sort_keys=True),
         },
     )
+
+
+def _int(value: object) -> int:
+    if value is None:
+        return 0
+    return int(Decimal(str(value)))
+
+
+def _decimal(value: object) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    return Decimal(str(value))

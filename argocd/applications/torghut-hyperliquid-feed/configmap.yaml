@@ -13,6 +13,7 @@ data:
   HYPERLIQUID_INCLUDE_SPOT: "true"
   HYPERLIQUID_MARKET_COVERAGE: "top-volume"
   HYPERLIQUID_TOP_MARKET_COUNT: "100"
+  HYPERLIQUID_PINNED_PERP_COINS: "SPX"
   HYPERLIQUID_WS_CHANNELS: "allMids,trades,l2Book,bbo,candle,activeAssetCtx,allDexsAssetCtxs"
   # Five candle windows over the top 100 markets remain below the 1000-subscription cap.
   HYPERLIQUID_CANDLE_INTERVALS: "1m,3m,5m,15m,1h"

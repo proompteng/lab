@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-feed-clickhouse-optional-20260618b
+        proompteng.ai/config-revision: hyperliquid-feed-pinned-spx-20260618a
       labels:
         app: torghut-hyperliquid-feed
     spec:
@@ -31,12 +31,18 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-hyperliquid-feed
-          image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed:latest
+          image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:3235e6b70f331f1e5701e8b1bc3b4be953a1ea96c0e0a7b0b6e0e45af42089b8
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: torghut-hyperliquid-feed-config
           env:
+            - name: TORGHUT_HYPERLIQUID_FEED_VERSION
+              value: main-02c30d10
+            - name: TORGHUT_HYPERLIQUID_FEED_COMMIT
+              value: 02c30d10889c2ad975ec218be0e6bada0a17fa41
+            - name: TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST
+              value: sha256:3235e6b70f331f1e5701e8b1bc3b4be953a1ea96c0e0a7b0b6e0e45af42089b8
             - name: KAFKA_SASL_USER
               value: torghut-hyperliquid-feed
             - name: KAFKA_SASL_PASSWORD

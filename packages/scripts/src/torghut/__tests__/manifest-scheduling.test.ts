@@ -167,9 +167,27 @@ describe('Torghut manifest scheduling', () => {
     expect(data.CLICKHOUSE_REQUIRED_FOR_READINESS).toBe('false')
 
     const deployment = parseManifest('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
+    const feedContainer = getAtPath(deployment, ['spec', 'template', 'spec', 'containers', 0])
+    expect(String(feedContainer.image)).toMatch(
+      /^registry\.ide-newton\.ts\.net\/lab\/torghut-hyperliquid-feed@sha256:[0-9a-f]{64}$/,
+    )
+    expect(String(feedContainer.image)).not.toContain(':latest')
+    const feedEnv = feedContainer.env
+    expect(feedEnv).toContainEqual(
+      expect.objectContaining({
+        name: 'TORGHUT_HYPERLIQUID_FEED_COMMIT',
+        value: expect.stringMatching(/^[0-9a-f]{40}$/),
+      }),
+    )
+    expect(feedEnv).toContainEqual(
+      expect.objectContaining({
+        name: 'TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST',
+        value: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      }),
+    )
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-clickhouse-optional-20260618b')
+    ).toBe('hyperliquid-feed-pinned-spx-20260618a')
   })
 
   it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {

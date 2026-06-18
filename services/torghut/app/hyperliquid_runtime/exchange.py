@@ -9,11 +9,14 @@ from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidRuntimeConfig
 from .models import (
+    AccountSnapshot,
+    AccountState,
     Fill,
     HyperliquidMarket,
     OrderIntent,
     OrderResult,
     OrderStatus,
+    PositionSnapshot,
     RuntimeDependencyStatus,
 )
 
@@ -30,6 +33,10 @@ class HyperliquidExchange(Protocol):
 
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
         """Read current account fills from the dedicated testnet account."""
+        ...
+
+    def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState:
+        """Read current account and position state from the dedicated testnet account."""
         ...
 
     def filter_supported_markets(
@@ -67,6 +74,20 @@ class ShadowHyperliquidExchange:
         _ = market_id_by_coin
         self._observed_at = datetime.now(timezone.utc)
         return []
+
+    def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState:
+        _ = market_id_by_coin
+        self._observed_at = datetime.now(timezone.utc)
+        return AccountState(
+            account=AccountSnapshot(
+                observed_at=self._observed_at,
+                account_value_usd=Decimal("0"),
+                withdrawable_usd=Decimal("0"),
+                gross_exposure_usd=Decimal("0"),
+                raw_payload={"shadow": True},
+            ),
+            positions=(),
+        )
 
     def filter_supported_markets(
         self,
@@ -111,6 +132,20 @@ class UnavailableHyperliquidExchange:
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
         _ = market_id_by_coin
         return []
+
+    def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState:
+        _ = market_id_by_coin
+        observed_at = datetime.now(timezone.utc)
+        return AccountState(
+            account=AccountSnapshot(
+                observed_at=observed_at,
+                account_value_usd=Decimal("0"),
+                withdrawable_usd=Decimal("0"),
+                gross_exposure_usd=Decimal("0"),
+                raw_payload={"unavailable": True, "reasons": list(self._reasons)},
+            ),
+            positions=(),
+        )
 
     def filter_supported_markets(
         self,
@@ -194,6 +229,25 @@ class HyperliquidSdkExchange:
             for fill in raw_fills
             if _fill_coin(fill) in market_id_by_coin
         ]
+
+    def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState:
+        info = self._info()
+        account = self._config.account_address
+        observed_at = datetime.now(timezone.utc)
+        if account is None:
+            return AccountState(
+                account=AccountSnapshot(
+                    observed_at=observed_at,
+                    account_value_usd=Decimal("0"),
+                    withdrawable_usd=Decimal("0"),
+                    gross_exposure_usd=Decimal("0"),
+                    raw_payload={"missing_account": True},
+                ),
+                positions=(),
+            )
+        raw_state = cast(dict[str, object], info.user_state(account))
+        self._last_exchange_read_at = observed_at
+        return _account_state_from_payload(raw_state, market_id_by_coin, observed_at)
 
     def filter_supported_markets(
         self,
@@ -437,6 +491,64 @@ def _fill_coin(payload: dict[str, object]) -> str:
     return str(payload.get("coin") or "").strip()
 
 
+def _account_state_from_payload(
+    payload: dict[str, object],
+    market_id_by_coin: dict[str, str],
+    observed_at: datetime,
+) -> AccountState:
+    margin_summary = _mapping(payload.get("marginSummary"))
+    raw_positions = payload.get("assetPositions")
+    positions: list[PositionSnapshot] = []
+    if isinstance(raw_positions, list):
+        for raw_position in cast(list[object], raw_positions):
+            if not isinstance(raw_position, dict):
+                continue
+            raw_position_map = cast(dict[str, object], raw_position)
+            position_payload = (
+                _mapping(raw_position_map.get("position")) or raw_position_map
+            )
+            coin = str(position_payload.get("coin") or "").strip()
+            market_id = market_id_by_coin.get(coin)
+            if not market_id:
+                continue
+            size = _decimal(position_payload.get("szi"))
+            entry_price = _optional_decimal(position_payload.get("entryPx"))
+            position_value = _position_notional(position_payload, size, entry_price)
+            positions.append(
+                PositionSnapshot(
+                    market_id=market_id,
+                    coin=coin,
+                    size=size,
+                    entry_price=entry_price,
+                    notional_usd=position_value.copy_abs(),
+                    unrealized_pnl_usd=_decimal(position_payload.get("unrealizedPnl")),
+                    observed_at=observed_at,
+                    raw_payload=raw_position_map,
+                )
+            )
+    gross_exposure_usd = _decimal(margin_summary.get("totalNtlPos"))
+    if gross_exposure_usd == Decimal("0"):
+        gross_exposure_usd = sum(
+            (position.notional_usd for position in positions), Decimal("0")
+        )
+    return AccountState(
+        account=AccountSnapshot(
+            observed_at=observed_at,
+            account_value_usd=_decimal(margin_summary.get("accountValue")),
+            withdrawable_usd=_decimal(payload.get("withdrawable")),
+            gross_exposure_usd=gross_exposure_usd.copy_abs(),
+            raw_payload=payload,
+        ),
+        positions=tuple(positions),
+    )
+
+
+def _mapping(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return cast(dict[str, object], value)
+    return {}
+
+
 def _sdk_dex(dex: str) -> str:
     cleaned = dex.strip()
     if cleaned in {"", "default"}:
@@ -459,6 +571,23 @@ def _decimal(value: object) -> Decimal:
     if value is None:
         return Decimal("0")
     return Decimal(str(value))
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    return Decimal(str(value))
+
+
+def _position_notional(
+    position_payload: dict[str, object],
+    size: Decimal,
+    entry_price: Decimal | None,
+) -> Decimal:
+    position_value = _decimal(position_payload.get("positionValue"))
+    if position_value != Decimal("0") or entry_price is None:
+        return position_value
+    return size * entry_price
 
 
 def _from_ms(value: object) -> datetime:

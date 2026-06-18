@@ -26,6 +26,10 @@ const wsReleaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-ws-release.yml', import.meta.url),
   'utf8',
 )
+const hyperliquidFeedReleaseWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-hyperliquid-feed-release.yml', import.meta.url),
+  'utf8',
+)
 const ciWorkflow = readFileSync(new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url), 'utf8')
 const pullRequestWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/pull-request.yml', import.meta.url),
@@ -135,6 +139,7 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/hyperliquid-feed/**'")
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/platform/**'")
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/settings.gradle.kts'")
+    expect(hyperliquidFeedWorkflow).toContain("- 'packages/scripts/src/torghut/release-contract.ts'")
     expect(hyperliquidFeedWorkflow).not.toContain("- 'services/dorvud/**'")
     expect(hyperliquidFeedWorkflow).not.toContain('workflow_run:')
     expect(hyperliquidFeedWorkflow).toContain("github.event_name == 'push'")
@@ -143,6 +148,24 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedWorkflow).toContain('platforms: ${{ matrix.platform }}')
     expect(hyperliquidFeedWorkflow).toContain('name: Verify multi-arch image manifest')
     expect(hyperliquidFeedWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
+    expect(hyperliquidFeedWorkflow).toContain('name: Write release contract artifact')
+    expect(hyperliquidFeedWorkflow).toContain('--path torghut-hyperliquid-feed-release-contract.json')
+    expect(hyperliquidFeedWorkflow).toContain("--image 'registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed'")
+    expect(hyperliquidFeedWorkflow).toContain('name: torghut-hyperliquid-feed-release-contract')
+  })
+
+  it('promotes Hyperliquid feed images through a digest-pinned release PR', () => {
+    expect(hyperliquidFeedReleaseWorkflow).toContain('workflow_run:')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('torghut-hyperliquid-feed-build-push')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('name: torghut-hyperliquid-feed-release-contract')
+    expect(hyperliquidFeedReleaseWorkflow).toContain("IMAGE='registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed'")
+    expect(hyperliquidFeedReleaseWorkflow).toContain(
+      'bun run packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts',
+    )
+    expect(hyperliquidFeedReleaseWorkflow).toContain('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
+    expect(hyperliquidFeedReleaseWorkflow).toContain(
+      'branch: codex/torghut-hyperliquid-feed-release-${{ steps.meta.outputs.tag }}',
+    )
   })
 
   it('defines native amd64 and arm64 GitHub runner scale sets for Torghut image builds', () => {
