@@ -486,7 +486,10 @@ class TestPacketAcceptsAlternateRuntimePlanAndCompletionGateShapes(
             output_path = tmp_path / "packet.json"
             import_path.write_text(json.dumps(_runtime_import()), encoding="utf-8")
 
-            with patch.object(packet, "urlopen", side_effect=open_url):
+            with patch(
+                "scripts.runtime_ledger_proof_packet.io_artifacts.urlopen",
+                side_effect=open_url,
+            ):
                 exit_code = packet.main(
                     [
                         "--service-base-url",
@@ -550,7 +553,10 @@ class TestPacketAcceptsAlternateRuntimePlanAndCompletionGateShapes(
             output_path = tmp_path / "packet.json"
             import_path.write_text(json.dumps(_runtime_import()), encoding="utf-8")
 
-            with patch.object(packet, "urlopen", side_effect=open_url):
+            with patch(
+                "scripts.runtime_ledger_proof_packet.io_artifacts.urlopen",
+                side_effect=open_url,
+            ):
                 exit_code = packet.main(
                     [
                         "--status-service-base-url",
@@ -628,7 +634,10 @@ class TestPacketAcceptsAlternateRuntimePlanAndCompletionGateShapes(
             output_path = tmp_path / "packet.json"
             import_path.write_text(json.dumps(_runtime_import()), encoding="utf-8")
 
-            with patch.object(packet, "urlopen", side_effect=open_url):
+            with patch(
+                "scripts.runtime_ledger_proof_packet.io_artifacts.urlopen",
+                side_effect=open_url,
+            ):
                 exit_code = packet.main(
                     [
                         "--status-service-base-url",

@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import os
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -34,17 +33,8 @@ def _load_json_object(path: Path) -> dict[str, Any]:
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
 
 
-def _public_wrapper_attr(name: str) -> Any:
-    public_module = sys.modules.get("scripts.assemble_runtime_ledger_proof_packet")
-    if public_module is None:
-        return None
-    return getattr(public_module, name, None)
-
-
 def _urlopen(url: str, *, timeout_seconds: float) -> Any:
-    public_urlopen = _public_wrapper_attr("urlopen")
-    opener = public_urlopen if public_urlopen is not None else urlopen
-    return opener(url, timeout=timeout_seconds)
+    return urlopen(url, timeout=timeout_seconds)
 
 
 def _load_json_url(url: str, *, timeout_seconds: float) -> dict[str, Any]:
@@ -181,15 +171,6 @@ def _ceph_client_from_env() -> tuple[_ObjectStoreClient | None, str]:
 
 
 def _resolve_ceph_client_from_env() -> tuple[_ObjectStoreClient | None, str]:
-    public_ceph_client_from_env = _public_wrapper_attr("_ceph_client_from_env")
-    if (
-        public_ceph_client_from_env is not None
-        and public_ceph_client_from_env is not _ceph_client_from_env
-    ):
-        return cast(
-            tuple[_ObjectStoreClient | None, str],
-            public_ceph_client_from_env(),
-        )
     return _ceph_client_from_env()
 
 
@@ -356,18 +337,8 @@ def _load_optional_json_object(
     if path is not None:
         return _load_json_object(path)
     if url:
-        public_load_json_url = _public_wrapper_attr("_load_json_url")
-        load_json_url = (
-            public_load_json_url
-            if public_load_json_url is not None
-            and public_load_json_url is not _load_json_url
-            else _load_json_url
-        )
         try:
-            return cast(
-                dict[str, Any],
-                load_json_url(url, timeout_seconds=timeout_seconds),
-            )
+            return _load_json_url(url, timeout_seconds=timeout_seconds)
         except (HTTPError, URLError, TimeoutError) as exc:
             if unavailable_source_name is None:
                 raise

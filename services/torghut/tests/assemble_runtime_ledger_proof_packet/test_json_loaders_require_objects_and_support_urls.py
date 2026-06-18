@@ -33,23 +33,28 @@ class TestJsonLoadersRequireObjectsAndSupportUrls(_TestRuntimeLedgerProofPacketB
             def read(self) -> bytes:
                 return json.dumps(self.body).encode("utf-8")
 
-        with patch.object(packet, "urlopen", return_value=_Response({"ok": True})):
+        with patch(
+            "scripts.runtime_ledger_proof_packet.io_artifacts.urlopen",
+            return_value=_Response({"ok": True}),
+        ):
             self.assertEqual(
                 packet._load_json_url(
                     "http://example.invalid/status.json", timeout_seconds=1
                 ),
                 {"ok": True},
             )
-        with patch.object(packet, "urlopen", return_value=_Response(["bad"])):
+        with patch(
+            "scripts.runtime_ledger_proof_packet.io_artifacts.urlopen",
+            return_value=_Response(["bad"]),
+        ):
             with self.assertRaisesRegex(ValueError, "json_object_required"):
                 packet._load_json_url(
                     "http://example.invalid/status.json",
                     timeout_seconds=1,
                 )
         http_error_url = "http://example.invalid/degraded.json"
-        with patch.object(
-            packet,
-            "urlopen",
+        with patch(
+            "scripts.runtime_ledger_proof_packet.io_artifacts.urlopen",
             side_effect=HTTPError(
                 url=http_error_url,
                 code=503,
@@ -69,9 +74,8 @@ class TestJsonLoadersRequireObjectsAndSupportUrls(_TestRuntimeLedgerProofPacketB
                     "http_error": True,
                 },
             )
-        with patch.object(
-            packet,
-            "urlopen",
+        with patch(
+            "scripts.runtime_ledger_proof_packet.io_artifacts.urlopen",
             side_effect=HTTPError(
                 url=http_error_url,
                 code=503,
@@ -82,9 +86,8 @@ class TestJsonLoadersRequireObjectsAndSupportUrls(_TestRuntimeLedgerProofPacketB
         ):
             with self.assertRaises(HTTPError):
                 packet._load_json_url(http_error_url, timeout_seconds=1)
-        with patch.object(
-            packet,
-            "_load_json_url",
+        with patch(
+            "scripts.runtime_ledger_proof_packet.io_artifacts._load_json_url",
             side_effect=HTTPError(
                 url=http_error_url,
                 code=503,

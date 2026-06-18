@@ -15,7 +15,6 @@ from .common import (
     CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT as _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
     CERTIFICATE_EVIDENCE_WINDOW_LIMIT as _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
     coerce_aware_datetime as _coerce_aware_datetime,
-    compat_symbol as _compat_symbol,
     maybe_set_runtime_ledger_status_statement_timeout as _maybe_set_runtime_ledger_status_statement_timeout,
     normalize_reason_codes as _normalize_reason_codes,
     rollback_runtime_ledger_status_session as _rollback_runtime_ledger_status_session,
@@ -63,10 +62,7 @@ def _load_latest_certificate_evidence(
     evidence: list[dict[str, object]] = []
     try:
         for hypothesis_id in normalized_ids:
-            _compat_symbol(
-                "_maybe_set_runtime_ledger_status_statement_timeout",
-                _maybe_set_runtime_ledger_status_statement_timeout,
-            )(session)
+            _maybe_set_runtime_ledger_status_statement_timeout(session)
             metric_windows = list(
                 session.execute(
                     select(StrategyHypothesisMetricWindow)
@@ -82,10 +78,7 @@ def _load_latest_certificate_evidence(
             )
             candidate_rows: list[dict[str, object]] = []
             for metric_window in metric_windows:
-                _compat_symbol(
-                    "_maybe_set_runtime_ledger_status_statement_timeout",
-                    _maybe_set_runtime_ledger_status_statement_timeout,
-                )(session)
+                _maybe_set_runtime_ledger_status_statement_timeout(session)
                 promotion_decision = (
                     session.execute(
                         select(StrategyPromotionDecision)
@@ -105,10 +98,7 @@ def _load_latest_certificate_evidence(
                 )
 
                 runtime_ledger_bucket = None
-                _compat_symbol(
-                    "_maybe_set_runtime_ledger_status_statement_timeout",
-                    _maybe_set_runtime_ledger_status_statement_timeout,
-                )(session)
+                _maybe_set_runtime_ledger_status_statement_timeout(session)
                 ledger_rows = list(
                     session.execute(
                         select(StrategyRuntimeLedgerBucket)

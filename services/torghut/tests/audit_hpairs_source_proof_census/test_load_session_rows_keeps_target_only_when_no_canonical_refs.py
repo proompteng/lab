@@ -38,7 +38,7 @@ def test_load_session_rows_keeps_target_only_when_no_canonical_refs() -> None:
     )
 
     with patch(
-        "scripts.audit_hpairs_source_proof_census.load_runtime_authority_rows",
+        "scripts.hpairs_source_proof_census_audit.shared_context.load_runtime_authority_rows",
         return_value=[],
     ):
         rows = census._load_session_rows(
@@ -123,7 +123,7 @@ def test_load_session_rows_adds_linked_source_account_windows() -> None:
     )
 
     with patch(
-        "scripts.audit_hpairs_source_proof_census.load_runtime_authority_rows",
+        "scripts.hpairs_source_proof_census_audit.shared_context.load_runtime_authority_rows",
         return_value=[],
     ):
         rows = census._load_session_rows(

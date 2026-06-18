@@ -6,12 +6,11 @@ import hashlib
 import json
 import logging
 import os
-import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from threading import Lock
-from typing import Any, NamedTuple, Protocol, TypeVar, cast
+from typing import Any, NamedTuple, Protocol, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -75,8 +74,6 @@ from ..tca import build_tca_gate_inputs
 
 
 logger = logging.getLogger("app.trading.submission_council")
-
-_CompatSymbol = TypeVar("_CompatSymbol")
 
 _CAPITAL_STAGE_ORDER = (
     "shadow",
@@ -152,13 +149,6 @@ _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
         "expected_market_closed_staleness",
     }
 )
-
-
-def _compat_symbol(name: str, fallback: _CompatSymbol) -> _CompatSymbol:
-    facade = sys.modules.get("app.trading.submission_council")
-    if facade is None:
-        return fallback
-    return cast(_CompatSymbol, getattr(facade, name, fallback))
 
 
 def _safe_int(value: object) -> int:
@@ -452,7 +442,6 @@ __all__ = [
     "_bounded_paper_route_probe_notional",
     "_certificate_evidence_reason_codes",
     "_coerce_aware_datetime",
-    "_compat_symbol",
     "_decimal_text",
     "_maybe_set_runtime_ledger_status_statement_timeout",
     "_normalize_reason_codes",
@@ -500,7 +489,6 @@ __all__ = [
     "sql_text",
     "strategy_names_from_strategy_id",
     "summarize_hypothesis_runtime_statuses",
-    "sys",
     "timedelta",
     "timezone",
     "urlencode",
@@ -518,7 +506,6 @@ certificate_evidence_reason_codes = _certificate_evidence_reason_codes
 CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT = _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT
 CERTIFICATE_EVIDENCE_WINDOW_LIMIT = _CERTIFICATE_EVIDENCE_WINDOW_LIMIT
 coerce_aware_datetime = _coerce_aware_datetime
-compat_symbol = _compat_symbol
 decimal_text = _decimal_text
 LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES = _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES
 maybe_set_runtime_ledger_status_statement_timeout = (

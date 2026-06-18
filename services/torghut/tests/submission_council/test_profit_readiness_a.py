@@ -440,7 +440,7 @@ class TestSubmissionCouncilProfitReadinessA(SubmissionCouncilTestCase):
 
             with (
                 patch(
-                    "app.trading.submission_council._autoresearch_portfolio_current_oracle_passed",
+                    "app.trading.submission_council.profit_readiness._autoresearch_portfolio_current_oracle_passed",
                     return_value=True,
                 ),
                 patch.object(

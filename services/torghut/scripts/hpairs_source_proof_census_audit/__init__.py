@@ -2,7 +2,6 @@ from __future__ import annotations
 from .shared_context import (
     argparse,
     json,
-    sys,
     Mapping,
     Sequence,
     Set,
@@ -88,7 +87,6 @@ from .parse_timestamp import main
 __all__ = [
     "argparse",
     "json",
-    "sys",
     "Mapping",
     "Sequence",
     "Set",

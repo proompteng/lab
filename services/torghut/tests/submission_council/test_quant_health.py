@@ -153,7 +153,7 @@ class TestSubmissionCouncilQuantHealth(SubmissionCouncilTestCase):
                 }
             )
 
-        with patch("app.trading.submission_council.urlopen", fake_urlopen):
+        with patch("app.trading.submission_council.quant_health.urlopen", fake_urlopen):
             status = load_quant_evidence_status(account_label="paper")
             cached_status = load_quant_evidence_status(account_label="paper")
 
@@ -207,7 +207,7 @@ class TestSubmissionCouncilQuantHealth(SubmissionCouncilTestCase):
             del request, timeout
             return _FakeQuantHealthResponse(payloads.pop(0))
 
-        with patch("app.trading.submission_council.urlopen", fake_urlopen):
+        with patch("app.trading.submission_council.quant_health.urlopen", fake_urlopen):
             empty_status = load_quant_evidence_status(account_label="paper")
             stage_status = load_quant_evidence_status(account_label="paper")
             stale_status = load_quant_evidence_status(account_label="paper")
@@ -246,7 +246,7 @@ class TestSubmissionCouncilQuantHealth(SubmissionCouncilTestCase):
                 }
             )
 
-        with patch("app.trading.submission_council.urlopen", fake_urlopen):
+        with patch("app.trading.submission_council.quant_health.urlopen", fake_urlopen):
             status = load_quant_evidence_status(account_label="paper")
 
         self.assertTrue(status["ok"])
@@ -276,7 +276,7 @@ class TestSubmissionCouncilQuantHealth(SubmissionCouncilTestCase):
             del request, timeout
             raise RuntimeError("network unavailable")
 
-        with patch("app.trading.submission_council.urlopen", fake_urlopen):
+        with patch("app.trading.submission_council.quant_health.urlopen", fake_urlopen):
             status = load_quant_evidence_status(account_label="paper")
 
         self.assertTrue(status["ok"])

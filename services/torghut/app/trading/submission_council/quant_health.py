@@ -25,7 +25,6 @@ from .common import (
     RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES as _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES,
     TYPED_QUANT_HEALTH_PATH as _TYPED_QUANT_HEALTH_PATH,
     coerce_aware_datetime as _coerce_aware_datetime,
-    compat_symbol as _compat_symbol,
     safe_attr_text as _safe_attr_text,
     safe_bool as _safe_bool,
     safe_int as _safe_int,
@@ -437,7 +436,7 @@ def load_quant_evidence_status(
         request = Request(
             request_url, method="GET", headers={"accept": "application/json"}
         )
-        with _compat_symbol("urlopen", urlopen)(
+        with urlopen(
             request, timeout=settings.trading_jangar_control_plane_timeout_seconds
         ) as response:
             status_code = int(getattr(response, "status", 200))
