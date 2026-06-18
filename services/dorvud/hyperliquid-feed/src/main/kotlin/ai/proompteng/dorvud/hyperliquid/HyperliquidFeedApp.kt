@@ -73,6 +73,12 @@ class HyperliquidFeedApp(
   private val restBudget = MinuteWeightBudget(config.restWeightBudgetPerMinute, nowMs)
   private val backoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
   private val dedup = DedupCache<String>(Duration.ofSeconds(config.dedupTtlSeconds), config.dedupMaxEntries)
+  private val eventFreshness =
+    EventFreshnessTracker(
+      requiredChannels = config.readyRequiredChannels,
+      maxAgeMs = config.readyEventMaxAgeMs,
+      nowMs = nowMs,
+    )
 
   fun start(): Job =
     scope.launch {
@@ -138,8 +144,9 @@ class HyperliquidFeedApp(
     return nowMs() - notReadySinceMs.get() < config.healthNotReadyKillAfterMs
   }
 
-  fun readinessInfo(): HyperliquidReadinessInfo =
-    HyperliquidReadinessInfo(
+  fun readinessInfo(): HyperliquidReadinessInfo {
+    val freshness = eventFreshnessSnapshot()
+    return HyperliquidReadinessInfo(
       status = if (ready.get()) "ready" else "not_ready",
       ready = ready.get(),
       websocket = wsReady.get(),
@@ -147,10 +154,14 @@ class HyperliquidFeedApp(
       clickhouse = clickHouseReady.get(),
       clickhouseLastSuccessLagMs = clickHouseLastSuccessLagMs(),
       clickhouseLastFailureAgeMs = clickHouseLastFailureAgeMs(),
+      marketDataFresh = freshness.fresh,
+      marketDataLastSeenLagMs = freshness.lastSeenLagMs,
+      marketDataMaxAgeMs = config.readyEventMaxAgeMs,
       catalog = catalogReady.get(),
       subscriptions = subscriptionCount.get(),
       markets = marketCount.get(),
     )
+  }
 
   private suspend fun streamShardLoop(
     shard: SubscriptionShard,
@@ -254,6 +265,7 @@ class HyperliquidFeedApp(
         kafkaReady.set(true)
         metrics.kafkaProduceSuccess.increment()
         metrics.recordEvent(record.envelope.channel)
+        recordMarketDataFreshness(record.envelope.channel)
         clickHouseSink.enqueue(record)
       }.onFailure { error ->
         kafkaReady.set(false)
@@ -291,9 +303,22 @@ class HyperliquidFeedApp(
   }
 
   private fun updateReady() {
-    val isReady = wsReady.get() && kafkaReady.get() && clickHouseFresh() && catalogReady.get()
+    val isReady = wsReady.get() && kafkaReady.get() && clickHouseFresh() && marketDataFresh() && catalogReady.get()
     markReady(isReady)
   }
+
+  private fun recordMarketDataFreshness(channel: String) {
+    val observedAt = eventFreshness.record(channel)
+    metrics.setEventLastSeenEpochMs(channel, observedAt)
+  }
+
+  private fun marketDataFresh(): Boolean {
+    val fresh = eventFreshness.isFresh()
+    metrics.setMarketDataReady(fresh)
+    return fresh
+  }
+
+  private fun eventFreshnessSnapshot(): EventFreshnessSnapshot = eventFreshness.snapshot()
 
   private fun clickHouseFresh(): Boolean {
     val fresh = clickHouseFreshAt(nowMs())
@@ -328,6 +353,7 @@ class HyperliquidFeedApp(
     metrics.setWsConnected(wsReady.get())
     metrics.setKafkaReady(kafkaReady.get())
     metrics.setClickHouseReady(clickHouseFreshAt(nowMs()))
+    metrics.setMarketDataReady(eventFreshnessSnapshot().fresh)
     if (!value && changed) notReadySinceMs.set(nowMs())
   }
 }

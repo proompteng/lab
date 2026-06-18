@@ -51,6 +51,8 @@ data class HyperliquidConfig(
   val heartbeatIntervalMs: Long,
   val dedupTtlSeconds: Long,
   val dedupMaxEntries: Int,
+  val readyRequiredChannels: Set<String>,
+  val readyEventMaxAgeMs: Long,
   val healthPort: Int,
   val metricsPort: Int,
   val healthNotReadyKillAfterMs: Long,
@@ -110,6 +112,16 @@ data class HyperliquidConfig(
             if (unknown.isNotEmpty()) error("Unsupported HYPERLIQUID_WS_CHANNELS: ${unknown.joinToString(",")}")
           }
 
+      val readyRequiredChannels =
+        csv(mergedEnv["HYPERLIQUID_READY_REQUIRED_CHANNELS"] ?: "raw,candle")
+          .toSet()
+          .also { channels ->
+            val supportedReadinessChannels = supportedChannels + "raw"
+            val unknown = channels.filterNot { it in supportedReadinessChannels }
+            if (unknown.isNotEmpty()) error("Unsupported HYPERLIQUID_READY_REQUIRED_CHANNELS: ${unknown.joinToString(",")}")
+          }
+      val readyEventMaxAgeMs = longEnv(mergedEnv, "HYPERLIQUID_READY_EVENT_MAX_AGE_MS", 180_000).coerceAtLeast(30_000)
+
       val maxWsConnections = intEnv(mergedEnv, "HYPERLIQUID_MAX_WS_CONNECTIONS", 8)
       val maxSubscriptionsPerConnection = intEnv(mergedEnv, "HYPERLIQUID_MAX_SUBSCRIPTIONS_PER_CONNECTION", 125)
       val maxTotalSubscriptions = intEnv(mergedEnv, "HYPERLIQUID_MAX_TOTAL_SUBSCRIPTIONS", 1000)
@@ -161,6 +173,8 @@ data class HyperliquidConfig(
         heartbeatIntervalMs = longEnv(mergedEnv, "HYPERLIQUID_HEARTBEAT_INTERVAL_MS", 30_000),
         dedupTtlSeconds = longEnv(mergedEnv, "DEDUP_TTL_SEC", 30),
         dedupMaxEntries = intEnv(mergedEnv, "DEDUP_MAX_ENTRIES", 100_000),
+        readyRequiredChannels = readyRequiredChannels,
+        readyEventMaxAgeMs = readyEventMaxAgeMs,
         healthPort = intEnv(mergedEnv, "HEALTH_PORT", 8080),
         metricsPort = intEnv(mergedEnv, "METRICS_PORT", 9090),
         healthNotReadyKillAfterMs = longEnv(mergedEnv, "HEALTH_NOT_READY_KILL_AFTER_MS", 180_000),
