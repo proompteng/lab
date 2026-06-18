@@ -5,9 +5,9 @@
 - Version: `v1`
 - Date: `2026-02-28`
 - Scope: automation strategy and runbook for recurring trading-day replay simulations
-- Source of truth (runtime): `start_historical_simulation.py` and live cluster config
+- Source of truth (runtime): `scripts.historical_simulation_startup` and live cluster config
 - Implementation status: `Partial`
-- Implementation evidence: `services/torghut/scripts/start_historical_simulation.py`, `services/torghut/scripts/analyze_historical_simulation.py`, `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`, `argocd/applications/torghut/README.md`, `docs/torghut/rollouts/historical-simulation-playbook.md`
+- Implementation evidence: `services/torghut/scripts/historical_simulation_startup`, `services/torghut/scripts/analyze_historical_simulation.py`, `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`, `argocd/applications/torghut/README.md`, `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Implementation gaps: no dedicated `automate_trading_day_simulation.py` batch-day planner/orchestrator, no production CronJob/Temporal workflow for recurring session windows, and no persisted day-run registry schema.
 - Rollout and verification:
   - ship and version `services/torghut/scripts/automate_trading_day_simulation.py`,
@@ -20,7 +20,7 @@ This document was stale when it described the entire automation surface as plann
 
 The current repository already includes:
 
-- `start_historical_simulation.py` support for end-to-end `run` execution with report/teardown handling;
+- `scripts.historical_simulation_startup` support for end-to-end `run` execution with report/teardown handling;
 - a GitOps-managed `torghut-historical-simulation` Argo `WorkflowTemplate`;
 - an operator playbook and README flow for running the dedicated simulation surfaces without manual cluster patching;
 - analysis/report generation paths for full-session replay output.
@@ -39,7 +39,7 @@ manual cluster patching.
 
 The design intentionally builds on the existing production runtime contracts:
 
-- `services/torghut/scripts/start_historical_simulation.py`
+- `services/torghut/scripts/historical_simulation_startup`
 - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
 - `docs/torghut/rollouts/historical-simulation-playbook.md`
 
@@ -53,7 +53,7 @@ The design intentionally builds on the existing production runtime contracts:
 
 - **Trading day**: A New York market session day (currently Mon–Fri by default).
 - **Trading-session window**: `09:30` to `16:00 America/New_York` by default, with configurable buffer.
-- **Simulation run**: One `start_historical_simulation.py` apply/teardown cycle driven by a per-day dataset manifest.
+- **Simulation run**: One `scripts.historical_simulation_startup` apply/teardown cycle driven by a per-day dataset manifest.
 - **Paper-only**: `TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`, `TRADING_EXECUTION_ADAPTER=simulation`.
 
 ```mermaid
@@ -142,7 +142,7 @@ The orchestrator may persist these manifests under:
 Each run follows this sequence:
 
 1. **Preflight**
-   - `uv run python scripts/start_historical_simulation.py --mode plan --run-id <run_id> --dataset-manifest <path>`
+   - `uv run python -m scripts.historical_simulation_startup --mode plan --run-id <run_id> --dataset-manifest <path>`
    - Validate script-level isolation guard output and runtime plan sanity checks.
 2. **Apply**
    - `--mode apply --confirm START_HISTORICAL_SIMULATION`

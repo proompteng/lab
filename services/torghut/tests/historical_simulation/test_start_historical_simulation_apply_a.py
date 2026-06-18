@@ -16,7 +16,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     datetime,
     patch,
     replace,
-    start_historical_simulation,
+    historical_simulation_startup,
     timezone,
 )
 
@@ -194,7 +194,7 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
                     ),
                 )
 
-                report = start_historical_simulation._apply(
+                report = historical_simulation_startup._apply(
                     resources=resources,
                     manifest=manifest,
                     kafka_config=kafka_config,
@@ -358,7 +358,7 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
                         "scripts.historical_simulation_startup.replay_execution._configure_torghut_service_for_simulation"
                     ),
                 )
-                report = start_historical_simulation._apply(
+                report = historical_simulation_startup._apply(
                     resources=resources,
                     manifest=manifest,
                     kafka_config=kafka_config,
@@ -644,7 +644,7 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
                         return_value={"status": "released", "run_id": resources.run_id},
                     ),
                 )
-                start_historical_simulation._apply(
+                historical_simulation_startup._apply(
                     resources=resources,
                     manifest=manifest,
                     kafka_config=kafka_config,
@@ -817,7 +817,7 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
                         return_value=None,
                     ),
                 )
-                report = start_historical_simulation._apply(
+                report = historical_simulation_startup._apply(
                     resources=resources,
                     manifest=manifest,
                     kafka_config=kafka_config,

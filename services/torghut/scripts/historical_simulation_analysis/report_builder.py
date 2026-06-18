@@ -13,7 +13,7 @@ from typing import Any
 
 import psycopg
 
-from scripts.start_historical_simulation import (
+from scripts.historical_simulation_startup import (
     ClickHouseRuntimeConfig,
     _as_mapping,
     _as_text,

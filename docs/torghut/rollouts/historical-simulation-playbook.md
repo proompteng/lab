@@ -3,7 +3,7 @@
 Last updated: **2026-03-12**
 
 This playbook is the production run procedure for Torghut historical simulations using
-`services/torghut/scripts/start_historical_simulation.py` on the dedicated simulation surfaces.
+`services/torghut/scripts/historical_simulation_startup` on the dedicated simulation surfaces.
 
 It is designed for runs that must preserve production safety while producing empirical evidence.
 
@@ -85,7 +85,7 @@ Expected dedicated resources:
 - `AnalysisTemplate/torghut-simulation-teardown-clean`
 
 This playbook is Argo-first. The canonical execution engine is still
-`services/torghut/scripts/start_historical_simulation.py`; the WorkflowTemplate is a thin wrapper around that script.
+`services/torghut/scripts/historical_simulation_startup`; the WorkflowTemplate is a thin wrapper around that script.
 
 Phase 1 note:
 
@@ -131,7 +131,7 @@ argo submit --from workflowtemplate/torghut-historical-simulation \
   -p datasetManifestB64="${MANIFEST_B64}"
 ```
 
-`start_historical_simulation.py --mode run` handles:
+`python -m scripts.historical_simulation_startup --mode run` handles:
 
 - Argo automation switch to `manual` (if manifest enables management),
 - apply (dump/replay/configure),
@@ -430,7 +430,7 @@ ENGINE = ReplicatedReplacingMergeTree(
   - Torghut logged repeated `Feature quality gate failed ... reasons=['non_monotonic_progression']`,
   - `trade_decisions` and `executions` remained `0`.
 - Root cause was sequential:
-  - the simulation script configures `TRADING_SIGNAL_ALLOWED_SOURCES=ws,ta` in [`start_historical_simulation.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/scripts/start_historical_simulation.py#L2715), so mixed-source batches can contain a `ws` row with a large `seq` followed by `ta` rows that restart at `seq=1`,
+  - the simulation script configures `TRADING_SIGNAL_ALLOWED_SOURCES=ws,ta` in [`scripts.historical_simulation_startup`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/scripts/historical_simulation_startup#L2715), so mixed-source batches can contain a `ws` row with a large `seq` followed by `ta` rows that restart at `seq=1`,
   - even after narrowing to `ta` only for diagnosis, the deployed ingest path still returned multi-symbol rows in ClickHouse query order when no dedupe occurred, while the feature-quality gate validates monotonicity on `(event_ts, symbol, seq)`.
 - Relevant code:
   - ingest fetch path returns `_filter_signals(self._dedupe_signals(signals))` at [`ingest.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/ingest.py#L782),

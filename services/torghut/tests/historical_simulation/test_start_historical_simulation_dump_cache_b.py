@@ -21,7 +21,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     json,
     patch,
     replace,
-    start_historical_simulation,
+    historical_simulation_startup,
 )
 
 
@@ -83,7 +83,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
             )
             self.assertEqual(
                 payload_sha,
-                start_historical_simulation._dump_sha256_for_replay(dump_path),
+                historical_simulation_startup._dump_sha256_for_replay(dump_path),
             )
 
     def test_dump_topics_cleans_compressed_sort_temps(self) -> None:

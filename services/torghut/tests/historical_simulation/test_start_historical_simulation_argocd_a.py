@@ -17,7 +17,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _set_argocd_application_sync_policy,
     _set_argocd_automation_mode,
     patch,
-    start_historical_simulation,
+    historical_simulation_startup,
     yaml,
 )
 
@@ -145,25 +145,25 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
         resources = _build_resources("sim-1", {"dataset_id": "dataset-a"})
 
         self.assertIsNone(
-            start_historical_simulation._run_simulation_autonomy_lane(
+            historical_simulation_startup._run_simulation_autonomy_lane(
                 resources=resources,
-                autonomy_config=start_historical_simulation.AutonomyLaneConfig(
+                autonomy_config=historical_simulation_startup.AutonomyLaneConfig(
                     enabled=False
                 ),
             )
         )
 
         with self.assertRaisesRegex(RuntimeError, "autonomy.signals is required"):
-            start_historical_simulation._run_simulation_autonomy_lane(
+            historical_simulation_startup._run_simulation_autonomy_lane(
                 resources=resources,
-                autonomy_config=start_historical_simulation.AutonomyLaneConfig(
+                autonomy_config=historical_simulation_startup.AutonomyLaneConfig(
                     enabled=True
                 ),
             )
 
     def test_resolve_manifest_relative_path_rejects_missing_file(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "autonomy.signals not found"):
-            start_historical_simulation._resolve_manifest_relative_path(
+            historical_simulation_startup._resolve_manifest_relative_path(
                 "../missing/signals.json",
                 manifest_path=Path("/tmp/config/dataset.yaml"),
                 label="autonomy.signals",
@@ -482,7 +482,7 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
                 "namespace": "torghut",
                 "name": "torghut-sim",
                 "jqPathExpressions": [
-                    start_historical_simulation.SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_JQ
+                    historical_simulation_startup.SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_JQ
                 ],
             }
         ]
@@ -523,21 +523,19 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
                 "scripts.historical_simulation_startup.service_environment._kubectl_patch_json"
             ) as patch_mock,
         ):
-            report = (
-                start_historical_simulation._set_argocd_application_ignore_differences(
-                    config=ArgocdAutomationConfig(
-                        manage_automation=True,
-                        applicationset_name="product",
-                        applicationset_namespace="argocd",
-                        app_name="torghut",
-                        root_app_name="root",
-                        desired_mode_during_run="manual",
-                        restore_mode_after_run="previous",
-                        verify_timeout_seconds=30,
-                    ),
-                    required_ignore_differences=runtime_ignore_differences,
-                    desired_ignore_differences=runtime_ignore_differences,
-                )
+            report = historical_simulation_startup._set_argocd_application_ignore_differences(
+                config=ArgocdAutomationConfig(
+                    manage_automation=True,
+                    applicationset_name="product",
+                    applicationset_namespace="argocd",
+                    app_name="torghut",
+                    root_app_name="root",
+                    desired_mode_during_run="manual",
+                    restore_mode_after_run="previous",
+                    verify_timeout_seconds=30,
+                ),
+                required_ignore_differences=runtime_ignore_differences,
+                desired_ignore_differences=runtime_ignore_differences,
             )
         self.assertTrue(report["changed"])
         patch_mock.assert_called_once_with(

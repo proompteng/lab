@@ -74,7 +74,7 @@ from tests.historical_simulation.start_historical_simulation_support import (
     patch,
     re,
     replace,
-    start_historical_simulation,
+    historical_simulation_startup,
     timezone,
     uuid,
     yaml,
@@ -84,8 +84,6 @@ from tests.historical_simulation.start_historical_simulation_support import (
 class StartHistoricalSimulationTestCaseBase(TestCase):
     pass
 
-
-__all__ = ("StartHistoricalSimulationTestCaseBase",)
 
 __all__: tuple[str, ...] = (
     "Any",
@@ -162,7 +160,7 @@ __all__: tuple[str, ...] = (
     "patch",
     "re",
     "replace",
-    "start_historical_simulation",
+    "historical_simulation_startup",
     "timezone",
     "uuid",
     "yaml",

@@ -17,7 +17,7 @@ from scripts.analyze_historical_simulation import (
     _fifo_trade_pnl,
     _query_rows,
 )
-from scripts.start_historical_simulation import ClickHouseRuntimeConfig
+from scripts.historical_simulation_startup import ClickHouseRuntimeConfig
 
 
 class TestAnalyzeHistoricalSimulation(TestCase):

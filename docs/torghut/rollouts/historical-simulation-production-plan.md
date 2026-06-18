@@ -17,7 +17,7 @@ Deliver a production-grade historical simulation workflow where one CLI command:
 
 ## 2) Current Gaps (Code-Derived)
 
-Current starter script (`services/torghut/scripts/start_historical_simulation.py`) supports `plan|apply|teardown`, isolated topics/DBs, and replay, but has these gaps:
+Current starter script (`services/torghut/scripts/historical_simulation_startup`) supports `plan|apply|teardown`, isolated topics/DBs, and replay, but has these gaps:
 
 - Argo automation toggling is manual and outside the script.
 - No first-class `run` mode that orchestrates apply -> wait -> report -> teardown.
@@ -30,7 +30,7 @@ Current starter script (`services/torghut/scripts/start_historical_simulation.py
 Single command from `services/torghut`:
 
 ```bash
-uv run python scripts/start_historical_simulation.py \
+uv run python -m scripts.historical_simulation_startup \
   --mode run \
   --run-id sim-2026-03-02-full-day-01 \
   --dataset-manifest config/simulation/full-day-2026-02-27.yaml \
@@ -66,7 +66,7 @@ Out of scope:
 
 Primary file:
 
-- `services/torghut/scripts/start_historical_simulation.py`
+- `services/torghut/scripts/historical_simulation_startup`
 
 Changes:
 
@@ -334,7 +334,7 @@ Done means all are true:
 
 ## 14) Immediate Next Implementation Steps
 
-1. Extend `start_historical_simulation.py` with `run` and `report` modes and Argo automation management.
+1. Extend `scripts.historical_simulation_startup` with `run` and `report` modes and Argo automation management.
 2. Create `analyze_historical_simulation.py` with `torghut.simulation-report.v1` output schema.
 3. Update playbook to replace manual Argo steps with in-script automation.
 4. Execute one strict full-day run and validate report quality against the DoD.

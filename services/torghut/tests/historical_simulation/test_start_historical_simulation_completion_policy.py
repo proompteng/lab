@@ -17,7 +17,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     json,
     patch,
     replace,
-    start_historical_simulation,
+    historical_simulation_startup,
 )
 
 
@@ -36,7 +36,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 "scripts.historical_simulation_startup.replay_execution._read_simulation_runtime_lock",
                 return_value={"run_id": "sim-2"},
             ):
-                report = start_historical_simulation._teardown(
+                report = historical_simulation_startup._teardown(
                     resources=resources,
                     allow_missing_state=False,
                 )
@@ -54,7 +54,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 "scripts.historical_simulation_startup.replay_execution._release_simulation_runtime_lock",
                 return_value={"status": "released", "run_id": resources.run_id},
             ) as release_lock:
-                report = start_historical_simulation._teardown(
+                report = historical_simulation_startup._teardown(
                     resources=resources,
                     allow_missing_state=True,
                 )
@@ -101,7 +101,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                     return_value=None,
                 ),
             ):
-                report = start_historical_simulation._teardown(
+                report = historical_simulation_startup._teardown(
                     resources=resources,
                     allow_missing_state=False,
                 )
