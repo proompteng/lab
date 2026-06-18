@@ -9,23 +9,25 @@ on:
     branches:
       - main
     paths:
-      - 'services/dorvud/**'
+      - 'services/dorvud/gradle/**'
+      - 'services/dorvud/gradlew'
+      - 'services/dorvud/gradle.properties'
+      - 'services/dorvud/settings.gradle.kts'
+      - 'services/dorvud/build.gradle.kts'
+      - 'services/dorvud/platform/**'
+      - 'services/dorvud/flink-integration/**'
+      - 'services/dorvud/technical-analysis/**'
+      - 'services/dorvud/technical-analysis-flink/**'
       - 'packages/scripts/src/torghut/release-contract.ts'
       - 'packages/scripts/src/shared/docker.ts'
       - '.github/workflows/torghut-ta-build-push.yaml'
-  workflow_run:
-    workflows:
-      - dorvud-ci
-    types:
-      - completed
 
 jobs:
   build-platform:
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||
-        github.event_name == 'push' ||
-        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+        github.event_name == 'push'
       }}
     strategy:
       fail-fast: false

@@ -14,6 +14,10 @@ const wsWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-ws-build-push.yaml', import.meta.url),
   'utf8',
 )
+const hyperliquidFeedWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-hyperliquid-feed-build-push.yaml', import.meta.url),
+  'utf8',
+)
 const ciWorkflow = readFileSync(new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url), 'utf8')
 const pullRequestWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/pull-request.yml', import.meta.url),
@@ -77,9 +81,24 @@ describe('torghut build-push workflow', () => {
   })
 
   it('publishes and contracts TA and WS images as amd64 and arm64 from direct pushes', () => {
-    for (const serviceWorkflow of [taWorkflow, wsWorkflow]) {
+    const serviceWorkflows = [
+      {
+        workflow: taWorkflow,
+        servicePath: 'services/dorvud/technical-analysis-flink/**',
+      },
+      {
+        workflow: wsWorkflow,
+        servicePath: 'services/dorvud/websockets/**',
+      },
+    ]
+
+    for (const { workflow: serviceWorkflow, servicePath } of serviceWorkflows) {
       expect(serviceWorkflow).toContain('push:')
-      expect(serviceWorkflow).toContain("- 'services/dorvud/**'")
+      expect(serviceWorkflow).toContain(`- '${servicePath}'`)
+      expect(serviceWorkflow).toContain("- 'services/dorvud/platform/**'")
+      expect(serviceWorkflow).toContain("- 'services/dorvud/settings.gradle.kts'")
+      expect(serviceWorkflow).not.toContain("- 'services/dorvud/**'")
+      expect(serviceWorkflow).not.toContain('workflow_run:')
       expect(serviceWorkflow).toContain("github.event_name == 'push'")
       expect(serviceWorkflow).toContain('runner: arc-amd64')
       expect(serviceWorkflow).toContain('runner: arc-arm64')
@@ -101,6 +120,21 @@ describe('torghut build-push workflow', () => {
         "--platform-digest 'linux/arm64=${{ steps.digest.outputs.platform_digest_arm64 }}'",
       )
     }
+  })
+
+  it('builds Hyperliquid feed images only for feed or shared Dorvud changes', () => {
+    expect(hyperliquidFeedWorkflow).toContain('push:')
+    expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/hyperliquid-feed/**'")
+    expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/platform/**'")
+    expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/settings.gradle.kts'")
+    expect(hyperliquidFeedWorkflow).not.toContain("- 'services/dorvud/**'")
+    expect(hyperliquidFeedWorkflow).not.toContain('workflow_run:')
+    expect(hyperliquidFeedWorkflow).toContain("github.event_name == 'push'")
+    expect(hyperliquidFeedWorkflow).toContain('runner: arc-amd64')
+    expect(hyperliquidFeedWorkflow).toContain('runner: arc-arm64')
+    expect(hyperliquidFeedWorkflow).toContain('platforms: ${{ matrix.platform }}')
+    expect(hyperliquidFeedWorkflow).toContain('name: Verify multi-arch image manifest')
+    expect(hyperliquidFeedWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
   })
 
   it('defines native amd64 and arm64 GitHub runner scale sets for Torghut image builds', () => {
