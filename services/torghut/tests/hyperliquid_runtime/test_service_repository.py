@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -42,11 +43,17 @@ def _config(**overrides: str) -> HyperliquidRuntimeConfig:
     return HyperliquidRuntimeConfig.from_env(env)
 
 
-def _feature() -> FeatureSnapshot:
+def _feature(
+    *,
+    market_id: str = "hl:perp:cash:cash:AAPL",
+    coin: str = "cash:AAPL",
+    dex: str = "cash",
+    source_lag_seconds: int = 10,
+) -> FeatureSnapshot:
     return FeatureSnapshot(
-        market_id="hl:perp:cash:cash:AAPL",
-        coin="cash:AAPL",
-        dex="cash",
+        market_id=market_id,
+        coin=coin,
+        dex=dex,
         event_ts=datetime(2026, 6, 18, tzinfo=timezone.utc),
         price=Decimal("200"),
         momentum_1m_bps=Decimal("3"),
@@ -62,15 +69,20 @@ def _feature() -> FeatureSnapshot:
         funding_rate=Decimal("0.0001"),
         open_interest_usd=Decimal("1000000"),
         regime="trend",
-        source_lag_seconds=10,
+        source_lag_seconds=source_lag_seconds,
     )
 
 
-def _market() -> HyperliquidMarket:
+def _market(
+    *,
+    market_id: str = "hl:perp:cash:cash:AAPL",
+    coin: str = "cash:AAPL",
+    dex: str = "cash",
+) -> HyperliquidMarket:
     return HyperliquidMarket(
-        market_id="hl:perp:cash:cash:AAPL",
-        coin="cash:AAPL",
-        dex="cash",
+        market_id=market_id,
+        coin=coin,
+        dex=dex,
         asset_class="stocks",
         network="mainnet",
         day_notional_volume_usd=Decimal("500000"),
@@ -374,8 +386,14 @@ class _FakeRepository:
 
 
 class _FakeClickHouse:
-    def __init__(self, *, features: list[FeatureSnapshot] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        features: list[FeatureSnapshot] | None = None,
+        catalog_rows: list[dict[str, object]] | None = None,
+    ) -> None:
         self._features = features if features is not None else [_feature()]
+        self._catalog_rows = catalog_rows
 
     def status(self) -> ClickHouseStatus:
         return ClickHouseStatus(
@@ -384,6 +402,8 @@ class _FakeClickHouse:
         )
 
     def load_catalog_rows(self) -> list[dict[str, object]]:
+        if self._catalog_rows is not None:
+            return self._catalog_rows
         return [
             {
                 "market_type": "perp",
@@ -506,6 +526,31 @@ def _journal_event(source_id: str, transfer_kind: str) -> HyperliquidJournalEven
     )
 
 
+def test_feature_readiness_allows_partial_fresh_coverage() -> None:
+    status = service_module._feature_readiness_status(
+        execution_markets=(
+            _market(),
+            _market(
+                market_id="hl:perp:cash:cash:TSLA",
+                coin="cash:TSLA",
+                dex="cash",
+            ),
+        ),
+        features=[_feature()],
+        clickhouse_ready=True,
+    )
+
+    assert status.ready
+    assert status.reason == "partial_feature_coverage_missing:1"
+    assert service_module._fresh_features(
+        [
+            _feature(),
+            replace(_feature(), source_lag_seconds=999),
+        ],
+        max_source_lag_seconds=120,
+    ) == [_feature()]
+
+
 def test_runtime_service_orchestrates_signal_order_and_accounting(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -549,6 +594,73 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
         "fill",
         "order_submitted",
     ]
+
+
+def test_runtime_service_skips_execution_markets_without_fresh_features(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    exchange = _FakeExchange(fills=False)
+    journal = _FakeJournal()
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+    service = HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        ),
+        clickhouse=_FakeClickHouse(
+            features=[
+                _feature(),
+                _feature(
+                    market_id="hl:perp:cash:cash:TSLA",
+                    coin="cash:TSLA",
+                    source_lag_seconds=999,
+                ),
+            ],
+            catalog_rows=[
+                {
+                    "market_type": "perp",
+                    "market_id": "hl:perp:cash:cash:AAPL",
+                    "coin": "cash:AAPL",
+                    "dex": "cash",
+                    "payload": '{"dayNtlVlm":"500000","markPx":"200","openInterest":"1000000"}',
+                },
+                {
+                    "market_type": "perp",
+                    "market_id": "hl:perp:cash:cash:TSLA",
+                    "coin": "cash:TSLA",
+                    "dex": "cash",
+                    "payload": '{"dayNtlVlm":"400000","markPx":"250","openInterest":"1000000"}',
+                },
+            ],
+        ),
+        exchange=exchange,
+        journal=journal,
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)
+
+    assert result.markets_seen == 2
+    assert result.signals_written == 1
+    assert result.orders_submitted == 1
+    assert exchange.open_order_reconcile_inputs == [
+        {
+            "cash:AAPL": "hl:perp:cash:cash:AAPL",
+            "cash:TSLA": "hl:perp:cash:cash:TSLA",
+        }
+    ]
+    assert any(
+        dependency.name == "hyperliquid_execution_features"
+        and dependency.ready
+        and dependency.reason == "partial_feature_coverage_missing:1"
+        for dependency in result.dependency_statuses
+    )
 
 
 def test_runtime_service_releases_reconciled_closed_orders(
