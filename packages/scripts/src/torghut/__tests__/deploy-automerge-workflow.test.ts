@@ -59,8 +59,8 @@ describe('torghut-deploy-automerge workflow', () => {
     }
   })
 
-  test('verifies the matching source build-push image contract instead of waiting for full source CI', () => {
-    expect(deployAutomergeWorkflow).toContain('name: Verify source image build contract')
+  test('verifies the promoted digest contract without rediscovering source build runs', () => {
+    expect(deployAutomergeWorkflow).toContain('name: Verify source image digest contract')
     expect(deployAutomergeWorkflow).toContain(
       "startsWith(github.event.pull_request.head.ref, 'codex/torghut-release-')",
     )
@@ -70,21 +70,22 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(deployAutomergeWorkflow).toContain(
       "startsWith(github.event.pull_request.head.ref, 'codex/torghut-ws-release-')",
     )
-    expect(deployAutomergeWorkflow).toContain("build_workflow='torghut-build-push.yaml'")
-    expect(deployAutomergeWorkflow).toContain("build_workflow='torghut-ta-build-push.yaml'")
-    expect(deployAutomergeWorkflow).toContain("build_workflow='torghut-ws-build-push.yaml'")
+    expect(deployAutomergeWorkflow).toContain("expected_image='registry.ide-newton.ts.net/lab/torghut'")
+    expect(deployAutomergeWorkflow).toContain("expected_image='registry.ide-newton.ts.net/lab/torghut-ta'")
+    expect(deployAutomergeWorkflow).toContain("expected_image='registry.ide-newton.ts.net/lab/torghut-ws'")
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_COMMIT'")
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_TA_COMMIT'")
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_WS_COMMIT'")
-    expect(deployAutomergeWorkflow).toContain('build-platform (linux/amd64, amd64, arc-amd64)')
-    expect(deployAutomergeWorkflow).toContain('build-platform (linux/arm64, arm64, arc-arm64)')
-    expect(deployAutomergeWorkflow).toContain('publish-index')
-    expect(deployAutomergeWorkflow).toContain('build-push passed required image contract jobs')
+    expect(deployAutomergeWorkflow).toContain('docker buildx imagetools inspect')
+    expect(deployAutomergeWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
+    expect(deployAutomergeWorkflow).toContain('release manifest pins a multi-arch image digest')
+    expect(deployAutomergeWorkflow).not.toContain('gh run list')
+    expect(deployAutomergeWorkflow).not.toContain('gh run view')
     expect(deployAutomergeWorkflow).not.toContain('name: Wait for source commit Torghut CI')
     expect(deployAutomergeWorkflow).not.toContain('--workflow torghut-ci.yml')
   })
 
-  test('allowlists hyperliquid feed image promotion PRs with a feed build gate', () => {
+  test('allowlists hyperliquid feed image promotion PRs with a feed digest gate', () => {
     const manifestPath = 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
 
     expect(hyperliquidFeedReleaseWorkflow).toContain(manifestPath)
@@ -96,9 +97,8 @@ describe('torghut-deploy-automerge workflow', () => {
       "startsWith(github.event.pull_request.head.ref, 'codex/torghut-hyperliquid-feed-release-')",
     )
     expect(deployAutomergeWorkflow).toContain("steps.gates.outputs.release_lane == 'hyperliquid-feed'")
-    expect(deployAutomergeWorkflow).toContain('torghut-hyperliquid-feed-build-push.yaml')
-    expect(deployAutomergeWorkflow).toContain('name: Verify source Hyperliquid feed image build contract')
-    expect(deployAutomergeWorkflow).toContain('Hyperliquid feed build-push passed required image contract jobs')
+    expect(deployAutomergeWorkflow).toContain('name: Verify source Hyperliquid feed image digest contract')
+    expect(deployAutomergeWorkflow).toContain('Hyperliquid feed release manifest pins a multi-arch image digest')
     expect(deployAutomergeWorkflow).toContain('TORGHUT_HYPERLIQUID_FEED_COMMIT')
   })
 })

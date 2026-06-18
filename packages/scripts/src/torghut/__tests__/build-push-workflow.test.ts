@@ -183,7 +183,7 @@ describe('torghut build-push workflow', () => {
     const releaseManifestJobBody = ciWorkflow.slice(releaseManifestJob, nextJob)
 
     expect(releaseManifestJob).toBeGreaterThan(-1)
-    expect(releaseManifestJobBody).toContain('name: Verify source image build contract')
+    expect(releaseManifestJobBody).toContain('name: Verify source image digest contract')
     expect(releaseManifestJobBody).toContain('TORGHUT_COMMIT')
     expect(releaseManifestJobBody).toContain('TORGHUT_TA_COMMIT')
     expect(releaseManifestJobBody).toContain('TORGHUT_WS_COMMIT')
@@ -220,21 +220,26 @@ describe('torghut build-push workflow', () => {
     expect(prFilesCall).toBeGreaterThan(authHeader)
   })
 
-  it('gates release manifest-only CI on the completed build-push image contract', () => {
+  it('gates release manifest-only CI on digest-pinned multi-arch image contracts', () => {
     const releaseManifestJob = ciWorkflow.indexOf('release-manifests:')
-    const buildContractStep = ciWorkflow.indexOf('name: Verify source image build contract', releaseManifestJob)
+    const buildContractStep = ciWorkflow.indexOf('name: Verify source image digest contract', releaseManifestJob)
+    const releaseManifestJobBody = ciWorkflow.slice(
+      releaseManifestJob,
+      ciWorkflow.indexOf('\n  pyright:', releaseManifestJob),
+    )
 
     expect(buildContractStep).toBeGreaterThan(releaseManifestJob)
-    expect(ciWorkflow).toContain('torghut-build-push.yaml')
-    expect(ciWorkflow).toContain('torghut-ta-build-push.yaml')
-    expect(ciWorkflow).toContain('torghut-ws-build-push.yaml')
-    expect(ciWorkflow).toContain('argocd/applications/torghut/knative-service.yaml')
-    expect(ciWorkflow).toContain('argocd/applications/torghut/ta/flinkdeployment.yaml')
-    expect(ciWorkflow).toContain('argocd/applications/torghut/ws/deployment.yaml')
-    expect(ciWorkflow).toContain('build-platform (linux/amd64, amd64, arc-amd64)')
-    expect(ciWorkflow).toContain('build-platform (linux/arm64, arm64, arc-arm64)')
-    expect(ciWorkflow).toContain('publish-index')
-    expect(ciWorkflow).toContain('build-push passed required image contract jobs')
+    expect(releaseManifestJobBody).toContain('argocd/applications/torghut/knative-service.yaml')
+    expect(releaseManifestJobBody).toContain('argocd/applications/torghut/ta/flinkdeployment.yaml')
+    expect(releaseManifestJobBody).toContain('argocd/applications/torghut/ws/deployment.yaml')
+    expect(releaseManifestJobBody).toContain('registry.ide-newton.ts.net/lab/torghut')
+    expect(releaseManifestJobBody).toContain('registry.ide-newton.ts.net/lab/torghut-ta')
+    expect(releaseManifestJobBody).toContain('registry.ide-newton.ts.net/lab/torghut-ws')
+    expect(releaseManifestJobBody).toContain('docker buildx imagetools inspect')
+    expect(releaseManifestJobBody).toContain('for platform in linux/amd64 linux/arm64; do')
+    expect(releaseManifestJobBody).toContain('release manifest pins a multi-arch image digest')
+    expect(releaseManifestJobBody).not.toContain('gh run list')
+    expect(releaseManifestJobBody).not.toContain('gh run view')
     expect(ciWorkflow).not.toContain('name: Require source commit Torghut CI')
     expect(ciWorkflow).not.toContain('--workflow torghut-ci.yml')
   })
