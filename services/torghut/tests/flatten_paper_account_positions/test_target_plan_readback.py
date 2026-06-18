@@ -204,6 +204,7 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
                     "symbols": ["AAPL", "AMZN"],
                     "account_state": {
                         "clean_baseline": False,
+                        "clean_baseline_snapshot_at": "2026-06-05T13:15:00+00:00",
                         "blockers": ["account_dirty_before_window"],
                     },
                 }
@@ -223,7 +224,64 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
             targets[0]["paper_route_clean_window_baseline_blockers"],
             ["account_dirty_before_window"],
         )
+        baseline = targets[0]["paper_route_clean_window_baseline_state"]
+        self.assertEqual(
+            baseline["snapshot_as_of"],
+            "2026-06-05T13:15:00+00:00",
+        )
+        self.assertFalse(baseline["source_auditable"])
         self.assertEqual(targets[0]["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+
+    def test_target_plan_readback_accepts_full_audit_proof_snapshot_timestamp(
+        self,
+    ) -> None:
+        proofs_payload = {
+            "schema_version": "torghut.proofs.v1",
+            "proofs": [
+                {
+                    "identity": {
+                        "hypothesis_id": "configured-paper-collection:hpairs",
+                        "candidate_id": "configured:hpairs",
+                        "runtime_strategy_name": "microbar-pairs-vwap-cap-safe",
+                        "account_label": "PA3SX7FYNUTF",
+                    },
+                    "window": {
+                        "start": "2026-06-22T13:30:00+00:00",
+                        "end": "2026-06-22T20:00:00+00:00",
+                    },
+                    "account_state": {
+                        "clean_baseline": True,
+                        "clean_baseline_snapshot_at": "2026-06-18T21:12:19+00:00",
+                        "blockers": [],
+                    },
+                }
+            ],
+        }
+
+        with patch.object(
+            flatten_script.urllib.request,
+            "urlopen",
+            return_value=FakeHttpResponse(proofs_payload),
+        ):
+            readback = flatten_script.read_target_plan_clean_window_readback(
+                url=(
+                    "http://torghut.torghut.svc.cluster.local/trading/"
+                    "proofs?kind=runtime_window&window=next&full_audit=true&limit=20"
+                ),
+                account_label="PA3SX7FYNUTF",
+                snapshot_id="snapshot-1",
+                snapshot_as_of="2026-06-18T21:12:18+00:00",
+                timeout_seconds=2,
+            )
+
+        self.assertEqual(readback["state"], "clean")
+        self.assertEqual(readback["plan_source"], "proofs")
+        self.assertEqual(readback["matching_target_count"], 1)
+        self.assertEqual(readback["clean_matching_target_count"], 1)
+        self.assertTrue(readback["persisted_snapshot_seen"])
+        self.assertFalse(readback["persisted_snapshot_id_seen"])
+        self.assertTrue(readback["persisted_snapshot_as_of_seen"])
+        self.assertEqual(readback["blockers"], [])
 
     def test_target_plan_readback_proves_clean_matching_snapshot(self) -> None:
         target_plan = {

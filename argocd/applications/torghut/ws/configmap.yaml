@@ -16,8 +16,8 @@ data:
   # Keep universe size capped at 12 to preserve headroom and avoid 405 symbol-limit failures.
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars,updatedBars"
   # Static executable universe; the live trading loop must not depend on Jangar.
-  SYMBOLS: "NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC"
-  SYMBOLS_ALLOWLIST: "NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC"
+  SYMBOLS: "NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC"
+  SYMBOLS_ALLOWLIST: "NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC"
   SYMBOLS_POLL_INTERVAL_MS: "30000"
   SUBSCRIBE_BATCH_SIZE: "200"
   SHARD_COUNT: "1"

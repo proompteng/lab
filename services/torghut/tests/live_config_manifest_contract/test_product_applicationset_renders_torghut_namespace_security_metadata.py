@@ -301,6 +301,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
         self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
         self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
+        self.assertEqual(pod_spec.get("restartPolicy"), "Never")
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
         self.assertNotIn("nodeSelector", pod_spec)
         resources = cast(Mapping[str, object], container.get("resources", {}))
@@ -363,7 +364,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertIn("--database-dsn-env DB_DSN", args)
         self.assertIn(
             "--target-plan-readback-url "
-            "'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20'",
+            "'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&full_audit=true&limit=20'",
             args,
         )
         self.assertIn(
@@ -383,7 +384,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertIn("--target-plan-readback-url", args)
         self.assertIn(
             "http://torghut.torghut.svc.cluster.local/trading/"
-            "proofs?kind=runtime_window&window=next&limit=20",
+            "proofs?kind=runtime_window&window=next&full_audit=true&limit=20",
             args,
         )
         self.assertIn("--target-plan-readback-timeout-seconds 10", args)

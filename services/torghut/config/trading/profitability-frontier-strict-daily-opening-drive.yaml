@@ -25,7 +25,7 @@ consistency_constraints:
   require_every_day_active: true
 strategy_overrides:
   universe_symbols:
-    - ['NVDA', 'AVGO', 'AMD', 'MU', 'MRVL', 'CRDO', 'COHR', 'LITE', 'TSM', 'WDC']
+    - ['NVDA', 'AVGO', 'AMD', 'MU', 'MRVL', 'CRDO', 'COHR', 'LITE', 'SNDK', 'WDC']
   normalization_regime:
     - 'opening_window_scaled'
   max_position_pct_equity:

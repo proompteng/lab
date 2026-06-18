@@ -20,7 +20,7 @@ def test_configured_collection_targets_use_runtime_account_and_buy_actions(
     monkeypatch.setattr(
         settings,
         "trading_static_symbols_raw",
-        "NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC",
+        "NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC",
     )
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
