@@ -184,6 +184,19 @@ describe('Torghut manifest scheduling', () => {
     expect(resources).not.toContain('externalsecret.yaml')
   })
 
+  it('keeps options TA recoverable across transient Kafka source startup failures', () => {
+    const config = parseManifest('argocd/applications/torghut-options/ta/configmap.yaml')
+    const data = getAtPath(config, ['data'])
+    expect(data.TA_AUTO_OFFSET_RESET).toBe('latest')
+
+    const deployment = parseManifest('argocd/applications/torghut-options/ta/flinkdeployment.yaml')
+    const spec = getAtPath(deployment, ['spec'])
+    const flinkConfiguration = getAtPath(spec, ['flinkConfiguration'])
+    expect(spec.restartNonce).toBe(15)
+    expect(flinkConfiguration['restart-strategy.fixed-delay.attempts']).toBe('60')
+    expect(flinkConfiguration['restart-strategy.fixed-delay.delay']).toBe('10 s')
+  })
+
   it('keeps whitepaper autoresearch off the serving pod resource envelope', () => {
     const manifest = parseManifest('argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml')
     const template = getAtPath(manifest, ['spec', 'templates', 0])

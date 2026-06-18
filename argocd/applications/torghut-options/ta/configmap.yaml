@@ -29,7 +29,7 @@ data:
   TA_STATUS_TOPIC: "torghut.options.ta.status.v1"
   TA_GROUP_ID: "torghut-options-ta-2026-03-08"
   TA_CLIENT_ID: "torghut-options-ta-r8"
-  TA_AUTO_OFFSET_RESET: "earliest"
+  TA_AUTO_OFFSET_RESET: "latest"
   TA_CHECKPOINT_DIR: "s3a://flink-checkpoints/torghut/options-technical-analysis"
   TA_SAVEPOINT_DIR: "s3a://flink-checkpoints/torghut/options-technical-analysis/savepoints"
   TA_CHECKPOINT_INTERVAL_MS: "60000"
