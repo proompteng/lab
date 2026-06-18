@@ -43,7 +43,7 @@ class GUID(TypeDecorator[uuid.UUID]):
     impl = CHAR(36)
     cache_ok = True
 
-    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:  # type: ignore[override]
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
         if dialect.name == "postgresql":
             return dialect.type_descriptor(PGUUID(as_uuid=True))
         return dialect.type_descriptor(CHAR(36))
@@ -69,7 +69,7 @@ class JSONType(TypeDecorator[Any]):
     impl = JSON
     cache_ok = True
 
-    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:  # type: ignore[override]
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
         if dialect.name == "postgresql":
             from sqlalchemy.dialects.postgresql import (
                 JSONB,

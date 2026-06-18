@@ -167,17 +167,13 @@ def _import_array_backend(preference: str) -> tuple[str, Any]:
         return "numpy-fallback", np
     if normalized == "mlx":
         try:
-            import mlx.core as mx  # type: ignore[import-not-found]
-
-            return "mlx", mx
+            return "mlx", cast(Any, importlib.import_module("mlx.core"))
         except ModuleNotFoundError:
             import numpy as np
 
             return "numpy-fallback", np
     try:
-        import mlx.core as mx  # type: ignore[import-not-found]
-
-        return "mlx", mx
+        return "mlx", cast(Any, importlib.import_module("mlx.core"))
     except ModuleNotFoundError:
         import numpy as np
 

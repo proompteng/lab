@@ -65,7 +65,7 @@ def _int(value: object, default: int = 0) -> int:
     try:
         if isinstance(value, bool):
             return int(value)
-        return int(value)  # type: ignore[arg-type]
+        return int(str(value).strip())
     except (TypeError, ValueError):
         return default
 

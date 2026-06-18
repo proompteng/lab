@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from importlib import import_module
 import json
 import logging
 import uuid
@@ -438,7 +439,7 @@ def _manual_assignment_hooks(consumer: Any) -> _ManualAssignmentHooks:
 
 def _manual_topic_partitions(hooks: _ManualAssignmentHooks) -> list[Any]:
     try:
-        from kafka import TopicPartition  # type: ignore[import-not-found]
+        TopicPartition = import_module("kafka").TopicPartition
     except Exception as exc:  # pragma: no cover - import guarded at runtime
         raise RuntimeError(
             "kafka-python dependency is required for manual order-feed assignment"
