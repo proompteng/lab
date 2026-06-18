@@ -216,7 +216,7 @@ class TestSearchFrontierLedgerArgs(SearchConsistentProfitabilityFrontierTestCase
 
     def test_frontier_exact_replay_bucket_rejects_empty_bucket_build(self) -> None:
         with patch(
-            "scripts.search_consistent_profitability_frontier.build_runtime_ledger_buckets",
+            "scripts.consistent_profitability_frontier.ledger_order.build_runtime_ledger_buckets",
             return_value=[],
         ):
             bucket = frontier._frontier_exact_replay_bucket(
