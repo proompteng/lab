@@ -110,6 +110,10 @@ data:
       argMax(open_interest_usd, event_ts) AS open_interest_usd,
       argMax(regime, event_ts) AS regime,
       argMax(source_lag_seconds, event_ts) AS source_lag_seconds
-    FROM torghut.hyperliquid_ta_features
-    WHERE event_ts >= now() - INTERVAL 2 HOUR
+    FROM
+    (
+      SELECT *
+      FROM torghut.hyperliquid_ta_features
+      WHERE event_ts >= now() - INTERVAL 2 HOUR
+    )
     GROUP BY network, market_id;
