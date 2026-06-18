@@ -30,7 +30,7 @@ type PostDeployEvidenceInput = {
 type LiveSubmitContract = 'bounded_live_submit_active' | 'expired_activation_blocked'
 
 export type PostDeployEvidenceResult = {
-  readyzAcceptedReason: 'healthy_2xx' | 'repair_only_zero_notional'
+  readyzAcceptedReason: 'healthy_2xx' | 'repair_only_zero_notional' | 'core_dependencies_only_gate_closed'
   readyzStatusCode: number
   summaryLines: string[]
   liveSubmitContract?: LiveSubmitContract
@@ -204,6 +204,63 @@ const assertLiveSubmitActivationContract = (activation: JsonObject): LiveSubmitC
     throw new Error('torghut live_submit_activation.reason must be empty before expiry')
   }
   return 'bounded_live_submit_active'
+}
+
+const assertCoreDependenciesOnlyReadyz = (readyz: JsonObject) => {
+  if (readyz.status !== 'degraded') {
+    throw new Error('non-2xx core-dependencies-only /readyz is only accepted when payload.status is degraded')
+  }
+  requireScalarValue(readyz.readiness_surface, 'core_dependencies_only', 'readyz readiness_surface')
+
+  const dependencies = requireObject(readyz.dependencies, 'readyz dependencies')
+  requireDependencyOk(dependencies, 'postgres')
+  requireDependencyOk(dependencies, 'clickhouse')
+  requireDependencyOk(dependencies, 'database')
+
+  const scheduler = requireObject(readyz.scheduler, 'readyz scheduler')
+  if (scheduler.ok !== true || scheduler.running !== true) {
+    throw new Error('readyz scheduler must be ok and running for core-dependencies-only rollout acceptance')
+  }
+
+  const liveSubmissionGate = requireObject(readyz.live_submission_gate, 'readyz live_submission_gate')
+  if (requireBoolean(liveSubmissionGate.allowed, 'readyz live_submission_gate.allowed') !== false) {
+    throw new Error('core-dependencies-only rollout acceptance requires live_submission_gate.allowed=false')
+  }
+  requireScalarValue(liveSubmissionGate.reason, 'readyz_core_dependencies_only', 'readyz live_submission_gate.reason')
+  requireArrayIncludes(
+    liveSubmissionGate.reason_codes,
+    'readyz_core_dependencies_only',
+    'readyz live_submission_gate.reason_codes',
+  )
+  requireArrayIncludes(
+    liveSubmissionGate.blocked_reasons,
+    'readyz_core_dependencies_only',
+    'readyz live_submission_gate.blocked_reasons',
+  )
+  requireScalarValue(
+    liveSubmissionGate.readiness_surface,
+    'core_dependencies_only',
+    'readyz live_submission_gate.readiness_surface',
+  )
+  if (requireBoolean(liveSubmissionGate.read_model_evaluated, 'readyz live_submission_gate.read_model_evaluated')) {
+    throw new Error(
+      'core-dependencies-only rollout acceptance requires live_submission_gate.read_model_evaluated=false',
+    )
+  }
+  for (const authorityKey of [
+    'promotion_authority',
+    'promotion_authority_ok',
+    'final_authority_ok',
+    'final_promotion_allowed',
+    'final_promotion_authorized',
+  ]) {
+    if (requireBoolean(liveSubmissionGate[authorityKey], `readyz live_submission_gate.${authorityKey}`) !== false) {
+      throw new Error(`core-dependencies-only rollout acceptance requires live_submission_gate.${authorityKey}=false`)
+    }
+  }
+  assertLiveSubmitActivationContract(
+    requireObject(liveSubmissionGate.live_submit_activation, 'readyz live_submission_gate.live_submit_activation'),
+  )
 }
 
 const assertBoundedLiveSubmitContract = (status: JsonObject): LiveSubmitContract => {
@@ -586,10 +643,19 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
   let liveSubmitContract: LiveSubmitContract | undefined
   if (readyzStatusCode < 200 || readyzStatusCode >= 300) {
     if (readyzStatusCode !== 503) {
-      throw new Error(`Torghut /readyz returned HTTP ${readyzStatusCode}; expected 2xx or repair-only 503`)
+      throw new Error(
+        `Torghut /readyz returned HTTP ${readyzStatusCode}; expected 2xx, repair-only 503, or core-dependencies-only 503`,
+      )
     }
-    assertRepairOnlyZeroNotionalReadyz(readyz, digest)
-    readyzAcceptedReason = 'repair_only_zero_notional'
+    const dependencies = requireObject(readyz.dependencies, 'readyz dependencies')
+    if (dependencies.live_submission_gate !== undefined || dependencies.profitability_proof_floor !== undefined) {
+      assertRepairOnlyZeroNotionalReadyz(readyz, digest)
+      readyzAcceptedReason = 'repair_only_zero_notional'
+    } else {
+      assertCoreDependenciesOnlyReadyz(readyz)
+      liveSubmitContract = assertBoundedLiveSubmitContract(status)
+      readyzAcceptedReason = 'core_dependencies_only_gate_closed'
+    }
   } else {
     liveSubmitContract = assertBoundedLiveSubmitContract(status)
   }

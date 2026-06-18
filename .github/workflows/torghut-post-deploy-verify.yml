@@ -315,7 +315,7 @@ jobs:
                       printf '%s' "${status}"
                       return 0
                     fi
-                    echo "Attempt ${attempt}: ${label} database readiness timed out; retrying until repair-only readyz contract is acceptable" >&2
+                    echo "Attempt ${attempt}: ${label} database readiness timed out; retrying until readyz contract is acceptable" >&2
                     sleep 5
                     continue
                     ;;

@@ -25,4 +25,15 @@ describe('torghut-deploy-automerge workflow', () => {
       expect(countOccurrences(deployAutomergeWorkflow, `'${manifestPath}'`)).toBeGreaterThanOrEqual(2)
     }
   })
+
+  test('verifies the source build-push image contract instead of waiting for full source CI', () => {
+    expect(deployAutomergeWorkflow).toContain('name: Verify source image build contract')
+    expect(deployAutomergeWorkflow).toContain('--workflow torghut-build-push.yaml')
+    expect(deployAutomergeWorkflow).toContain('build-platform (linux/amd64, amd64, arc-amd64)')
+    expect(deployAutomergeWorkflow).toContain('build-platform (linux/arm64, arm64, arc-arm64)')
+    expect(deployAutomergeWorkflow).toContain('publish-index')
+    expect(deployAutomergeWorkflow).toContain('Torghut build-push passed required image contract jobs')
+    expect(deployAutomergeWorkflow).not.toContain('name: Wait for source commit Torghut CI')
+    expect(deployAutomergeWorkflow).not.toContain('--workflow torghut-ci.yml')
+  })
 })

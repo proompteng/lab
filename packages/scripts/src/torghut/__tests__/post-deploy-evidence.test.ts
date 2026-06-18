@@ -161,6 +161,38 @@ const baseReadyz = {
   },
 }
 
+const coreDependenciesOnlyReadyz = {
+  status: 'degraded',
+  reason_codes: ['alpaca_degraded'],
+  scheduler: { ok: true, running: true },
+  readiness_surface: 'core_dependencies_only',
+  dependencies: {
+    postgres: { ok: true },
+    clickhouse: { ok: true },
+    database: { ok: true },
+    alpaca: {
+      ok: false,
+      detail: 'alpaca account probe timed out after 2.00s',
+    },
+  },
+  live_submission_gate: {
+    allowed: false,
+    promotion_authority: false,
+    promotion_authority_ok: false,
+    final_authority_ok: false,
+    final_promotion_allowed: false,
+    final_promotion_authorized: false,
+    reason: 'readyz_core_dependencies_only',
+    reason_codes: ['readyz_core_dependencies_only'],
+    blocked_reasons: ['readyz_core_dependencies_only'],
+    capital_stage: 'shadow',
+    capital_state: 'observe',
+    read_model_evaluated: false,
+    readiness_surface: 'core_dependencies_only',
+    live_submit_activation: baseLiveSubmitActivation,
+  },
+}
+
 describe('validatePostDeployEvidence', () => {
   it('accepts normal 2xx readyz with route board evidence', () => {
     const result = validatePostDeployEvidence({
@@ -291,6 +323,53 @@ describe('validatePostDeployEvidence', () => {
 
     expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
     expect(result.summaryLines.join('\n')).toContain('Readyz acceptance: `repair_only_zero_notional`')
+  })
+
+  it('accepts core-dependencies-only readyz 503 when the deploy surface is healthy and the gate is closed', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '503',
+      readyz: coreDependenciesOnlyReadyz,
+      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+      tradingStatus: baseTradingStatus,
+    })
+
+    expect(result.readyzAcceptedReason).toBe('core_dependencies_only_gate_closed')
+    expect(result.liveSubmitContract).toBe('bounded_live_submit_active')
+    expect(result.summaryLines.join('\n')).toContain('Readyz acceptance: `core_dependencies_only_gate_closed`')
+  })
+
+  it('rejects core-dependencies-only readyz 503 when a core runtime dependency is down', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '503',
+        readyz: {
+          ...coreDependenciesOnlyReadyz,
+          dependencies: {
+            ...coreDependenciesOnlyReadyz.dependencies,
+            database: { ok: false, detail: 'schema drift' },
+          },
+        },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+      }),
+    ).toThrow('readyz dependencies.database.ok must be true')
+  })
+
+  it('rejects core-dependencies-only readyz 503 if it carries live submission authority', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '503',
+        readyz: {
+          ...coreDependenciesOnlyReadyz,
+          live_submission_gate: {
+            ...coreDependenciesOnlyReadyz.live_submission_gate,
+            allowed: true,
+          },
+        },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+      }),
+    ).toThrow('live_submission_gate.allowed=false')
   })
 
   it('rejects repair-only 503 when runtime dependencies are down', () => {
