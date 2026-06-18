@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from .policy_check_modules.common import (
+from .policy_check.common import (
     Any,
     Path,
     PromotionPrerequisiteResult,
@@ -14,7 +14,7 @@ from .policy_check_modules.common import (
     timedelta,
     timezone,
 )
-from .policy_check_modules.requirements import (
+from .policy_check.requirements import (
     as_dict as _as_dict,
     benchmark_parity_artifact_candidates as _benchmark_parity_artifact_candidates,
     coerce_evidence_bool as _coerce_evidence_bool,
@@ -45,14 +45,14 @@ from .policy_check_modules.requirements import (
     requires_simulation_calibration as _requires_simulation_calibration,
     requires_stress_evidence as _requires_stress_evidence,
 )
-from .policy_check_modules.profitability_manifest import (
+from .policy_check.profitability_manifest import (
     append_benchmark_parity_evidence_reasons as _append_benchmark_parity_evidence_reasons,
     append_janus_evidence_reasons as _append_janus_evidence_reasons,
     append_portfolio_optimizer_evidence_reasons as _append_portfolio_optimizer_evidence_reasons,
     append_profitability_evidence_reasons as _append_profitability_evidence_reasons,
     append_profitability_stage_manifest_reasons as _append_profitability_stage_manifest_reasons,
 )
-from .policy_check_modules.promotion_evidence import (
+from .policy_check.promotion_evidence import (
     evaluate_alpha_readiness_summary,
     evaluate_promotion_evidence as _evaluate_promotion_evidence,
 )

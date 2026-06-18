@@ -448,7 +448,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     return_value=shared_gate,
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.status_dependencies.build_api_live_submission_gate_payload",
+                    "app.api.readiness_helpers.status_dependencies.build_api_live_submission_gate_payload",
                     return_value=shared_gate,
                 ),
                 patch(

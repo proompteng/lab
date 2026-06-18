@@ -38,11 +38,11 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -175,11 +175,11 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
             with (
                 patch(
-                    "app.api.readiness_helpers_modules.shared_context._evaluate_scheduler_status",
+                    "app.api.readiness_helpers.shared_context._evaluate_scheduler_status",
                     return_value=(True, {"ok": True, "running": True}),
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.shared_context.readiness_dependency_snapshot",
+                    "app.api.readiness_helpers.shared_context.readiness_dependency_snapshot",
                     return_value=(
                         {
                             "postgres": {"ok": True, "detail": "ok"},
@@ -193,7 +193,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
                     ),
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_universe_dependency",
+                    "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_universe_dependency",
                     return_value={"ok": True, "detail": "ok"},
                 ),
             ):
@@ -222,7 +222,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
 
     @patch(
-        "app.api.health_checks_modules.remember_alpaca_success._alpaca_probe_account",
+        "app.api.health_checks.remember_alpaca_success._alpaca_probe_account",
         side_effect=[
             {
                 "ok": True,
@@ -240,7 +240,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             },
         ],
     )
-    @patch("app.api.health_checks_modules.remember_alpaca_success.TorghutAlpacaClient")
+    @patch("app.api.health_checks.remember_alpaca_success.TorghutAlpacaClient")
     def test_check_alpaca_uses_cached_last_known_good_for_slow_probe(
         self,
         mock_client: Any,
@@ -275,7 +275,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         self.assertEqual(second["account_label"], "PA3SX7FYNUTF")
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._evaluate_database_contract",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -367,7 +367,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_universe_source = original_source
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._evaluate_database_contract",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -508,15 +508,15 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             app.state.trading_scheduler = scheduler
             with (
                 patch(
-                    "app.api.readiness_helpers_modules.status_dependencies.build_api_live_submission_gate_payload",
+                    "app.api.readiness_helpers.status_dependencies.build_api_live_submission_gate_payload",
                     return_value=authoritative_gate,
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.status_dependencies.empirical_jobs_status",
+                    "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.evaluate_trading_health_payload.load_quant_evidence_status",
+                    "app.api.readiness_helpers.evaluate_trading_health_payload.load_quant_evidence_status",
                     return_value={
                         "required": True,
                         "ok": True,

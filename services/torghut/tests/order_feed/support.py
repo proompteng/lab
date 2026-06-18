@@ -27,7 +27,7 @@ from app.models import (
     TigerBeetleTransferRef,
     TradeDecision,
 )
-from app.trading import order_feed_modules as order_feed_module
+from app.trading import order_feed as order_feed_module
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION,

@@ -43,7 +43,7 @@ from app.trading.tigerbeetle_journal import (
     runtime_ledger_transfer_id,
     tigerbeetle_runtime_ledger_journal_payload,
 )
-from app.trading.tigerbeetle_journal_modules.journal_payloads import (
+from app.trading.tigerbeetle_journal.journal_payloads import (
     event_amount_usd,
     lookup_payload_decimal,
     order_event_precedes,
@@ -53,7 +53,7 @@ from app.trading.tigerbeetle_journal_modules.journal_payloads import (
     result_statuses_by_index,
     transfer_attr,
 )
-from app.trading.tigerbeetle_journal_modules.transfer_refs import (
+from app.trading.tigerbeetle_journal.transfer_refs import (
     order_event_account_specs,
     dedupe_account_specs,
     persist_account_refs,

@@ -534,16 +534,16 @@ class TradingApiTestCaseBase(TestCase):
         )
         for session_local_target in (
             "app.api.common.SessionLocal",
-            "app.api.health_checks_modules.shared_context.SessionLocal",
-            "app.api.health_checks_modules.load_options_catalog_freshness_summary.SessionLocal",
-            "app.api.health_checks_modules.remember_alpaca_success.SessionLocal",
+            "app.api.health_checks.shared_context.SessionLocal",
+            "app.api.health_checks.load_options_catalog_freshness_summary.SessionLocal",
+            "app.api.health_checks.remember_alpaca_success.SessionLocal",
             "app.api.maintenance.SessionLocal",
             "app.api.proofs.SessionLocal",
-            "app.api.readiness_helpers_modules.evaluate_trading_health_payload.SessionLocal",
-            "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.SessionLocal",
+            "app.api.readiness_helpers.evaluate_trading_health_payload.SessionLocal",
+            "app.api.readiness_helpers.refresh_universe_state_for_readiness.SessionLocal",
             "app.api.trading_status.SessionLocal",
             "app.api.status_helpers.SessionLocal",
-            "app.api.trading_misc_modules.shared_context.SessionLocal",
+            "app.api.trading_misc.shared_context.SessionLocal",
             "app.api.vnext_helpers.SessionLocal",
         ):
             session_local_patch = patch(session_local_target, self.session_local)

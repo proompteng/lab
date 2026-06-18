@@ -13,10 +13,10 @@ from unittest.mock import patch
 
 import scripts.run_whitepaper_autoresearch_profit_target as runner
 from app.trading.discovery import fast_replay
-from app.trading.discovery.fast_replay_modules import (
+from app.trading.discovery.fast_replay import (
     extract_price as fast_replay_extract_price,
 )
-from app.trading.discovery.fast_replay_modules import (
+from app.trading.discovery.fast_replay import (
     frontier_selection_blockers_for_row as fast_replay_frontier,
 )
 from app.trading.discovery.replay_tape import (

@@ -275,7 +275,7 @@ class TestEvidenceEpochs(TestCase):
             with (
                 session_local() as session,
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy._evaluate_database_contract",
+                    "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
                     return_value={
                         "ok": True,
                         "schema_current": True,
@@ -285,7 +285,7 @@ class TestEvidenceEpochs(TestCase):
                     },
                 ),
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy.build_empirical_jobs_status",
+                    "app.api.trading_misc.trading_autonomy.build_empirical_jobs_status",
                     return_value={"ready": True},
                 ),
             ):
@@ -373,7 +373,7 @@ class TestEvidenceEpochs(TestCase):
             session.commit()
             with (
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy._evaluate_database_contract",
+                    "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
                     return_value={
                         "ok": True,
                         "schema_current": True,
@@ -383,7 +383,7 @@ class TestEvidenceEpochs(TestCase):
                     },
                 ),
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy.build_empirical_jobs_status",
+                    "app.api.trading_misc.trading_autonomy.build_empirical_jobs_status",
                     return_value={"ready": True},
                 ),
             ):
@@ -513,7 +513,7 @@ class TestEvidenceEpochs(TestCase):
         with session_local() as session:
             with (
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy._evaluate_database_contract",
+                    "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
                     return_value={
                         "ok": True,
                         "schema_current": True,
@@ -523,7 +523,7 @@ class TestEvidenceEpochs(TestCase):
                     },
                 ),
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy.build_empirical_jobs_status",
+                    "app.api.trading_misc.trading_autonomy.build_empirical_jobs_status",
                     return_value={"ready": True},
                 ),
             ):
@@ -555,7 +555,7 @@ class TestEvidenceEpochs(TestCase):
         with session_local() as session:
             with (
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy._evaluate_database_contract",
+                    "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
                     return_value={
                         "ok": True,
                         "schema_current": True,
@@ -565,11 +565,11 @@ class TestEvidenceEpochs(TestCase):
                     },
                 ),
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy.build_empirical_jobs_status",
+                    "app.api.trading_misc.trading_autonomy.build_empirical_jobs_status",
                     return_value={"ready": True},
                 ),
                 patch(
-                    "app.api.trading_misc_modules.trading_autonomy._daily_runtime_ledger_portfolio_summary",
+                    "app.api.trading_misc.trading_autonomy._daily_runtime_ledger_portfolio_summary",
                     return_value={
                         "bucket_count": 1,
                         "evidence_grade_bucket_count": 1,
@@ -945,7 +945,7 @@ class TestEvidenceEpochs(TestCase):
             self.assertFalse(no_persist_response.json()["persisted"])
 
             with patch(
-                "app.api.trading_misc_modules.trading_autonomy.persist_evidence_epoch",
+                "app.api.trading_misc.trading_autonomy.persist_evidence_epoch",
                 side_effect=SQLAlchemyError("boom"),
             ):
                 persist_error_response = client.get(
@@ -959,7 +959,7 @@ class TestEvidenceEpochs(TestCase):
             )
 
             with patch(
-                "app.api.trading_misc_modules.trading_autonomy._evaluate_database_contract",
+                "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
                 side_effect=RuntimeError("database contract unavailable"),
             ):
                 degraded_response = client.get(
@@ -978,7 +978,7 @@ class TestEvidenceEpochs(TestCase):
             )
 
             with patch(
-                "app.api.trading_misc_modules.trading_autonomy.build_empirical_jobs_status",
+                "app.api.trading_misc.trading_autonomy.build_empirical_jobs_status",
                 side_effect=SQLAlchemyError("empirical query failed"),
             ):
                 empirical_error_response = client.get(

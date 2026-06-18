@@ -163,11 +163,11 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                 return_value=now,
             ),
             patch(
-                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                "app.trading.scheduler.pipeline.run_cycle.trading_now",
                 return_value=now,
             ),
             patch(
-                "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
+                "app.trading.scheduler.pipeline.decision_lifecycle.trading_now",
                 return_value=now,
             ),
             patch("app.trading.simulation.trading_now", return_value=now),
@@ -460,11 +460,11 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                 return_value=now,
             ),
             patch(
-                "app.trading.scheduler.pipeline_modules.run_cycle.trading_now",
+                "app.trading.scheduler.pipeline.run_cycle.trading_now",
                 return_value=now,
             ),
             patch(
-                "app.trading.scheduler.pipeline_modules.decision_lifecycle.trading_now",
+                "app.trading.scheduler.pipeline.decision_lifecycle.trading_now",
                 return_value=now,
             ),
             patch("app.trading.simulation.trading_now", return_value=now),

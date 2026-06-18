@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from ...config import settings
 from ...models import Strategy, TradeDecision, coerce_json_payload
 from ..models import StrategyDecision
-from .pipeline_modules.shared import TradingPipelineBase
+from .pipeline.shared import TradingPipelineBase
 from .target_plan_helpers import (
     bounded_sim_collection_metadata_from_decision as _bounded_sim_collection_metadata_from_decision,
     safe_int as _safe_int,

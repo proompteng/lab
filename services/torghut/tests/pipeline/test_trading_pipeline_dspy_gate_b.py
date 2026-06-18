@@ -114,7 +114,7 @@ class TestTradingPipelineDspyGateB(TradingPipelineTestCaseBase):
             )
 
             with patch(
-                "app.trading.scheduler.pipeline_modules.llm_review.DSPyReviewRuntime.from_settings"
+                "app.trading.scheduler.pipeline.llm_review.DSPyReviewRuntime.from_settings"
             ) as from_settings:
                 pipeline = TradingPipeline(
                     alpaca_client=FakeAlpacaClient(),
@@ -250,7 +250,7 @@ class TestTradingPipelineDspyGateB(TradingPipelineTestCaseBase):
 
             engine = CountingLLMReviewEngine()
             with patch(
-                "app.trading.scheduler.pipeline_modules.llm_review.DSPyReviewRuntime.from_settings"
+                "app.trading.scheduler.pipeline.llm_review.DSPyReviewRuntime.from_settings"
             ) as from_settings:
                 pipeline = TradingPipeline(
                     alpaca_client=FakeAlpacaClient(),

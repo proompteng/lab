@@ -23,7 +23,7 @@ from tests.api.trading_api_support import (
 
 HEALTH_CHECKS_API = "app.api.health_checks"
 READINESS_CONTRACT_API = (
-    "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness"
+    "app.api.readiness_helpers.refresh_universe_state_for_readiness"
 )
 PATCH_ACCOUNT_SCOPE = (
     f"{READINESS_CONTRACT_API}._check_account_scope_invariants_bounded"
@@ -79,7 +79,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
+                "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_trading_health_payload",
                 side_effect=_slow_health_payload,
             ):
                 started_at = time.monotonic()
@@ -142,7 +142,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
+                "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_trading_health_payload",
                 side_effect=_slow_health_payload,
             ):
                 response = self.client.get("/trading/health")
@@ -222,7 +222,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
+                "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_trading_health_payload",
                 side_effect=_refresh_health_payload,
             ):
                 response = self.client.get("/trading/health")
@@ -351,7 +351,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
+                "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_trading_health_payload",
                 side_effect=_refresh_health_payload,
             ):
                 started_at = time.monotonic()
@@ -409,7 +409,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
+                "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_trading_health_payload",
                 side_effect=_refresh_health_payload,
             ):
                 response = self.client.get("/trading/health")
@@ -518,7 +518,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
 
         try:
             with patch(
-                "app.api.readiness_helpers_modules.evaluate_trading_health_payload._evaluate_trading_health_payload",
+                "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_trading_health_payload",
                 side_effect=_slow_health_payload,
             ):
                 response = self.client.get("/trading/health")

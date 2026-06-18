@@ -3,8 +3,8 @@ from __future__ import annotations
 from app.config import settings
 
 from app.trading.execution_policy import (
-    _near_touch_limit_price,
-    _should_keep_market_order_for_high_conviction_entry,
+    near_touch_limit_price,
+    should_keep_market_order_for_high_conviction_entry,
 )
 
 from app.trading.models import (
@@ -488,7 +488,7 @@ def _apply_order_preferences(
     market_spread_bps_max = _decision_market_order_spread_bps_max(decision)
     if (
         entry_order_type != "limit"
-        and _should_keep_market_order_for_high_conviction_entry(
+        and should_keep_market_order_for_high_conviction_entry(
             decision,
             price=price,
             spread=spread,
@@ -499,7 +499,7 @@ def _apply_order_preferences(
     return decision.model_copy(
         update={
             "order_type": "limit",
-            "limit_price": _near_touch_limit_price(price, spread, decision.action),
+            "limit_price": near_touch_limit_price(price, spread, decision.action),
         }
     )
 

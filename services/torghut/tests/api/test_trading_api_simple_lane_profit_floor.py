@@ -280,7 +280,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         settings.trading_emergency_stop_enabled = False
         try:
             with patch(
-                "app.api.health_checks_modules.load_options_catalog_freshness_summary.build_live_submission_gate_payload",
+                "app.api.health_checks.load_options_catalog_freshness_summary.build_live_submission_gate_payload",
                 return_value={
                     "allowed": True,
                     "reason": "ready",
@@ -354,7 +354,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
         try:
             with patch(
-                "app.api.health_checks_modules.load_options_catalog_freshness_summary.build_live_submission_gate_payload",
+                "app.api.health_checks.load_options_catalog_freshness_summary.build_live_submission_gate_payload",
                 return_value=shared_gate,
             ) as shared_gate_builder:
                 gate = _build_live_submission_gate_payload(
@@ -414,7 +414,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.api.proof_floor_payloads_modules.shared_context.build_profitability_proof_floor_receipt",
+            "app.api.proof_floor_payloads.shared_context.build_profitability_proof_floor_receipt",
             return_value=proof_floor,
         ):
             status_response = self.client.get("/trading/status")
@@ -725,7 +725,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.api.proof_floor_payloads_modules.shared_context.build_renewal_bond_profit_escrow",
+            "app.api.proof_floor_payloads.shared_context.build_renewal_bond_profit_escrow",
             return_value=escrow,
         ):
             status_response = self.client.get("/trading/status")
@@ -755,7 +755,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.api.proof_floor_payloads_modules.shared_context.build_capital_replay_projection",
+                "app.api.proof_floor_payloads.shared_context.build_capital_replay_projection",
                 return_value=projection,
             ),
             patch(
@@ -793,7 +793,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.api.proof_floor_payloads_modules.build_jangar_reliability_settlement_ref.build_quality_adjusted_profit_frontier",
+            "app.api.proof_floor_payloads.build_jangar_reliability_settlement_ref.build_quality_adjusted_profit_frontier",
             return_value=frontier,
         ):
             status_response = self.client.get("/trading/status")
@@ -828,7 +828,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.api.proof_floor_payloads_modules.build_jangar_reliability_settlement_ref.build_profit_signal_quorum",
+            "app.api.proof_floor_payloads.build_jangar_reliability_settlement_ref.build_profit_signal_quorum",
             return_value=quorum,
         ):
             status_response = self.client.get("/trading/status")
@@ -868,14 +868,14 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                     return_value={"ok": True},
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                    "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
                     return_value={
                         "account_scope_ready": True,
                         "account_scope_errors": [],
                     },
                 ),
                 patch(
-                    "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+                    "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
                     return_value={
                         "schema_current": True,
                         "current_heads": ["0011_execution_tca_simulator_divergence"],

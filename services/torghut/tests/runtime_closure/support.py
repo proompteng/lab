@@ -32,10 +32,10 @@ from app.trading.discovery.runtime_closure import (
 )
 
 runtime_closure_candidate_payloads = import_module(
-    "app.trading.discovery.runtime_closure_modules.candidate_payloads"
+    "app.trading.discovery.runtime_closure.candidate_payloads"
 )
 runtime_closure_replay_analysis = import_module(
-    "app.trading.discovery.runtime_closure_modules.replay_analysis"
+    "app.trading.discovery.runtime_closure.replay_analysis"
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]

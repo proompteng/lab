@@ -121,7 +121,7 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
             )
 
             with patch(
-                "app.trading.scheduler.pipeline_modules.submission_policy.derive_adaptive_execution_policy",
+                "app.trading.scheduler.pipeline.submission_policy.derive_adaptive_execution_policy",
                 return_value=fallback_policy,
             ):
                 pipeline.run_once()

@@ -35,11 +35,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -104,11 +104,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -184,11 +184,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -268,11 +268,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -356,11 +356,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -422,7 +422,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             )
 
     @patch(
-        "app.api.readiness_helpers_modules.evaluate_trading_health_payload.load_quant_evidence_status"
+        "app.api.readiness_helpers.evaluate_trading_health_payload.load_quant_evidence_status"
     )
     @patch(
         "app.api.health_checks.build_tigerbeetle_ledger_status",
@@ -441,11 +441,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -507,7 +507,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_universe_source = original_source
 
     @patch(
-        "app.api.readiness_helpers_modules.status_dependencies.build_api_live_submission_gate_payload",
+        "app.api.readiness_helpers.status_dependencies.build_api_live_submission_gate_payload",
         return_value={
             "allowed": True,
             "reason": "ready",
@@ -515,11 +515,9 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             "capital_stage": "live",
         },
     )
+    @patch("app.api.readiness_helpers.status_dependencies.empirical_jobs_status")
     @patch(
-        "app.api.readiness_helpers_modules.status_dependencies.empirical_jobs_status"
-    )
-    @patch(
-        "app.api.readiness_helpers_modules.evaluate_trading_health_payload.load_quant_evidence_status"
+        "app.api.readiness_helpers.evaluate_trading_health_payload.load_quant_evidence_status"
     )
     @patch(
         "app.api.health_checks.build_tigerbeetle_ledger_status",
@@ -538,11 +536,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -591,7 +589,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             app.state.trading_scheduler = scheduler
 
             with patch(
-                "app.api.readiness_helpers_modules.status_dependencies.build_profitability_proof_floor_payload",
+                "app.api.readiness_helpers.status_dependencies.build_profitability_proof_floor_payload",
                 return_value={
                     "route_state": "live_micro_candidate",
                     "capital_state": "live_allowed",
@@ -616,7 +614,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             )
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._evaluate_database_contract",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -684,7 +682,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
 
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._evaluate_database_contract",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -768,11 +766,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": False, "detail": "down"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -823,11 +821,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],
@@ -893,11 +891,11 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
-        "app.api.readiness_helpers_modules.refresh_universe_state_for_readiness.check_schema_current",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
         return_value={
             "schema_current": True,
             "current_heads": ["0011_execution_tca_simulator_divergence"],

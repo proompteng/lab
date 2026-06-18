@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.trading.scheduler.submission_preparation_modules.shared import (
+from app.trading.scheduler.submission_preparation.shared import (
     TradingSubmissionRequest,
 )
 

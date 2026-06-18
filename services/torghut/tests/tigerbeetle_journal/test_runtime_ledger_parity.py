@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.trading.tigerbeetle_journal_modules.journal_payloads import (
+from app.trading.tigerbeetle_journal.journal_payloads import (
     PreparedTigerBeetleTransferWrite,
 )
 from tests.tigerbeetle_journal.support import (
