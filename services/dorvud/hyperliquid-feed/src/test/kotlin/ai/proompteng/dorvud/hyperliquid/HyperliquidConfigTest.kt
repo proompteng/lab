@@ -22,7 +22,39 @@ class HyperliquidConfigTest {
     assertEquals("wss://api.hyperliquid.xyz/ws", config.wsUrl)
     assertTrue(config.includePerps)
     assertTrue(config.includeSpot)
+    assertEquals(100, config.topMarketCount)
     assertFalse(config.wsChannels.any { it.startsWith("user", ignoreCase = true) })
+  }
+
+  @Test
+  fun `accepts top volume market coverage with explicit count`() {
+    val config =
+      HyperliquidConfig.fromEnv(
+        mapOf(
+          "KAFKA_SASL_PASSWORD" to "secret",
+          "HYPERLIQUID_MARKET_COVERAGE" to "top-volume",
+          "HYPERLIQUID_TOP_MARKET_COUNT" to "250",
+        ),
+      )
+
+    assertEquals("top-volume", config.marketCoverage)
+    assertEquals(250, config.topMarketCount)
+  }
+
+  @Test
+  fun `rejects invalid top market count`() {
+    val error =
+      assertFailsWith<IllegalStateException> {
+        HyperliquidConfig.fromEnv(
+          mapOf(
+            "KAFKA_SASL_PASSWORD" to "secret",
+            "HYPERLIQUID_MARKET_COVERAGE" to "top-volume",
+            "HYPERLIQUID_TOP_MARKET_COUNT" to "0",
+          ),
+        )
+      }
+
+    assertTrue(error.message.orEmpty().contains("HYPERLIQUID_TOP_MARKET_COUNT"))
   }
 
   @Test

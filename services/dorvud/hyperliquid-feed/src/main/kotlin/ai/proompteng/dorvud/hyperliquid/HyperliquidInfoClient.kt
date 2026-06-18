@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import mu.KotlinLogging
 import java.time.Instant
@@ -23,6 +24,11 @@ private val infoLogger = KotlinLogging.logger {}
 private data class InfoRequest(
   val type: String,
   val dex: String? = null,
+)
+
+private data class MarketVolumeScore(
+  val marketId: String,
+  val dayNotionalVolume: Double,
 )
 
 class HyperliquidInfoClient(
@@ -39,7 +45,12 @@ class HyperliquidInfoClient(
     if (config.includeSpot) {
       markets += loadSpotMarkets()
     }
-    return applyCoverage(markets).sortedWith(compareBy({ it.marketType.name }, { it.marketId }))
+    val selected = applyCoverage(markets)
+    return if (config.marketCoverage in setOf("top-volume", "top-volume-100")) {
+      selected
+    } else {
+      selected.sortedWith(compareBy({ it.marketType.name }, { it.marketId }))
+    }
   }
 
   suspend fun loadFundingAndContextRecords(markets: List<HyperliquidMarket>): List<RoutedEnvelope> {
@@ -156,7 +167,7 @@ class HyperliquidInfoClient(
     }
   }
 
-  private fun applyCoverage(markets: List<HyperliquidMarket>): List<HyperliquidMarket> =
+  private suspend fun applyCoverage(markets: List<HyperliquidMarket>): List<HyperliquidMarket> =
     when (config.marketCoverage) {
       "all" -> markets
       "canary", "top-liquidity-canary" ->
@@ -164,8 +175,78 @@ class HyperliquidInfoClient(
           market.coin.uppercase() in config.canaryCoins ||
             market.coin.substringBefore('/').uppercase() in config.canaryCoins
         }
-      else -> error("HYPERLIQUID_MARKET_COVERAGE must be all, canary, or top-liquidity-canary")
+      "top-volume", "top-volume-100" -> selectTopVolumeMarkets(markets)
+      else -> error("HYPERLIQUID_MARKET_COVERAGE must be all, canary, top-liquidity-canary, top-volume, or top-volume-100")
     }
+
+  private suspend fun selectTopVolumeMarkets(markets: List<HyperliquidMarket>): List<HyperliquidMarket> {
+    val scores =
+      buildList {
+        if (config.includePerps) addAll(loadPerpMarketVolumeScores())
+        if (config.includeSpot) addAll(loadSpotMarketVolumeScores())
+      }.associateBy({ it.marketId }, { it.dayNotionalVolume })
+
+    val selected =
+      markets
+        .sortedWith(
+          compareByDescending<HyperliquidMarket> { scores[it.marketId] ?: 0.0 }
+            .thenBy { it.marketType.name }
+            .thenBy { it.marketId },
+        ).take(config.topMarketCount)
+
+    val minSelectedVolume = selected.minOfOrNull { scores[it.marketId] ?: 0.0 } ?: 0.0
+    infoLogger.info {
+      "selected Hyperliquid top-volume markets count=${selected.size} configured=${config.topMarketCount} " +
+        "catalog=${markets.size} scored=${scores.size} min_day_notional_volume=$minSelectedVolume"
+    }
+    return selected
+  }
+
+  private suspend fun loadPerpMarketVolumeScores(): List<MarketVolumeScore> =
+    loadPerpDexNames().flatMap { dex ->
+      val context = postInfo("metaAndAssetCtxs", weight = 20, dex = dex)
+      val (universe, contexts) = contextPair(context) ?: return@flatMap emptyList()
+      universe.mapIndexedNotNull { index, marketElement ->
+        val market = marketElement as? JsonObject ?: return@mapIndexedNotNull null
+        val name = market["name"]?.jsonPrimitive?.contentOrNull ?: return@mapIndexedNotNull null
+        val volume = dayNotionalVolume(contexts.getOrNull(index) as? JsonObject)
+        MarketVolumeScore(
+          marketId = HyperliquidMarketIds.perp(name, dex),
+          dayNotionalVolume = volume,
+        )
+      }
+    }
+
+  private suspend fun loadSpotMarketVolumeScores(): List<MarketVolumeScore> {
+    val context = postInfo("spotMetaAndAssetCtxs", weight = 20)
+    val (universe, contexts) = contextPair(context) ?: return emptyList()
+    return universe.mapIndexedNotNull { index, marketElement ->
+      val market = marketElement as? JsonObject ?: return@mapIndexedNotNull null
+      val name = market["name"]?.jsonPrimitive?.contentOrNull ?: return@mapIndexedNotNull null
+      val spotIndex = market["index"]?.jsonPrimitive?.intOrNull ?: return@mapIndexedNotNull null
+      val volume = dayNotionalVolume(contexts.getOrNull(index) as? JsonObject)
+      MarketVolumeScore(
+        marketId = HyperliquidMarketIds.spot(spotIndex, name),
+        dayNotionalVolume = volume,
+      )
+    }
+  }
+
+  private fun contextPair(context: JsonElement): Pair<JsonArray, JsonArray>? {
+    val response = context as? JsonArray ?: return null
+    val meta = response.getOrNull(0) as? JsonObject ?: return null
+    val contexts = response.getOrNull(1) as? JsonArray ?: return null
+    val universe = meta["universe"] as? JsonArray ?: return null
+    return universe to contexts
+  }
+
+  private fun dayNotionalVolume(context: JsonObject?): Double =
+    context
+      ?.get("dayNtlVlm")
+      ?.jsonPrimitive
+      ?.contentOrNull
+      ?.toDoubleOrNull()
+      ?: 0.0
 
   private suspend fun postInfo(
     type: String,

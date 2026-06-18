@@ -38,6 +38,12 @@ Hyperliquid market IDs:
 - Spot: `hl:spot:<index>:<name>`.
 - Spot websocket subscriptions use `PURR/USDC` for PURR and `@<index>` for other spot pairs.
 
+Live Hyperliquid feed coverage:
+
+- Production selects the top `100` perp/spot markets by Hyperliquid public 24h notional volume (`dayNtlVlm`).
+- Ranking uses public `metaAndAssetCtxs` across default and builder perp DEXes plus `spotMetaAndAssetCtxs`.
+- User-address streams, private keys, signed requests, and order placement remain out of scope for this lane.
+
 Notes:
 
 - Ordering is preserved per symbol by using Kafka message key = `symbol`.
