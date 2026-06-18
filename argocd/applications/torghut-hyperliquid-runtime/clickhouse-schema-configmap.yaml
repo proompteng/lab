@@ -43,12 +43,14 @@ data:
     TTL toDateTime(event_ts) + INTERVAL 90 DAY
     SETTINGS index_granularity = 8192;
 
-    CREATE MATERIALIZED VIEW IF NOT EXISTS torghut.hyperliquid_ta_features_candle_mv ON CLUSTER default
+    DROP VIEW IF EXISTS torghut.hyperliquid_ta_features_candle_mv ON CLUSTER default;
+
+    CREATE MATERIALIZED VIEW torghut.hyperliquid_ta_features_candle_mv ON CLUSTER default
     TO torghut.hyperliquid_ta_features
     AS
     SELECT
       now64(3) AS ingest_ts,
-      event_ts,
+      _event_ts AS event_ts,
       network,
       coalesce(market_id, symbol) AS market_id,
       coalesce(coin, symbol) AS coin,
@@ -68,11 +70,12 @@ data:
       0 AS funding_rate,
       0 AS open_interest_usd,
       multiIf(_return_bps > 8, 'trend_up', _return_bps < -8, 'trend_down', 'range') AS regime,
-      greatest(0, dateDiff('second', toDateTime(event_ts), now())) AS source_lag_seconds
+      greatest(0, dateDiff('second', toDateTime(_event_ts), now())) AS source_lag_seconds
     FROM
     (
       SELECT
         *,
+        toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC') AS _event_ts,
         toFloat64OrZero(JSONExtractString(payload, 'o')) AS _open,
         toFloat64OrZero(JSONExtractString(payload, 'h')) AS _high,
         toFloat64OrZero(JSONExtractString(payload, 'l')) AS _low,
@@ -90,7 +93,7 @@ data:
     INSERT INTO torghut.hyperliquid_ta_features
     SELECT
       now64(3) AS ingest_ts,
-      event_ts,
+      _event_ts AS event_ts,
       network,
       coalesce(market_id, symbol) AS market_id,
       coalesce(coin, symbol) AS coin,
@@ -110,11 +113,12 @@ data:
       0 AS funding_rate,
       0 AS open_interest_usd,
       multiIf(_return_bps > 8, 'trend_up', _return_bps < -8, 'trend_down', 'range') AS regime,
-      greatest(0, dateDiff('second', toDateTime(event_ts), now())) AS source_lag_seconds
+      greatest(0, dateDiff('second', toDateTime(_event_ts), now())) AS source_lag_seconds
     FROM
     (
       SELECT
         *,
+        toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC') AS _event_ts,
         toFloat64OrZero(JSONExtractString(payload, 'o')) AS _open,
         toFloat64OrZero(JSONExtractString(payload, 'h')) AS _high,
         toFloat64OrZero(JSONExtractString(payload, 'l')) AS _low,
@@ -126,11 +130,13 @@ data:
       FROM torghut.hyperliquid_candles
       WHERE channel = 'candle'
         AND market_type = 'perp'
-        AND event_ts >= now() - INTERVAL 2 HOUR
+        AND toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC') >= now() - INTERVAL 2 HOUR
         AND JSONExtractString(payload, 'i') IN ('1m', '3m', '5m', '15m', '1h')
     );
 
-    CREATE VIEW IF NOT EXISTS torghut.hyperliquid_runtime_latest_features ON CLUSTER default
+    DROP VIEW IF EXISTS torghut.hyperliquid_runtime_latest_features ON CLUSTER default;
+
+    CREATE VIEW torghut.hyperliquid_runtime_latest_features ON CLUSTER default
     AS
     SELECT
       network,
