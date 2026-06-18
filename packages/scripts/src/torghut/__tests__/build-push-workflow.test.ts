@@ -273,6 +273,22 @@ describe('torghut build-push workflow', () => {
     }
   })
 
+  it('keeps Hyperliquid feed stale workflow promotions path-aware so unrelated main commits do not block release', () => {
+    expect(hyperliquidFeedReleaseWorkflow).toContain('git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" --')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('services/dorvud/hyperliquid-feed')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('services/dorvud/platform')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/torghut/release-contract.ts')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/cli.ts')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/docker.ts')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/git.ts')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('.github/workflows/torghut-hyperliquid-feed-build-push.yaml')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('.github/workflows/torghut-hyperliquid-feed-release.yml')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('newer Hyperliquid feed build inputs changed')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('newer main ${MAIN_HEAD} contains only unrelated changes')
+  })
+
   it('does not cancel main source CI while release promotion verifies the image contract', () => {
     expect(ciWorkflow).toContain(
       "group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}",

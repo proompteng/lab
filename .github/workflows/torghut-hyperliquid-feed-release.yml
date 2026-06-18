@@ -102,8 +102,35 @@ jobs:
             fi
 
             if [ "${SOURCE_SHA}" != "${MAIN_HEAD}" ]; then
-              echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main is ${MAIN_HEAD}"
-              PROMOTE='false'
+              if ! git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"; then
+                echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main ${MAIN_HEAD} is not a descendant."
+                PROMOTE='false'
+              else
+                FEED_CHANGES="$(
+                  git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" -- \
+                    services/dorvud/gradle \
+                    services/dorvud/gradlew \
+                    services/dorvud/gradle.properties \
+                    services/dorvud/settings.gradle.kts \
+                    services/dorvud/build.gradle.kts \
+                    services/dorvud/platform \
+                    services/dorvud/hyperliquid-feed \
+                    packages/scripts/src/torghut/release-contract.ts \
+                    packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts \
+                    packages/scripts/src/shared/cli.ts \
+                    packages/scripts/src/shared/docker.ts \
+                    packages/scripts/src/shared/git.ts \
+                    .github/workflows/torghut-hyperliquid-feed-build-push.yaml \
+                    .github/workflows/torghut-hyperliquid-feed-release.yml
+                )"
+                if [ -n "${FEED_CHANGES}" ]; then
+                  echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Hyperliquid feed build inputs changed:"
+                  printf '%s\n' "${FEED_CHANGES}"
+                  PROMOTE='false'
+                else
+                  echo "Promoting ${SOURCE_SHA}; newer main ${MAIN_HEAD} contains only unrelated changes."
+                fi
+              fi
             fi
           else
             if [ -n "${COMMIT_SHA_INPUT}" ]; then
