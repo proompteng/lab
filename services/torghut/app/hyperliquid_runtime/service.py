@@ -210,11 +210,23 @@ class HyperliquidRuntimeService:
             config=self._config,
             decision_id=decision_id,
         )
+        self._journal.persist_refs(
+            context.session,
+            self._journal.order_events(
+                intent,
+                OrderResult(
+                    status="submitted",
+                    exchange_order_id=None,
+                    raw_response={"pre_exchange_submit": True},
+                ),
+            ),
+        )
         result = self._exchange.submit_ioc_limit(intent)
         context.repository.insert_order(intent, result)
-        self._journal.persist_refs(
-            context.session, self._journal.order_events(intent, result)
-        )
+        if result.status in {"rejected", "cancelled"}:
+            self._journal.persist_refs(
+                context.session, self._journal.order_events(intent, result)
+            )
 
     def _write_performance(
         self,

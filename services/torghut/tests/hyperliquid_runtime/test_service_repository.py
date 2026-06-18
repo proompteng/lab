@@ -358,9 +358,9 @@ class _FakeJournal:
         return [_journal_event(fill.fill_hash, "fill")]
 
     def order_events(
-        self, intent: OrderIntent, _result: OrderResult
+        self, intent: OrderIntent, result: OrderResult
     ) -> list[HyperliquidJournalEvent]:
-        return [_journal_event(intent.cloid, "order")]
+        return [_journal_event(intent.cloid, f"order_{result.status}")]
 
     def persist_refs(
         self,
@@ -425,7 +425,10 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     assert repository.account_states[0].positions[0].coin == "cash:AAPL"
     assert repository.performance[0].reconciliation_status == "pass"
     assert exchange.dead_man_seconds == 60
-    assert journal.persisted
+    assert [event.transfer_kind for event in journal.persisted] == [
+        "fill",
+        "order_submitted",
+    ]
 
 
 def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(
