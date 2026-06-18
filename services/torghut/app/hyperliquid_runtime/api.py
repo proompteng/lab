@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -17,6 +18,8 @@ from .ledger import HyperliquidTigerBeetleJournal
 from .metrics import HyperliquidRuntimeMetrics
 from .models import CycleResult
 from .service import HyperliquidRuntimeService, runtime_readiness
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeAppState:
@@ -98,7 +101,10 @@ def metrics() -> Response:
 
 async def _runtime_loop() -> None:
     while True:
-        await asyncio.to_thread(_run_one_cycle)
+        try:
+            await asyncio.to_thread(_run_one_cycle)
+        except Exception:
+            logger.exception("Hyperliquid runtime cycle failed")
         await asyncio.sleep(runtime_state.config.poll_interval_seconds)
 
 
