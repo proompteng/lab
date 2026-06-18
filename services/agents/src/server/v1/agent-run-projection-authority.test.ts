@@ -128,4 +128,36 @@ describe('AgentRun projection authority API', () => {
       }),
     ])
   })
+
+  it('classifies Failed terminal AgentRuns as terminal_audit for missing Job without runner status', async () => {
+    const failedRun = {
+      id: 'failed-missing-job',
+      agentName: 'codex-worker',
+      deliveryId: 'delivery-failed',
+      provider: 'job',
+      status: 'Failed',
+      externalRunId: 'agentrun-failed',
+      payload: {},
+      createdAt: '2026-05-20T09:00:00.000Z',
+      updatedAt: '2026-05-20T10:00:00.000Z',
+    }
+    const store = createStore([failedRun])
+
+    const response = await getAgentRunProjectionAuthorityHandler(
+      new Request('http://agents.test/v1/agent-runs/projection-authority?includeTerminalAudit=true'),
+      depsFor(store),
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(store.listAgentRuns).toHaveBeenCalledWith({ agentName: null, statuses: null, limit: 100 })
+    expect(body.claims).toEqual([
+      expect.objectContaining({
+        source_ref: 'agent_runs:failed-missing-job',
+        authority_state: 'terminal_audit',
+        status: 'failed',
+        reason_codes: expect.arrayContaining(['agents_service_agentrun_projection_terminal_audit']),
+      }),
+    ])
+  })
 })
