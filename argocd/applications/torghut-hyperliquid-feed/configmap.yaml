@@ -57,7 +57,7 @@ data:
   CLICKHOUSE_USERNAME: "torghut"
   CLICKHOUSE_BATCH_SIZE: "1000"
   CLICKHOUSE_FLUSH_MS: "500"
-  CLICKHOUSE_REQUEST_TIMEOUT_MS: "10000"
+  CLICKHOUSE_REQUEST_TIMEOUT_MS: "30000"
   CLICKHOUSE_ENABLED_TABLES: "hyperliquid_market_catalog,hyperliquid_candles,hyperliquid_asset_contexts,hyperliquid_funding,hyperliquid_status"
   CLICKHOUSE_READY_TABLES: "hyperliquid_candles"
   CLICKHOUSE_READY_MAX_AGE_MS: "120000"
