@@ -278,10 +278,9 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
                 self.assertEqual(compile_row.status, "succeeded")
                 self.assertTrue(bool(compile_row.artifact_hash))
                 self.assertEqual(eval_row.gate_compatibility, "pass")
-                self.assertEqual(
-                    compile_row.metadata_json.get("executor"),  # type: ignore[union-attr]
-                    "dspy_live",
-                )
+                metadata = compile_row.metadata_json
+                self.assertIsInstance(metadata, dict)
+                self.assertEqual(metadata.get("executor"), "dspy_live")
 
     def test_sanitize_idempotency_key_replaces_invalid_chars(self) -> None:
         key = _sanitize_idempotency_key(" :torghut:dspy:run:2026-02-27T07:39:00Z: ")

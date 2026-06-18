@@ -219,7 +219,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         pipeline = scheduler._build_pipeline_for_account(lane)
 
         self.assertEqual(
-            pipeline.order_feed_ingestor._default_account_label,  # type: ignore[attr-defined]
+            pipeline.order_feed_ingestor.default_account_label,
             "paper-x",
         )
 

@@ -70,6 +70,10 @@ class OrderFeedIngestor:
         self._disabled_logged = False
         self._manual_assignment_ready = False
 
+    @property
+    def default_account_label(self) -> str:
+        return self._default_account_label
+
     def ingest_once(self, session: Session) -> dict[str, int]:
         counters = self._new_counters()
         if not self._preconditions_met():

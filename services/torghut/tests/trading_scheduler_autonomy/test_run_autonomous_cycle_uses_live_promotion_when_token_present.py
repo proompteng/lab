@@ -729,12 +729,16 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
             settings.trading_signal_staleness_alert_critical_reasons_raw = (
                 "no_signals_in_window"
             )
-            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
             scheduler.state.metrics.signal_lag_seconds = 68
             scheduler.state.metrics.no_signal_reason_streak = {
                 "no_signals_in_window": 2
             }
-            scheduler._evaluate_safety_controls()
+            with patch.object(
+                type(scheduler),
+                "_is_market_session_open",
+                return_value=True,
+            ):
+                scheduler._evaluate_safety_controls()
 
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertIsNone(scheduler.state.emergency_stop_reason)

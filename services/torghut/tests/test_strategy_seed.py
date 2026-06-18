@@ -19,32 +19,32 @@ class TestStrategySeed(TestCase):
         )
 
     def test_upsert_strategy(self) -> None:
-        seed_strategy.ensure_schema = lambda: None  # type: ignore[assignment]
-        with self.session_local() as session:
-            strategy = seed_strategy.upsert_strategy(
-                name="demo",
-                description="demo",
-                base_timeframe="1Min",
-                symbols=["AAPL"],
-                enabled=True,
-                max_notional=None,
-                max_position_pct=None,
-                session=session,
-            )
-            self.assertEqual(strategy.name, "demo")
+        with patch.object(seed_strategy, "ensure_schema", return_value=None):
+            with self.session_local() as session:
+                strategy = seed_strategy.upsert_strategy(
+                    name="demo",
+                    description="demo",
+                    base_timeframe="1Min",
+                    symbols=["AAPL"],
+                    enabled=True,
+                    max_notional=None,
+                    max_position_pct=None,
+                    session=session,
+                )
+                self.assertEqual(strategy.name, "demo")
 
-            updated = seed_strategy.upsert_strategy(
-                name="demo",
-                description="updated",
-                base_timeframe="5Min",
-                symbols=["AAPL", "MSFT"],
-                enabled=False,
-                max_notional=None,
-                max_position_pct=None,
-                session=session,
-            )
-            self.assertEqual(updated.description, "updated")
-            self.assertFalse(updated.enabled)
+                updated = seed_strategy.upsert_strategy(
+                    name="demo",
+                    description="updated",
+                    base_timeframe="5Min",
+                    symbols=["AAPL", "MSFT"],
+                    enabled=False,
+                    max_notional=None,
+                    max_position_pct=None,
+                    session=session,
+                )
+                self.assertEqual(updated.description, "updated")
+                self.assertFalse(updated.enabled)
 
     def test_parse_args_defaults_to_chip_universe(self) -> None:
         with patch("sys.argv", ["seed_strategy.py", "--name", "demo"]):

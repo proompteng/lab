@@ -177,7 +177,7 @@ def _optional_decimal_constraint(
 
 
 def iter_parameter_candidates(
-    parameter_grid: Mapping[str, Iterable[Any]],
+    parameter_grid: Mapping[str, object],
 ) -> list[dict[str, Any]]:
     items = []
     for key, values in parameter_grid.items():

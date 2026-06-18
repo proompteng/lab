@@ -205,6 +205,7 @@ class TestRunDSPyWorkflowScript(TestCase):
             (artifact_root / "iteration-1.md").write_text("old", encoding="utf-8")
             (artifact_root / "iteration-3.md").write_text("old", encoding="utf-8")
 
+            responses: dict[str, dict[str, object]] = {"dataset-build": {}}
             report_path = run_dspy_workflow._write_iteration_report(
                 artifact_root=artifact_root,
                 repository="proompteng/lab",
@@ -212,7 +213,7 @@ class TestRunDSPyWorkflowScript(TestCase):
                 head="codex/dspy-live-3",
                 run_prefix="torghut-dspy-run-3",
                 status="completed",
-                responses={"dataset-build": {}},  # type: ignore[arg-type]
+                responses=responses,
             )
 
             self.assertEqual(report_path.name, "iteration-4.md")

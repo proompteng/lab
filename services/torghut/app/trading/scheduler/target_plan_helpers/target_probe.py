@@ -549,7 +549,7 @@ def _target_probe_symbol_notional_budget(
 def _quote_snapshot_reference_price(
     snapshot: Mapping[str, Any],
     *,
-    action: Literal["buy", "sell"],
+    action: Literal["buy", "sell", "hold"],
 ) -> Decimal | None:
     bid = _decimal_from_mapping(snapshot, ("bid", "bid_px", "bid_price", "bp"))
     ask = _decimal_from_mapping(snapshot, ("ask", "ask_px", "ask_price", "ap"))

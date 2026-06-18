@@ -348,7 +348,7 @@ def test_target_notional_budget_and_quote_reference_defensive_paths() -> None:
     )
     assert _quote_snapshot_reference_price(
         {"bid": "99", "ask": "101"},
-        action="hold",  # type: ignore[arg-type]
+        action="hold",
     ) == Decimal("100")
     assert _quote_snapshot_reference_price({}, action="buy") is None
 
