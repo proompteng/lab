@@ -168,31 +168,50 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
-
-          source_sha="$(
-            awk '
-              /^[[:space:]]*- name:[[:space:]]*TORGHUT_COMMIT[[:space:]]*$/ { found = 1; next }
-              found && /^[[:space:]]*value:/ {
-                sub(/^[[:space:]]*value:[[:space:]]*/, "")
-                gsub(/"/, "")
-                print
-                exit
-              }
-            ' argocd/applications/torghut/knative-service.yaml
-          )"
-          if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "Unable to resolve TORGHUT_COMMIT from release manifest"
-            exit 1
-          fi
-          echo "Torghut release manifest-only change; requiring successful multi-arch build for ${source_sha}."
 
           required_build_jobs=(
             'build-platform (linux/amd64, amd64, arc-amd64)'
             'build-platform (linux/arm64, arm64, arc-arm64)'
             'publish-index'
           )
+
+          changed_files="$(mktemp)"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            if [ -z "${BASE_REF}" ]; then
+              echo "BASE_REF is required for pull_request release manifest verification" >&2
+              exit 1
+            fi
+            diff_base="$(git merge-base "origin/${BASE_REF}" HEAD)"
+          elif [ -n "${BEFORE_SHA}" ] && ! [[ "${BEFORE_SHA}" =~ ^0+$ ]] && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            diff_base="${BEFORE_SHA}"
+          else
+            diff_base="$(git rev-parse HEAD^)"
+          fi
+          git diff --name-only "${diff_base}...HEAD" > "${changed_files}"
+
+          matches_changed() {
+            local regex="$1"
+            grep -Eq "${regex}" "${changed_files}"
+          }
+
+          resolve_source_sha() {
+            local manifest_path="$1"
+            local env_name="$2"
+            awk -v env_name="${env_name}" '
+              $0 ~ "^[[:space:]]*- name:[[:space:]]*" env_name "[[:space:]]*$" { found = 1; next }
+              found && /^[[:space:]]*value:/ {
+                sub(/^[[:space:]]*value:[[:space:]]*/, "")
+                gsub(/"/, "")
+                print
+                exit
+              }
+            ' "${manifest_path}"
+          }
 
           assert_required_build_jobs() {
             local run_id="$1"
@@ -235,45 +254,89 @@ jobs:
             done
           }
 
-          deadline=$((SECONDS + 900))
-          while true; do
-            run_line="$(
-              gh run list \
-                -R "${GH_REPO}" \
-                --workflow torghut-build-push.yaml \
-                --commit "${source_sha}" \
-                --json databaseId,status,conclusion,url,createdAt \
-                --jq 'sort_by(.createdAt) | reverse | .[0] // {} | [.databaseId // "", .status // "", .conclusion // "", .url // ""] | @tsv'
-            )"
-            IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "${run_line}"
-
-            if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ] && [ "${run_conclusion}" = 'success' ]; then
-              assert_required_build_jobs "${run_id}"
-              echo "Torghut build-push passed required image contract jobs for ${source_sha}: ${run_url}"
-              break
-            fi
-
-            if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ]; then
-              echo "Torghut build-push did not pass for ${source_sha}: ${run_conclusion}"
-              echo "${run_url}"
+          verify_build_contract() {
+            local label="$1"
+            local manifest_path="$2"
+            local env_name="$3"
+            local workflow_name="$4"
+            local source_sha
+            source_sha="$(resolve_source_sha "${manifest_path}" "${env_name}")"
+            if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "Unable to resolve ${env_name} from ${manifest_path}"
               exit 1
             fi
+            echo "${label} release manifest-only change; requiring successful multi-arch build for ${source_sha}."
 
-            if [ "${SECONDS}" -ge "${deadline}" ]; then
-              echo "Timed out waiting for Torghut build-push for ${source_sha}"
-              if [ -n "${run_url}" ]; then
-                echo "${run_url}"
+            deadline=$((SECONDS + 900))
+            while true; do
+              run_line="$(
+                gh run list \
+                  -R "${GH_REPO}" \
+                  --workflow "${workflow_name}" \
+                  --commit "${source_sha}" \
+                  --json databaseId,status,conclusion,url,createdAt \
+                  --jq 'sort_by(.createdAt) | reverse | .[0] // {} | [.databaseId // "", .status // "", .conclusion // "", .url // ""] | @tsv'
+              )"
+              IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "${run_line}"
+
+              if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ] && [ "${run_conclusion}" = 'success' ]; then
+                assert_required_build_jobs "${run_id}"
+                echo "${label} build-push passed required image contract jobs for ${source_sha}: ${run_url}"
+                break
               fi
-              exit 1
-            fi
 
-            if [ -z "${run_id}" ]; then
-              echo "Waiting for Torghut build-push to appear for ${source_sha}"
-            else
-              echo "Waiting for Torghut build-push: status=${run_status} conclusion=${run_conclusion:-pending}"
-            fi
-            sleep 10
-          done
+              if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ]; then
+                echo "${label} build-push did not pass for ${source_sha}: ${run_conclusion}"
+                echo "${run_url}"
+                exit 1
+              fi
+
+              if [ "${SECONDS}" -ge "${deadline}" ]; then
+                echo "Timed out waiting for ${label} build-push for ${source_sha}"
+                if [ -n "${run_url}" ]; then
+                  echo "${run_url}"
+                fi
+                exit 1
+              fi
+
+              if [ -z "${run_id}" ]; then
+                echo "Waiting for ${label} build-push to appear for ${source_sha}"
+              else
+                echo "Waiting for ${label} build-push: status=${run_status} conclusion=${run_conclusion:-pending}"
+              fi
+              sleep 10
+            done
+          }
+
+          verified_any=false
+          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|db-migrations-job|historical-simulation-workflowtemplate|empirical-promotion-workflowtemplate|empirical-promotion-renewal-cronjob|whitepaper-autoresearch-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|execution-tca-refresh-cronjob|order-feed-source-window-repair-cronjob|zero-notional-drift-repair-cronjob|paper-account-flatten-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
+            verify_build_contract \
+              "Torghut" \
+              argocd/applications/torghut/knative-service.yaml \
+              TORGHUT_COMMIT \
+              torghut-build-push.yaml
+            verified_any=true
+          fi
+          if matches_changed '^argocd/applications/(torghut/(ta|ta-sim)/flinkdeployment\.yaml|torghut-options/ta/flinkdeployment\.yaml)$'; then
+            verify_build_contract \
+              "Torghut TA" \
+              argocd/applications/torghut/ta/flinkdeployment.yaml \
+              TORGHUT_TA_COMMIT \
+              torghut-ta-build-push.yaml
+            verified_any=true
+          fi
+          if matches_changed '^argocd/applications/(torghut/ws/deployment\.yaml|torghut-options/ws/deployment\.yaml)$'; then
+            verify_build_contract \
+              "Torghut WS" \
+              argocd/applications/torghut/ws/deployment.yaml \
+              TORGHUT_WS_COMMIT \
+              torghut-ws-build-push.yaml
+            verified_any=true
+          fi
+
+          if [ "${verified_any}" != 'true' ]; then
+            echo "No Torghut image promotion manifests changed; release manifest check passed."
+          fi
 
   pyright:
     name: Pyright

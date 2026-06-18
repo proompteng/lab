@@ -18,6 +18,14 @@ const hyperliquidFeedWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-hyperliquid-feed-build-push.yaml', import.meta.url),
   'utf8',
 )
+const taReleaseWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-ta-release.yml', import.meta.url),
+  'utf8',
+)
+const wsReleaseWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-ws-release.yml', import.meta.url),
+  'utf8',
+)
 const ciWorkflow = readFileSync(new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url), 'utf8')
 const pullRequestWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/pull-request.yml', import.meta.url),
@@ -154,6 +162,8 @@ describe('torghut build-push workflow', () => {
     expect(releaseManifestJob).toBeGreaterThan(-1)
     expect(releaseManifestJobBody).toContain('name: Verify source image build contract')
     expect(releaseManifestJobBody).toContain('TORGHUT_COMMIT')
+    expect(releaseManifestJobBody).toContain('TORGHUT_TA_COMMIT')
+    expect(releaseManifestJobBody).toContain('TORGHUT_WS_COMMIT')
     expect(releaseManifestJobBody).not.toContain('oven-sh/setup-bun')
     expect(releaseManifestJobBody).not.toContain('actions/cache@v4')
     expect(releaseManifestJobBody).not.toContain('bun install')
@@ -192,13 +202,52 @@ describe('torghut build-push workflow', () => {
     const buildContractStep = ciWorkflow.indexOf('name: Verify source image build contract', releaseManifestJob)
 
     expect(buildContractStep).toBeGreaterThan(releaseManifestJob)
-    expect(ciWorkflow).toContain('--workflow torghut-build-push.yaml')
+    expect(ciWorkflow).toContain('torghut-build-push.yaml')
+    expect(ciWorkflow).toContain('torghut-ta-build-push.yaml')
+    expect(ciWorkflow).toContain('torghut-ws-build-push.yaml')
+    expect(ciWorkflow).toContain('argocd/applications/torghut/knative-service.yaml')
+    expect(ciWorkflow).toContain('argocd/applications/torghut/ta/flinkdeployment.yaml')
+    expect(ciWorkflow).toContain('argocd/applications/torghut/ws/deployment.yaml')
     expect(ciWorkflow).toContain('build-platform (linux/amd64, amd64, arc-amd64)')
     expect(ciWorkflow).toContain('build-platform (linux/arm64, arm64, arc-arm64)')
     expect(ciWorkflow).toContain('publish-index')
-    expect(ciWorkflow).toContain('Torghut build-push passed required image contract jobs')
+    expect(ciWorkflow).toContain('build-push passed required image contract jobs')
     expect(ciWorkflow).not.toContain('name: Require source commit Torghut CI')
     expect(ciWorkflow).not.toContain('--workflow torghut-ci.yml')
+  })
+
+  it('keeps TA and WS stale workflow promotions path-aware so unrelated main commits do not force rebuilds', () => {
+    const releaseWorkflows = [
+      {
+        workflow: taReleaseWorkflow,
+        workflowPath: '.github/workflows/torghut-ta-release.yml',
+        buildPath: '.github/workflows/torghut-ta-build-push.yaml',
+        updateScript: 'packages/scripts/src/torghut/update-ta-manifest.ts',
+        servicePath: 'services/dorvud/technical-analysis-flink',
+        message: 'newer Torghut TA build inputs changed',
+      },
+      {
+        workflow: wsReleaseWorkflow,
+        workflowPath: '.github/workflows/torghut-ws-release.yml',
+        buildPath: '.github/workflows/torghut-ws-build-push.yaml',
+        updateScript: 'packages/scripts/src/torghut/update-ws-manifest.ts',
+        servicePath: 'services/dorvud/websockets',
+        message: 'newer Torghut WS build inputs changed',
+      },
+    ]
+
+    for (const { workflow, workflowPath, buildPath, updateScript, servicePath, message } of releaseWorkflows) {
+      expect(workflow).toContain('git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"')
+      expect(workflow).toContain('git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" --')
+      expect(workflow).toContain(servicePath)
+      expect(workflow).toContain('services/dorvud/platform')
+      expect(workflow).toContain('packages/scripts/src/torghut/release-contract.ts')
+      expect(workflow).toContain(updateScript)
+      expect(workflow).toContain(buildPath)
+      expect(workflow).toContain(workflowPath)
+      expect(workflow).toContain(message)
+      expect(workflow).toContain('newer main ${MAIN_HEAD} contains only unrelated changes')
+    }
   })
 
   it('does not cancel main source CI while release promotion verifies the image contract', () => {
