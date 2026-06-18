@@ -1241,14 +1241,24 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             message,
             durationMs: Date.now() - reconcileStartedAt,
           })
+          const terminalMessage = `${message}; runner status not preserved in AgentRun status`
+          const terminalConditions = upsertCondition(warningConditions, {
+            type: 'Failed',
+            status: 'True',
+            reason: 'JobMissing',
+            message: terminalMessage,
+          })
           await setStatus(kube, agentRun, {
             observedGeneration,
-            phase: 'Running',
-            startedAt: asString(status.startedAt) ?? nowIso(),
+            phase: 'Failed',
+            reason: 'JobMissing',
+            message: terminalMessage,
+            finishedAt: nowIso(),
             runtimeRef,
-            conditions: warningConditions,
+            conditions: terminalConditions,
             vcs: asRecord(status.vcs) ?? undefined,
           })
+          return
         }
         return
       }

@@ -362,4 +362,118 @@ describe('agents controller agent-run reconciler', () => {
       expect.objectContaining({ runName: 'old-workflow-run' }),
     )
   })
+
+  it('terminalizes a job AgentRun when the Job is missing without stored runner status', async () => {
+    const setStatus = vi.fn(async () => undefined)
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async () => null),
+    }
+    const reconciler = createAgentRunReconciler(createBaseDependencies({ setStatus }))
+
+    await reconciler.reconcileAgentRun(
+      kube as never,
+      {
+        metadata: {
+          name: 'run-1',
+          namespace: 'agents',
+          generation: 1,
+          finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+        },
+        spec: {
+          agentRef: { name: 'codex-agent' },
+          runtime: { type: 'job' },
+          parameters: {},
+          workload: {},
+        },
+        status: {
+          phase: 'Running',
+          startedAt: '2026-05-18T13:00:00.000Z',
+          runtimeRef: {
+            type: 'job',
+            name: 'run-1-job',
+            namespace: 'agents',
+            jobObservedAt: '2026-05-18T13:00:01.000Z',
+          },
+        },
+      },
+      'agents',
+      [],
+      [],
+      {
+        perNamespace: 10,
+        perAgent: 10,
+        cluster: 10,
+        repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+      },
+      { total: 0, perAgent: new Map(), perRepository: new Map() },
+      0,
+    )
+
+    expect(kube.get).toHaveBeenCalledWith('job', 'run-1-job', 'agents')
+    expect(setStatus).toHaveBeenCalledWith(
+      kube,
+      expect.any(Object),
+      expect.objectContaining({
+        phase: 'Failed',
+        reason: 'JobMissing',
+        finishedAt: '2026-05-18T14:00:00.000Z',
+        runtimeRef: expect.objectContaining({ type: 'job', name: 'run-1-job' }),
+        conditions: expect.arrayContaining([
+          expect.objectContaining({ type: 'Warning', status: 'True', reason: 'JobMissing' }),
+          expect.objectContaining({ type: 'Failed', status: 'True', reason: 'JobMissing' }),
+        ]),
+      }),
+    )
+  })
+
+  it('returns without updating when Job is missing and jobObservedAt is not set', async () => {
+    const setStatus = vi.fn(async () => undefined)
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async () => null),
+    }
+    const reconciler = createAgentRunReconciler(createBaseDependencies({ setStatus }))
+
+    await reconciler.reconcileAgentRun(
+      kube as never,
+      {
+        metadata: {
+          name: 'run-1',
+          namespace: 'agents',
+          generation: 1,
+          finalizers: ['agents.proompteng.ai/runtime-cleanup'],
+        },
+        spec: {
+          agentRef: { name: 'codex-agent' },
+          runtime: { type: 'job' },
+          parameters: {},
+          workload: {},
+        },
+        status: {
+          phase: 'Running',
+          startedAt: '2026-05-18T13:00:00.000Z',
+          runtimeRef: {
+            type: 'job',
+            name: 'run-1-job',
+            namespace: 'agents',
+          },
+        },
+      },
+      'agents',
+      [],
+      [],
+      {
+        perNamespace: 10,
+        perAgent: 10,
+        cluster: 10,
+        repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+      },
+      { total: 0, perAgent: new Map(), perRepository: new Map() },
+      0,
+    )
+
+    expect(kube.get).toHaveBeenCalledWith('job', 'run-1-job', 'agents')
+    expect(setStatus).not.toHaveBeenCalled()
+  })
 })
