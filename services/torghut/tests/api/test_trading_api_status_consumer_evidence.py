@@ -51,6 +51,22 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
         self.assertEqual(float(tca_summary["avg_expected_shortfall_bps_p95"]), 5.0)
         self.assertEqual(float(tca_summary["avg_realized_shortfall_bps"]), 1.2)
         self.assertEqual(float(tca_summary["avg_divergence_bps"]), 0.7)
+        submission_authority = payload["submission_authority"]
+        self.assertEqual(
+            submission_authority["schema_version"],
+            "torghut.submission-authority.v1",
+        )
+        self.assertIn(
+            submission_authority["effective_submit_mode"],
+            {
+                "blocked",
+                "bounded_live_paper_collection",
+                "bounded_live_paper_collection_waiting_for_session",
+                "capital_promotion",
+            },
+        )
+        self.assertIn("capital_promotion_gate", submission_authority)
+        self.assertIn("bounded_collection_gate", submission_authority)
 
     def test_trading_status_reports_latest_persisted_decision_timestamp(self) -> None:
         with self.session_local() as session:
