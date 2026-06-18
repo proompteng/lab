@@ -3,7 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 
 
-def test_search_consistent_profitability_frontier_split_modules_are_importable() -> (
+def test_search_consistent_profitability_frontier_split_packages_are_importable() -> (
     None
 ):
     modules = [

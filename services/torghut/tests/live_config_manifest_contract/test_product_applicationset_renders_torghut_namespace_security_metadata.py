@@ -529,7 +529,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         )
         core_path = (
             repo_root
-            / "services/torghut/scripts/materialize_bounded_paper_route_targets_modules"
+            / "services/torghut/scripts/paper_route_target_materialization"
             / "target_materialization_core.py"
         )
         cli_source = cli_path.read_text(encoding="utf-8")

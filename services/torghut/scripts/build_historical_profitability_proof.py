@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from scripts.build_historical_profitability_proof_modules import (
+from scripts.historical_profitability_proof import (
     HistoricalRunSummary,
     ProfitabilityProofGatePolicy,
     build_historical_profitability_bundle,

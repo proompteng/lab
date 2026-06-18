@@ -3,7 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 
 
-def test_trading_api_split_modules_are_importable() -> None:
+def test_trading_api_split_packages_are_importable() -> None:
     modules = [
         "tests.api.test_trading_api_forecast_options",
         "tests.api.test_trading_api_db_contract",

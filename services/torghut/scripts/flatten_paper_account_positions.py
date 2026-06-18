@@ -1,5 +1,5 @@
 from __future__ import annotations
-from scripts.flatten_paper_account_positions_modules import (
+from scripts.paper_account_position_flattening import (
     argparse,
     json,
     os,
@@ -56,7 +56,7 @@ from scripts.flatten_paper_account_positions_modules import (
     OrderFirewall,
     main,
 )
-from scripts.flatten_paper_account_positions_modules.flatten_core import (
+from scripts.paper_account_position_flattening.flatten_core import (
     _as_sequence,
     _parse_args,
     _readback_datetime,
@@ -68,7 +68,7 @@ from scripts.flatten_paper_account_positions_modules.flatten_core import (
     _target_plan_target_account_label,
     _target_plan_target_matches_account,
 )
-from scripts.flatten_paper_account_positions_modules.lineage_execution import (
+from scripts.paper_account_position_flattening.lineage_execution import (
     _decision_mapping,
     _decision_params,
     _first_lineage_bool,

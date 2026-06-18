@@ -3,7 +3,7 @@ from __future__ import annotations
 import urllib
 from decimal import Decimal
 
-from scripts.readback_hpairs_profit_proof_gap_modules import (
+from scripts.hpairs_profit_proof_gap_readback import (
     BlockerStage,
     CLOSED_TRADES_KEYS,
     CONCENTRATION_DRAWDOWN_WORDS,

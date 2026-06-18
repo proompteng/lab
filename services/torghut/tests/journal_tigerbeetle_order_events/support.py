@@ -48,9 +48,9 @@ from app.trading.tigerbeetle_client import (
     TigerBeetleClientTimeoutError,
 )
 from scripts import journal_tigerbeetle_order_events as script
-from scripts.journal_tigerbeetle_order_events_modules import cli as script_cli
-from scripts.journal_tigerbeetle_order_events_modules import journal_core as script_core
-from scripts.journal_tigerbeetle_order_events_modules import (
+from scripts.tigerbeetle_order_journal import cli as script_cli
+from scripts.tigerbeetle_order_journal import journal_core as script_core
+from scripts.tigerbeetle_order_journal import (
     journal_payloads as script_payloads,
 )
 from scripts import run_tigerbeetle_journal_cron as cron_runner

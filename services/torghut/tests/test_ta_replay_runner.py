@@ -10,7 +10,7 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from scripts import ta_replay_runner as runner
-from scripts.ta_replay_runner_modules import replay_core, replay_orchestration
+from scripts.technical_analysis_replay import replay_core, replay_orchestration
 
 
 _TABLE_COVERAGE_TSV = """table_name\tdays\tfirst_day\tlast_day\trows

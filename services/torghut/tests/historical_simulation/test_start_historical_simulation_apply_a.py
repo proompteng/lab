@@ -67,23 +67,23 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
             with ExitStack() as stack:
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_supported_binary"
+                        "scripts.historical_simulation_startup.replay_execution._ensure_supported_binary"
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_lz4_codec_available"
+                        "scripts.historical_simulation_startup.replay_execution._ensure_lz4_codec_available"
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._acquire_simulation_runtime_lock",
+                        "scripts.historical_simulation_startup.replay_execution._acquire_simulation_runtime_lock",
                         return_value={"status": "acquired", "run_id": resources.run_id},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._capture_cluster_state",
+                        "scripts.historical_simulation_startup.replay_execution._capture_cluster_state",
                         return_value={
                             "ta_data": {
                                 "TA_GROUP_ID": "prod-ta-group",
@@ -95,101 +95,101 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_topics",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_topics",
                         return_value={"status": "ok"},
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_clickhouse_database"
+                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_database"
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_clickhouse_runtime_tables",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_runtime_tables",
                         return_value=None,
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_postgres_database"
+                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_database"
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_postgres_runtime_permissions",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_runtime_permissions",
                         return_value={"grants_applied": True},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._run_migrations",
+                        "scripts.historical_simulation_startup.replay_execution._run_migrations",
                         return_value=None,
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._reset_postgres_runtime_state",
+                        "scripts.historical_simulation_startup.replay_execution._reset_postgres_runtime_state",
                         return_value=None,
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._seed_simulation_trade_cursor",
+                        "scripts.historical_simulation_startup.replay_execution._seed_simulation_trade_cursor",
                         return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._upsert_simulation_runtime_context",
+                        "scripts.historical_simulation_startup.replay_execution._upsert_simulation_runtime_context",
                         return_value=None,
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._dump_topics",
+                        "scripts.historical_simulation_startup.replay_execution._dump_topics",
                         return_value={"records": 1, "sha256": "abc"},
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._validate_dump_coverage",
+                        "scripts.historical_simulation_startup.replay_execution._validate_dump_coverage",
                         return_value={"coverage_ratio": 1.0},
                     ),
                 )
                 runtime_guard = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_argocd_manual_before_runtime_mutation",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_argocd_manual_before_runtime_mutation",
                         return_value={"managed": True, "changed": True},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ta_runtime_reconfigure_required",
+                        "scripts.historical_simulation_startup.replay_execution._ta_runtime_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._torghut_service_reconfigure_required",
+                        "scripts.historical_simulation_startup.replay_execution._torghut_service_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._configure_ta_for_simulation",
+                        "scripts.historical_simulation_startup.replay_execution._configure_ta_for_simulation",
                         return_value=None,
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._restart_ta_deployment",
+                        "scripts.historical_simulation_startup.replay_execution._restart_ta_deployment",
                         return_value="nonce",
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._configure_torghut_service_for_simulation",
+                        "scripts.historical_simulation_startup.replay_execution._configure_torghut_service_for_simulation",
                         return_value=None,
                     ),
                 )
@@ -252,25 +252,25 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
             with ExitStack() as stack:
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_supported_binary",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_supported_binary",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_lz4_codec_available",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_lz4_codec_available",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._acquire_simulation_runtime_lock",
+                        "scripts.historical_simulation_startup.replay_execution._acquire_simulation_runtime_lock",
                         return_value={"status": "acquired", "run_id": resources.run_id},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._capture_cluster_state",
+                        "scripts.historical_simulation_startup.replay_execution._capture_cluster_state",
                         return_value={
                             "ta_data": {"TA_GROUP_ID": "torghut-ta-sim-default"}
                         },
@@ -278,84 +278,84 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_topics",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_topics",
                         return_value={"status": "ok"},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_clickhouse_runtime_tables",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_runtime_tables",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_postgres_runtime_permissions",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_runtime_permissions",
                         return_value={"grants_applied": True},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._run_migrations",
+                        "scripts.historical_simulation_startup.replay_execution._run_migrations",
                         return_value=None,
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._reset_postgres_runtime_state",
+                        "scripts.historical_simulation_startup.replay_execution._reset_postgres_runtime_state",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._seed_simulation_trade_cursor",
+                        "scripts.historical_simulation_startup.replay_execution._seed_simulation_trade_cursor",
                         return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._upsert_simulation_runtime_context",
+                        "scripts.historical_simulation_startup.replay_execution._upsert_simulation_runtime_context",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._dump_topics",
+                        "scripts.historical_simulation_startup.replay_execution._dump_topics",
                         return_value={"records": 1, "sha256": "abc"},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._validate_dump_coverage",
+                        "scripts.historical_simulation_startup.replay_execution._validate_dump_coverage",
                         return_value={"coverage_ratio": 1.0},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ta_runtime_reconfigure_required",
+                        "scripts.historical_simulation_startup.replay_execution._ta_runtime_reconfigure_required",
                         return_value=False,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._torghut_service_reconfigure_required",
+                        "scripts.historical_simulation_startup.replay_execution._torghut_service_reconfigure_required",
                         return_value=False,
                     ),
                 )
                 configure_ta = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._configure_ta_for_simulation"
+                        "scripts.historical_simulation_startup.replay_execution._configure_ta_for_simulation"
                     ),
                 )
                 restart_ta = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._restart_ta_deployment",
+                        "scripts.historical_simulation_startup.replay_execution._restart_ta_deployment",
                         return_value=7,
                     ),
                 )
                 configure_service = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._configure_torghut_service_for_simulation"
+                        "scripts.historical_simulation_startup.replay_execution._configure_torghut_service_for_simulation"
                     ),
                 )
                 report = start_historical_simulation._apply(
@@ -469,7 +469,7 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
             raise AssertionError(f"unexpected kubectl args: {args}")
 
         with patch(
-            "scripts.start_historical_simulation_modules.service_environment._kubectl_json",
+            "scripts.historical_simulation_startup.service_environment._kubectl_json",
             side_effect=_kubectl_json_side_effect,
         ):
             resolved = _resolve_warm_lane_runtime_postgres_config(
@@ -530,25 +530,25 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
             with ExitStack() as stack:
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_supported_binary",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_supported_binary",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_lz4_codec_available",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_lz4_codec_available",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._acquire_simulation_runtime_lock",
+                        "scripts.historical_simulation_startup.replay_execution._acquire_simulation_runtime_lock",
                         return_value={"status": "acquired", "run_id": resources.run_id},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._capture_cluster_state",
+                        "scripts.historical_simulation_startup.replay_execution._capture_cluster_state",
                         return_value={
                             "ta_data": {"TA_GROUP_ID": "torghut-ta-sim-default"}
                         },
@@ -556,91 +556,91 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_topics",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_topics",
                         return_value={"status": "ok"},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_clickhouse_runtime_tables",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_runtime_tables",
                         return_value=None,
                     ),
                 )
                 ensure_permissions = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_postgres_runtime_permissions",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_runtime_permissions",
                         return_value={"grants_applied": True},
                     ),
                 )
                 run_migrations = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._run_migrations",
+                        "scripts.historical_simulation_startup.replay_execution._run_migrations",
                         return_value=None,
                     ),
                 )
                 reset_runtime_state = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._reset_postgres_runtime_state",
+                        "scripts.historical_simulation_startup.replay_execution._reset_postgres_runtime_state",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._seed_simulation_trade_cursor",
+                        "scripts.historical_simulation_startup.replay_execution._seed_simulation_trade_cursor",
                         return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._upsert_simulation_runtime_context",
+                        "scripts.historical_simulation_startup.replay_execution._upsert_simulation_runtime_context",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._dump_topics",
+                        "scripts.historical_simulation_startup.replay_execution._dump_topics",
                         return_value={"records": 1, "sha256": "abc"},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._validate_dump_coverage",
+                        "scripts.historical_simulation_startup.replay_execution._validate_dump_coverage",
                         return_value={"coverage_ratio": 1.0},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ta_runtime_reconfigure_required",
+                        "scripts.historical_simulation_startup.replay_execution._ta_runtime_reconfigure_required",
                         return_value=False,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._torghut_service_reconfigure_required",
+                        "scripts.historical_simulation_startup.replay_execution._torghut_service_reconfigure_required",
                         return_value=False,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._configure_ta_for_simulation",
+                        "scripts.historical_simulation_startup.replay_execution._configure_ta_for_simulation",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._restart_ta_deployment",
+                        "scripts.historical_simulation_startup.replay_execution._restart_ta_deployment",
                         return_value=1,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._configure_torghut_service_for_simulation",
+                        "scripts.historical_simulation_startup.replay_execution._configure_torghut_service_for_simulation",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._release_simulation_runtime_lock",
+                        "scripts.historical_simulation_startup.replay_execution._release_simulation_runtime_lock",
                         return_value={"status": "released", "run_id": resources.run_id},
                     ),
                 )
@@ -697,25 +697,25 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
             with ExitStack() as stack:
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_supported_binary",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_supported_binary",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_lz4_codec_available",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_lz4_codec_available",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._acquire_simulation_runtime_lock",
+                        "scripts.historical_simulation_startup.replay_execution._acquire_simulation_runtime_lock",
                         return_value={"status": "acquired", "run_id": resources.run_id},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._capture_cluster_state",
+                        "scripts.historical_simulation_startup.replay_execution._capture_cluster_state",
                         return_value={
                             "ta_data": {
                                 "TA_GROUP_ID": "prod-ta-group",
@@ -725,95 +725,95 @@ class TestStartHistoricalSimulationApplyA(StartHistoricalSimulationTestCaseBase)
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_topics",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_topics",
                         return_value={"status": "ok"},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_clickhouse_database"
+                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_database"
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_clickhouse_runtime_tables",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_clickhouse_runtime_tables",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_postgres_database"
+                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_database"
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ensure_postgres_runtime_permissions",
+                        "scripts.historical_simulation_startup.replay_execution._ensure_postgres_runtime_permissions",
                         return_value={"grants_applied": True},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._run_migrations",
+                        "scripts.historical_simulation_startup.replay_execution._run_migrations",
                         return_value=None,
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._reset_postgres_runtime_state",
+                        "scripts.historical_simulation_startup.replay_execution._reset_postgres_runtime_state",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._seed_simulation_trade_cursor",
+                        "scripts.historical_simulation_startup.replay_execution._seed_simulation_trade_cursor",
                         return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._upsert_simulation_runtime_context",
+                        "scripts.historical_simulation_startup.replay_execution._upsert_simulation_runtime_context",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._dump_topics",
+                        "scripts.historical_simulation_startup.replay_execution._dump_topics",
                         return_value={"records": 1, "sha256": "abc"},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._validate_dump_coverage",
+                        "scripts.historical_simulation_startup.replay_execution._validate_dump_coverage",
                         return_value={"coverage_ratio": 1.0},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._ta_runtime_reconfigure_required",
+                        "scripts.historical_simulation_startup.replay_execution._ta_runtime_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._torghut_service_reconfigure_required",
+                        "scripts.historical_simulation_startup.replay_execution._torghut_service_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._configure_ta_for_simulation",
+                        "scripts.historical_simulation_startup.replay_execution._configure_ta_for_simulation",
                         return_value=None,
                     ),
                 )
                 restart_ta = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._restart_ta_deployment",
+                        "scripts.historical_simulation_startup.replay_execution._restart_ta_deployment",
                         return_value="nonce",
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation_modules.replay_execution._configure_torghut_service_for_simulation",
+                        "scripts.historical_simulation_startup.replay_execution._configure_torghut_service_for_simulation",
                         return_value=None,
                     ),
                 )

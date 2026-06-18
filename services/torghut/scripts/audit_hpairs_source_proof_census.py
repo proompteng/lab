@@ -1,5 +1,5 @@
 from __future__ import annotations
-from scripts.audit_hpairs_source_proof_census_modules import (
+from scripts.hpairs_source_proof_census_audit import (
     argparse,
     json,
     sys,
@@ -84,11 +84,11 @@ from scripts.audit_hpairs_source_proof_census_modules import (
     load_dsn_rows,
     main,
 )
-from scripts.audit_hpairs_source_proof_census_modules.blocker_ladder import (
+from scripts.hpairs_source_proof_census_audit.blocker_ladder import (
     _parse_cli_timestamp,
     _row_list,
 )
-from scripts.audit_hpairs_source_proof_census_modules.parse_timestamp import (
+from scripts.hpairs_source_proof_census_audit.parse_timestamp import (
     _decimal,
     _int,
     _mapping,
@@ -97,14 +97,14 @@ from scripts.audit_hpairs_source_proof_census_modules.parse_timestamp import (
     _text,
     _utc,
 )
-from scripts.audit_hpairs_source_proof_census_modules.source_event_row_matches_identity import (
+from scripts.hpairs_source_proof_census_audit.source_event_row_matches_identity import (
     _row_aliases_target_account,
     _source_event_row_matches_identity,
     _source_window_row_matches_identity,
     _text_values,
     _value_mentions_text,
 )
-from scripts.audit_hpairs_source_proof_census_modules.shared_context import (
+from scripts.hpairs_source_proof_census_audit.shared_context import (
     _load_session_rows,
     _sqlalchemy_dsn,
 )

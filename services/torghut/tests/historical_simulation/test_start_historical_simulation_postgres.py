@@ -48,19 +48,19 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.resource_planning._run_command",
+                "scripts.historical_simulation_startup.resource_planning._run_command",
                 side_effect=_fake_run_command,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.kubernetes_argocd._run_with_transient_postgres_retry",
+                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.resource_planning.shutil.which",
+                "scripts.historical_simulation_startup.resource_planning.shutil.which",
                 return_value="/usr/bin/alembic",
             ),
             patch(
-                "scripts.start_historical_simulation_modules.runtime_migrations._assert_required_simulation_metadata_tables",
+                "scripts.historical_simulation_startup.runtime_migrations._assert_required_simulation_metadata_tables",
                 return_value=None,
             ),
         ):
@@ -136,15 +136,15 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.storage_and_database.psycopg.connect",
+                "scripts.historical_simulation_startup.storage_and_database.psycopg.connect",
                 side_effect=_fake_connect,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.kubernetes_argocd._run_with_transient_postgres_retry",
+                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.storage_and_database._postgres_extension_exists",
+                "scripts.historical_simulation_startup.storage_and_database._postgres_extension_exists",
                 return_value=True,
             ),
         ):
@@ -236,11 +236,11 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.storage_and_database.psycopg.connect",
+                "scripts.historical_simulation_startup.storage_and_database.psycopg.connect",
                 return_value=_FakeConnection(),
             ),
             patch(
-                "scripts.start_historical_simulation_modules.kubernetes_argocd._run_with_transient_postgres_retry",
+                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
         ):
@@ -319,11 +319,11 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.storage_and_database.psycopg.connect",
+                "scripts.historical_simulation_startup.storage_and_database.psycopg.connect",
                 return_value=_FakeConnection(),
             ),
             patch(
-                "scripts.start_historical_simulation_modules.kubernetes_argocd._run_with_transient_postgres_retry",
+                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
         ):
@@ -411,11 +411,11 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.storage_and_database.psycopg.connect",
+                "scripts.historical_simulation_startup.storage_and_database.psycopg.connect",
                 return_value=_FakeConnection(),
             ),
             patch(
-                "scripts.start_historical_simulation_modules.kubernetes_argocd._run_with_transient_postgres_retry",
+                "scripts.historical_simulation_startup.kubernetes_argocd._run_with_transient_postgres_retry",
                 side_effect=_fake_retry,
             ),
         ):

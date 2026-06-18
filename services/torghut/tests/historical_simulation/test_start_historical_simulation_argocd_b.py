@@ -184,14 +184,14 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._read_argocd_automation_mode",
+                "scripts.historical_simulation_startup.argocd_rollouts._read_argocd_automation_mode",
                 return_value={
                     "pointer": "/spec/generators/0/list/elements/0/automation",
                     "mode": "auto",
                 },
             ) as automation_read_mock,
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._read_named_argocd_application_sync_policy",
+                "scripts.historical_simulation_startup.argocd_rollouts._read_named_argocd_application_sync_policy",
                 side_effect=[
                     {
                         "sync_policy": {
@@ -220,19 +220,19 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 ],
             ) as application_read_mock,
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._set_argocd_application_sync_policy",
+                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_application_sync_policy",
                 side_effect=_set_application_sync_policy,
             ) as application_sync_mock,
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._set_argocd_application_ignore_differences",
+                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_application_ignore_differences",
                 side_effect=_set_ignore_differences,
             ) as ignore_differences_mock,
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._set_argocd_automation_mode",
+                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_automation_mode",
                 side_effect=_set_applicationset_mode,
             ) as applicationset_mock,
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._wait_for_argocd_application_mode",
+                "scripts.historical_simulation_startup.argocd_rollouts._wait_for_argocd_application_mode",
                 side_effect=_wait_application_mode,
             ) as application_mode_mock,
         ):
@@ -318,14 +318,14 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         )
         with (
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._read_argocd_automation_mode",
+                "scripts.historical_simulation_startup.argocd_rollouts._read_argocd_automation_mode",
                 return_value={
                     "pointer": "/spec/generators/0/list/elements/0/automation",
                     "mode": "manual",
                 },
             ),
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._read_named_argocd_application_sync_policy",
+                "scripts.historical_simulation_startup.argocd_rollouts._read_named_argocd_application_sync_policy",
                 side_effect=[
                     {
                         "sync_policy": {
@@ -354,7 +354,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 ],
             ),
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._prepare_argocd_for_run"
+                "scripts.historical_simulation_startup.argocd_rollouts._prepare_argocd_for_run"
             ) as prepare_mock,
         ):
             report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(
@@ -389,14 +389,14 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         )
         with (
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._read_argocd_automation_mode",
+                "scripts.historical_simulation_startup.argocd_rollouts._read_argocd_automation_mode",
                 return_value={
                     "pointer": "/spec/generators/0/list/elements/0/automation",
                     "mode": "manual",
                 },
             ),
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._read_named_argocd_application_sync_policy",
+                "scripts.historical_simulation_startup.argocd_rollouts._read_named_argocd_application_sync_policy",
                 side_effect=[
                     {
                         "sync_policy": {
@@ -425,7 +425,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 ],
             ),
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._prepare_argocd_for_run",
+                "scripts.historical_simulation_startup.argocd_rollouts._prepare_argocd_for_run",
                 return_value={
                     "managed": True,
                     "changed": True,
@@ -513,19 +513,19 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._set_argocd_automation_mode",
+                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_automation_mode",
                 side_effect=_set_applicationset_mode,
             ) as applicationset_mock,
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._set_argocd_application_sync_policy",
+                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_application_sync_policy",
                 side_effect=_set_application_sync_policy,
             ) as application_mock,
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._set_argocd_application_ignore_differences",
+                "scripts.historical_simulation_startup.argocd_rollouts._set_argocd_application_ignore_differences",
                 side_effect=_set_ignore_differences,
             ) as ignore_differences_mock,
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._wait_for_argocd_application_mode",
+                "scripts.historical_simulation_startup.argocd_rollouts._wait_for_argocd_application_mode",
                 side_effect=_wait_application_mode,
             ) as application_mode_mock,
         ):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
+from scripts.runtime_ledger_proof_packet.common import (
     DOC29_LIVE_SCALE_GATE,
     _bool,
     _int,
@@ -14,7 +14,7 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
     _text,
     _text_list,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.hpairs import _extend_unique
+from scripts.runtime_ledger_proof_packet.hpairs import _extend_unique
 
 
 def _check(

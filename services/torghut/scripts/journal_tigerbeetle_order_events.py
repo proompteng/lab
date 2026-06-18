@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.trading.tigerbeetle_ledger_model import TRANSFER_KIND_RUNTIME_NET_PNL
 
-from scripts.journal_tigerbeetle_order_events_modules import (
+from scripts.tigerbeetle_order_journal import (
     DEFAULT_SOURCES,
     SOURCE_TYPE_EXECUTION,
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,

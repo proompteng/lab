@@ -3,7 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 
 
-def test_runtime_window_import_split_modules_are_importable() -> None:
+def test_runtime_window_import_split_packages_are_importable() -> None:
     modules = [
         "tests.runtime_window_import.test_runtime_window_config",
         "tests.runtime_window_import.test_runtime_window_authority",

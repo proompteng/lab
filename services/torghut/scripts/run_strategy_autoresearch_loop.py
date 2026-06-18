@@ -1,5 +1,5 @@
 from __future__ import annotations
-from scripts.run_strategy_autoresearch_loop_modules import (
+from scripts.strategy_autoresearch_loop import (
     argparse,
     json,
     os,
@@ -65,7 +65,7 @@ from scripts.run_strategy_autoresearch_loop_modules import (
     LatestCompleteWindowRequirement,
     run_strategy_autoresearch_loop,
 )
-from scripts.run_strategy_autoresearch_loop_modules.shared_context import (
+from scripts.strategy_autoresearch_loop.shared_context import (
     _REPO_ROOT,
     _apply_exact_replay_guidance_to_next_sweep,
     _apply_objective_capital_limits,
@@ -75,14 +75,14 @@ from scripts.run_strategy_autoresearch_loop_modules.shared_context import (
     _parse_args,
     _select_effective_replay_tape_window,
 )
-from scripts.run_strategy_autoresearch_loop_modules.load_yaml import (
+from scripts.strategy_autoresearch_loop.load_yaml import (
     _history_record,
     _latest_complete_window_requirement,
     _maybe_materialize_run_replay_tape,
     _maybe_write_signal_bundle,
     _provided_replay_tape_receipt,
 )
-from scripts.run_strategy_autoresearch_loop_modules.write_results_tsv import (
+from scripts.strategy_autoresearch_loop.write_results_tsv import (
     _best_history_record,
     _exact_replay_history_row,
     _exact_replay_runtime_window_blockers,
@@ -93,7 +93,7 @@ from scripts.run_strategy_autoresearch_loop_modules.write_results_tsv import (
     _runtime_closure_subject,
     _summary_promotion_readiness_for_outputs,
 )
-from scripts.run_strategy_autoresearch_loop_modules.write_portfolio_outputs import (
+from scripts.strategy_autoresearch_loop.write_portfolio_outputs import (
     _exact_replay_candidate_for_payload,
     _exact_replay_ledger_paths,
     _exact_replay_ranking_by_candidate,

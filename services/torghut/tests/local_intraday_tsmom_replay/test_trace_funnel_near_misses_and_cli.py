@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.local_intraday_tsmom_replay_modules.cli_args import _parse_args
+from scripts.intraday_tsmom_replay.cli_args import _parse_args
 
 from tests.local_intraday_tsmom_replay.support import (
     json,
@@ -487,11 +487,11 @@ class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
             }
             with (
                 patch(
-                    "scripts.local_intraday_tsmom_replay_modules.cli._parse_args",
+                    "scripts.intraday_tsmom_replay.cli._parse_args",
                     return_value=args,
                 ),
                 patch(
-                    "scripts.local_intraday_tsmom_replay_modules.cli.run_replay",
+                    "scripts.intraday_tsmom_replay.cli.run_replay",
                     return_value=payload,
                 ),
                 patch("builtins.print"),
@@ -592,11 +592,11 @@ class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
 
             with (
                 patch(
-                    "scripts.local_intraday_tsmom_replay_modules.cli._parse_args",
+                    "scripts.intraday_tsmom_replay.cli._parse_args",
                     return_value=args,
                 ),
                 patch(
-                    "scripts.local_intraday_tsmom_replay_modules.cli.run_replay",
+                    "scripts.intraday_tsmom_replay.cli.run_replay",
                     return_value=payload,
                 ) as run_replay_mock,
                 patch("builtins.print"),

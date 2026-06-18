@@ -128,14 +128,10 @@ def test_file_length_filter_ignores_non_length_pylint_messages() -> None:
     assert messages == []
 
 
-def test_file_length_main_combines_transitional_extracted_source_baseline(
+def test_file_length_main_uses_transitional_extracted_source_baseline(
     monkeypatch,
     capsys,
 ) -> None:
-    def fake_base_extracted_source_paths(base: str) -> set[str]:
-        assert base == "HEAD^"
-        return set()
-
     def fake_run(command, *, check: bool, cwd=None):
         assert check is False
         assert cwd is None
@@ -148,11 +144,6 @@ def test_file_length_main_combines_transitional_extracted_source_baseline(
             ),
         )
 
-    monkeypatch.setattr(
-        file_length_gate,
-        "_base_extracted_source_paths",
-        fake_base_extracted_source_paths,
-    )
     monkeypatch.setattr(file_length_gate, "_run", fake_run)
 
     result = file_length_gate.main(

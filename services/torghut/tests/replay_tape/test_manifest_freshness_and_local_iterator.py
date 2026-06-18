@@ -415,7 +415,7 @@ class TestReplayTapeManifestFreshnessAndLocalIterator(_TestReplayTapeBase):
             )
 
             with patch(
-                "scripts.local_intraday_tsmom_replay_modules.signal_rows._fetch_chunk",
+                "scripts.intraday_tsmom_replay.signal_rows._fetch_chunk",
                 side_effect=AssertionError("clickhouse should not be queried"),
             ):
                 rows = list(_iter_signal_rows(config))

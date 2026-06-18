@@ -20,7 +20,7 @@ from app.trading.paper_route_target_plan import (
     materialize_bounded_paper_route_target_plan,
 )
 from scripts import materialize_bounded_paper_route_targets as cli
-from scripts.materialize_bounded_paper_route_targets_modules import (
+from scripts.paper_route_target_materialization import (
     target_materialization_core,
 )
 

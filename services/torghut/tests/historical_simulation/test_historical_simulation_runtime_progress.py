@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from scripts.historical_simulation_verification_modules import runtime_progress
+from scripts.historical_simulation_runtime_verification import runtime_progress
 
 
 def _ts(value: str) -> datetime:

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from scripts.verify_trading_readiness_modules import (
+from scripts.trading_readiness_verification import (
     argparse,
     json,
     Mapping,
@@ -24,13 +24,13 @@ from scripts.verify_trading_readiness_modules import (
     evaluate_trading_readiness,
     main,
 )
-from scripts.verify_trading_readiness_modules.add_tigerbeetle_parity_check import (
+from scripts.trading_readiness_verification.add_tigerbeetle_parity_check import (
     readiness_next_action as _readiness_next_action,
 )
-from scripts.verify_trading_readiness_modules.paper_route_target_plan_summary import (
+from scripts.trading_readiness_verification.paper_route_target_plan_summary import (
     runtime_ledger_daily_net_pnl as _runtime_ledger_daily_net_pnl,
 )
-from scripts.verify_trading_readiness_modules import (
+from scripts.trading_readiness_verification import (
     paper_route_target_plan_summary as _paper_route_target_plan_summary_module,
     shared_context as _readiness_shared_context,
 )

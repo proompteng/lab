@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import urlopen
 
-from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
+from scripts.runtime_ledger_proof_packet.common import (
     ARTIFACT_SCHEMA_VERSION,
     COMPLETION_DOC29_ENDPOINT,
     DOC29_LIVE_SCALE_GATE,

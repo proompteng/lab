@@ -69,7 +69,7 @@ class TestAnalyzeHistoricalSimulation(TestCase):
             return 200, "AAPL250321C00200000\t1.55\n"
 
         with patch(
-            "scripts.analyze_historical_simulation_modules.report_helpers._http_clickhouse_query",
+            "scripts.historical_simulation_analysis.report_helpers._http_clickhouse_query",
             side_effect=_fake_clickhouse_query,
         ):
             prices = _build_last_price_map(
@@ -102,7 +102,7 @@ class TestAnalyzeHistoricalSimulation(TestCase):
             return 200, "NVDA\t205.55\nAMD\t350.02\n"
 
         with patch(
-            "scripts.analyze_historical_simulation_modules.report_helpers._http_clickhouse_query",
+            "scripts.historical_simulation_analysis.report_helpers._http_clickhouse_query",
             side_effect=_fake_clickhouse_query,
         ):
             prices = _build_last_price_map(
@@ -135,7 +135,7 @@ class TestAnalyzeHistoricalSimulation(TestCase):
             return 200, "NVDA\t205.55\n"
 
         with patch(
-            "scripts.analyze_historical_simulation_modules.report_helpers._http_clickhouse_query",
+            "scripts.historical_simulation_analysis.report_helpers._http_clickhouse_query",
             side_effect=_fake_clickhouse_query,
         ):
             prices = _build_last_price_map(
@@ -367,7 +367,7 @@ class TestAnalyzeHistoricalSimulation(TestCase):
 
             with (
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._load_manifest",
+                    "scripts.historical_simulation_analysis.report_builder._load_manifest",
                     return_value={
                         "reporting": {
                             "commission_bps": "10",
@@ -380,19 +380,19 @@ class TestAnalyzeHistoricalSimulation(TestCase):
                     },
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._build_resources",
+                    "scripts.historical_simulation_analysis.report_builder._build_resources",
                     return_value=resources,
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._default_simulation_postgres_db",
+                    "scripts.historical_simulation_analysis.report_builder._default_simulation_postgres_db",
                     return_value="simulation_db",
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._build_postgres_runtime_config",
+                    "scripts.historical_simulation_analysis.report_builder._build_postgres_runtime_config",
                     return_value=postgres_config,
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._build_clickhouse_runtime_config",
+                    "scripts.historical_simulation_analysis.report_builder._build_clickhouse_runtime_config",
                     return_value=ClickHouseRuntimeConfig(
                         http_url="",
                         username=None,
@@ -400,26 +400,26 @@ class TestAnalyzeHistoricalSimulation(TestCase):
                     ),
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._resolve_window_bounds",
+                    "scripts.historical_simulation_analysis.report_builder._resolve_window_bounds",
                     return_value=(
                         datetime(2026, 2, 27, 19, 59, tzinfo=timezone.utc),
                         datetime(2026, 2, 27, 20, 1, tzinfo=timezone.utc),
                     ),
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._validate_window_policy",
+                    "scripts.historical_simulation_analysis.report_builder._validate_window_policy",
                     return_value={"strict_coverage_ratio": 0.4},
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder.psycopg.connect",
+                    "scripts.historical_simulation_analysis.report_builder.psycopg.connect",
                     return_value=FakeConnection(),
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._query_rows",
+                    "scripts.historical_simulation_analysis.report_builder._query_rows",
                     side_effect=_fake_query_rows,
                 ),
                 patch(
-                    "scripts.analyze_historical_simulation_modules.report_builder._collect_clickhouse_stats",
+                    "scripts.historical_simulation_analysis.report_builder._collect_clickhouse_stats",
                     return_value={"status": "skipped"},
                 ),
             ):

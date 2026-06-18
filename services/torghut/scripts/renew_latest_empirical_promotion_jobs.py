@@ -1,5 +1,5 @@
 from __future__ import annotations
-from scripts.renew_latest_empirical_promotion_jobs_modules import (
+from scripts.empirical_promotion_renewal import (
     argparse,
     json,
     os,
@@ -55,7 +55,7 @@ from scripts.renew_latest_empirical_promotion_jobs_modules import (
     runtime_version_ref as _runtime_version_ref,
     runtime_window_targets as _runtime_window_targets,
 )
-from scripts.renew_latest_empirical_promotion_jobs_modules.offline_replay_triage_candidates_from_rank import (
+from scripts.empirical_promotion_renewal.offline_replay_triage_candidates_from_rank import (
     offline_replay_triage_candidates_from_ranking as _offline_replay_triage_candidates_from_ranking,
     offline_replay_triage_for_deferred_imports as _offline_replay_triage_for_deferred_imports,
     run_runtime_window_source_window_repair as _run_runtime_window_source_window_repair,
@@ -64,7 +64,7 @@ from scripts.renew_latest_empirical_promotion_jobs_modules.offline_replay_triage
     runtime_window_import_next_blocker as _runtime_window_import_next_blocker,
     runtime_window_import_payload_proof_blockers as _runtime_window_import_payload_proof_blockers,
 )
-from scripts.renew_latest_empirical_promotion_jobs_modules.parse_runtime_window_target_spec import (
+from scripts.empirical_promotion_renewal.parse_runtime_window_target_spec import (
     extend_unique_text_items as _extend_unique_text_items,
     hpairs_source_proof_census_status as _hpairs_source_proof_census_status,
     read_json_mapping as _read_json_mapping,
@@ -77,7 +77,7 @@ from scripts.renew_latest_empirical_promotion_jobs_modules.parse_runtime_window_
     runtime_window_target_plan_positive_mapping_count as _runtime_window_target_plan_positive_mapping_count,
     runtime_window_target_plan_with_import_audit_blockers as _runtime_window_target_plan_with_import_audit_blockers,
 )
-from scripts.renew_latest_empirical_promotion_jobs_modules.raise_if_runtime_window_target_plan_import import (
+from scripts.empirical_promotion_renewal.raise_if_runtime_window_target_plan_import import (
     read_runtime_window_target_plan_url as _read_runtime_window_target_plan_url,
     runtime_window_target_plan_import_blocked_result as _runtime_window_target_plan_import_blocked_result,
     runtime_window_target_metadata as _runtime_window_target_metadata,
@@ -85,10 +85,10 @@ from scripts.renew_latest_empirical_promotion_jobs_modules.raise_if_runtime_wind
     runtime_window_targets_from_autoresearch_epochs as _runtime_window_targets_from_autoresearch_epochs,
     runtime_window_targets_from_plan as _runtime_window_targets_from_plan,
 )
-from scripts.renew_latest_empirical_promotion_jobs_modules.run_runtime_window_import_target import (
+from scripts.empirical_promotion_renewal.run_runtime_window_import_target import (
     run_runtime_window_import_target as _run_runtime_window_import_target,
 )
-from scripts.renew_latest_empirical_promotion_jobs_modules.runtime_window_targets import (
+from scripts.empirical_promotion_renewal.runtime_window_targets import (
     latest_completed_regular_session as _latest_completed_regular_session,
     latest_source_activity_window as _latest_source_activity_window,
     offline_replay_exact_artifact_refs as _offline_replay_exact_artifact_refs,
@@ -96,7 +96,7 @@ from scripts.renew_latest_empirical_promotion_jobs_modules.runtime_window_target
     run_runtime_window_import as _run_runtime_window_import,
     runtime_window_target_plan_bounds as _runtime_window_target_plan_bounds,
 )
-from scripts.renew_latest_empirical_promotion_jobs_modules.shared_context import (
+from scripts.empirical_promotion_renewal.shared_context import (
     as_text_list as _as_text_list,
     read_runtime_window_manifest as _read_runtime_window_manifest,
 )

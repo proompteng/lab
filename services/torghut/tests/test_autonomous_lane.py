@@ -3,7 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 
 
-def test_autonomous_lane_split_modules_are_importable() -> None:
+def test_autonomous_lane_split_packages_are_importable() -> None:
     modules = [
         "tests.autonomous_lane.test_autonomous_lane_evidence",
         "tests.autonomous_lane.test_autonomous_lane_governance_a",

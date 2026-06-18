@@ -1,5 +1,5 @@
 from __future__ import annotations
-from scripts.ta_replay_runner_modules import (
+from scripts.technical_analysis_replay import (
     APPLY_CONFIRMATION_PHRASE,
     CLICKHOUSE_TA_TTL_DAYS,
     DEFAULT_KAFKA_RETENTION_TOPICS,
