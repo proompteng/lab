@@ -43,6 +43,7 @@ class ClickHouseSinkTest {
               requestTimeoutMs = 1_000,
               readyMaxAgeMs = 1_000,
               failureHoldMs = 1_000,
+              enabledTables = setOf("hyperliquid_raw", "hyperliquid_candles"),
             ),
           httpClient = client,
           metrics = HyperliquidMetrics(SimpleMeterRegistry()),
@@ -60,6 +61,7 @@ class ClickHouseSinkTest {
       }
 
       assertEquals(false, readySignals.last().ready)
+      assertEquals(false, readySignals.last().tableFreshnessReady)
       job.cancelAndJoin()
       client.close()
     }
@@ -227,7 +229,7 @@ class ClickHouseSinkTest {
     }
 
   @Test
-  fun `marks clickhouse not ready when table ingest freshness is stale`() =
+  fun `keeps clickhouse ready and reports table freshness separately when inserts succeed but freshness is stale`() =
     runBlocking {
       val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
       val client =
@@ -261,12 +263,13 @@ class ClickHouseSinkTest {
       sink.enqueue(candleRecord())
 
       withTimeout(1_000) {
-        while (readySignals.lastOrNull()?.ready != false) {
+        while (readySignals.lastOrNull()?.tableFreshnessReady != false) {
           delay(10)
         }
       }
 
-      assertEquals(false, readySignals.last().ready)
+      assertEquals(true, readySignals.last().ready)
+      assertEquals(false, readySignals.last().tableFreshnessReady)
       assertEquals(3_000, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
       job.cancelAndJoin()
       client.close()
@@ -313,7 +316,46 @@ class ClickHouseSinkTest {
       }
 
       assertEquals(true, readySignals.last().ready)
+      assertEquals(true, readySignals.last().tableFreshnessReady)
       assertEquals(500, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
+      job.cancelAndJoin()
+      client.close()
+    }
+
+  @Test
+  fun `skips clickhouse writes for disabled tables`() =
+    runBlocking {
+      val observedQueries = mutableListOf<String>()
+      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            observedQueries += queryParam(request.url)
+            respond(content = "", status = HttpStatusCode.OK)
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config =
+            clickHouseConfig(
+              readyMaxAgeMs = 1_000,
+              enabledTables = setOf("hyperliquid_candles"),
+              readyTables = setOf("hyperliquid_candles"),
+            ),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { 10_000 },
+          onReady = { readySignals += it },
+        )
+      val job = sink.start(this)
+
+      sink.enqueue(rawRecord())
+
+      delay(50)
+
+      assertEquals(emptyList(), observedQueries)
+      assertEquals(emptyList(), readySignals)
       job.cancelAndJoin()
       client.close()
     }
@@ -331,6 +373,8 @@ class ClickHouseSinkTest {
     batchSize: Int = 1,
     flushMs: Long = 1,
     requestTimeoutMs: Long = 1_000,
+    enabledTables: Set<String> = setOf("hyperliquid_raw", "hyperliquid_candles"),
+    readyTables: Set<String> = setOf("hyperliquid_raw", "hyperliquid_candles"),
   ): ClickHouseConfig =
     ClickHouseConfig(
       enabled = true,
@@ -343,7 +387,8 @@ class ClickHouseSinkTest {
       requestTimeoutMs = requestTimeoutMs,
       readyMaxAgeMs = readyMaxAgeMs,
       failureHoldMs = 1_000,
-      readyTables = setOf("hyperliquid_raw", "hyperliquid_candles"),
+      enabledTables = enabledTables,
+      readyTables = readyTables,
       freshnessCheckMs = 1,
     )
 
@@ -373,6 +418,29 @@ class ClickHouseSinkTest {
               put("i", "1m")
               put("c", "100")
             },
+        ),
+    )
+
+  private fun rawRecord(): RoutedEnvelope =
+    RoutedEnvelope(
+      topic = "torghut.hyperliquid.raw.v1",
+      key = "raw",
+      envelope =
+        HyperliquidEnvelope(
+          ingestTs = "2026-06-18T04:00:00Z",
+          eventTs = "2026-06-18T04:00:00Z",
+          network = "mainnet",
+          feed = "hyperliquid-mainnet",
+          channel = "raw",
+          symbol = "hyperliquid",
+          marketType = null,
+          marketId = null,
+          dex = null,
+          coin = null,
+          spotIndex = null,
+          seq = 1,
+          source = "ws",
+          payload = buildJsonObject { put("channel", "raw") },
         ),
     )
 }

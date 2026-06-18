@@ -122,6 +122,24 @@ describe('Torghut manifest scheduling', () => {
     expect(getAtPath(replayCronWorkflow, ['spec']).failedJobsHistoryLimit).toBe(0)
   })
 
+  it('bounds Hyperliquid ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
+    const job = parseManifest('argocd/applications/torghut-hyperliquid-feed/clickhouse-schema-job.yaml')
+    const container = getAtPath(job, ['spec', 'template', 'spec', 'containers', 0])
+    const args = Array.isArray(container.args) ? container.args.join('\n') : ''
+
+    expect(getAtPath(job, ['spec']).activeDeadlineSeconds).toBe(900)
+    expect(args).toContain('set -euo pipefail')
+    expect(args).toContain('--connect_timeout 5')
+    expect(args).toContain('--send_timeout 30')
+    expect(args).toContain('--receive_timeout 120')
+    expect(args).toContain('"${CLICKHOUSE_CLIENT[@]}" --multiquery < /schema/schema.sql')
+
+    const schema = parseManifest('argocd/applications/torghut-hyperliquid-feed/clickhouse-schema-configmap.yaml')
+    const data = getAtPath(schema, ['data'])
+    expect(data['schema.sql']).toContain('SET distributed_ddl_task_timeout = 45;')
+    expect(data['schema.sql']).toContain("SET distributed_ddl_output_mode = 'null_status_on_timeout';")
+  })
+
   it('keeps whitepaper autoresearch off the serving pod resource envelope', () => {
     const manifest = parseManifest('argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml')
     const template = getAtPath(manifest, ['spec', 'templates', 0])

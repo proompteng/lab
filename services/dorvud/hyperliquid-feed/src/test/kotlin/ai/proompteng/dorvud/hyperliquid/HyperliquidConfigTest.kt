@@ -50,6 +50,7 @@ class HyperliquidConfigTest {
           "CLICKHOUSE_READY_MAX_AGE_MS" to "90000",
           "CLICKHOUSE_FAILURE_HOLD_MS" to "45000",
           "CLICKHOUSE_REQUEST_TIMEOUT_MS" to "7000",
+          "CLICKHOUSE_ENABLED_TABLES" to "hyperliquid_raw,hyperliquid_candles,hyperliquid_bbo",
           "CLICKHOUSE_READY_TABLES" to "hyperliquid_raw,hyperliquid_candles,hyperliquid_bbo",
           "CLICKHOUSE_FRESHNESS_CHECK_MS" to "5000",
           "HYPERLIQUID_READY_REQUIRED_CHANNELS" to "raw,candle",
@@ -60,6 +61,7 @@ class HyperliquidConfigTest {
     assertEquals(90_000, config.clickHouse.readyMaxAgeMs)
     assertEquals(45_000, config.clickHouse.failureHoldMs)
     assertEquals(7_000, config.clickHouse.requestTimeoutMs)
+    assertEquals(setOf("hyperliquid_raw", "hyperliquid_candles", "hyperliquid_bbo"), config.clickHouse.enabledTables)
     assertEquals(setOf("hyperliquid_raw", "hyperliquid_candles", "hyperliquid_bbo"), config.clickHouse.readyTables)
     assertEquals(5_000, config.clickHouse.freshnessCheckMs)
     assertEquals(setOf("raw", "candle"), config.readyRequiredChannels)
@@ -140,5 +142,21 @@ class HyperliquidConfigTest {
       }
 
     assertTrue(error.message.orEmpty().contains("Unsupported CLICKHOUSE_READY_TABLES"))
+  }
+
+  @Test
+  fun `rejects readiness tables disabled for clickhouse writes`() {
+    val error =
+      assertFailsWith<IllegalStateException> {
+        HyperliquidConfig.fromEnv(
+          mapOf(
+            "KAFKA_SASL_PASSWORD" to "secret",
+            "CLICKHOUSE_ENABLED_TABLES" to "hyperliquid_candles",
+            "CLICKHOUSE_READY_TABLES" to "hyperliquid_raw,hyperliquid_candles",
+          ),
+        )
+      }
+
+    assertTrue(error.message.orEmpty().contains("CLICKHOUSE_READY_TABLES must be included in CLICKHOUSE_ENABLED_TABLES"))
   }
 }
