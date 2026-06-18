@@ -393,11 +393,110 @@ def test_sdk_execution_universe_reports_metadata_failure(
         )
     )
 
-    supported_markets, status = sdk_exchange.filter_supported_markets((_market(),))
+    supported_markets, status = sdk_exchange.filter_supported_markets(
+        (
+            _market(
+                coin="SPX",
+                dex="default",
+                market_id="hl:perp:default:SPX",
+            ),
+        )
+    )
 
     assert supported_markets == ()
     assert not status.ready
     assert status.reason == "execution_market_metadata_unavailable:TimeoutError"
+
+
+def test_sdk_execution_universe_skips_unsupported_non_default_testnet_dexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdk_calls: dict[str, object] = {}
+
+    class FakeInfo:
+        def __init__(self, _url: str, *, skip_ws: bool) -> None:
+            assert skip_ws
+
+        def meta(self, dex: str = "") -> dict[str, object]:
+            meta_dexes = sdk_calls.setdefault("meta_dexes", [])
+            assert isinstance(meta_dexes, list)
+            meta_dexes.append(dex)
+            if dex:
+                raise RuntimeError(f"unsupported dex {dex}")
+            return {"universe": [{"name": "SPX"}]}
+
+    def fake_import(name: str) -> object:
+        if name == "hyperliquid.info":
+            return SimpleNamespace(Info=FakeInfo)
+        raise AssertionError(f"unexpected import {name}")
+
+    monkeypatch.setattr(exchange_module.importlib, "import_module", fake_import)
+    sdk_exchange = HyperliquidSdkExchange(
+        _config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0xabc",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY="0xdef",
+        )
+    )
+
+    supported_markets, status = sdk_exchange.filter_supported_markets(
+        (
+            _market(),
+            _market(coin="xyz:NVDA", dex="xyz", market_id="hl:perp:xyz:xyz:NVDA"),
+            _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
+        )
+    )
+
+    assert supported_markets == (
+        _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
+    )
+    assert status.ready
+    assert sdk_calls["meta_dexes"] == ["", "cash", "xyz"]
+    assert sdk_exchange.dependency_status().ready
+
+
+def test_sdk_execution_universe_reports_no_markets_when_only_non_default_dexes_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdk_calls: dict[str, object] = {}
+
+    class FakeInfo:
+        def __init__(self, _url: str, *, skip_ws: bool) -> None:
+            assert skip_ws
+
+        def meta(self, dex: str = "") -> dict[str, object]:
+            meta_dexes = sdk_calls.setdefault("meta_dexes", [])
+            assert isinstance(meta_dexes, list)
+            meta_dexes.append(dex)
+            raise RuntimeError(f"unsupported dex {dex}")
+
+    def fake_import(name: str) -> object:
+        if name == "hyperliquid.info":
+            return SimpleNamespace(Info=FakeInfo)
+        raise AssertionError(f"unexpected import {name}")
+
+    monkeypatch.setattr(exchange_module.importlib, "import_module", fake_import)
+    sdk_exchange = HyperliquidSdkExchange(
+        _config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0xabc",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY="0xdef",
+        )
+    )
+
+    supported_markets, status = sdk_exchange.filter_supported_markets(
+        (
+            _market(),
+            _market(coin="xyz:NVDA", dex="xyz", market_id="hl:perp:xyz:xyz:NVDA"),
+        )
+    )
+
+    assert supported_markets == ()
+    assert not status.ready
+    assert status.reason == "no_execution_supported_markets"
+    assert sdk_calls["meta_dexes"] == ["cash", "xyz"]
+    assert not sdk_exchange.dependency_status().ready
+    assert sdk_exchange.dependency_status().reason == "exchange_not_read"
 
 
 def test_order_result_status_variants() -> None:
