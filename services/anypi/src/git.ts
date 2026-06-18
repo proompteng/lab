@@ -10,6 +10,7 @@ import type {
   CiWaitResult,
   CommandResult,
   PullRequestResult,
+  TimeoutEvidence,
   ValidationResult,
 } from './types'
 
@@ -531,5 +532,82 @@ export const waitForPullRequestChecks = async (
     durationMs: Date.now() - started,
     checks: lastChecks,
     summary: lastSummary,
+  }
+}
+
+/**
+ * Capture git state (branch, HEAD, status) for timeout evidence.
+ */
+export const captureGitState = async (worktree: string, env?: Record<string, string | undefined>) => {
+  const branch = await runCommand('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    cwd: worktree,
+    env,
+    allowFailure: true,
+  })
+  const head = await runCommand('git', ['rev-parse', 'HEAD'], {
+    cwd: worktree,
+    env,
+    allowFailure: true,
+  })
+  const status = await gitStatusShort(worktree, env)
+  return {
+    branch: branch.stdout.trim(),
+    head: head.stdout.trim(),
+    status,
+  }
+}
+
+/**
+ * Compute diff stat for uncommitted changes.
+ */
+export const computeDiffStat = async (worktree: string, env?: Record<string, string | undefined>) => {
+  const result = await runCommand('git', ['diff', '--stat'], {
+    cwd: worktree,
+    env,
+    allowFailure: true,
+  })
+  return result.stdout.trim()
+}
+
+/**
+ * Create a patch file of uncommitted changes and return its path.
+ */
+export const capturePatch = async (worktree: string, env?: Record<string, string | undefined>) => {
+  const patchDir = resolve('/tmp', `anypi-patch-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+  await mkdir(patchDir, { recursive: true })
+  const patchPath = resolve(patchDir, 'uncommitted.patch')
+  const result = await runCommand('git', ['diff', 'HEAD'], {
+    cwd: worktree,
+    env,
+    allowFailure: true,
+  })
+  await writeFile(patchPath, result.stdout, 'utf8')
+  // Even if git diff fails, return the path (file may be empty or creation may have succeeded)
+  return patchPath
+}
+
+/**
+ * Capture all timeout evidence and write it to the status file.
+ * This must be called from the timeout failure path before re-throwing.
+ */
+export const captureTimeoutEvidence = async (
+  worktree: string,
+  env?: Record<string, string | undefined>,
+  runnerLogPath?: string,
+  runnerStatusPath?: string,
+): Promise<TimeoutEvidence> => {
+  const timestamp = new Date().toISOString()
+  const { branch, head, status } = await captureGitState(worktree, env)
+  const diffStat = await computeDiffStat(worktree, env)
+  const patchPath = await capturePatch(worktree, env)
+  return {
+    branch,
+    head,
+    status,
+    diffStat,
+    patchPath,
+    runnerLogPath: runnerLogPath ?? '',
+    runnerStatusPath: runnerStatusPath ?? '',
+    timestamp,
   }
 }

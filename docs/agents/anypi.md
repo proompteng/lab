@@ -67,6 +67,26 @@ injected as repository context.
 Status evidence is written to `/workspace/.agent/status.json`: `promptVariant`, `promptHash`, `piPromptTimeoutSeconds`,
 `validationPlan`, `validations`, `ci`, `ciAttempts`, `sessionFiles`, `commit`, and `pullRequest`.
 
+## Timeout Evidence Capture
+
+When a Pi prompt exceeds the `ANYPI_PI_PROMPT_TIMEOUT_SECONDS` threshold, the runner captures and persists timeout
+evidence before failing the run. This ensures that unfinished autonomous work is preserved for review or recovery.
+
+On timeout, the following evidence is written to `/workspace/.agent/status.json` in the `timeoutEvidence` field:
+
+- `branch`: Current Git branch name
+- `head`: Current HEAD commit SHA
+- `status`: Uncommitted changes status (`git status --short`)
+- `diffStat`: Summary of uncommitted changes (`git diff --stat`)
+- `patchPath`: File path to a complete uncommitted patch file
+- `runnerLogPath`: Path to the runner log file
+- `runnerStatusPath`: Path to the runner status file
+- `timestamp`: ISO 8601 timestamp of the timeout event
+
+The patch file at `patchPath` contains the full diff of uncommitted changes (`git diff HEAD`), allowing manual recovery
+or review of any work produced before the timeout. A timed-out run fails clearly with `status: failed` and includes
+the timeout error message and evidence in the status JSON.
+
 ## AgentRun Example
 
 ```yaml

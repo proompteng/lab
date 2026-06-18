@@ -133,4 +133,16 @@ export type AnypiStatus = {
   validationAttempts: number
   promptChars: number
   error?: string
+  timeoutEvidence?: TimeoutEvidence
+}
+
+export type TimeoutEvidence = {
+  branch: string
+  head: string
+  status: string
+  diffStat: string
+  patchPath: string
+  runnerLogPath: string
+  runnerStatusPath: string
+  timestamp: string
 }

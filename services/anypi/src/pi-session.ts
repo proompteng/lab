@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { spawn } from 'node:child_process'
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import {
@@ -16,6 +17,7 @@ import {
 import type { AnypiConfig } from './config'
 import { writeModelsFile } from './config'
 import { buildSystemPrompt } from './prompt'
+import type { AnypiStatus } from './types'
 
 export type PiRunResult = {
   text: string
@@ -64,11 +66,78 @@ const createResourceLoader = async (worktree: string, systemPrompt: string): Pro
   }
 }
 
+/**
+ * Write status to the status file path.
+ * This is a minimal write function to avoid circular imports.
+ */
+const writeStatusFile = async (path: string, status: Partial<AnypiStatus>) => {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, `${JSON.stringify(status, null, 2)}\n`, 'utf8')
+}
+
+/**
+ * Capture timeout evidence using shell commands.
+ * This function runs git commands directly to avoid circular dependencies.
+ */
+const captureTimeoutEvidenceDirect = async (
+  worktree: string,
+  env?: Record<string, string | undefined>,
+  runnerLogPath?: string,
+  runnerStatusPath?: string,
+): Promise<AnypiStatus['timeoutEvidence']> => {
+  const timestamp = new Date().toISOString()
+
+  const runGit = async (args: string[]): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const subprocess = spawn('git', args, { cwd: worktree, env: { ...process.env, ...env } })
+      let stdout = ''
+      subprocess.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString()
+      })
+      subprocess.stderr.on('data', () => {})
+      subprocess.on('close', (code: number | null) => {
+        if (code === 0 || code === null) resolve(stdout.trim())
+        else resolve('')
+      })
+      subprocess.on('error', reject)
+    })
+  }
+
+  const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'])
+  const head = await runGit(['rev-parse', 'HEAD'])
+  const status = await runGit(['status', '--short'])
+  const diffStat = await runGit(['diff', '--stat'])
+
+  const patchDir = resolve('/tmp', `anypi-patch-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+  await mkdir(patchDir, { recursive: true })
+  const patchPath = resolve(patchDir, 'uncommitted.patch')
+
+  const patchSubprocess = spawn('git', ['diff', 'HEAD'], { cwd: worktree, env: { ...process.env, ...env } })
+  const patchWriteStream = writeFile(patchPath, '')
+  patchSubprocess.stdout.pipe(patchWriteStream as any)
+  await patchWriteStream
+
+  return {
+    branch,
+    head,
+    status,
+    diffStat,
+    patchPath,
+    runnerLogPath: runnerLogPath ?? '',
+    runnerStatusPath: runnerStatusPath ?? '',
+    timestamp,
+  }
+}
+
 const runPromptWithTimeout = async (
   session: Awaited<ReturnType<typeof createAgentSession>>['session'],
   prompt: string,
   timeoutSeconds: number,
-) => {
+  worktree: string,
+  env?: Record<string, string | undefined>,
+  runnerLogPath?: string,
+  runnerStatusPath?: string,
+): Promise<void> => {
   let timedOut = false
   let timeout: ReturnType<typeof setTimeout> | undefined
   const promptPromise = session.prompt(prompt).catch((error: unknown) => {
@@ -76,8 +145,22 @@ const runPromptWithTimeout = async (
     throw error
   })
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => {
+    timeout = setTimeout(async () => {
       timedOut = true
+      // Capture timeout evidence before dispose
+      try {
+        const evidence = await captureTimeoutEvidenceDirect(worktree, env, runnerLogPath, runnerStatusPath)
+        // Write partial failed status with timeout evidence
+        await writeStatusFile(runnerStatusPath ?? '', {
+          status: 'failed' as const,
+          finishedAt: new Date().toISOString(),
+          error: `Pi prompt exceeded ${timeoutSeconds}s timeout`,
+          timeoutEvidence: evidence,
+        })
+      } catch (err) {
+        // If status writing fails, still proceed with dispose
+        console.error('Failed to write timeout evidence:', err)
+      }
       session.dispose()
       reject(new Error(`Pi prompt exceeded ${timeoutSeconds}s timeout`))
     }, timeoutSeconds * 1000)
@@ -153,7 +236,15 @@ export const runPiAgent = async (
 
   try {
     try {
-      await runPromptWithTimeout(session, prompt, config.piPromptTimeoutSeconds)
+      await runPromptWithTimeout(
+        session,
+        prompt,
+        config.piPromptTimeoutSeconds,
+        config.worktree,
+        undefined, // env - will use process.env merged
+        config.logPath,
+        config.statusPath,
+      )
     } catch (error) {
       if (!text.trim() || !isBenignAssistantContinuationError(error)) throw error
       await log(`pi stopped after assistant final response: ${(error as Error).message}`)
