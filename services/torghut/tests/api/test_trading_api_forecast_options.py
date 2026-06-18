@@ -624,11 +624,11 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         try:
             with (
                 patch(
-                    "app.api.health_checks.shared_context.check_tigerbeetle_protocol_health",
+                    "app.api.health_checks.tigerbeetle_health.check_tigerbeetle_protocol_health",
                     return_value={"ok": True, "protocol_ok": True},
                 ),
                 patch(
-                    "app.api.health_checks.shared_context.latest_tigerbeetle_reconciliation_payload",
+                    "app.api.health_checks.tigerbeetle_health.latest_tigerbeetle_reconciliation_payload",
                     return_value={
                         "ok": True,
                         "age_seconds": 1,
@@ -636,7 +636,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
                     },
                 ),
                 patch(
-                    "app.api.health_checks.shared_context.tigerbeetle_ref_counts",
+                    "app.api.health_checks.tigerbeetle_health.tigerbeetle_ref_counts",
                     side_effect=SQLAlchemyError(
                         "QueryCanceled: canceling statement due to statement timeout"
                     ),
@@ -674,17 +674,17 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         try:
             with (
                 patch(
-                    "app.api.health_checks.shared_context.check_tigerbeetle_protocol_health",
+                    "app.api.health_checks.tigerbeetle_health.check_tigerbeetle_protocol_health",
                     return_value={"ok": True, "protocol_ok": True},
                 ),
                 patch(
-                    "app.api.health_checks.shared_context.latest_tigerbeetle_reconciliation_payload",
+                    "app.api.health_checks.tigerbeetle_health.latest_tigerbeetle_reconciliation_payload",
                     side_effect=SQLAlchemyError(
                         "QueryCanceled: canceling statement due to statement timeout"
                     ),
                 ),
                 patch(
-                    "app.api.health_checks.shared_context.tigerbeetle_ref_counts",
+                    "app.api.health_checks.tigerbeetle_health.tigerbeetle_ref_counts",
                     return_value={
                         "account_ref_count": 1,
                         "transfer_ref_count": 1,
