@@ -38,7 +38,6 @@ from .common import (
 from ..bootstrap import (
     require_whitepaper_control_token as _require_whitepaper_control_token,
 )
-from .proxy import capture_module_exports
 
 router = APIRouter()
 
@@ -452,4 +451,3 @@ __all__ = [
     "get_whitepaper_run",
     "search_whitepapers",
 ]
-capture_module_exports(globals(), __all__)

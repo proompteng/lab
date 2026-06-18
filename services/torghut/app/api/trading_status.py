@@ -63,7 +63,6 @@ from .proof_floor_payloads import (
     load_rejected_signal_outcome_learning_summary,
     simple_lane_reject_reason_totals as _simple_lane_reject_reason_totals,
 )
-from .proxy import capture_module_exports
 from .status_helpers import (
     TradingStatusReadBudget,
     budget_unavailable_hypothesis_runtime_payload,
@@ -768,4 +767,3 @@ def trading_status() -> dict[str, object]:
 
 
 __all__ = ["trading_status"]
-capture_module_exports(globals(), __all__)

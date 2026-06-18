@@ -257,7 +257,6 @@ from ..common import (
 
 from ..common import main_runtime_value
 
-from ..proxy import capture_module_exports
 from ..trading_scheduler_state import get_trading_scheduler
 
 router = APIRouter()
@@ -1212,7 +1211,6 @@ __all__: tuple[str, ...] = (
     "build_tca_gate_inputs",
     "build_torghut_consumer_evidence_receipt",
     "build_trading_consumer_evidence_payload",
-    "capture_module_exports",
     "capture_posthog_event",
     "cast",
     "check_schema_current",

@@ -22,7 +22,6 @@ from .shared_context import (
     build_capital_replay_projection,
     build_profit_signal_quorum,
     build_quality_adjusted_profit_frontier,
-    capture_module_exports,
     cast,
     datetime,
     func,
@@ -682,8 +681,6 @@ __all__ = [
     "load_rejected_signal_outcome_learning_summary",
     "load_route_provenance_summary",
 ]
-
-capture_module_exports(globals(), __all__)
 
 
 __all__ = (

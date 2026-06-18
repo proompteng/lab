@@ -31,7 +31,6 @@ from .health_checks import (
     load_tca_summary,
     unavailable_tigerbeetle_reconciliation_payload,
 )
-from .proxy import capture_module_exports
 from .trading_misc import daily_runtime_ledger_portfolio_summary
 from .vnext_helpers import load_llm_evaluation
 
@@ -481,4 +480,3 @@ __all__ = [
     "load_trading_status_hypothesis_runtime",
     "unavailable_runtime_ledger_portfolio_summary",
 ]
-capture_module_exports(globals(), __all__)

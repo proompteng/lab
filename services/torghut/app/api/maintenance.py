@@ -42,7 +42,6 @@ from .common import (
 )
 from .common import main_runtime_value
 from .application import get_app
-from .proxy import capture_module_exports
 from .readiness_helpers import (
     evaluate_database_contract as _evaluate_database_contract,
     evaluate_trading_health_payload as _evaluate_trading_health_payload,
@@ -707,4 +706,3 @@ __all__ = [
     "root",
     "db_check",
 ]
-capture_module_exports(globals(), __all__)

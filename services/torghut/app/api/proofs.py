@@ -82,7 +82,6 @@ from .proofs_external_target_fetch import (
 from .proofs_external_target_fetch import (
     paper_route_target_plan_url_points_to_self as _paper_route_target_plan_url_points_to_self,
 )
-from .proxy import capture_module_exports
 from .runtime_profitability import aggregate_tca_rows as _aggregate_tca_rows
 from .status_helpers import deferred_hypothesis_payload_for_live_submission_gate
 from .trading_scheduler_state import get_trading_scheduler
@@ -968,4 +967,3 @@ __all__ = [
     "_merge_external_paper_route_target_plan",
     "trading_tca",
 ]
-capture_module_exports(globals(), __all__)

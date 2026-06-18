@@ -7,7 +7,6 @@ from typing import Any
 from . import shared_context as _consumer_evidence
 from . import trading_autonomy as _autonomy
 from . import trading_executions as _executions
-from ..proxy import capture_module_exports
 
 _IMPLEMENTATION_MODULES: tuple[object, ...] = (
     _consumer_evidence,
@@ -96,5 +95,3 @@ __all__ = (
     "trading_decisions",
     "trading_executions",
 )
-
-capture_module_exports(globals(), __all__)

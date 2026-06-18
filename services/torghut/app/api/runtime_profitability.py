@@ -38,7 +38,6 @@ from .health_checks import (
     empirical_jobs_status,
     load_tca_summary,
 )
-from .proxy import capture_module_exports
 from .runtime_profitability_helpers import (
     load_runtime_profitability_gate_rollback_attribution as _load_runtime_profitability_gate_rollback_attribution,
 )
@@ -481,4 +480,3 @@ __all__ = [
     "_load_runtime_profitability_executions",
     "_load_runtime_profitability_realized_pnl_summary",
 ]
-capture_module_exports(globals(), __all__)

@@ -13,7 +13,6 @@ from .common import (
     jsonable_encoder,
 )
 from . import readiness_helpers
-from .proxy import capture_module_exports
 
 router = APIRouter()
 
@@ -33,4 +32,3 @@ def readyz() -> JSONResponse:
 
 
 __all__ = ["readyz"]
-capture_module_exports(globals(), __all__)

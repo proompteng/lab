@@ -14,8 +14,10 @@ from ...trading.live_submit_activation import (
 if TYPE_CHECKING:
     pass
 
-from .. import common as common_api
 from ..common import (
+    ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
+    ALPACA_HEALTH_CACHE_LOCK,
+    ALPACA_HEALTH_STATE,
     BLOCKER_RECONCILIATION_STALE,
     BUILD_ARGO_HEALTH,
     BUILD_ARGO_SYNC_REVISION,
@@ -50,18 +52,26 @@ from ..common import (
     MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
     MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
     Mapping,
+    OPTIONS_CATALOG_FRESHNESS_CACHE,
+    OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
     OperationalError,
+    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
     PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
+    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
     PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
     Path,
     ProofKind,
     ProofWindowSelector,
     Query,
+    READINESS_PROMOTION_AUTHORITY_KEYS,
+    RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
     RUNTIME_PROFITABILITY_LOOKBACK_HOURS,
     RUNTIME_PROFITABILITY_SCHEMA_VERSION,
     RejectedSignalOutcomeEvent,
     Request,
     Response,
+    SIMPLE_LANE_ALLOWED_REJECT_REASONS,
     SQLAlchemyError,
     Sequence,
     Session,
@@ -69,6 +79,14 @@ from ..common import (
     SignalEnvelope,
     Strategy,
     StrategyRuntimeLedgerBucket,
+    TRADING_DEPENDENCY_HEALTH_CACHE,
+    TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
+    TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
+    TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
+    TRADING_HEALTH_SURFACE_EVALUATIONS,
+    TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
+    TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
+    TRADING_STATUS_READ_BUDGET_SECONDS,
     ThreadPoolExecutor,
     TimeoutError,
     TorghutAlpacaClient,
@@ -90,6 +108,7 @@ from ..common import (
     WhitepaperKafkaWorker,
     WhitepaperRolloutTransition,
     WhitepaperWorkflowService,
+    ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
     active_simulation_runtime_context,
     assert_runtime_gate_policy_contract,
     asynccontextmanager,
@@ -173,16 +192,20 @@ from ..common import (
     logger,
     logging,
     os,
+    paper_route_target_plan_success_cache,
     persist_evidence_epoch,
     ping,
     refresh_execution_tca_metrics,
     render_trading_metrics,
     resolve_active_capital_stage,
     resolve_hypothesis_dependency_quorum,
+    retryable_tca_recompute_error,
     run_zero_notional_repair,
     runtime_ledger_promotion_source_authority_blockers,
     select,
     settings,
+    shared_mapping_items,
+    shared_paper_route_target_plan_from_payload,
     shutdown_posthog_telemetry,
     simulation_progress_snapshot,
     sys,
@@ -205,74 +228,7 @@ from ...bootstrap import evaluate_scheduler_status as _evaluate_scheduler_status
 from .. import health_checks as health_checks_api
 from ..common import main_runtime_value
 
-from ..proxy import capture_module_exports
 from ..trading_scheduler_state import get_trading_scheduler
-
-_COMMON_PRIVATE_EXPORTS = common_api.__dict__
-ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _COMMON_PRIVATE_EXPORTS[
-    "ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS"
-]
-ALPACA_HEALTH_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS["ALPACA_HEALTH_CACHE_LOCK"]
-ALPACA_HEALTH_STATE = _COMMON_PRIVATE_EXPORTS["ALPACA_HEALTH_STATE"]
-OPTIONS_CATALOG_FRESHNESS_CACHE = _COMMON_PRIVATE_EXPORTS[
-    "OPTIONS_CATALOG_FRESHNESS_CACHE"
-]
-OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
-    "OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK"
-]
-PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = _COMMON_PRIVATE_EXPORTS[
-    "PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL"
-]
-PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = _COMMON_PRIVATE_EXPORTS[
-    "PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS"
-]
-PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
-    "PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK"
-]
-READINESS_PROMOTION_AUTHORITY_KEYS = _COMMON_PRIVATE_EXPORTS[
-    "READINESS_PROMOTION_AUTHORITY_KEYS"
-]
-RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _COMMON_PRIVATE_EXPORTS[
-    "RETRYABLE_TCA_RECOMPUTE_SQLSTATES"
-]
-SIMPLE_LANE_ALLOWED_REJECT_REASONS = _COMMON_PRIVATE_EXPORTS[
-    "SIMPLE_LANE_ALLOWED_REJECT_REASONS"
-]
-TRADING_DEPENDENCY_HEALTH_CACHE = _COMMON_PRIVATE_EXPORTS[
-    "TRADING_DEPENDENCY_HEALTH_CACHE"
-]
-TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _COMMON_PRIVATE_EXPORTS[
-    "TRADING_DEPENDENCY_HEALTH_CACHE_LOCK"
-]
-TRADING_HEALTH_SURFACE_EVALUATIONS = _COMMON_PRIVATE_EXPORTS[
-    "TRADING_HEALTH_SURFACE_EVALUATIONS"
-]
-TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _COMMON_PRIVATE_EXPORTS[
-    "TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR"
-]
-TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _COMMON_PRIVATE_EXPORTS[
-    "TRADING_HEALTH_SURFACE_EVALUATION_LOCK"
-]
-TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _COMMON_PRIVATE_EXPORTS[
-    "TRADING_HEALTH_SURFACE_PAYLOAD_CACHE"
-]
-TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _COMMON_PRIVATE_EXPORTS[
-    "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS"
-]
-TRADING_STATUS_READ_BUDGET_SECONDS = _COMMON_PRIVATE_EXPORTS[
-    "TRADING_STATUS_READ_BUDGET_SECONDS"
-]
-ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _COMMON_PRIVATE_EXPORTS[
-    "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS"
-]
-paper_route_target_plan_success_cache = _COMMON_PRIVATE_EXPORTS[
-    "paper_route_target_plan_success_cache"
-]
-retryable_tca_recompute_error = _COMMON_PRIVATE_EXPORTS["retryable_tca_recompute_error"]
-shared_mapping_items = _COMMON_PRIVATE_EXPORTS["shared_mapping_items"]
-shared_paper_route_target_plan_from_payload = _COMMON_PRIVATE_EXPORTS[
-    "shared_paper_route_target_plan_from_payload"
-]
 
 
 def _active_runtime_revision() -> str | None:
@@ -316,11 +272,9 @@ def readiness_dependency_checks(
     }
 
     if include_database_contract:
-        from . import refresh_universe_state_for_readiness as database_contract_api
+        from .refresh_universe_state_for_readiness import evaluate_database_contract
 
-        database_contract = database_contract_api.__dict__[
-            "_evaluate_database_contract"
-        ](session)
+        database_contract = evaluate_database_contract(session)
         lineage_errors = cast(
             list[str],
             database_contract.get("schema_graph_lineage_errors", []),
@@ -1130,7 +1084,6 @@ __all__: tuple[str, ...] = (
     "WhitepaperRolloutTransition",
     "WhitepaperWorkflowService",
     "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
-    "_COMMON_PRIVATE_EXPORTS",
     "_active_runtime_revision",
     "_evaluate_core_readiness_payload",
     "_evaluate_scheduler_status",
@@ -1185,12 +1138,10 @@ __all__: tuple[str, ...] = (
     "cache_completed_trading_health_surface_payload",
     "cached_readiness_dependencies_for_health_surface",
     "cached_trading_health_surface_payload",
-    "capture_module_exports",
     "capture_posthog_event",
     "cast",
     "check_schema_current",
     "check_tigerbeetle_health",
-    "common_api",
     "compact_alpha_evidence_foundry",
     "compact_alpha_readiness_settlement_conveyor",
     "compact_alpha_repair_closure_board",

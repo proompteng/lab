@@ -220,8 +220,6 @@ from ..common import (
     whitepaper_workflow_enabled,
 )
 
-from ..proxy import capture_module_exports
-
 
 def _apply_status_read_statement_timeout(
     session: Session,
@@ -1191,7 +1189,6 @@ __all__: tuple[str, ...] = (
     "build_tca_gate_inputs",
     "build_tigerbeetle_ledger_status",
     "build_torghut_consumer_evidence_receipt",
-    "capture_module_exports",
     "capture_posthog_event",
     "cast",
     "check_clickhouse",
