@@ -5,6 +5,7 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Url
+import io.ktor.http.content.TextContent
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -15,6 +16,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ClickHouseSinkTest {
   @Test
@@ -38,6 +40,7 @@ class ClickHouseSinkTest {
               password = "",
               batchSize = 1,
               flushMs = 1,
+              requestTimeoutMs = 1_000,
               readyMaxAgeMs = 1_000,
               failureHoldMs = 1_000,
             ),
@@ -57,6 +60,168 @@ class ClickHouseSinkTest {
       }
 
       assertEquals(false, readySignals.last().ready)
+      job.cancelAndJoin()
+      client.close()
+    }
+
+  @Test
+  fun `batches records during flush window before inserting`() =
+    runBlocking {
+      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      val insertBodies = mutableListOf<String>()
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            if (queryParam(request.url).startsWith("INSERT")) {
+              insertBodies += (request.body as TextContent).text
+              respond(content = "", status = HttpStatusCode.OK)
+            } else {
+              respond(
+                content =
+                  """
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900}
+                  """.trimIndent(),
+                status = HttpStatusCode.OK,
+              )
+            }
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config = clickHouseConfig(readyMaxAgeMs = 1_000, batchSize = 10, flushMs = 50),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { 10_000 },
+          onReady = { readySignals += it },
+        )
+      val job = sink.start(this)
+
+      repeat(3) { sink.enqueue(candleRecord(seq = it.toLong() + 1)) }
+
+      withTimeout(1_000) {
+        while (readySignals.lastOrNull()?.ready != true) {
+          delay(10)
+        }
+      }
+
+      assertEquals(1, insertBodies.size)
+      assertEquals(
+        3,
+        insertBodies
+          .single()
+          .lineSequence()
+          .filter { it.isNotBlank() }
+          .count(),
+      )
+      job.cancelAndJoin()
+      client.close()
+    }
+
+  @Test
+  fun `times out a stalled clickhouse request and marks not ready`() =
+    runBlocking {
+      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      var insertAttempts = 0
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            if (queryParam(request.url).startsWith("INSERT")) {
+              insertAttempts += 1
+              if (insertAttempts == 1) {
+                delay(5_000)
+              }
+              respond(content = "", status = HttpStatusCode.OK)
+            } else {
+              respond(
+                content =
+                  """
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900}
+                  """.trimIndent(),
+                status = HttpStatusCode.OK,
+              )
+            }
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config = clickHouseConfig(readyMaxAgeMs = 1_000, requestTimeoutMs = 100),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { 10_000 },
+          onReady = { readySignals += it },
+        )
+      val job = sink.start(this)
+
+      sink.enqueue(candleRecord(seq = 1))
+      withTimeout(1_000) {
+        while (readySignals.lastOrNull()?.ready != false) {
+          delay(10)
+        }
+      }
+
+      assertEquals(1, insertAttempts)
+      assertTrue(job.isActive)
+      job.cancelAndJoin()
+      client.close()
+    }
+
+  @Test
+  fun `continues draining records after a clickhouse insert failure`() =
+    runBlocking {
+      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      var insertAttempts = 0
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            if (queryParam(request.url).startsWith("INSERT")) {
+              insertAttempts += 1
+              if (insertAttempts == 1) {
+                respond(content = "replica unavailable", status = HttpStatusCode.InternalServerError)
+              } else {
+                respond(content = "", status = HttpStatusCode.OK)
+              }
+            } else {
+              respond(
+                content =
+                  """
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900}
+                  """.trimIndent(),
+                status = HttpStatusCode.OK,
+              )
+            }
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config = clickHouseConfig(readyMaxAgeMs = 1_000),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { 10_000 },
+          onReady = { readySignals += it },
+        )
+      val job = sink.start(this)
+
+      sink.enqueue(candleRecord(seq = 1))
+      withTimeout(1_000) {
+        while (readySignals.lastOrNull()?.ready != false) {
+          delay(10)
+        }
+      }
+
+      sink.enqueue(candleRecord(seq = 2))
+      withTimeout(1_000) {
+        while (readySignals.lastOrNull()?.ready != true) {
+          delay(10)
+        }
+      }
+
+      assertEquals(2, insertAttempts)
       job.cancelAndJoin()
       client.close()
     }
@@ -154,14 +319,28 @@ class ClickHouseSinkTest {
     }
 
   private fun clickHouseConfig(readyMaxAgeMs: Long): ClickHouseConfig =
+    clickHouseConfig(
+      readyMaxAgeMs = readyMaxAgeMs,
+      batchSize = 1,
+      flushMs = 1,
+      requestTimeoutMs = 1_000,
+    )
+
+  private fun clickHouseConfig(
+    readyMaxAgeMs: Long,
+    batchSize: Int = 1,
+    flushMs: Long = 1,
+    requestTimeoutMs: Long = 1_000,
+  ): ClickHouseConfig =
     ClickHouseConfig(
       enabled = true,
       httpUrl = "http://clickhouse.local:8123",
       database = "torghut",
       username = "torghut",
       password = "",
-      batchSize = 1,
-      flushMs = 1,
+      batchSize = batchSize,
+      flushMs = flushMs,
+      requestTimeoutMs = requestTimeoutMs,
       readyMaxAgeMs = readyMaxAgeMs,
       failureHoldMs = 1_000,
       readyTables = setOf("hyperliquid_raw", "hyperliquid_candles"),
@@ -170,7 +349,7 @@ class ClickHouseSinkTest {
 
   private fun queryParam(url: Url): String = url.parameters["query"] ?: ""
 
-  private fun candleRecord(): RoutedEnvelope =
+  private fun candleRecord(seq: Long = 1): RoutedEnvelope =
     RoutedEnvelope(
       topic = "torghut.hyperliquid.candles.v1",
       key = "hl:perp:cash:cash:AAPL",
@@ -187,7 +366,7 @@ class ClickHouseSinkTest {
           dex = "cash",
           coin = "cash:AAPL",
           spotIndex = null,
-          seq = 1,
+          seq = seq,
           source = "ws",
           payload =
             buildJsonObject {
