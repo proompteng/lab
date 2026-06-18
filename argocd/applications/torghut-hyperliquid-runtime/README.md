@@ -21,6 +21,7 @@ Use the repo bootstrap helper after signing in to 1Password CLI:
 
 ```bash
 scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh status
+scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh check
 scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh create
 scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh reconcile
 ```
