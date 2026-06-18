@@ -101,11 +101,11 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
                 "app.api.status_helpers.load_hypothesis_registry", return_value=registry
             ),
             patch(
-                "app.trading.submission_council.load_hypothesis_registry",
+                "app.trading.submission_council.runtime_summary.load_hypothesis_registry",
                 return_value=registry,
             ),
             patch(
-                "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                "app.trading.submission_council.runtime_summary.compile_hypothesis_runtime_statuses",
                 return_value=runtime_items,
             ),
         ):

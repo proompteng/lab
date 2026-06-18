@@ -17,6 +17,8 @@ from tests.assemble_runtime_ledger_proof_packet.support import (
     tempfile,
 )
 
+from scripts.runtime_ledger_proof_packet import io_artifacts as packet_io_artifacts
+
 
 class TestDefaultOneDayPacketIsSmokeNotAuthority(_TestRuntimeLedgerProofPacketBase):
     def test_default_one_day_packet_is_smoke_not_authority(self) -> None:
@@ -517,7 +519,7 @@ class TestDefaultOneDayPacketIsSmokeNotAuthority(_TestRuntimeLedgerProofPacketBa
             completion_path.write_text(json.dumps(_completion()), encoding="utf-8")
 
             with patch.object(
-                packet,
+                packet_io_artifacts,
                 "_ceph_client_from_env",
                 return_value=(fake_client, "torghut-empirical-artifacts"),
             ):
@@ -673,7 +675,7 @@ class TestDefaultOneDayPacketIsSmokeNotAuthority(_TestRuntimeLedgerProofPacketBa
             )
 
             with patch.object(
-                packet,
+                packet_io_artifacts,
                 "_ceph_client_from_env",
                 return_value=(None, "torghut-empirical-artifacts"),
             ):
@@ -751,7 +753,7 @@ class TestDefaultOneDayPacketIsSmokeNotAuthority(_TestRuntimeLedgerProofPacketBa
             completion_path.write_text(json.dumps(_completion()), encoding="utf-8")
 
             with patch.object(
-                packet,
+                packet_io_artifacts,
                 "_ceph_client_from_env",
                 return_value=(fake_client, "torghut-empirical-artifacts"),
             ):

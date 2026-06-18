@@ -13,7 +13,6 @@ from .common import (
     CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT as _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
     CERTIFICATE_EVIDENCE_WINDOW_LIMIT as _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
     coerce_aware_datetime as _coerce_aware_datetime,
-    compat_symbol as _compat_symbol,
     decimal_text as _decimal_text,
     normalize_reason_codes as _normalize_reason_codes,
     safe_decimal as _safe_decimal,
@@ -50,27 +49,19 @@ def build_hypothesis_runtime_summary(
         load_latest_runtime_ledger_summary as _load_latest_runtime_ledger_summary,
     )
 
-    registry = _compat_symbol("load_hypothesis_registry", load_hypothesis_registry)()
+    registry = load_hypothesis_registry()
     if dependency_quorum is None:
-        dependency_quorum = _compat_symbol(
-            "resolve_hypothesis_dependency_quorum",
-            resolve_hypothesis_dependency_quorum,
-        )(registry)
+        dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
     runtime_ledger_summary = _load_latest_runtime_ledger_summary(
         session,
         hypothesis_ids=[item.hypothesis_id for item in registry.items],
     )
-    compile_statuses = _compat_symbol(
-        "compile_hypothesis_runtime_statuses",
-        compile_hypothesis_runtime_statuses,
-    )
-    build_tca_inputs = _compat_symbol("build_tca_gate_inputs", build_tca_gate_inputs)
-    items = compile_statuses(
+    items = compile_hypothesis_runtime_statuses(
         registry=registry,
         state=state,
         tca_summary=tca_summary
         if tca_summary is not None
-        else build_tca_inputs(
+        else build_tca_gate_inputs(
             session=session,
             account_label=settings.trading_account_label,
         ),

@@ -34,6 +34,8 @@ from .classify_source_window_drop import (
     raw_event_with_linkage_blockers as _raw_event_with_linkage_blockers,
 )
 from .normalize_order_feed_record import (
+    apply_order_event_to_execution,
+    latest_order_event_for_execution,
     link_order_events_to_execution,
 )
 
@@ -118,24 +120,12 @@ def _update_trade_decision_from_execution(*args: Any, **kwargs: Any) -> None:
     update_trade_decision(*args, **kwargs)
 
 
-def _order_feed_facade() -> Any:
-    import importlib
+def _stable_execution_source_offset(value: object) -> int:
+    from .resolve_execution_linkage_for_identity import (
+        stable_execution_source_offset,
+    )
 
-    return importlib.import_module(__package__ or "app.trading.order_feed")
-
-
-def _facade_latest_order_event_for_execution(*args: Any, **kwargs: Any) -> Any:
-    return _order_feed_facade().latest_order_event_for_execution(*args, **kwargs)
-
-
-def _facade_apply_order_event_to_execution(
-    *args: Any, **kwargs: Any
-) -> tuple[bool, bool]:
-    return _order_feed_facade().apply_order_event_to_execution(*args, **kwargs)
-
-
-def _facade_stable_execution_source_offset(value: object) -> int:
-    return _order_feed_facade()._stable_execution_source_offset(value)
+    return stable_execution_source_offset(value)
 
 
 def repair_order_feed_execution_links(
@@ -413,13 +403,11 @@ def repair_order_feed_execution_states(
         "out_of_order_events_skipped": 0,
     }
     for execution in executions:
-        latest_event = _facade_latest_order_event_for_execution(session, execution)
+        latest_event = latest_order_event_for_execution(session, execution)
         if latest_event is None:
             continue
         counters["latest_event_found"] += 1
-        updated, out_of_order = _facade_apply_order_event_to_execution(
-            execution, latest_event
-        )
+        updated, out_of_order = apply_order_event_to_execution(execution, latest_event)
         if out_of_order:
             counters["out_of_order_events_skipped"] += 1
             continue
@@ -654,11 +642,11 @@ def backfill_order_feed_events_from_executions(
         "skipped_source_offset_collision": 0,
     }
     for execution in executions:
-        if _facade_latest_order_event_for_execution(session, execution) is not None:
+        if latest_order_event_for_execution(session, execution) is not None:
             counters["skipped_existing_event"] += 1
             continue
 
-        source_offset = _facade_stable_execution_source_offset(execution.id)
+        source_offset = _stable_execution_source_offset(execution.id)
         if _source_offset_in_use(
             session,
             source_topic=EXECUTION_RAW_ORDER_SOURCE_TOPIC,

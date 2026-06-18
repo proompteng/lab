@@ -2,7 +2,6 @@ from __future__ import annotations
 from scripts.hpairs_source_proof_census_audit import (
     argparse,
     json,
-    sys,
     Mapping,
     Sequence,
     Set,
@@ -112,7 +111,6 @@ from scripts.hpairs_source_proof_census_audit.shared_context import (
 __all__ = [
     "argparse",
     "json",
-    "sys",
     "Mapping",
     "Sequence",
     "Set",

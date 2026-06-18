@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -158,13 +157,6 @@ _ECONOMICS_BLOCKERS = frozenset(
         EXECUTION_ECONOMICS_MISSING_BLOCKER,
     }
 )
-
-
-def _facade_attr(name: str, fallback: object) -> object:
-    facade = sys.modules.get("scripts.audit_hpairs_source_proof_census")
-    if facade is None:
-        return fallback
-    return getattr(facade, name, fallback)
 
 
 @dataclass(frozen=True)
@@ -364,13 +356,10 @@ def load_dsn_rows(
 ) -> CensusSourceRows:
     """Read only the bounded H-PAIRS source rows needed for the census."""
 
-    create_engine_fn = cast(Any, _facade_attr("create_engine", create_engine))
-    sessionmaker_fn = cast(Any, _facade_attr("sessionmaker", sessionmaker))
-    load_rows = cast(Any, _facade_attr("_load_session_rows", _load_session_rows))
-    engine = create_engine_fn(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
-    session_factory = sessionmaker_fn(bind=engine)
+    engine = create_engine(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
+    session_factory = sessionmaker(bind=engine)
     with session_factory() as session:
-        return load_rows(
+        return _load_session_rows(
             session,
             identity=identity,
             started_at=started_at,
@@ -547,11 +536,7 @@ def _load_session_rows(
         _source_window_row(row) for row in session.scalars(source_window_stmt).all()
     ]
 
-    load_authority_rows = cast(
-        Any,
-        _facade_attr("load_runtime_authority_rows", load_runtime_authority_rows),
-    )
-    ledger_rows = load_authority_rows(
+    ledger_rows = load_runtime_authority_rows(
         session,
         hypothesis_id=identity.hypothesis_id,
         candidate_id=identity.candidate_id,
@@ -815,7 +800,6 @@ __all__: tuple[str, ...] = (
     "_PRIMARY_LIFECYCLE_BLOCKERS",
     "_SOURCE_REF_BLOCKERS",
     "_authority_scope_rows",
-    "_facade_attr",
     "_load_session_rows",
     "_source_account_label",
     "_sqlalchemy_dsn",
@@ -837,6 +821,5 @@ __all__: tuple[str, ...] = (
     "parse_args",
     "select",
     "sessionmaker",
-    "sys",
     "timezone",
 )

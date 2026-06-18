@@ -25,7 +25,6 @@ from .common import (
     PROMOTION_SCALAR_COUNT_LIMIT as _PROMOTION_SCALAR_COUNT_LIMIT,
     PROMOTION_TABLE_COUNT_SCAN_LIMIT as _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
     PortfolioPromotionRow as _PortfolioPromotionRow,
-    compat_symbol as _compat_symbol,
     maybe_set_runtime_ledger_status_statement_timeout as _maybe_set_runtime_ledger_status_statement_timeout,
     rollback_runtime_ledger_status_session as _rollback_runtime_ledger_status_session,
     safe_int as _safe_int,
@@ -93,10 +92,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
     ready_refs: set[str] = set()
     ready_source_candidate_ids: set[str] = set()
     for row in portfolio_rows:
-        current_oracle_passed = _compat_symbol(
-            "_autoresearch_portfolio_current_oracle_passed",
-            _autoresearch_portfolio_current_oracle_passed,
-        )(row)
+        current_oracle_passed = _autoresearch_portfolio_current_oracle_passed(row)
         if (
             row.status in _AUTORESEARCH_PORTFOLIO_READY_STATUSES
             and current_oracle_passed

@@ -844,7 +844,7 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
             session.commit()
 
             with patch(
-                "app.trading.submission_council.load_hypothesis_registry",
+                "app.trading.submission_council.runtime_summary.load_hypothesis_registry",
                 return_value=registry,
             ):
                 gate = build_live_submission_gate_payload(

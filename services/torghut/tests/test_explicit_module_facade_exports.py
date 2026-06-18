@@ -143,6 +143,36 @@ def test_app_and_script_import_surfaces_do_not_ship_runtime_compat_modules() -> 
     assert compat_module_paths == []
 
 
+def test_owner_modules_do_not_patch_through_public_wrappers() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    forbidden_by_path = {
+        "scripts/runtime_ledger_proof_packet/io_artifacts.py": (
+            "_public_wrapper_attr",
+            "scripts.assemble_runtime_ledger_proof_packet",
+        ),
+        "scripts/hpairs_source_proof_census_audit/shared_context.py": (
+            "_facade_attr",
+            "scripts.audit_hpairs_source_proof_census",
+        ),
+        "app/trading/submission_council/common.py": (
+            "_compat_symbol",
+            "compat_symbol =",
+            'sys.modules.get("app.trading.submission_council")',
+        ),
+        "app/trading/order_feed/repair_order_feed_execution_links.py": (
+            "_order_feed_facade",
+            "_facade_latest_order_event_for_execution",
+            "_facade_apply_order_event_to_execution",
+            "_facade_stable_execution_source_offset",
+        ),
+    }
+
+    for relative_path, forbidden_tokens in forbidden_by_path.items():
+        source = (service_root / relative_path).read_text(encoding="utf-8")
+        for token in forbidden_tokens:
+            assert token not in source, f"{relative_path} still contains {token}"
+
+
 def test_generated_split_package_directories_are_absent() -> None:
     service_root = Path(__file__).resolve().parents[1]
     split_package_suffix = "_" + "modules"

@@ -18,6 +18,7 @@ from tests.order_feed.support import (
     datetime,
     func,
     order_feed_module,
+    order_feed_repair_module,
     patch,
     repair_order_feed_execution_links,
     repair_order_feed_execution_states,
@@ -266,7 +267,7 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
                 client_order_id="race-client",
             )
             with patch.object(
-                order_feed_module,
+                order_feed_repair_module,
                 "latest_order_event_for_execution",
                 return_value=ExecutionOrderEvent(
                     event_fingerprint="race-existing",
@@ -299,7 +300,7 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
             )
             session.commit()
             with patch.object(
-                order_feed_module,
+                order_feed_repair_module,
                 "_stable_execution_source_offset",
                 return_value=77,
             ):

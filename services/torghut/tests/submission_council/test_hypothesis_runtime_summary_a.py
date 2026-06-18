@@ -118,11 +118,11 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
 
             with (
                 patch(
-                    "app.trading.submission_council.load_hypothesis_registry",
+                    "app.trading.submission_council.runtime_summary.load_hypothesis_registry",
                     return_value=registry,
                 ),
                 patch(
-                    "app.trading.submission_council.resolve_hypothesis_dependency_quorum",
+                    "app.trading.submission_council.runtime_summary.resolve_hypothesis_dependency_quorum",
                     return_value=JangarDependencyQuorumStatus(
                         decision="allow",
                         reasons=[],
@@ -130,11 +130,11 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
                     ),
                 ),
                 patch(
-                    "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                    "app.trading.submission_council.runtime_summary.compile_hypothesis_runtime_statuses",
                     return_value=runtime_items,
                 ),
                 patch(
-                    "app.trading.submission_council.build_tca_gate_inputs",
+                    "app.trading.submission_council.runtime_summary.build_tca_gate_inputs",
                     return_value={},
                 ),
             ):
@@ -289,11 +289,11 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
 
             with (
                 patch(
-                    "app.trading.submission_council.load_hypothesis_registry",
+                    "app.trading.submission_council.runtime_summary.load_hypothesis_registry",
                     return_value=registry,
                 ),
                 patch(
-                    "app.trading.submission_council.resolve_hypothesis_dependency_quorum",
+                    "app.trading.submission_council.runtime_summary.resolve_hypothesis_dependency_quorum",
                     return_value=JangarDependencyQuorumStatus(
                         decision="allow",
                         reasons=[],
@@ -301,11 +301,11 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
                     ),
                 ),
                 patch(
-                    "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                    "app.trading.submission_council.runtime_summary.compile_hypothesis_runtime_statuses",
                     return_value=runtime_items,
                 ),
                 patch(
-                    "app.trading.submission_council.build_tca_gate_inputs",
+                    "app.trading.submission_council.runtime_summary.build_tca_gate_inputs",
                     return_value={},
                 ),
             ):
@@ -436,11 +436,11 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
 
             with (
                 patch(
-                    "app.trading.submission_council.load_hypothesis_registry",
+                    "app.trading.submission_council.runtime_summary.load_hypothesis_registry",
                     return_value=registry,
                 ),
                 patch(
-                    "app.trading.submission_council.resolve_hypothesis_dependency_quorum",
+                    "app.trading.submission_council.runtime_summary.resolve_hypothesis_dependency_quorum",
                     return_value=JangarDependencyQuorumStatus(
                         decision="allow",
                         reasons=[],
@@ -448,11 +448,11 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
                     ),
                 ),
                 patch(
-                    "app.trading.submission_council.compile_hypothesis_runtime_statuses",
+                    "app.trading.submission_council.runtime_summary.compile_hypothesis_runtime_statuses",
                     return_value=runtime_items,
                 ),
                 patch(
-                    "app.trading.submission_council.build_tca_gate_inputs",
+                    "app.trading.submission_council.runtime_summary.build_tca_gate_inputs",
                     return_value={},
                 ),
             ):
@@ -605,7 +605,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
             session.commit()
 
             with patch(
-                "app.trading.submission_council.load_hypothesis_registry",
+                "app.trading.submission_council.runtime_summary.load_hypothesis_registry",
                 return_value=registry,
             ):
                 gate = build_live_submission_gate_payload(
@@ -809,7 +809,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
             session.commit()
 
             with patch(
-                "app.trading.submission_council._maybe_set_runtime_ledger_status_statement_timeout",
+                "app.trading.submission_council.certificate_loading._maybe_set_runtime_ledger_status_statement_timeout",
                 side_effect=SQLAlchemyError("statement timeout"),
             ):
                 evidence = _load_latest_certificate_evidence(

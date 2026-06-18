@@ -5,6 +5,9 @@ from typing import cast
 
 import pytest
 
+from scripts.hpairs_source_proof_census_audit import (
+    shared_context as census_shared_context,
+)
 from tests.audit_hpairs_source_proof_census.support import (
     AUTHORITY_EXPLICIT_COSTS_BLOCKER,
     AUTHORITY_OPEN_POSITIONS_BLOCKER,
@@ -324,7 +327,9 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(
             return ScalarResult(self.scalar_results.pop(0))
 
     monkeypatch.setattr(
-        census, "load_runtime_authority_rows", lambda *args, **kwargs: [ledger_bucket]
+        census_shared_context,
+        "load_runtime_authority_rows",
+        lambda *args, **kwargs: [ledger_bucket],
     )
 
     rows = census._load_session_rows(
@@ -377,9 +382,15 @@ def test_dsn_loader_opens_session_and_delegates(
         ) -> None:
             return None
 
-    monkeypatch.setattr(census, "create_engine", lambda dsn, **kwargs: f"engine:{dsn}")
-    monkeypatch.setattr(census, "sessionmaker", lambda bind: lambda: FakeSession())
-    monkeypatch.setattr(census, "_load_session_rows", lambda *args, **kwargs: expected)
+    monkeypatch.setattr(
+        census_shared_context, "create_engine", lambda dsn, **kwargs: f"engine:{dsn}"
+    )
+    monkeypatch.setattr(
+        census_shared_context, "sessionmaker", lambda bind: lambda: FakeSession()
+    )
+    monkeypatch.setattr(
+        census_shared_context, "_load_session_rows", lambda *args, **kwargs: expected
+    )
 
     rows = census.load_dsn_rows(
         "sqlite:///:memory:", identity=identity, started_at=None, ended_at=None
@@ -417,10 +428,14 @@ def test_dsn_loader_sqlalchemy_dsn_uses_installed_psycopg_driver(
         captured["kwargs"] = kwargs
         return f"engine:{dsn}"
 
-    monkeypatch.setattr(census, "create_engine", fake_create_engine)
-    monkeypatch.setattr(census, "sessionmaker", lambda bind: lambda: FakeSession())
+    monkeypatch.setattr(census_shared_context, "create_engine", fake_create_engine)
     monkeypatch.setattr(
-        census, "_load_session_rows", lambda *args, **kwargs: census.CensusSourceRows()
+        census_shared_context, "sessionmaker", lambda bind: lambda: FakeSession()
+    )
+    monkeypatch.setattr(
+        census_shared_context,
+        "_load_session_rows",
+        lambda *args, **kwargs: census.CensusSourceRows(),
     )
 
     census.load_dsn_rows(
