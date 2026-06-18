@@ -8,15 +8,15 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  backoffLimit: 6
-  activeDeadlineSeconds: 360
+  backoffLimit: 0
+  activeDeadlineSeconds: 240
   ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
         app: torghut-hyperliquid-clickhouse-schema
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       serviceAccountName: torghut-runtime
       containers:
         - name: schema
@@ -30,7 +30,6 @@ spec:
               set -euo pipefail
               CLICKHOUSE_CLIENT=(
                 clickhouse-client
-                --host torghut-clickhouse.torghut.svc.cluster.local
                 --port 9000
                 --user "${CLICKHOUSE_USERNAME}"
                 --password "${CLICKHOUSE_PASSWORD}"
@@ -38,15 +37,60 @@ spec:
                 --send_timeout 30
                 --receive_timeout 60
               )
-              deadline=$((SECONDS + 300))
-              until "${CLICKHOUSE_CLIENT[@]}" --query 'SELECT 1'; do
-                if [ "${SECONDS}" -ge "${deadline}" ]; then
-                  echo "ClickHouse did not become ready in time" >&2
+              PRIMARY_HOST=torghut-clickhouse.torghut.svc.cluster.local
+              REQUIRED_TABLES=(
+                hyperliquid_raw
+                hyperliquid_market_catalog
+                hyperliquid_trades
+                hyperliquid_l2_books
+                hyperliquid_bbo
+                hyperliquid_candles
+                hyperliquid_asset_contexts
+                hyperliquid_funding
+                hyperliquid_status
+              )
+              REQUIRED_TABLE_LIST="'${REQUIRED_TABLES[0]}'"
+              for table in "${REQUIRED_TABLES[@]:1}"; do
+                REQUIRED_TABLE_LIST="${REQUIRED_TABLE_LIST},'${table}'"
+              done
+
+              wait_for_host() {
+                local host="$1"
+                local deadline=$((SECONDS + 90))
+                until "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query 'SELECT 1'; do
+                  if [ "${SECONDS}" -ge "${deadline}" ]; then
+                    echo "ClickHouse host ${host} did not become ready in time" >&2
+                    exit 1
+                  fi
+                  sleep 5
+                done
+              }
+
+              table_count() {
+                local host="$1"
+                "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query \
+                  "SELECT count() FROM system.tables WHERE database='torghut' AND name IN (${REQUIRED_TABLE_LIST})"
+              }
+
+              wait_for_host "${PRIMARY_HOST}"
+              mapfile -t HOSTS < <(
+                "${CLICKHOUSE_CLIENT[@]}" --host "${PRIMARY_HOST}" --query \
+                  "SELECT DISTINCT host_name FROM system.clusters WHERE cluster='default' ORDER BY host_name"
+              )
+              if [ "${#HOSTS[@]}" -eq 0 ]; then
+                HOSTS=("${PRIMARY_HOST}")
+              fi
+
+              sed -E 's/ ON CLUSTER default//g' /schema/schema.sql > /tmp/schema-local.sql
+              for host in "${HOSTS[@]}"; do
+                wait_for_host "${host}"
+                timeout 90s "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --multiquery < /tmp/schema-local.sql
+                count="$(table_count "${host}")"
+                if [ "${count}" -ne "${#REQUIRED_TABLES[@]}" ]; then
+                  echo "ClickHouse host ${host} has ${count}/${#REQUIRED_TABLES[@]} required Hyperliquid tables" >&2
                   exit 1
                 fi
-                sleep 5
               done
-              timeout 240s "${CLICKHOUSE_CLIENT[@]}" --multiquery < /schema/schema.sql
           env:
             - name: CLICKHOUSE_USERNAME
               value: torghut
