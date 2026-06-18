@@ -762,6 +762,9 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
         prepared_decision: StrategyDecision,
         snapshot: MarketSnapshot | None,
     ) -> tuple[StrategyDecision, Optional[MarketSnapshot]] | None:
+        prepared_decision = self._marketable_bounded_live_close_decision(
+            prepared_decision
+        )
         self.executor.sync_decision_state(
             request.session,
             request.decision_row,
@@ -786,3 +789,145 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
             )
             return None
         return prepared_decision, snapshot
+
+    @classmethod
+    def _marketable_bounded_live_close_decision(
+        cls,
+        decision: StrategyDecision,
+    ) -> StrategyDecision:
+        if not cls._bounded_live_close_order_needs_marketability(decision):
+            return decision
+        marketable_limit = cls._bounded_live_close_marketable_limit(decision)
+        if marketable_limit is None or marketable_limit <= 0:
+            return decision
+
+        original_limit = decision.limit_price
+        if (
+            decision.action == "sell"
+            and original_limit is not None
+            and original_limit <= marketable_limit
+        ):
+            return cls._bounded_live_close_decision_with_marketability_audit(
+                decision,
+                marketable_limit=marketable_limit,
+                adjusted=False,
+            )
+        if (
+            decision.action == "buy"
+            and original_limit is not None
+            and original_limit >= marketable_limit
+        ):
+            return cls._bounded_live_close_decision_with_marketability_audit(
+                decision,
+                marketable_limit=marketable_limit,
+                adjusted=False,
+            )
+
+        return cls._bounded_live_close_decision_with_marketability_audit(
+            decision.model_copy(
+                update={
+                    "order_type": "limit",
+                    "limit_price": marketable_limit,
+                }
+            ),
+            marketable_limit=marketable_limit,
+            adjusted=True,
+            original_order_type=decision.order_type,
+            original_limit_price=original_limit,
+        )
+
+    @staticmethod
+    def _bounded_live_close_order_needs_marketability(
+        decision: StrategyDecision,
+    ) -> bool:
+        params = decision.params
+        if params.get("bounded_live_paper_route_close") is True:
+            return True
+        simple_lane = mapping_value(params.get("simple_lane"))
+        if (
+            simple_lane is not None
+            and simple_lane.get("bounded_live_paper_route_close") is True
+        ):
+            return True
+        exit_metadata = mapping_value(params.get("paper_route_probe_exit"))
+        return (
+            exit_metadata is not None
+            and exit_metadata.get("live_bounded_paper_route_close") is True
+        )
+
+    @staticmethod
+    def _bounded_live_close_marketable_limit(
+        decision: StrategyDecision,
+    ) -> Decimal | None:
+        bid, ask = (
+            SimplePipelineSubmissionQuoteRouteabilityMixin._bounded_live_close_bid_ask(
+                decision.params
+            )
+        )
+        if decision.action == "sell":
+            return bid
+        if decision.action == "buy":
+            return ask
+        return None  # pragma: no cover - StrategyDecision constrains action.
+
+    @staticmethod
+    def _bounded_live_close_bid_ask(
+        params: Mapping[str, Any],
+    ) -> tuple[Decimal | None, Decimal | None]:
+        quote = mapping_value(params.get("price_snapshot")) or {}
+        routeability = mapping_value(params.get("quote_routeability")) or {}
+        bid = optional_decimal(quote.get("bid"))
+        if bid is None:
+            bid = optional_decimal(routeability.get("bid"))
+        if bid is None:
+            bid = optional_decimal(params.get("imbalance_bid_px"))
+        if bid is None:
+            bid = optional_decimal(params.get("bid"))
+        ask = optional_decimal(quote.get("ask"))
+        if ask is None:
+            ask = optional_decimal(routeability.get("ask"))
+        if ask is None:
+            ask = optional_decimal(params.get("imbalance_ask_px"))
+        if ask is None:
+            ask = optional_decimal(params.get("ask"))
+        return bid, ask
+
+    @staticmethod
+    def _bounded_live_close_decision_with_marketability_audit(
+        decision: StrategyDecision,
+        *,
+        marketable_limit: Decimal,
+        adjusted: bool,
+        original_order_type: str | None = None,
+        original_limit_price: Decimal | None = None,
+    ) -> StrategyDecision:
+        params = dict(decision.params)
+        bid, ask = (
+            SimplePipelineSubmissionQuoteRouteabilityMixin._bounded_live_close_bid_ask(
+                params
+            )
+        )
+        audit = {
+            "schema_version": "torghut.bounded-live-paper-close-order.v1",
+            "state": "marketable_limit_adjusted" if adjusted else "already_marketable",
+            "reason": "bounded_live_paper_route_close_requires_marketable_limit",
+            "action": decision.action,
+            "order_type": decision.order_type,
+            "limit_price": str(decision.limit_price)
+            if decision.limit_price is not None
+            else None,
+            "marketable_limit_price": str(marketable_limit),
+            "quote_bid": str(bid) if bid is not None else None,
+            "quote_ask": str(ask) if ask is not None else None,
+        }
+        if adjusted:
+            audit["original_order_type"] = original_order_type
+            audit["original_limit_price"] = (
+                str(original_limit_price) if original_limit_price is not None else None
+            )
+
+        params["bounded_live_paper_route_close_order"] = audit
+        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
+        simple_lane["bounded_live_paper_route_close_order"] = audit
+        params["simple_lane"] = simple_lane
+        return decision.model_copy(update={"params": params})

@@ -47,6 +47,209 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
             session_factory=session_local,
         )
 
+    def test_live_bounded_close_sell_limit_is_marketable_at_bid(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-a",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 17, 20, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("0.1671"),
+            order_type="limit",
+            limit_price=Decimal("298.19"),
+            params={
+                "bounded_live_paper_route_close": True,
+                "price_snapshot": {
+                    "bid": "298.17",
+                    "ask": "298.23",
+                },
+                "simple_lane": {
+                    "bounded_live_paper_route_close": True,
+                },
+            },
+        )
+
+        prepared = SimpleTradingPipeline._marketable_bounded_live_close_decision(
+            decision
+        )
+
+        self.assertEqual(prepared.order_type, "limit")
+        self.assertEqual(prepared.limit_price, Decimal("298.17"))
+        audit = cast(
+            dict[str, Any],
+            prepared.params["bounded_live_paper_route_close_order"],
+        )
+        self.assertEqual(audit["state"], "marketable_limit_adjusted")
+        self.assertEqual(audit["original_limit_price"], "298.19")
+        self.assertEqual(audit["marketable_limit_price"], "298.17")
+        simple_lane = cast(dict[str, Any], prepared.params["simple_lane"])
+        self.assertEqual(
+            simple_lane["bounded_live_paper_route_close_order"],
+            audit,
+        )
+
+    def test_live_bounded_close_buy_limit_is_marketable_at_ask(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-a",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 17, 20, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("0.1671"),
+            order_type="limit",
+            limit_price=Decimal("298.20"),
+            params={
+                "paper_route_probe_exit": {
+                    "live_bounded_paper_route_close": True,
+                },
+                "quote_routeability": {
+                    "bid": "298.17",
+                    "ask": "298.23",
+                },
+            },
+        )
+
+        prepared = SimpleTradingPipeline._marketable_bounded_live_close_decision(
+            decision
+        )
+
+        self.assertEqual(prepared.order_type, "limit")
+        self.assertEqual(prepared.limit_price, Decimal("298.23"))
+        audit = cast(
+            dict[str, Any],
+            prepared.params["bounded_live_paper_route_close_order"],
+        )
+        self.assertEqual(audit["state"], "marketable_limit_adjusted")
+        self.assertEqual(audit["original_limit_price"], "298.20")
+        self.assertEqual(audit["marketable_limit_price"], "298.23")
+
+    def test_live_bounded_close_simple_lane_marker_is_marketable(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-a",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 17, 20, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("0.1671"),
+            order_type="limit",
+            limit_price=Decimal("298.19"),
+            params={
+                "simple_lane": {
+                    "bounded_live_paper_route_close": True,
+                },
+                "price_snapshot": {
+                    "bid": "298.17",
+                    "ask": "298.23",
+                },
+            },
+        )
+
+        prepared = SimpleTradingPipeline._marketable_bounded_live_close_decision(
+            decision
+        )
+
+        self.assertEqual(prepared.limit_price, Decimal("298.17"))
+
+    def test_live_bounded_close_leaves_already_marketable_sell_limit(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-a",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 17, 20, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("0.1671"),
+            order_type="limit",
+            limit_price=Decimal("298.16"),
+            params={
+                "bounded_live_paper_route_close": True,
+                "price_snapshot": {
+                    "bid": "298.17",
+                    "ask": "298.23",
+                },
+            },
+        )
+
+        prepared = SimpleTradingPipeline._marketable_bounded_live_close_decision(
+            decision
+        )
+
+        self.assertEqual(prepared.limit_price, Decimal("298.16"))
+        audit = cast(
+            dict[str, Any],
+            prepared.params["bounded_live_paper_route_close_order"],
+        )
+        self.assertEqual(audit["state"], "already_marketable")
+
+    def test_live_bounded_close_leaves_already_marketable_buy_limit(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-a",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 17, 20, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("0.1671"),
+            order_type="limit",
+            limit_price=Decimal("298.24"),
+            params={
+                "bounded_live_paper_route_close": True,
+                "price_snapshot": {
+                    "bid": "298.17",
+                    "ask": "298.23",
+                },
+            },
+        )
+
+        prepared = SimpleTradingPipeline._marketable_bounded_live_close_decision(
+            decision
+        )
+
+        self.assertEqual(prepared.limit_price, Decimal("298.24"))
+        audit = cast(
+            dict[str, Any],
+            prepared.params["bounded_live_paper_route_close_order"],
+        )
+        self.assertEqual(audit["state"], "already_marketable")
+
+    def test_live_bounded_close_without_quote_leaves_decision_unchanged(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-a",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 17, 20, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("0.1671"),
+            order_type="limit",
+            limit_price=Decimal("298.19"),
+            params={
+                "bounded_live_paper_route_close": True,
+            },
+        )
+
+        prepared = SimpleTradingPipeline._marketable_bounded_live_close_decision(
+            decision
+        )
+
+        self.assertIs(prepared, decision)
+
+    def test_live_bounded_close_bid_ask_fallback_sources(self) -> None:
+        bid, ask = SimpleTradingPipeline._bounded_live_close_bid_ask(
+            {
+                "imbalance_bid_px": "298.17",
+                "imbalance_ask_px": "298.23",
+            }
+        )
+        self.assertEqual(bid, Decimal("298.17"))
+        self.assertEqual(ask, Decimal("298.23"))
+
+        bid, ask = SimpleTradingPipeline._bounded_live_close_bid_ask(
+            {
+                "bid": "298.11",
+                "ask": "298.29",
+            }
+        )
+        self.assertEqual(bid, Decimal("298.11"))
+        self.assertEqual(ask, Decimal("298.29"))
+
     def test_live_bounded_paper_route_close_bypasses_gate_and_tags_exit(
         self,
     ) -> None:
