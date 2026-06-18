@@ -137,15 +137,15 @@ jobs:
 
             payload="$(
               SYNC_REVISION="${revision}" python3 - <<'PY'
-import json
-import os
+          import json
+          import os
 
-sync = {"prune": True}
-revision = os.environ.get("SYNC_REVISION", "")
-if revision:
-    sync["revision"] = revision
-print(json.dumps({"operation": {"sync": sync}}))
-PY
+          sync = {"prune": True}
+          revision = os.environ.get("SYNC_REVISION", "")
+          if revision:
+              sync["revision"] = revision
+          print(json.dumps({"operation": {"sync": sync}}))
+          PY
             )"
             kubectl patch application "${app}" -n argocd --type merge -p "${payload}"
           }
