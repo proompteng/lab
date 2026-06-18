@@ -172,6 +172,34 @@ describe('Torghut manifest scheduling', () => {
     ).toBe('hyperliquid-feed-clickhouse-optional-20260618b')
   })
 
+  it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
+    const job = parseManifest('argocd/applications/torghut-hyperliquid-runtime/clickhouse-schema-job.yaml')
+    const container = getAtPath(job, ['spec', 'template', 'spec', 'containers', 0])
+    const args = Array.isArray(container.args) ? container.args.join('\n') : ''
+
+    expect(getAtPath(job, ['spec']).backoffLimit).toBe(0)
+    expect(getAtPath(job, ['spec']).activeDeadlineSeconds).toBe(240)
+    expect(getAtPath(job, ['spec', 'template', 'spec']).restartPolicy).toBe('Never')
+    expect(args).toContain('set -euo pipefail')
+    expect(args).toContain('--connect_timeout 5')
+    expect(args).toContain('--send_timeout 30')
+    expect(args).toContain('--receive_timeout 60')
+    expect(args).toContain("SELECT DISTINCT host_name FROM system.clusters WHERE cluster='default' ORDER BY host_name")
+    expect(args).toContain("sed -E 's/ ON CLUSTER default//g' /schema/schema.sql > /tmp/schema-local.sql")
+    expect(args).toContain(
+      'timeout 90s "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --multiquery < /tmp/schema-local.sql',
+    )
+    expect(args).toContain(
+      'ClickHouse host ${host} has ${count}/${#REQUIRED_OBJECTS[@]} required Hyperliquid runtime objects',
+    )
+
+    const schema = parseManifest('argocd/applications/torghut-hyperliquid-runtime/clickhouse-schema-configmap.yaml')
+    const data = getAtPath(schema, ['data'])
+    expect(data['schema.sql']).toContain('SET distributed_ddl_task_timeout = 10;')
+    expect(data['schema.sql']).toContain("SET distributed_ddl_output_mode = 'null_status_on_timeout';")
+    expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
+  })
+
   it('keeps Hyperliquid runtime shadow mode free of optional execution secret drift', () => {
     const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
     const runtimeData = getAtPath(runtimeConfig, ['data'])
