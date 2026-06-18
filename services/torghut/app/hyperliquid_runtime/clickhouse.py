@@ -137,16 +137,16 @@ class ClickHouseRuntimeReader:
         query = f"""
         SELECT
           'hyperliquid_candles' AS name,
-          max(parseDateTimeBestEffort(event_ts)) AS observed_at,
+          max(parseDateTimeBestEffort(ingest_ts)) AS observed_at,
           dateDiff('second', observed_at, now()) AS lag_seconds
         FROM {database}.hyperliquid_candles
         WHERE network = {_sql_string(self._config.market_data_network)}
         UNION ALL
         SELECT
-          'hyperliquid_runtime_latest_features' AS name,
-          max(event_ts) AS observed_at,
+          'hyperliquid_ta_features' AS name,
+          max(ingest_ts) AS observed_at,
           dateDiff('second', observed_at, now()) AS lag_seconds
-        FROM {database}.hyperliquid_runtime_latest_features
+        FROM {database}.hyperliquid_ta_features
         WHERE network = {_sql_string(self._config.market_data_network)}
         FORMAT JSONEachRow
         """
@@ -268,7 +268,7 @@ def _dependency_from_row(
 ) -> RuntimeDependencyStatus:
     observed_at = _optional_datetime(row.get("observed_at"))
     lag_seconds = int(_decimal(row.get("lag_seconds")))
-    ready = observed_at is not None and lag_seconds <= staleness_seconds
+    ready = observed_at is not None and 0 <= lag_seconds <= staleness_seconds
     reason = None if ready else "stale_or_missing"
     return RuntimeDependencyStatus(
         name=_string(row.get("name")),

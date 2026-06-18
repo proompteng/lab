@@ -77,7 +77,7 @@ def test_clickhouse_reader_parses_queries_status_and_features(
         if "UNION ALL" in query:
             return (
                 '{"name":"hyperliquid_candles","observed_at":"2026-06-18T00:00:00Z","lag_seconds":7}\n'
-                '{"name":"hyperliquid_runtime_latest_features","observed_at":"2026-06-18T00:00:00","lag_seconds":8}\n'
+                '{"name":"hyperliquid_ta_features","observed_at":"2026-06-18T00:00:00","lag_seconds":8}\n'
             )
         if "runtime_latest_features" in query and "SELECT" in query:
             return (
@@ -109,11 +109,30 @@ def test_clickhouse_reader_parses_queries_status_and_features(
     assert status.ready
     assert {dependency.name for dependency in status.statuses} == {
         "hyperliquid_candles",
-        "hyperliquid_runtime_latest_features",
+        "hyperliquid_ta_features",
     }
     assert any("hyperliquid_asset_contexts" in query for query in queries)
     assert any("JSONExtractRaw(a.payload, 'ctx')" in query for query in queries)
+    assert any("max(parseDateTimeBestEffort(ingest_ts))" in query for query in queries)
+    assert any("FROM torghut.hyperliquid_ta_features" in query for query in queries)
     assert any("FORMAT JSONEachRow" in query for query in queries)
+
+
+def test_clickhouse_status_rejects_future_event_lag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_request(**_kwargs: object) -> str:
+        return (
+            '{"name":"hyperliquid_candles","observed_at":"2026-06-18T00:00:00Z","lag_seconds":-120}\n'
+            '{"name":"hyperliquid_ta_features","observed_at":"2026-06-18T00:00:00Z","lag_seconds":2}\n'
+        )
+
+    monkeypatch.setattr(clickhouse_module, "_request_clickhouse", fake_request)
+
+    status = ClickHouseRuntimeReader(_config()).status()
+
+    assert not status.ready
+    assert status.statuses[0].reason == "stale_or_missing"
 
 
 def test_clickhouse_status_reports_query_failure(
