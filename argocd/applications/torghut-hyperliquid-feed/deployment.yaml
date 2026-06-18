@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-feed-liveness-20260618a
+        proompteng.ai/config-revision: hyperliquid-feed-clickhouse-sink-20260618a
       labels:
         app: torghut-hyperliquid-feed
     spec:
