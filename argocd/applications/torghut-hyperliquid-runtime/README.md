@@ -29,14 +29,14 @@ scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh reconcile
 `status` is safe to run repeatedly. It reports only whether the 1Password item, required fields, ExternalSecret,
 and target Kubernetes Secret exist; it does not print credential values.
 
-Shadow mode does not require Hyperliquid execution credentials. Keep the ExternalSecret out of steady-state
-GitOps while `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false`; otherwise a missing optional 1Password item degrades the
-Argo app even though the runtime is correctly serving read-only readiness.
+Shadow mode does not require Hyperliquid execution credentials, but this app now includes the ExternalSecret because
+`op://infra/hyperliquid-testnet` exists with the required fields. Keep `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false`
+until `reconcile` reports the Kubernetes Secret as ready and the exchange-side testnet account is funded or authorized.
 
-After `check` reports the 1Password item is present, open a GitOps PR that adds `externalsecret.yaml` to
-`kustomization.yaml` while keeping `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false`. Merge and wait for Argo to sync, then
-run `scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh reconcile`. After `reconcile` reports the Kubernetes
-Secret as ready, open the trading-enable PR that sets `HYPERLIQUID_RUNTIME_TRADING_ENABLED=true` in `configmap.yaml`.
+After `check` reports the 1Password item is present, keep `externalsecret.yaml` in `kustomization.yaml` while
+`HYPERLIQUID_RUNTIME_TRADING_ENABLED=false`. Merge and wait for Argo to sync, then run
+`scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh reconcile`. After `reconcile` reports the Kubernetes Secret
+as ready, open the trading-enable PR that sets `HYPERLIQUID_RUNTIME_TRADING_ENABLED=true` in `configmap.yaml`.
 Keep the default caps unless a separate rollout approves a larger envelope. The runtime must continue to report
 `execution_network=testnet`; mainnet execution is rejected by config validation.
 
