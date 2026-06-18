@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from argparse import Namespace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -10,6 +9,7 @@ from unittest.mock import patch
 
 import app.trading.discovery.mlx_features as mlx_features_module
 from app.trading.discovery.autoresearch import (
+    FamilyAutoresearchPlan,
     ProposalModelPolicy,
     ReplayBudget,
     RuntimeClosurePolicy,
@@ -63,6 +63,26 @@ def _template() -> FamilyTemplate:
             "strategy_name": "breakout-continuation-long-v1",
             "disable_other_strategies": True,
         },
+    )
+
+
+def _family_plan() -> FamilyAutoresearchPlan:
+    return FamilyAutoresearchPlan(
+        family_template=_template(),
+        seed_sweep_config=Path("seed-sweep.json"),
+        max_iterations=1,
+        keep_top_candidates=1,
+        frontier_top_n=1,
+        force_keep_top_candidate_if_all_vetoed=False,
+        symbol_prune_iterations=0,
+        symbol_prune_candidates=0,
+        symbol_prune_min_universe_size=0,
+        loss_repair_iterations=0,
+        loss_repair_candidates=0,
+        consistency_repair_iterations=0,
+        consistency_repair_candidates=0,
+        parameter_mutations={},
+        strategy_override_mutations={},
     )
 
 
@@ -351,10 +371,10 @@ class TestMlxAutoresearch(TestCase):
     def test_descriptor_from_sweep_config_captures_runtime_relevant_fields(
         self,
     ) -> None:
-        family_plan = Namespace(family_template=_template())
+        family_plan = _family_plan()
         descriptor = descriptor_from_sweep_config(
             candidate_id="cand-1",
-            family_plan=family_plan,  # type: ignore[arg-type]
+            family_plan=family_plan,
             sweep_config={
                 "parameters": {
                     "leader_reclaim_start_minutes_since_open": ["45"],
@@ -419,10 +439,10 @@ class TestMlxAutoresearch(TestCase):
     def test_rank_candidate_descriptors_orders_candidates_from_history_signal(
         self,
     ) -> None:
-        family_plan = Namespace(family_template=_template())
+        family_plan = _family_plan()
         strong = descriptor_from_sweep_config(
             candidate_id="strong",
-            family_plan=family_plan,  # type: ignore[arg-type]
+            family_plan=family_plan,
             sweep_config={
                 "parameters": {"leader_reclaim_start_minutes_since_open": ["45"]},
                 "strategy_overrides": {},
@@ -430,7 +450,7 @@ class TestMlxAutoresearch(TestCase):
         )
         weak = descriptor_from_sweep_config(
             candidate_id="weak",
-            family_plan=family_plan,  # type: ignore[arg-type]
+            family_plan=family_plan,
             sweep_config={
                 "parameters": {"leader_reclaim_start_minutes_since_open": ["0"]},
                 "strategy_overrides": {},
@@ -480,10 +500,10 @@ class TestMlxAutoresearch(TestCase):
         self.assertIn(ranked[0].backend, {"mlx", "numpy-fallback"})
 
     def test_rank_candidate_descriptors_respects_numpy_backend_preference(self) -> None:
-        family_plan = Namespace(family_template=_template())
+        family_plan = _family_plan()
         descriptor = descriptor_from_sweep_config(
             candidate_id="strong",
-            family_plan=family_plan,  # type: ignore[arg-type]
+            family_plan=family_plan,
             sweep_config={
                 "parameters": {"leader_reclaim_start_minutes_since_open": ["45"]},
                 "strategy_overrides": {},
@@ -519,10 +539,10 @@ class TestMlxAutoresearch(TestCase):
     def test_rank_candidate_descriptors_uses_capital_prior_during_cold_start(
         self,
     ) -> None:
-        family_plan = Namespace(family_template=_template())
+        family_plan = _family_plan()
         over_budget = descriptor_from_sweep_config(
             candidate_id="aaa-over-budget",
-            family_plan=family_plan,  # type: ignore[arg-type]
+            family_plan=family_plan,
             sweep_config={
                 "parameters": {"max_gross_exposure_pct_equity": ["10.0"]},
                 "strategy_overrides": {
@@ -533,7 +553,7 @@ class TestMlxAutoresearch(TestCase):
         )
         feasible = descriptor_from_sweep_config(
             candidate_id="zzz-feasible",
-            family_plan=family_plan,  # type: ignore[arg-type]
+            family_plan=family_plan,
             sweep_config={
                 "parameters": {"max_gross_exposure_pct_equity": ["1.0"]},
                 "strategy_overrides": {
@@ -560,10 +580,10 @@ class TestMlxAutoresearch(TestCase):
         self.assertEqual(ranked[0].mode, "ranking_only_cold_start_capital_prior")
 
     def test_rank_candidate_descriptors_demotes_negative_lift_model(self) -> None:
-        family_plan = Namespace(family_template=_template())
+        family_plan = _family_plan()
         weak = descriptor_from_sweep_config(
             candidate_id="aaa-weak",
-            family_plan=family_plan,  # type: ignore[arg-type]
+            family_plan=family_plan,
             sweep_config={
                 "parameters": {"leader_reclaim_start_minutes_since_open": ["45"]},
                 "strategy_overrides": {},
@@ -571,7 +591,7 @@ class TestMlxAutoresearch(TestCase):
         )
         strong = descriptor_from_sweep_config(
             candidate_id="zzz-strong",
-            family_plan=family_plan,  # type: ignore[arg-type]
+            family_plan=family_plan,
             sweep_config={
                 "parameters": {"leader_reclaim_start_minutes_since_open": ["45"]},
                 "strategy_overrides": {},
