@@ -16,11 +16,13 @@ import {
 import type { AnypiConfig } from './config'
 import { writeModelsFile } from './config'
 import { buildSystemPrompt } from './prompt'
+import type { LoopDetectionEvidence, ToolEvent } from './types'
 
 export type PiRunResult = {
   text: string
   tools: string[]
   sessionFile?: string
+  loopEvidence?: LoopDetectionEvidence
 }
 
 export type PiRunOptions = {
@@ -39,6 +41,8 @@ export const resolveAttemptSessionDir = (sessionDir: string, sessionLabel = 'att
     .slice(0, 48)
   return join(sessionDir, `${safeLabel || 'attempt'}-${randomUUID().slice(0, 8)}`)
 }
+
+export { type LoopDetectionEvidence, type ToolEvent }
 
 const collectAgentsFiles = async (worktree: string) => {
   const rootAgents = join(worktree, 'AGENTS.md')
@@ -137,6 +141,42 @@ export const runPiAgent = async (
   await log(`pi active tools: ${session.getActiveToolNames().join(', ')}`)
 
   let text = ''
+  const events: ToolEvent[] = []
+  let finishFinalizationEvents = 0
+  let readBashStatusEvents = 0
+  const lastToolsSet = new Set<string>()
+
+  const timestamp = () => new Date().toISOString()
+
+  const recordToolEvent = (type: string, toolName?: string) => {
+    const event: ToolEvent = { type, toolName, timestamp: timestamp() }
+    events.push(event)
+    if (toolName) lastToolsSet.add(toolName)
+  }
+
+  // Track finish/finalization-like tool calls
+  const isFinishOrFinalizationTool = (name: string) => {
+    const normalized = name.toLowerCase()
+    return (
+      normalized.includes('finish') ||
+      normalized.includes('final') ||
+      normalized.includes('complete') ||
+      normalized === 'submit'
+    )
+  }
+
+  // Track benign read/bash/status-like commands
+  const isBenignCommand = (name: string) => {
+    const normalized = name.toLowerCase()
+    return (
+      normalized === 'read' ||
+      normalized === 'bash' ||
+      normalized === 'status' ||
+      normalized === 'git' ||
+      normalized.includes('git_')
+    )
+  }
+
   const unsubscribe = session.subscribe((event) => {
     if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
       const delta = event.assistantMessageEvent.delta
@@ -144,12 +184,22 @@ export const runPiAgent = async (
       void log(delta)
     }
     if (event.type === 'tool_execution_start') {
+      recordToolEvent('tool_execution_start', event.toolName)
       void log(`tool start: ${event.toolName}`)
+      if (isFinishOrFinalizationTool(event.toolName)) {
+        finishFinalizationEvents += 1
+      }
+      if (isBenignCommand(event.toolName)) {
+        readBashStatusEvents += 1
+      }
     }
     if (event.type === 'tool_execution_end') {
+      recordToolEvent('tool_execution_end', event.toolName)
       void log(`tool end: ${event.toolName}`)
     }
   })
+
+  const startTime = Date.now()
 
   try {
     try {
@@ -158,10 +208,32 @@ export const runPiAgent = async (
       if (!text.trim() || !isBenignAssistantContinuationError(error)) throw error
       await log(`pi stopped after assistant final response: ${(error as Error).message}`)
     }
+
+    const elapsedSeconds = Math.round((Date.now() - startTime) / 1000)
+    const lastTools = [...lastToolsSet]
+
+    // Detect loop: many finish/finalization events or benign commands without worktree progress
+    const recentEvents = events.slice(-10)
+    const hasPotentialLoop =
+      finishFinalizationEvents >= 2 || (readBashStatusEvents >= 3 && finishFinalizationEvents >= 1)
+
+    let loopEvidence: LoopDetectionEvidence | undefined
+    if (hasPotentialLoop && elapsedSeconds < config.piPromptTimeoutSeconds) {
+      loopEvidence = {
+        elapsedSeconds,
+        lastTools,
+        recentEvents,
+        finishFinalizationEvents,
+        readBashStatusEvents,
+        gitStatusShort: '', // Will be populated by caller
+      }
+    }
+
     return {
       text,
       tools: session.getActiveToolNames(),
       sessionFile: session.sessionFile,
+      loopEvidence,
     }
   } finally {
     unsubscribe()

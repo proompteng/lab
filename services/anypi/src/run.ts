@@ -16,6 +16,7 @@ import {
   commitIfNeeded,
   countCommitsAhead,
   createOrUpdatePullRequest,
+  gitDiff,
   gitStatusShort,
   gitWorktreeContentHash,
   prepareRepository,
@@ -30,7 +31,9 @@ import type {
   AgentRunSpecPayload,
   AnypiStatus,
   CiWaitResult,
+  LoopDetectionEvidence,
   PullRequestResult,
+  ToolEvent,
   ValidationPlan,
   ValidationResult,
 } from './types'
@@ -147,6 +150,73 @@ const buildPullRequestBody = async (input: {
     ...input,
     template: await loadPullRequestTemplate(input.git.worktree),
   })
+
+/**
+ * Helper to capture git artifacts for hard timeout failure scenarios
+ */
+const captureHardTimeoutArtifacts = async (
+  git: GitContext | null,
+  worktree: string,
+  elapsedSeconds: number,
+  lastTools: string[],
+  recentEvents: ToolEvent[],
+  finishFinalizationEvents: number,
+  readBashStatusEvents: number,
+): Promise<LoopDetectionEvidence> => {
+  const gitStatusShortResult = await gitStatusShort(worktree, git?.env)
+
+  // Capture git diff stat
+  let gitDiffStat: string | undefined
+  try {
+    if (git) {
+      const diffResult = await gitDiff(worktree, git.env, ['--stat'])
+      if (diffResult.exitCode === 0 && diffResult.stdout.trim()) {
+        gitDiffStat = diffResult.stdout.trim()
+      }
+    }
+  } catch {
+    // Ignore diff errors
+  }
+
+  // Capture patch artifact path if we have changes
+  let patchArtifactPath: string | undefined
+  try {
+    const patchPath = join('/tmp', `anypi-loop-patch-${Date.now()}.patch`)
+    if (git && gitStatusShortResult) {
+      await mkdir(dirname(patchPath), { recursive: true })
+      await runShell(`git diff HEAD > "${patchPath}"`, { cwd: worktree, env: git.env })
+      patchArtifactPath = patchPath
+    }
+  } catch {
+    // Ignore patch capture errors
+  }
+
+  return {
+    elapsedSeconds,
+    lastTools,
+    recentEvents,
+    finishFinalizationEvents,
+    readBashStatusEvents,
+    gitStatusShort: gitStatusShortResult,
+    gitDiffStat,
+    patchArtifactPath,
+  }
+}
+
+/**
+ * Check if loop detection indicates stalled session
+ */
+export const isLoopDetected = (evidence?: LoopDetectionEvidence): boolean => {
+  if (!evidence) return false
+  // Consider it a loop if we have many finish/finalization events or benign commands
+  return evidence.finishFinalizationEvents >= 2 || evidence.readBashStatusEvents >= 3
+}
+
+const runShell = async (script: string, options?: { cwd?: string; env?: Record<string, string | undefined> }) => {
+  // Import locally to avoid circular dependency
+  const { runShell: shellRun } = await import('./command')
+  return shellRun(script, options)
+}
 
 const baseStatus = (
   config: AnypiConfig,
@@ -293,6 +363,11 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
         status.sessionFile = result.sessionFile
         status.sessionFiles = sessionFiles
       }
+      // Capture loop evidence if available
+      if (result.loopEvidence) {
+        status.loopEvidence = result.loopEvidence
+        await logger.info(`loop detection triggered: ${JSON.stringify(result.loopEvidence)}`)
+      }
     }
 
     for (let attempt = 0; attempt <= config.noChangeRepairAttempts; attempt += 1) {
@@ -316,6 +391,13 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
 
       const changed = await gitStatusShort(config.worktree, git?.env)
       const commitsAhead = git ? await countCommitsAhead(git) : 0
+
+      // If loop detected and we have worktree changes, stop cleanly to proceed to validation
+      if (isLoopDetected(status.loopEvidence) && (changed || (git && commitsAhead > 0))) {
+        await logger.info(`loop detected but worktree has changes; stopping cleanly to proceed to validation`)
+        break
+      }
+
       if (changed || !git || commitsAhead > 0) break
       if (attempt >= config.noChangeRepairAttempts) {
         throw new Error('Anypi completed without leaving code changes in the worktree')
@@ -360,6 +442,15 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
         status.sessionFiles = sessionFiles
       }
       const afterRepair = await getWorktreeProgress(git, config.worktree)
+
+      // If loop detected and we have worktree changes, stop cleanly to proceed to validation
+      if (isLoopDetected(status.loopEvidence) && hasWorktreeProgress(beforeRepair, afterRepair)) {
+        await logger.info(
+          `loop detected during validation repair but worktree has changes; stopping cleanly to proceed to validation`,
+        )
+        break
+      }
+
       if (!hasWorktreeProgress(beforeRepair, afterRepair)) {
         throw new Error(
           `${formatValidationError(failed)}; validation repair ${attempt + 1} produced no worktree changes`,
@@ -424,6 +515,13 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
 
           const previousCommit: string | undefined = status.commit
           const repairedCommit = await commitIfNeeded(git, buildCommitMessage(runSpec))
+
+          // If loop detected and we have new commits, stop cleanly to proceed
+          if (isLoopDetected(status.loopEvidence) && repairedCommit && repairedCommit !== previousCommit) {
+            await logger.info(`loop detected during CI repair but new commit made; stopping cleanly to proceed to PR`)
+            break
+          }
+
           if (!repairedCommit || repairedCommit === previousCommit) throw new Error('CI repair produced no new commit')
           status.commit = repairedCommit
           await pushBranch(git)
@@ -453,6 +551,12 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     status.status = 'failed'
     status.finishedAt = timestampUtc()
     status.error = toErrorMessage(error)
+
+    // Capture loop evidence if available from the last Pi run result
+    if (status.loopEvidence) {
+      await logger.info(`loop evidence captured: ${JSON.stringify(status.loopEvidence)}`)
+    }
+
     await writeStatus(config.statusPath, status)
     await logger.error(status.error)
     throw error

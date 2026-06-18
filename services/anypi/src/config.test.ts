@@ -18,6 +18,7 @@ import {
 } from './git'
 import {
   buildAgentPrompt,
+  buildCiRepairPrompt,
   buildNoChangeRepairPrompt,
   buildSystemPrompt,
   buildValidationRepairPrompt,
@@ -483,5 +484,105 @@ describe('Anypi prompt contract', () => {
         { status: ' M foo.ts', commitsAhead: 1, contentHash: 'same' },
       ),
     ).toBe(false)
+  })
+
+  test('keeps model-facing prompts free of runtime/provider/deployment prose', () => {
+    const systemPrompt = buildSystemPrompt('minimal')
+    expect(systemPrompt).not.toMatch(
+      /Anypi|YOLO|Kubernetes|Pi SDK|provider|Flamingo|vLLM|OpenAI|runtime|deployment|service|cluster|namespace|pod|container|docker|helm|argocd|gitops/i,
+    )
+    expect(systemPrompt).toContain('Act as a coding agent inside an existing repository')
+    expect(systemPrompt).not.toMatch(/Flamingo|qwen3-coder/i)
+  })
+
+  test('buildAgentPrompt does not leak runtime/provider/deployment prose', () => {
+    const prompt = buildAgentPrompt(
+      {
+        prompt: 'Refactor code and add tests.',
+        vcs: { repository: 'proompteng/lab', baseBranch: 'main', headBranch: 'codex/anypi' },
+      },
+      '/workspace/lab',
+    )
+    // Check that specific service names are not leaked
+    expect(prompt).not.toMatch(/Flamingo|qwen3-coder|runtime|provider|deployment|cluster|namespace|pod|container/i)
+    expect(prompt).toContain('Use repository instructions and existing patterns')
+    expect(prompt).toContain('Refactor code and add tests.')
+    // Note: 'anypi' appears in the prompt as the tool name (anypi loop detection) so we don't check for it
+  })
+
+  test('buildSystemPrompt variants are free of runtime/provider/deployment prose', () => {
+    for (const variant of ['minimal', 'finish-gated', 'repair-loop', 'strict-repo'] as const) {
+      const prompt = buildSystemPrompt(variant)
+      expect(prompt).not.toMatch(
+        /Flamingo|qwen3-coder|anypi|runtime|provider|deployment|cluster|namespace|pod|container/i,
+      )
+    }
+  })
+
+  test('buildValidationRepairPrompt does not leak runtime/provider/deployment prose', () => {
+    const prompt = buildValidationRepairPrompt({
+      attempt: 1,
+      maxAttempts: 2,
+      worktree: '/workspace/lab',
+      results: [
+        {
+          command: 'bash',
+          args: ['-lc', 'git diff --check'],
+          exitCode: 2,
+          stdout: 'file.py:1: trailing whitespace.',
+          stderr: '',
+          durationMs: 12,
+          ok: false,
+        },
+      ],
+    })
+    expect(prompt).not.toMatch(
+      /Flamingo|qwen3-coder|anypi|runtime|provider|deployment|cluster|namespace|pod|container/i,
+    )
+  })
+
+  test('buildNoChangeRepairPrompt does not leak runtime/provider/deployment prose', () => {
+    const prompt = buildNoChangeRepairPrompt({ attempt: 1, maxAttempts: 2, worktree: '/workspace/lab' })
+    expect(prompt).not.toMatch(
+      /Flamingo|qwen3-coder|anypi|runtime|provider|deployment|cluster|namespace|pod|container/i,
+    )
+  })
+
+  test('buildCiRepairPrompt does not leak runtime/provider/deployment prose', () => {
+    const prompt = buildCiRepairPrompt({
+      attempt: 1,
+      maxAttempts: 2,
+      worktree: '/workspace/lab',
+      summary: 'lint failed',
+    })
+    expect(prompt).not.toMatch(
+      /Flamingo|qwen3-coder|anypi|runtime|provider|deployment|cluster|namespace|pod|container/i,
+    )
+  })
+
+  test('rejects project-specific fallback strings in system prompts', () => {
+    for (const variant of ['minimal', 'finish-gated', 'repair-loop', 'strict-repo'] as const) {
+      const prompt = buildSystemPrompt(variant)
+      // Check for project-specific fallback strings
+      expect(prompt).not.toMatch(/torghut|dernier|alchimie|prtr|anyproject|myservice/i)
+      expect(prompt).not.toMatch(/fallback.*torghut|fallback.*dernier/i)
+    }
+  })
+
+  test('rejects project-specific fallback strings in repair prompts', () => {
+    expect(
+      buildValidationRepairPrompt({ attempt: 1, maxAttempts: 2, worktree: '/workspace/lab', results: [] }),
+    ).not.toMatch(/torghut|dernier|alchimie|prtr/i)
+    expect(buildNoChangeRepairPrompt({ attempt: 1, maxAttempts: 2, worktree: '/workspace/lab' })).not.toMatch(
+      /torghut|dernier|alchimie|prtr/i,
+    )
+    expect(
+      buildCiRepairPrompt({
+        attempt: 1,
+        maxAttempts: 2,
+        worktree: '/workspace/lab',
+        summary: 'lint failed',
+      }),
+    ).not.toMatch(/torghut|dernier|alchimie|prtr/i)
   })
 })

@@ -133,4 +133,22 @@ export type AnypiStatus = {
   validationAttempts: number
   promptChars: number
   error?: string
+  loopEvidence?: LoopDetectionEvidence
+}
+
+export type ToolEvent = {
+  type: string
+  toolName?: string
+  timestamp: string
+}
+
+export type LoopDetectionEvidence = {
+  elapsedSeconds: number
+  lastTools: string[]
+  recentEvents: ToolEvent[]
+  finishFinalizationEvents: number
+  readBashStatusEvents: number
+  gitStatusShort: string
+  gitDiffStat?: string
+  patchArtifactPath?: string
 }

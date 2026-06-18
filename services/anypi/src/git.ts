@@ -185,6 +185,9 @@ export const prepareRepository = async (
 export const gitStatusShort = async (worktree: string, env?: Record<string, string | undefined>) =>
   (await runCommand('git', ['status', '--short'], { cwd: worktree, env })).stdout.trim()
 
+export const gitDiff = async (worktree: string, env?: Record<string, string | undefined>, args: string[] = []) =>
+  await runCommand('git', ['diff', ...args], { cwd: worktree, env, allowFailure: true })
+
 export const gitWorktreeContentHash = async (worktree: string, env?: Record<string, string | undefined>) => {
   const hash = createHash('sha256')
   const commands = [
