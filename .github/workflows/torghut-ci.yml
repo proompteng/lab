@@ -854,3 +854,7 @@ jobs:
       - name: Security scan (ruff S, non-blocking)
         working-directory: services/torghut
         run: uv run --frozen ruff check app scripts migrations --select S --statistics --exit-zero
+
+      - name: Dead-code scan (vulture, non-blocking)
+        working-directory: services/torghut
+        run: uv run --frozen vulture --config pyproject.toml || true

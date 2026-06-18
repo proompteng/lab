@@ -76,7 +76,7 @@ Run Vulture from the Torghut service root so it picks up the checked-in `[tool.v
 
 ```bash
 cd services/torghut
-uvx --from vulture vulture --config pyproject.toml
+uv run --frozen vulture --config pyproject.toml
 ```
 
 The current config follows the upstream Vulture guidance for conservative cleanup:
