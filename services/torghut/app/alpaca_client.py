@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from dataclasses import asdict, is_dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Protocol, cast
 from uuid import UUID
 
 from alpaca.common.exceptions import APIError
@@ -37,6 +37,26 @@ class OrderFirewallViolation(PermissionError):
     """Raised when broker mutation methods are called outside OrderFirewall."""
 
 
+class _TradingClientLike(Protocol):
+    def get_account(self) -> Any: ...
+
+    def get_all_positions(self) -> Iterable[Any]: ...
+
+    def get_orders(self, filter: Any | None = None) -> Iterable[Any]: ...
+
+    def get_order_by_id(self, order_id: str) -> Any: ...
+
+    def submit_order(self, order_data: Any) -> Any: ...
+
+    def cancel_order_by_id(self, order_id: str) -> Any: ...
+
+    def cancel_orders(self) -> Iterable[Any]: ...
+
+
+class _StockDataClientLike(Protocol):
+    def get_stock_bars(self, request_params: StockBarsRequest) -> Any: ...
+
+
 class _TradingMutationGuardProxy:
     """Expose non-mutating trading methods while blocking direct order mutations."""
 
@@ -44,7 +64,7 @@ class _TradingMutationGuardProxy:
         {"submit_order", "cancel_order_by_id", "cancel_orders"}
     )
 
-    def __init__(self, trading_client: TradingClient) -> None:
+    def __init__(self, trading_client: _TradingClientLike) -> None:
         self._trading_client = trading_client
 
     def __getattr__(self, name: str) -> Any:
@@ -62,8 +82,8 @@ class TorghutAlpacaClient:
         api_key: Optional[str] = None,
         secret_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        trading_client: Optional[TradingClient] = None,
-        data_client: Optional[StockHistoricalDataClient] = None,
+        trading_client: _TradingClientLike | None = None,
+        data_client: _StockDataClientLike | None = None,
         paper: Optional[bool] = None,
     ) -> None:
         key = api_key or settings.apca_api_key_id
@@ -75,7 +95,7 @@ class TorghutAlpacaClient:
         self.endpoint_class = "paper" if use_paper else "live"
 
         # Default to paper trading; override URL if provided.
-        raw_trading_client = trading_client or TradingClient(
+        raw_trading_client: _TradingClientLike = trading_client or TradingClient(
             api_key=key,
             secret_key=secret,
             paper=use_paper,
@@ -85,7 +105,7 @@ class TorghutAlpacaClient:
         self.trading = _TradingMutationGuardProxy(raw_trading_client)
 
         # Market Data v2 (stocks).
-        self.data = data_client or StockHistoricalDataClient(
+        self.data: _StockDataClientLike = data_client or StockHistoricalDataClient(
             api_key=key,
             secret_key=secret,
             url_override=data_base,

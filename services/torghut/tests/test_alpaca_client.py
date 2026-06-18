@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, List
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
+from alpaca.data.requests import StockBarsRequest
+from alpaca.trading.requests import GetOrdersRequest
+
 from app.alpaca_client import OrderFirewallViolation, TorghutAlpacaClient
+from app.alpaca_client import OrderFirewallToken
 from app.config import settings
 from app.trading.firewall import OrderFirewall
 
@@ -20,18 +24,21 @@ class DummyModel:
 
 class DummyTradingClient:
     def __init__(self) -> None:
-        self.cancelled: List[str] = []
+        self.cancelled: list[str] = []
 
-    def get_account(self):  # type: ignore[override]
+    def get_account(self) -> DummyModel:
         return DummyModel(equity="10000", cash="5000", buying_power="20000")
 
-    def get_all_positions(self):  # type: ignore[override]
+    def get_all_positions(self) -> list[DummyModel]:
         return [DummyModel(symbol="AAPL", qty="1")]
 
-    def get_orders(self, filter=None):  # type: ignore[override]
+    def get_orders(self, filter: GetOrdersRequest | None = None) -> list[DummyModel]:
         return [DummyModel(id="order-1", symbol="AAPL", uuid_id=uuid.uuid4())]
 
-    def submit_order(self, order_data):  # type: ignore[override]
+    def get_order_by_id(self, order_id: str) -> DummyModel:
+        return DummyModel(id=order_id, symbol="AAPL")
+
+    def submit_order(self, order_data: Any) -> DummyModel:
         return DummyModel(
             id="order-123",
             symbol=order_data.symbol,
@@ -42,22 +49,27 @@ class DummyTradingClient:
             status="accepted",
         )
 
-    def cancel_order_by_id(self, order_id):  # type: ignore[override]
+    def cancel_order_by_id(self, order_id: str) -> None:
         self.cancelled.append(order_id)
 
-    def cancel_orders(self):  # type: ignore[override]
+    def cancel_orders(self) -> list[DummyModel]:
         return [DummyModel(id="order-1"), DummyModel(id="order-2")]
+
+
+class DummyBarsResponse:
+    def __init__(self, data: dict[str, list[DummyModel]]) -> None:
+        self.data = data
 
 
 class DummyDataClient:
     def __init__(self) -> None:
-        self.requested = []
+        self.requested: list[StockBarsRequest] = []
 
-    def get_stock_bars(self, request):  # type: ignore[override]
-        self.requested.append(request)
-        return type(
-            "Obj", (), {"data": {"AAPL": [DummyModel(symbol="AAPL", open=1, close=2)]}}
-        )()
+    def get_stock_bars(self, request_params: StockBarsRequest) -> DummyBarsResponse:
+        self.requested.append(request_params)
+        return DummyBarsResponse(
+            data={"AAPL": [DummyModel(symbol="AAPL", open=1, close=2)]}
+        )
 
 
 class TestAlpacaClient(TestCase):
@@ -106,7 +118,7 @@ class TestAlpacaClient(TestCase):
 
     def test_get_order_by_client_order_id_falls_back_to_client_id(self) -> None:
         class TradingClientWithClientId(DummyTradingClient):
-            def get_order_by_client_id(self, client_id: str):  # type: ignore[override]
+            def get_order_by_client_id(self, client_id: str) -> DummyModel:
                 return DummyModel(id="order-xyz", client_order_id=client_id)
 
         client = TorghutAlpacaClient(
@@ -148,7 +160,7 @@ class TestAlpacaClient(TestCase):
                 qty=1,
                 order_type="market",
                 time_in_force="day",
-                firewall_token=object(),  # type: ignore[arg-type]
+                firewall_token=cast(OrderFirewallToken, object()),
             )
 
     def test_raw_trading_client_proxy_blocks_mutations(self) -> None:
