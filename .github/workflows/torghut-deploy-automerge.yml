@@ -28,10 +28,15 @@ on:
       - 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
       - 'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
       - 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
+      - 'argocd/applications/torghut/ta/flinkdeployment.yaml'
+      - 'argocd/applications/torghut/ta-sim/flinkdeployment.yaml'
+      - 'argocd/applications/torghut/ws/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
       - 'argocd/applications/torghut-options/catalog/deployment.yaml'
       - 'argocd/applications/torghut-options/enricher/deployment.yaml'
+      - 'argocd/applications/torghut-options/ta/flinkdeployment.yaml'
+      - 'argocd/applications/torghut-options/ws/deployment.yaml'
       - '.github/workflows/torghut-deploy-automerge.yml'
 
 permissions:
@@ -46,7 +51,11 @@ jobs:
   enable:
     if: >-
       ${{
-        startsWith(github.event.pull_request.head.ref, 'codex/torghut-release-') &&
+        (
+          startsWith(github.event.pull_request.head.ref, 'codex/torghut-release-') ||
+          startsWith(github.event.pull_request.head.ref, 'codex/torghut-ta-release-') ||
+          startsWith(github.event.pull_request.head.ref, 'codex/torghut-ws-release-')
+        ) &&
         github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.draft == false
       }}
@@ -88,10 +97,15 @@ jobs:
             'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
             'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
             'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
+            'argocd/applications/torghut/ta/flinkdeployment.yaml'
+            'argocd/applications/torghut/ta-sim/flinkdeployment.yaml'
+            'argocd/applications/torghut/ws/deployment.yaml'
             'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
             'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
             'argocd/applications/torghut-options/catalog/deployment.yaml'
             'argocd/applications/torghut-options/enricher/deployment.yaml'
+            'argocd/applications/torghut-options/ta/flinkdeployment.yaml'
+            'argocd/applications/torghut-options/ws/deployment.yaml'
           )
 
           contains() {
@@ -165,19 +179,45 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
+          case "${PR_HEAD_REF}" in
+            codex/torghut-release-*)
+              source_manifest='argocd/applications/torghut/knative-service.yaml'
+              source_env_name='TORGHUT_COMMIT'
+              build_workflow='torghut-build-push.yaml'
+              build_label='Torghut'
+              ;;
+            codex/torghut-ta-release-*)
+              source_manifest='argocd/applications/torghut/ta/flinkdeployment.yaml'
+              source_env_name='TORGHUT_TA_COMMIT'
+              build_workflow='torghut-ta-build-push.yaml'
+              build_label='Torghut TA'
+              ;;
+            codex/torghut-ws-release-*)
+              source_manifest='argocd/applications/torghut/ws/deployment.yaml'
+              source_env_name='TORGHUT_WS_COMMIT'
+              build_workflow='torghut-ws-build-push.yaml'
+              build_label='Torghut WS'
+              ;;
+            *)
+              echo "Unsupported Torghut release branch: ${PR_HEAD_REF}"
+              exit 1
+              ;;
+          esac
+
           manifest="$(
             gh api \
               -H 'Accept: application/vnd.github.raw' \
-              "repos/${GH_REPO}/contents/argocd/applications/torghut/knative-service.yaml?ref=${PR_HEAD_SHA}"
+              "repos/${GH_REPO}/contents/${source_manifest}?ref=${PR_HEAD_SHA}"
           )"
           source_sha="$(
             printf '%s\n' "${manifest}" |
-              awk '
-                /^[[:space:]]*- name:[[:space:]]*TORGHUT_COMMIT[[:space:]]*$/ { found = 1; next }
+              awk -v env_name="${source_env_name}" '
+                $0 ~ "^[[:space:]]*- name:[[:space:]]*" env_name "[[:space:]]*$" { found = 1; next }
                 found && /^[[:space:]]*value:/ {
                   sub(/^[[:space:]]*value:[[:space:]]*/, "")
                   gsub(/"/, "")
@@ -187,7 +227,7 @@ jobs:
               '
           )"
           if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "Unable to resolve TORGHUT_COMMIT from release manifest"
+            echo "Unable to resolve ${source_env_name} from ${source_manifest}"
             exit 1
           fi
 
@@ -243,7 +283,7 @@ jobs:
             run_line="$(
               gh run list \
                 -R "${GH_REPO}" \
-                --workflow torghut-build-push.yaml \
+                --workflow "${build_workflow}" \
                 --commit "${source_sha}" \
                 --json databaseId,status,conclusion,url,createdAt \
                 --jq 'sort_by(.createdAt) | reverse | .[0] // {} | [.databaseId // "", .status // "", .conclusion // "", .url // ""] | @tsv'
@@ -252,18 +292,18 @@ jobs:
 
             if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ] && [ "${run_conclusion}" = 'success' ]; then
               assert_required_build_jobs "${run_id}"
-              echo "Torghut build-push passed required image contract jobs for ${source_sha}: ${run_url}"
+              echo "${build_label} build-push passed required image contract jobs for ${source_sha}: ${run_url}"
               break
             fi
 
             if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ]; then
-              echo "Torghut build-push did not pass for ${source_sha}: ${run_conclusion}"
+              echo "${build_label} build-push did not pass for ${source_sha}: ${run_conclusion}"
               echo "${run_url}"
               exit 1
             fi
 
             if [ "${SECONDS}" -ge "${deadline}" ]; then
-              echo "Timed out waiting for Torghut build-push for ${source_sha}"
+              echo "Timed out waiting for ${build_label} build-push for ${source_sha}"
               if [ -n "${run_url}" ]; then
                 echo "${run_url}"
               fi
@@ -271,9 +311,9 @@ jobs:
             fi
 
             if [ -z "${run_id}" ]; then
-              echo "Waiting for Torghut build-push to appear for ${source_sha}"
+              echo "Waiting for ${build_label} build-push to appear for ${source_sha}"
             else
-              echo "Waiting for Torghut build-push: status=${run_status} conclusion=${run_conclusion:-pending}"
+              echo "Waiting for ${build_label} build-push: status=${run_status} conclusion=${run_conclusion:-pending}"
             fi
             sleep 10
           done

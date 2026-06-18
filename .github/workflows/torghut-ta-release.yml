@@ -102,8 +102,35 @@ jobs:
             fi
 
             if [ "${SOURCE_SHA}" != "${MAIN_HEAD}" ]; then
-              echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main is ${MAIN_HEAD}"
-              PROMOTE='false'
+              if ! git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"; then
+                echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main ${MAIN_HEAD} is not a descendant."
+                PROMOTE='false'
+              else
+                TA_CHANGES="$(
+                  git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" -- \
+                    services/dorvud/gradle \
+                    services/dorvud/gradlew \
+                    services/dorvud/gradle.properties \
+                    services/dorvud/settings.gradle.kts \
+                    services/dorvud/build.gradle.kts \
+                    services/dorvud/platform \
+                    services/dorvud/flink-integration \
+                    services/dorvud/technical-analysis \
+                    services/dorvud/technical-analysis-flink \
+                    packages/scripts/src/torghut/release-contract.ts \
+                    packages/scripts/src/torghut/update-ta-manifest.ts \
+                    packages/scripts/src/shared/docker.ts \
+                    .github/workflows/torghut-ta-build-push.yaml \
+                    .github/workflows/torghut-ta-release.yml
+                )"
+                if [ -n "${TA_CHANGES}" ]; then
+                  echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Torghut TA build inputs changed:"
+                  printf '%s\n' "${TA_CHANGES}"
+                  PROMOTE='false'
+                else
+                  echo "Promoting ${SOURCE_SHA}; newer main ${MAIN_HEAD} contains only unrelated changes."
+                fi
+              fi
             fi
           else
             if [ -n "${COMMIT_SHA_INPUT}" ]; then
