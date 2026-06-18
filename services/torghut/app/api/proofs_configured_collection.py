@@ -61,6 +61,17 @@ def configured_strategy_paper_collection_hypothesis_id(strategy_name: str) -> st
     return f"configured-paper-collection:{strategy_name}"
 
 
+def configured_paper_collection_account_label() -> str:
+    account_label = str(settings.trading_account_label or "").strip()
+    return account_label or PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL
+
+
+def configured_strategy_paper_collection_symbol_actions(
+    symbols: Sequence[str],
+) -> dict[str, str]:
+    return {symbol.strip().upper(): "buy" for symbol in symbols if symbol.strip()}
+
+
 def configured_strategy_paper_collection_targets(
     session: Session,
     *,
@@ -77,6 +88,8 @@ def configured_strategy_paper_collection_targets(
         strategy_name = str(strategy.name).strip()
         if not strategy_name:
             continue
+        symbol_actions = configured_strategy_paper_collection_symbol_actions(symbols)
+        account_label = configured_paper_collection_account_label()
         target = {
             "hypothesis_id": configured_strategy_paper_collection_hypothesis_id(
                 strategy_name
@@ -87,8 +100,22 @@ def configured_strategy_paper_collection_targets(
             "strategy_lookup_names": [strategy_name],
             "strategy_family": str(strategy.universe_type or "").strip() or "static",
             "strategy_type": str(strategy.universe_type or "").strip() or "static",
-            "account_label": PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-            "source_account_label": PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+            "account_label": account_label,
+            "source_account_label": account_label,
+            "execution_account_label": account_label,
+            "paper_account_label": account_label,
+            "paper_route_runtime_account_label": account_label,
+            "bounded_collection_account_label": PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+            "account_stage_runtime_identity": {
+                "account_label": PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+                "source_account_label": account_label,
+                "execution_account_label": account_label,
+                "runtime_account_label": account_label,
+                "paper_account_label": account_label,
+                "paper_route_runtime_account_label": account_label,
+                "observed_stage": "paper",
+                "source_kind": "configured_simple_lane_paper_data_collection",
+            },
             "observed_stage": "paper",
             "source_kind": "configured_simple_lane_paper_data_collection",
             "source_plan_ref": "configured-simple-lane-paper-data-collection",
@@ -104,6 +131,11 @@ def configured_strategy_paper_collection_targets(
             "paper_route_probe_scope_authority": "configured_strategy_catalog",
             "paper_route_probe_symbols": symbols,
             "paper_route_probe_raw_target_symbols": symbols,
+            "paper_route_probe_symbol_actions": symbol_actions,
+            "target_symbol_actions": symbol_actions,
+            "symbol_actions": symbol_actions,
+            "paper_route_probe_symbol_quantities": {},
+            "target_symbol_quantities": {},
             "paper_route_probe_strategy_universe_fallback": True,
             "paper_route_probe_next_session_max_notional": max_notional,
             "paper_route_probe_effective_max_notional": max_notional,
@@ -140,6 +172,7 @@ def configured_paper_collection_target_plan(
     max_notional = _decimal_to_string(max_notional_value)
     if max_notional is None:
         return {}
+    account_label = configured_paper_collection_account_label()
     targets = configured_strategy_paper_collection_targets(
         session,
         max_notional=max_notional,
@@ -151,7 +184,9 @@ def configured_paper_collection_target_plan(
         "source": "configured_simple_lane_paper_data_collection",
         "source_ref": "configured-simple-lane-paper-data-collection",
         "target_count": len(targets),
-        "account_label": PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+        "account_label": account_label,
+        "source_account_label": account_label,
+        "bounded_collection_account_label": PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
         "observed_stage": "paper",
         "paper_data_collection_authorized": True,
         "bounded_evidence_collection_authorized": True,
@@ -169,6 +204,8 @@ __all__ = [
     "configured_static_symbol_allowlist",
     "configured_strategy_paper_collection_symbols",
     "configured_strategy_paper_collection_hypothesis_id",
+    "configured_paper_collection_account_label",
+    "configured_strategy_paper_collection_symbol_actions",
     "configured_strategy_paper_collection_targets",
     "configured_paper_collection_target_plan",
 ]
