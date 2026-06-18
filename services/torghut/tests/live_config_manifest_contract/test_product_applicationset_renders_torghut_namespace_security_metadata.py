@@ -47,6 +47,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertEqual(
             managed_namespace_metadata.get("labels"),
             {
+                "external-secrets.proompteng.ai/enabled": "true",
                 "pod-security.kubernetes.io/enforce": "privileged",
                 "pod-security.kubernetes.io/audit": "privileged",
                 "pod-security.kubernetes.io/warn": "privileged",

@@ -157,6 +157,17 @@ spec:
                           WHERE n.nspname = 'public'
                             AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
                             AND pg_get_userbyid(c.relowner) <> :runtime_role
+                            AND NOT (
+                              c.relkind = 'S'
+                              AND EXISTS (
+                                SELECT 1
+                                FROM pg_depend d
+                                WHERE d.classid = 'pg_class'::regclass
+                                  AND d.objid = c.oid
+                                  AND d.refclassid = 'pg_class'::regclass
+                                  AND d.deptype = 'a'
+                              )
+                            )
                           ORDER BY c.relkind, c.relname
                           """
                       ),
