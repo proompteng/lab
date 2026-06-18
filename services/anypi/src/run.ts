@@ -1,7 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { applyRunnerArtifacts, loadRunnerSpec, loadRunSpec, resolveConfig, type AnypiConfig } from './config'
+import {
+  applyRunnerArtifacts,
+  loadRunnerSpec,
+  loadRunSpec,
+  readJsonFile,
+  resolveConfig,
+  type AnypiConfig,
+} from './config'
 import { createLogger } from './logger'
 import { runPiAgent } from './pi-session'
 import {
@@ -453,6 +460,18 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     status.status = 'failed'
     status.finishedAt = timestampUtc()
     status.error = toErrorMessage(error)
+    // Preserve timeout artifacts if already captured (e.g., from prompt timeout)
+    if (!status.timeoutArtifacts) {
+      // Try to read existing status to see if artifacts were captured during timeout
+      try {
+        const existingStatus = await readJsonFile<AnypiStatus>(config.statusPath)
+        if (existingStatus.timeoutArtifacts) {
+          status.timeoutArtifacts = existingStatus.timeoutArtifacts
+        }
+      } catch {
+        // Ignore - status file may not exist or be readable
+      }
+    }
     await writeStatus(config.statusPath, status)
     await logger.error(status.error)
     throw error

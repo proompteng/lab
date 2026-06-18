@@ -104,6 +104,16 @@ export type CiWaitResult = {
   summary: string
 }
 
+export type TimeoutArtifacts = {
+  gitStatus: string
+  diffStat?: string
+  headBranch?: string
+  uncommittedPatchPath?: string
+  logPath?: string
+  statusPath?: string
+  sessionPath?: string
+}
+
 export type AnypiStatus = {
   provider: string
   status: 'running' | 'succeeded' | 'failed'
@@ -133,4 +143,5 @@ export type AnypiStatus = {
   validationAttempts: number
   promptChars: number
   error?: string
+  timeoutArtifacts?: TimeoutArtifacts
 }
