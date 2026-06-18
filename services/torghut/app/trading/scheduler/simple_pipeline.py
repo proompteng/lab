@@ -429,7 +429,9 @@ class SimpleTradingPipeline(
             "target_count": len(targets or []),
             "fetch_attempts": _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
         }
-        setattr(self.state, "last_bounded_evidence_collection_blocker", blocker)
+        state = getattr(self, "state", None)
+        if state is not None:
+            setattr(state, "last_bounded_evidence_collection_blocker", blocker)
         logger.warning(
             "Blocking bounded paper-route evidence decisions because target plan is unavailable account_label=%s reason=%s symbols=%s target_count=%s attempts=%s",
             self.account_label,

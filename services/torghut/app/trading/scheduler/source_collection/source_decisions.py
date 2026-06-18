@@ -139,6 +139,12 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
                 )
                 if decision is not None:
                     decisions.append(decision)
+        if not decisions and state.target_plan_targets:
+            self._record_bounded_target_plan_blocker(
+                reason="paper_route_target_plan_source_decisions_missing",
+                symbols=state.target_symbols,
+                targets=state.target_plan_targets,
+            )
         return decisions
 
     def _paper_route_target_source_collection_state(

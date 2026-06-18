@@ -552,7 +552,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertTrue(_manifest_bool(live_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertEqual(
             live_env.get("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT"),
-            "2026-06-17T20:05:00Z",
+            "2026-06-18T20:05:00Z",
         )
         self.assertTrue(
             _manifest_bool(live_env, "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED"),
