@@ -88,48 +88,48 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._ensure_supported_binary",
+                "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
                 return_value=None,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._update_run_state",
+                "scripts.historical_simulation_startup.lifecycle._update_run_state",
                 return_value=None,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._save_json",
+                "scripts.historical_simulation_startup.lifecycle._save_json",
                 return_value=None,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle.persist_completion_trace",
+                "scripts.historical_simulation_startup.lifecycle.persist_completion_trace",
                 return_value={},
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle.SessionLocal"
+                "scripts.historical_simulation_startup.lifecycle.SessionLocal"
             ) as mock_session_local,
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._prepare_argocd_for_run",
+                "scripts.historical_simulation_startup.lifecycle._prepare_argocd_for_run",
                 return_value={"managed": False},
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._restore_argocd_after_run",
+                "scripts.historical_simulation_startup.lifecycle._restore_argocd_after_run",
                 return_value={"managed": False},
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._apply",
+                "scripts.historical_simulation_startup.lifecycle._apply",
                 side_effect=lambda **_: call_order.append("apply") or {"status": "ok"},
             ),
             patch(
-                "scripts.start_historical_simulation_modules.argocd_rollouts._runtime_verify",
+                "scripts.historical_simulation_startup.argocd_rollouts._runtime_verify",
                 side_effect=lambda **_: (
                     call_order.append("runtime_verify") or {"runtime_state": "ready"}
                 ),
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._replay_dump",
+                "scripts.historical_simulation_startup.lifecycle._replay_dump",
                 side_effect=lambda **_: call_order.append("replay") or {"status": "ok"},
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._monitor_run_completion",
+                "scripts.historical_simulation_startup.lifecycle._monitor_run_completion",
                 side_effect=lambda **_: (
                     call_order.append("monitor")
                     or {
@@ -148,11 +148,11 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
                 ),
             ),
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._report_simulation",
+                "scripts.historical_simulation_startup.lifecycle._report_simulation",
                 side_effect=lambda **_: call_order.append("report") or {"status": "ok"},
             ),
             patch(
-                "scripts.start_historical_simulation_modules.resource_planning.run_autonomous_lane",
+                "scripts.historical_simulation_startup.resource_planning.run_autonomous_lane",
                 side_effect=lambda **kwargs: (
                     call_order.append("autonomy")
                     or SimpleNamespace(
@@ -197,7 +197,7 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
                 ),
             ) as autonomy_mock,
             patch(
-                "scripts.start_historical_simulation_modules.lifecycle._build_strategy_proof_artifact",
+                "scripts.historical_simulation_startup.lifecycle._build_strategy_proof_artifact",
                 return_value={"status": "ok", "legacy_path_count": 0},
             ),
         ):
@@ -289,60 +289,58 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
         with ExitStack() as stack:
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._ensure_supported_binary",
+                    "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
                     return_value=None,
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._update_run_state",
+                    "scripts.historical_simulation_startup.lifecycle._update_run_state",
                     return_value=None,
                 )
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._save_json",
+                    "scripts.historical_simulation_startup.lifecycle._save_json",
                     return_value=None,
                 )
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle.persist_completion_trace",
+                    "scripts.historical_simulation_startup.lifecycle.persist_completion_trace",
                     return_value={},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._upsert_simulation_progress_row",
+                    "scripts.historical_simulation_startup.lifecycle._upsert_simulation_progress_row",
                     return_value=None,
                 ),
             )
             mock_session_local = stack.enter_context(
-                patch(
-                    "scripts.start_historical_simulation_modules.lifecycle.SessionLocal"
-                )
+                patch("scripts.historical_simulation_startup.lifecycle.SessionLocal")
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._prepare_argocd_for_run",
+                    "scripts.historical_simulation_startup.lifecycle._prepare_argocd_for_run",
                     return_value={"managed": False},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._restore_argocd_after_run",
+                    "scripts.historical_simulation_startup.lifecycle._restore_argocd_after_run",
                     return_value={"managed": False},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._apply",
+                    "scripts.historical_simulation_startup.lifecycle._apply",
                     return_value={"status": "ok"},
                 )
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._run_rollouts_analysis",
+                    "scripts.historical_simulation_startup.lifecycle._run_rollouts_analysis",
                     side_effect=[
                         {"phase": "Successful"},
                         {"phase": "Failed"},
@@ -351,19 +349,19 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._runtime_verify",
+                    "scripts.historical_simulation_startup.lifecycle._runtime_verify",
                     return_value={"runtime_state": "ready"},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._replay_dump",
+                    "scripts.historical_simulation_startup.lifecycle._replay_dump",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._monitor_run_completion",
+                    "scripts.historical_simulation_startup.lifecycle._monitor_run_completion",
                     return_value={
                         "status": "ok",
                         "activity_classification": "success",
@@ -381,13 +379,13 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._report_simulation",
+                    "scripts.historical_simulation_startup.lifecycle._report_simulation",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._build_strategy_proof_artifact",
+                    "scripts.historical_simulation_startup.lifecycle._build_strategy_proof_artifact",
                     return_value={"status": "ok", "legacy_path_count": 0},
                 ),
             )
@@ -481,54 +479,52 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
         with ExitStack() as stack:
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._ensure_supported_binary",
+                    "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
                     return_value=None,
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._update_run_state",
+                    "scripts.historical_simulation_startup.lifecycle._update_run_state",
                     return_value=None,
                 )
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._save_json",
+                    "scripts.historical_simulation_startup.lifecycle._save_json",
                     return_value=None,
                 )
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle.persist_completion_trace",
+                    "scripts.historical_simulation_startup.lifecycle.persist_completion_trace",
                     return_value={},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._upsert_simulation_progress_row",
+                    "scripts.historical_simulation_startup.lifecycle._upsert_simulation_progress_row",
                     return_value=None,
                 ),
             )
             mock_session_local = stack.enter_context(
-                patch(
-                    "scripts.start_historical_simulation_modules.lifecycle.SessionLocal"
-                )
+                patch("scripts.historical_simulation_startup.lifecycle.SessionLocal")
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._read_argocd_automation_mode",
+                    "scripts.historical_simulation_startup.lifecycle._read_argocd_automation_mode",
                     return_value={"mode": "auto"},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._read_named_argocd_application_sync_policy",
+                    "scripts.historical_simulation_startup.lifecycle._read_named_argocd_application_sync_policy",
                     return_value={"sync_policy": {"automated": {"enabled": True}}},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._read_argocd_application_sync_policy",
+                    "scripts.historical_simulation_startup.lifecycle._read_argocd_application_sync_policy",
                     return_value={
                         "sync_policy": {"automated": {"enabled": True}},
                         "automation_mode": "auto",
@@ -538,13 +534,13 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._prepare_argocd_for_run",
+                    "scripts.historical_simulation_startup.lifecycle._prepare_argocd_for_run",
                     return_value={"managed": False},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._restore_argocd_after_run",
+                    "scripts.historical_simulation_startup.lifecycle._restore_argocd_after_run",
                     side_effect=lambda **_: (
                         call_order.append("argocd_restore") or {"managed": False}
                     ),
@@ -552,7 +548,7 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._wait_for_torghut_service_revision_ready",
+                    "scripts.historical_simulation_startup.lifecycle._wait_for_torghut_service_revision_ready",
                     return_value={
                         "ready": True,
                         "condition_ready": "True",
@@ -564,31 +560,31 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._apply",
+                    "scripts.historical_simulation_startup.lifecycle._apply",
                     return_value={"status": "ok"},
                 )
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._run_rollouts_analysis",
+                    "scripts.historical_simulation_startup.lifecycle._run_rollouts_analysis",
                     side_effect=_rollouts_side_effect,
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._runtime_verify",
+                    "scripts.historical_simulation_startup.lifecycle._runtime_verify",
                     return_value={"runtime_state": "ready"},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._replay_dump",
+                    "scripts.historical_simulation_startup.lifecycle._replay_dump",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._monitor_run_completion",
+                    "scripts.historical_simulation_startup.lifecycle._monitor_run_completion",
                     return_value={
                         "status": "ok",
                         "activity_classification": "success",
@@ -606,19 +602,19 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._report_simulation",
+                    "scripts.historical_simulation_startup.lifecycle._report_simulation",
                     return_value={"status": "ok"},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._build_strategy_proof_artifact",
+                    "scripts.historical_simulation_startup.lifecycle._build_strategy_proof_artifact",
                     return_value={"status": "ok", "legacy_path_count": 0},
                 ),
             )
             stack.enter_context(
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._teardown",
+                    "scripts.historical_simulation_startup.lifecycle._teardown",
                     side_effect=lambda **_: call_order.append("teardown") or None,
                 ),
             )

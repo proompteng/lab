@@ -75,7 +75,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             )
 
             with patch(
-                "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
+                "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
                 side_effect=AssertionError(
                     "expected dump reuse; consumer should not be constructed"
                 ),
@@ -134,7 +134,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                     },
                 ),
                 patch(
-                    "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
+                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
                     side_effect=RuntimeError("dump_invoked"),
                 ),
                 self.assertRaisesRegex(RuntimeError, "dump_invoked"),
@@ -237,13 +237,13 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
             with (
                 patch(
-                    "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
+                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
                     side_effect=AssertionError(
                         "expected durable cache restore; consumer should not be constructed"
                     ),
                 ),
                 patch(
-                    "scripts.start_historical_simulation_modules.state_and_cache._simulation_cache_client_from_env",
+                    "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
                     return_value=(_FakeCephClient(), "argo-workflows"),
                 ),
             ):
@@ -347,13 +347,13 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
 
             with (
                 patch(
-                    "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
+                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
                     side_effect=AssertionError(
                         "expected durable cache restore; consumer should not be constructed"
                     ),
                 ),
                 patch(
-                    "scripts.start_historical_simulation_modules.state_and_cache._simulation_cache_client_from_env",
+                    "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
                     return_value=(_FakeCephClient(), "argo-workflows"),
                 ),
             ):
@@ -429,7 +429,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
         with TemporaryDirectory() as tmp_dir:
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
             with patch(
-                "scripts.start_historical_simulation_modules.state_and_cache._simulation_cache_client_from_env",
+                "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
                 return_value=(_FakeCephClient(), "argo-workflows"),
             ):
                 report = start_historical_simulation._restore_cached_dump_if_available(
@@ -460,7 +460,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
 
             with patch(
-                "scripts.start_historical_simulation_modules.state_and_cache._simulation_cache_client_from_env",
+                "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
                 side_effect=AssertionError(
                     "non-hit cache decisions must not attempt restore"
                 ),
@@ -564,11 +564,11 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
 
             with (
                 patch(
-                    "scripts.start_historical_simulation_modules.state_and_cache._simulation_cache_client_from_env",
+                    "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
                     side_effect=_fake_cache_client,
                 ),
                 patch(
-                    "scripts.start_historical_simulation_modules.state_and_cache.time.sleep",
+                    "scripts.historical_simulation_startup.state_and_cache.time.sleep",
                     return_value=None,
                 ),
             ):
@@ -702,11 +702,11 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                     },
                 ),
                 patch(
-                    "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
+                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
                     return_value=_FakeConsumer(),
                 ),
                 patch(
-                    "scripts.start_historical_simulation_modules.topic_dumping._upload_dump_to_cache",
+                    "scripts.historical_simulation_startup.topic_dumping._upload_dump_to_cache",
                     side_effect=TimeoutError("timed out"),
                 ),
             ):
@@ -831,7 +831,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                     },
                 ),
                 patch(
-                    "scripts.start_historical_simulation_modules.topic_dumping._consumer_for_dump",
+                    "scripts.historical_simulation_startup.topic_dumping._consumer_for_dump",
                     return_value=fake_consumer,
                 ),
             ):

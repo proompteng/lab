@@ -16,7 +16,7 @@ from scripts.build_historical_profitability_proof import (
     build_historical_profitability_bundle,
     main,
 )
-from scripts.build_historical_profitability_proof_modules.proof_core import (
+from scripts.historical_profitability_proof.proof_core import (
     _load_json,
     _load_yaml,
 )
@@ -25,7 +25,7 @@ from scripts.build_historical_profitability_proof_modules.proof_core import (
 class TestBuildHistoricalProfitabilityProof(TestCase):
     def test_cli_entrypoint_delegates_to_main(self) -> None:
         with patch(
-            "scripts.build_historical_profitability_proof_modules.main",
+            "scripts.historical_profitability_proof.main",
             return_value=7,
         ) as mocked_main:
             with self.assertRaises(SystemExit) as raised:

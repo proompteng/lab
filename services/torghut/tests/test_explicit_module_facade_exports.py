@@ -8,7 +8,7 @@ import types
 import pytest
 
 
-EXPLICIT_FACADE_MODULES = (
+EXPLICIT_IMPORT_SURFACES = (
     "app.config",
     "app.metrics",
     "app.api.health_checks",
@@ -70,26 +70,47 @@ EXPLICIT_FACADE_MODULES = (
     "app.trading.tigerbeetle_reconcile",
     "app.whitepapers.claim_compiler",
     "app.whitepapers.workflow",
+    "scripts.analyze_historical_simulation",
+    "scripts.historical_simulation_analysis",
+    "scripts.assemble_runtime_ledger_proof_packet",
+    "scripts.runtime_ledger_proof_packet",
+    "scripts.audit_hpairs_signal_liveness",
+    "scripts.hpairs_signal_liveness_audit",
     "scripts.audit_hpairs_source_proof_census",
-    "scripts.audit_hpairs_source_proof_census_modules",
+    "scripts.hpairs_source_proof_census_audit",
+    "scripts.build_historical_profitability_proof",
+    "scripts.historical_profitability_proof",
     "scripts.flatten_paper_account_positions",
-    "scripts.flatten_paper_account_positions_modules",
+    "scripts.paper_account_position_flattening",
+    "scripts.historical_simulation_verification",
+    "scripts.historical_simulation_runtime_verification",
+    "scripts.journal_tigerbeetle_order_events",
+    "scripts.tigerbeetle_order_journal",
+    "scripts.local_intraday_tsmom_replay",
+    "scripts.intraday_tsmom_replay",
+    "scripts.materialize_bounded_paper_route_targets",
+    "scripts.paper_route_target_materialization",
+    "scripts.readback_hpairs_profit_proof_gap",
+    "scripts.hpairs_profit_proof_gap_readback",
     "scripts.renew_latest_empirical_promotion_jobs",
-    "scripts.renew_latest_empirical_promotion_jobs_modules",
+    "scripts.empirical_promotion_renewal",
     "scripts.run_local_simple_lane_replay",
-    "scripts.run_local_simple_lane_replay_modules",
+    "scripts.simple_lane_replay",
     "scripts.run_strategy_autoresearch_loop",
-    "scripts.run_strategy_autoresearch_loop_modules",
+    "scripts.strategy_autoresearch_loop",
+    "scripts.start_historical_simulation",
+    "scripts.historical_simulation_startup",
     "scripts.ta_replay_runner",
+    "scripts.technical_analysis_replay",
     "scripts.verify_trading_readiness",
-    "scripts.verify_trading_readiness_modules",
+    "scripts.trading_readiness_verification",
 )
 
 COMPAT_MODULE_CLASS_ATTR = "__" + "CompatModule__"
 
 
-@pytest.mark.parametrize("module_name", EXPLICIT_FACADE_MODULES)
-def test_old_facade_imports_are_normal_modules(module_name: str) -> None:
+@pytest.mark.parametrize("module_name", EXPLICIT_IMPORT_SURFACES)
+def test_refactored_import_surfaces_are_normal_modules(module_name: str) -> None:
     module = importlib.import_module(module_name)
 
     assert module.__name__ == module_name
@@ -175,6 +196,36 @@ def test_app_and_script_import_surfaces_do_not_ship_compatibility_stubs() -> Non
     ),
 )
 def test_removed_app_module_split_packages_are_not_importable(
+    module_name: str,
+) -> None:
+    importlib.invalidate_caches()
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(module_name)
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    (
+        "scripts.analyze_historical_simulation_modules",
+        "scripts.assemble_runtime_ledger_proof_packet_modules",
+        "scripts.audit_hpairs_signal_liveness_modules",
+        "scripts.audit_hpairs_source_proof_census_modules",
+        "scripts.build_historical_profitability_proof_modules",
+        "scripts.flatten_paper_account_positions_modules",
+        "scripts.historical_simulation_verification_modules",
+        "scripts.journal_tigerbeetle_order_events_modules",
+        "scripts.local_intraday_tsmom_replay_modules",
+        "scripts.materialize_bounded_paper_route_targets_modules",
+        "scripts.readback_hpairs_profit_proof_gap_modules",
+        "scripts.renew_latest_empirical_promotion_jobs_modules",
+        "scripts.run_local_simple_lane_replay_modules",
+        "scripts.run_strategy_autoresearch_loop_modules",
+        "scripts.start_historical_simulation_modules",
+        "scripts.ta_replay_runner_modules",
+        "scripts.verify_trading_readiness_modules",
+    ),
+)
+def test_removed_script_module_split_packages_are_not_importable(
     module_name: str,
 ) -> None:
     importlib.invalidate_caches()

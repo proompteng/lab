@@ -31,13 +31,13 @@ from app.trading.runtime_ledger_proof_policy import (
     normalize_runtime_ledger_proof_mode,
     runtime_ledger_proof_policy_from_env,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.cli import (
+from scripts.runtime_ledger_proof_packet.cli import (
     _parser,
     _required_source_args,
     _source_kind,
     main,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
+from scripts.runtime_ledger_proof_packet.common import (
     ARTIFACT_SCHEMA_VERSION,
     CAPITAL_PROMOTION_STATUS_BLOCKER_PREFIXES,
     CAPITAL_PROMOTION_STATUS_BLOCKERS,
@@ -65,13 +65,13 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
     _text_list,
     _utc_now,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.hpairs import (
+from scripts.runtime_ledger_proof_packet.hpairs import (
     _extend_unique,
     _hpairs_source_proof_census_attachment_blockers,
     _hpairs_source_proof_census_status,
     _source_offsets,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.io_artifacts import (
+from scripts.runtime_ledger_proof_packet.io_artifacts import (
     _apply_service_base_url_defaults,
     _artifact_key,
     _artifact_upload_receipt_blockers,
@@ -86,7 +86,7 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.io_artifacts import (
     _service_endpoint_url,
     _source_fetch_error_payload,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.lineage_verdict import (
+from scripts.runtime_ledger_proof_packet.lineage_verdict import (
     _assembly_code_lineage,
     _commit_refs_match,
     _first_env_text,
@@ -100,10 +100,10 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.lineage_verdict import
     _status_build_code_lineage,
     _status_gate_blocker_summary,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.packet_builder import (
+from scripts.runtime_ledger_proof_packet.packet_builder import (
     build_runtime_ledger_proof_packet,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.paper_route import (
+from scripts.runtime_ledger_proof_packet.paper_route import (
     _check,
     _completion_live_scale_gate,
     _health_gate_bool,
@@ -127,7 +127,7 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.paper_route import (
     _runtime_window_import_lineage,
     _runtime_window_import_payload,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.runtime_import_materialization import (
+from scripts.runtime_ledger_proof_packet.runtime_import_materialization import (
     _RUNTIME_LEDGER_NON_AUTHORITY_MATERIALIZATION_MARKERS,
     _RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS,
     _RUNTIME_LEDGER_PROMOTION_GRADE_SOURCE_MATERIALIZATIONS,
@@ -149,7 +149,7 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.runtime_import_materia
     _runtime_ledger_non_authority_marker_present,
     _runtime_ledger_readback_authority_markers_present,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.runtime_ledger_checks import (
+from scripts.runtime_ledger_proof_packet.runtime_ledger_checks import (
     _completion_blockers,
 )
 

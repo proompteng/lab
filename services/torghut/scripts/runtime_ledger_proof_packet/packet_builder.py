@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 from app.trading.runtime_ledger_proof_policy import normalize_runtime_ledger_proof_mode
-from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
+from scripts.runtime_ledger_proof_packet.common import (
     DEFAULT_RUNTIME_LEDGER_PROOF_MODE,
     DEFAULT_RUNTIME_LEDGER_PROOF_POLICY,
     RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER,
@@ -21,18 +21,18 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
     _text_list,
     _utc_now,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.hpairs import (
+from scripts.runtime_ledger_proof_packet.hpairs import (
     _extend_unique,
     _hpairs_source_proof_census_status,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.lineage_verdict import (
+from scripts.runtime_ledger_proof_packet.lineage_verdict import (
     _first_identity,
     _required_actions,
     _runtime_code_parity,
     _runtime_ledger_immutable_lineage,
     _status_gate_blocker_summary,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.paper_route import (
+from scripts.runtime_ledger_proof_packet.paper_route import (
     _check,
     _missing_target_identity_count,
     _paper_route_import_blockers,
@@ -48,12 +48,12 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.paper_route import (
     _runtime_window_import_lineage,
     _runtime_window_import_payload,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.runtime_import_materialization import (
+from scripts.runtime_ledger_proof_packet.runtime_import_materialization import (
     _runtime_import_authoritative_observation_count,
     _runtime_import_blockers,
     _runtime_import_materialization_summary,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.runtime_ledger_checks import (
+from scripts.runtime_ledger_proof_packet.runtime_ledger_checks import (
     RuntimeLedgerCheckContext,
     RuntimeLedgerThresholds,
     evaluate_runtime_ledger_checks,

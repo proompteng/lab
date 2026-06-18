@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
+from scripts.runtime_ledger_proof_packet.common import (
     RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS,
     RUNTIME_IMPORT_MATERIALIZATION_STRUCTURAL_BLOCKERS,
     _bool,
@@ -16,11 +16,11 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
     _text,
     _text_list,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.hpairs import (
+from scripts.runtime_ledger_proof_packet.hpairs import (
     _extend_unique,
     _source_offsets,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.paper_route import (
+from scripts.runtime_ledger_proof_packet.paper_route import (
     _runtime_window_import_items,
 )
 

@@ -1,4 +1,4 @@
-"""Run Torghut's file-length gate while allowing extracted legacy source payloads."""
+"""Run Torghut's file-length gate with the current extracted-source allowlist."""
 
 from __future__ import annotations
 
@@ -9,9 +9,7 @@ import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from pathlib import PurePosixPath
 
-TORGHUT_PREFIX = "services/torghut/"
 _PYLINT_MESSAGE_RE = re.compile(
     r"^(?P<path>[^:]+):(?P<line>\d+):(?P<column>\d+): "
     r"(?P<code>[A-Z]\d+): "
@@ -19,7 +17,6 @@ _PYLINT_MESSAGE_RE = re.compile(
 _PYLINT_FILE_LENGTH_RE = re.compile(
     r"Too many lines in module \((?P<actual>\d+)/(?P<limit>\d+)\)"
 )
-_SOURCE_PAYLOAD_FILE_PREFIX = "source_" + "segment_"
 # PR 10945 turned these generated payloads into real modules. Later cleanup PRs
 # should split them; until then, keep the gate blocking every other long file.
 _TRANSITIONAL_EXTRACTED_SOURCE_MODULES = {
@@ -36,14 +33,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--base",
         required=True,
-        help="Base commit/ref used to identify legacy source-segment payloads.",
+        help="Diff base kept for CI command compatibility.",
     )
     parser.add_argument("files", nargs="+", help="Paths to pass to Pylint")
     args = parser.parse_args(argv)
 
-    extracted_paths = (
-        _TRANSITIONAL_EXTRACTED_SOURCE_MODULES | _base_extracted_source_paths(args.base)
-    )
+    extracted_paths = _TRANSITIONAL_EXTRACTED_SOURCE_MODULES
     pylint_output = _run(
         [
             sys.executable,
@@ -80,41 +75,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     print("No blocking Pylint file-length violations.")
     return 0
-
-
-def _base_extracted_source_paths(base: str) -> set[str]:
-    repo_root = _repo_root()
-    paths = _run(
-        [
-            "git",
-            "ls-tree",
-            "-r",
-            "--name-only",
-            base,
-            "--",
-            "services/torghut/app",
-            "services/torghut/scripts",
-        ],
-        cwd=repo_root,
-        check=True,
-    )
-    extracted: set[str] = set()
-    for path_text in paths.stdout.splitlines():
-        path = PurePosixPath(path_text)
-        if (
-            not path.name.startswith(_SOURCE_PAYLOAD_FILE_PREFIX)
-            or path.suffix != ".py"
-        ):
-            continue
-        module_dir = path.parent
-        if not module_dir.name.endswith("_modules"):
-            continue
-        public_name = module_dir.name.removesuffix("_modules") + ".py"
-        public_path = module_dir.parent / public_name
-        public_text = str(public_path)
-        if public_text.startswith(TORGHUT_PREFIX):
-            extracted.add(public_text.removeprefix(TORGHUT_PREFIX))
-    return extracted
 
 
 def _filter_legacy_extracted_messages(
@@ -228,11 +188,6 @@ def _run(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-
-
-def _repo_root() -> Path:
-    result = _run(["git", "rev-parse", "--show-toplevel"], check=True)
-    return Path(result.stdout.strip())
 
 
 if __name__ == "__main__":

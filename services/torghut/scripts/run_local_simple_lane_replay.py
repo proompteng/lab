@@ -1,5 +1,5 @@
 from __future__ import annotations
-from scripts.run_local_simple_lane_replay_modules import (
+from scripts.simple_lane_replay import (
     argparse,
     json,
     logging,
@@ -55,11 +55,11 @@ from scripts.run_local_simple_lane_replay_modules import (
     parse_args,
     main,
 )
-from scripts.run_local_simple_lane_replay_modules.fetch_rows_via_kubectl import (
+from scripts.simple_lane_replay.fetch_rows_via_kubectl import (
     _build_artifacts,
     _fetch_rows_via_kubectl,
 )
-from scripts.run_local_simple_lane_replay_modules.shared_context import (
+from scripts.simple_lane_replay.shared_context import (
     _configure_replay_settings,
     _seed_strategies,
 )

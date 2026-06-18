@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
+from scripts.runtime_ledger_proof_packet.common import (
     CAPITAL_PROMOTION_STATUS_BLOCKER_PREFIXES,
     CAPITAL_PROMOTION_STATUS_BLOCKERS,
     RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER,
@@ -15,8 +15,8 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
     _text,
     _text_list,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.hpairs import _extend_unique
-from scripts.assemble_runtime_ledger_proof_packet_modules.paper_route import (
+from scripts.runtime_ledger_proof_packet.hpairs import _extend_unique
+from scripts.runtime_ledger_proof_packet.paper_route import (
     _runtime_window_import_items,
 )
 

@@ -131,19 +131,19 @@ class TestRunReplayRejectionEvidence(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
+                "scripts.intraday_tsmom_replay.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
+                "scripts.intraday_tsmom_replay.replay_loop._iter_signal_rows",
                 return_value=iter([signal]),
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                "scripts.intraday_tsmom_replay.replay_state.DecisionEngine",
                 _Engine,
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.runtime_evaluation.allocator_from_settings",
+                "scripts.intraday_tsmom_replay.runtime_evaluation.allocator_from_settings",
                 return_value=_Allocator(),
             ),
         ):
@@ -252,15 +252,15 @@ class TestRunReplayRejectionEvidence(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
+                "scripts.intraday_tsmom_replay.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
+                "scripts.intraday_tsmom_replay.replay_loop._iter_signal_rows",
                 return_value=iter([signal]),
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                "scripts.intraday_tsmom_replay.replay_state.DecisionEngine",
                 _Engine,
             ),
         ):
@@ -353,15 +353,15 @@ class TestRunReplayRejectionEvidence(_TestLocalIntradayTsmomReplayBase):
 
         with (
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_state._load_strategies",
+                "scripts.intraday_tsmom_replay.replay_state._load_strategies",
                 return_value=[strategy],
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_loop._iter_signal_rows",
+                "scripts.intraday_tsmom_replay.replay_loop._iter_signal_rows",
                 return_value=iter([signal_one, signal_two]),
             ),
             patch(
-                "scripts.local_intraday_tsmom_replay_modules.replay_state.DecisionEngine",
+                "scripts.intraday_tsmom_replay.replay_state.DecisionEngine",
                 _Engine,
             ),
         ):

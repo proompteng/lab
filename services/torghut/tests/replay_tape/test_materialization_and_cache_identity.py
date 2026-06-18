@@ -419,7 +419,7 @@ class TestReplayTapeMaterializationAndCacheIdentity(_TestReplayTapeBase):
         )
 
         with patch(
-            "scripts.local_intraday_tsmom_replay_modules.signal_rows._fetch_chunk",
+            "scripts.intraday_tsmom_replay.signal_rows._fetch_chunk",
             fetch_chunk,
         ):
             rows = list(_iter_signal_rows(config))

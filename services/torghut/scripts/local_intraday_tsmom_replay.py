@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from scripts.local_intraday_tsmom_replay_modules.replay_types import (
+from scripts.intraday_tsmom_replay.replay_types import (
     ClosedTrade,
     DEFAULT_CHUNK_MINUTES,
     DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
@@ -32,7 +32,7 @@ from scripts.local_intraday_tsmom_replay_modules.replay_types import (
     logger,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.ledger import (
+from scripts.intraday_tsmom_replay.ledger import (
     _append_ledger_fill,
     _append_ledger_resolution,
     _append_ledger_submission,
@@ -43,18 +43,18 @@ from scripts.local_intraday_tsmom_replay_modules.ledger import (
     _ledger_resolution_event_type,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.cli_args import (
+from scripts.intraday_tsmom_replay.cli_args import (
     _parse_args,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.strategy_loading import (
+from scripts.intraday_tsmom_replay.strategy_loading import (
     _b64,
     _http_query,
     _kubectl_clickhouse_query,
     _load_strategies,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.signal_rows import (
+from scripts.intraday_tsmom_replay.signal_rows import (
     FetchChunkRequest,
     _extract_ask,
     _extract_bid,
@@ -77,18 +77,18 @@ from scripts.local_intraday_tsmom_replay_modules.signal_rows import (
     _to_decimal,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.fill_stats import (
+from scripts.intraday_tsmom_replay.fill_stats import (
     _ensure_replay_stats_bucket,
     _log_trade_closed,
     _record_fill_order_type,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.costing import (
+from scripts.intraday_tsmom_replay.costing import (
     _estimate_trade_cost,
     _estimate_trade_cost_lineage,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.replay_stats import (
+from scripts.intraday_tsmom_replay.replay_stats import (
     _build_near_miss,
     _init_day_stats,
     _init_funnel_stats,
@@ -103,7 +103,7 @@ from scripts.local_intraday_tsmom_replay_modules.replay_stats import (
     _signal_regime_label,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.order_lifecycle import (
+from scripts.intraday_tsmom_replay.order_lifecycle import (
     TraceBlockContext,
     _append_decimal_sample,
     _apply_order_preferences,
@@ -135,7 +135,7 @@ from scripts.local_intraday_tsmom_replay_modules.order_lifecycle import (
     _should_replace_pending_order,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.positions import (
+from scripts.intraday_tsmom_replay.positions import (
     ClosePositionRequest,
     FillAccountingState,
     FillExecution,
@@ -148,16 +148,16 @@ from scripts.local_intraday_tsmom_replay_modules.positions import (
     _positions_payload,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.flattening import (
+from scripts.intraday_tsmom_replay.flattening import (
     FlattenPositionsRequest,
     _flatten_positions,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.replay_loop import (
+from scripts.intraday_tsmom_replay.replay_loop import (
     run_replay,
 )
 
-from scripts.local_intraday_tsmom_replay_modules.cli import (
+from scripts.intraday_tsmom_replay.cli import (
     main,
 )
 

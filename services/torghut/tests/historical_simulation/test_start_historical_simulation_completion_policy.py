@@ -33,7 +33,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
             state_path.write_text(json.dumps({"ta_job_state": "running"}))
 
             with patch(
-                "scripts.start_historical_simulation_modules.replay_execution._read_simulation_runtime_lock",
+                "scripts.historical_simulation_startup.replay_execution._read_simulation_runtime_lock",
                 return_value={"run_id": "sim-2"},
             ):
                 report = start_historical_simulation._teardown(
@@ -51,7 +51,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
             with patch(
-                "scripts.start_historical_simulation_modules.replay_execution._release_simulation_runtime_lock",
+                "scripts.historical_simulation_startup.replay_execution._release_simulation_runtime_lock",
                 return_value={"status": "released", "run_id": resources.run_id},
             ) as release_lock:
                 report = start_historical_simulation._teardown(
@@ -79,25 +79,25 @@ class TestStartHistoricalSimulationCompletionPolicy(
 
             with (
                 patch(
-                    "scripts.start_historical_simulation_modules.replay_execution._read_simulation_runtime_lock",
+                    "scripts.historical_simulation_startup.replay_execution._read_simulation_runtime_lock",
                     return_value={"run_id": resources.run_id},
                 ),
                 patch(
-                    "scripts.start_historical_simulation_modules.replay_execution._release_simulation_runtime_lock",
+                    "scripts.historical_simulation_startup.replay_execution._release_simulation_runtime_lock",
                     return_value={"status": "released", "run_id": resources.run_id},
                 ) as release_lock,
                 patch(
-                    "scripts.start_historical_simulation_modules.runtime_migrations._restore_ta_configuration"
+                    "scripts.historical_simulation_startup.runtime_migrations._restore_ta_configuration"
                 ) as restore_ta,
                 patch(
-                    "scripts.start_historical_simulation_modules.runtime_migrations._restore_torghut_env"
+                    "scripts.historical_simulation_startup.runtime_migrations._restore_torghut_env"
                 ) as restore_env,
                 patch(
-                    "scripts.start_historical_simulation_modules.runtime_migrations._restart_ta_deployment",
+                    "scripts.historical_simulation_startup.runtime_migrations._restart_ta_deployment",
                     return_value=11,
                 ) as restart_ta,
                 patch(
-                    "scripts.start_historical_simulation_modules.lifecycle._ensure_supported_binary",
+                    "scripts.historical_simulation_startup.lifecycle._ensure_supported_binary",
                     return_value=None,
                 ),
             ):
@@ -553,7 +553,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
         )
         with (
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._monitor_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._monitor_snapshot",
                 return_value={
                     "trade_decisions": 10,
                     "executions": 5,
@@ -563,11 +563,11 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 },
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._signal_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._signal_snapshot",
                 return_value={"signal_rows": 10, "price_rows": 10},
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.artifact_verification.time.sleep",
+                "scripts.historical_simulation_runtime_verification.artifact_verification.time.sleep",
                 return_value=None,
             ),
         ):
@@ -609,7 +609,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
         )
         with (
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._monitor_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._monitor_snapshot",
                 return_value={
                     "trade_decisions": 12,
                     "executions": 12,
@@ -620,7 +620,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 },
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._signal_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._signal_snapshot",
                 return_value={
                     "signal_rows": 120,
                     "price_rows": 120,
@@ -629,7 +629,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 },
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.artifact_verification.time.sleep",
+                "scripts.historical_simulation_runtime_verification.artifact_verification.time.sleep",
                 return_value=None,
             ),
         ):
@@ -727,7 +727,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
             password=None,
         )
         with patch(
-            "scripts.historical_simulation_verification_modules.artifact_verification._simulation_progress_snapshot",
+            "scripts.historical_simulation_runtime_verification.artifact_verification._simulation_progress_snapshot",
             return_value={
                 "components": {
                     "replay": {
@@ -805,7 +805,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
         )
         with (
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._progress_component_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._progress_component_snapshot",
                 return_value={
                     "torghut": {
                         "trade_decisions": 0,
@@ -822,7 +822,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 },
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._monitor_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._monitor_snapshot",
                 return_value={
                     "trade_decisions": 213,
                     "executions": 60,
@@ -832,7 +832,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 },
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._signal_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._signal_snapshot",
                 return_value={
                     "signal_rows": 1,
                     "price_rows": 1,
@@ -841,7 +841,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 },
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.artifact_verification.time.sleep",
+                "scripts.historical_simulation_runtime_verification.artifact_verification.time.sleep",
                 return_value=None,
             ),
         ):
@@ -896,7 +896,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
         )
         with (
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._monitor_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._monitor_snapshot",
                 side_effect=[
                     {
                         "trade_decisions": 0,
@@ -917,7 +917,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 ],
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.runtime_progress._signal_snapshot",
+                "scripts.historical_simulation_runtime_verification.runtime_progress._signal_snapshot",
                 side_effect=[
                     {
                         "signal_rows": 120,
@@ -934,7 +934,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 ],
             ),
             patch(
-                "scripts.historical_simulation_verification_modules.artifact_verification.time.sleep",
+                "scripts.historical_simulation_runtime_verification.artifact_verification.time.sleep",
                 return_value=None,
             ),
         ):

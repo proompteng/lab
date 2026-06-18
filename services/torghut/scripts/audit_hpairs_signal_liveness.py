@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.audit_hpairs_signal_liveness_modules import (
+from scripts.hpairs_signal_liveness_audit import (
     DEFAULT_HPAIRS_ACCOUNT_LABEL,
     DEFAULT_HPAIRS_CANDIDATE_ID,
     DEFAULT_HPAIRS_HYPOTHESIS_ID,

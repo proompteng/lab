@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
+from scripts.runtime_ledger_proof_packet.common import (
     HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
     _mapping,
     _sequence,

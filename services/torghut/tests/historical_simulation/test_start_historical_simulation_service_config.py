@@ -60,7 +60,7 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
             raise AssertionError(f"unexpected request path: {path}")
 
         with patch(
-            "scripts.start_historical_simulation_modules.kafka_runtime._http_request",
+            "scripts.historical_simulation_startup.kafka_runtime._http_request",
             side_effect=_fake_http_request,
         ):
             report = _ensure_simulation_schema_subjects(
@@ -140,11 +140,11 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_json",
+                "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
                 return_value=service_payload,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_patch",
+                "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch",
                 side_effect=lambda namespace, kind, name, patch: captured_patch.update(
                     {"namespace": namespace, "kind": kind, "name": name, "patch": patch}
                 ),
@@ -313,11 +313,11 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_json",
+                "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
                 return_value=service_payload,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_patch",
+                "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch",
                 side_effect=lambda namespace, kind, name, patch: captured_patch.update(
                     {"namespace": namespace, "kind": kind, "name": name, "patch": patch}
                 ),
@@ -426,11 +426,11 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
 
         with (
             patch(
-                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_json",
+                "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
                 return_value=service_payload,
             ),
             patch(
-                "scripts.start_historical_simulation_modules.runtime_migrations._kubectl_patch",
+                "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch",
                 side_effect=lambda namespace, kind, name, patch: captured_patch.update(
                     {"namespace": namespace, "kind": kind, "name": name, "patch": patch}
                 ),

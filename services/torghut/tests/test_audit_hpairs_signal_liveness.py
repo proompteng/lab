@@ -5,8 +5,8 @@ import runpy
 from pathlib import Path
 
 from scripts import audit_hpairs_signal_liveness as audit
-from scripts import audit_hpairs_signal_liveness_modules as audit_modules
-from scripts.audit_hpairs_signal_liveness_modules import liveness_core, veto_report
+from scripts import hpairs_signal_liveness_audit as audit_package
+from scripts.hpairs_signal_liveness_audit import liveness_core, veto_report
 
 
 def _base_fixture() -> dict[str, object]:
@@ -267,7 +267,7 @@ def test_cli_module_entrypoint_exits_with_main_result(monkeypatch: object) -> No
     def _fake_main() -> int:
         return 17
 
-    monkeypatch.setattr(audit_modules, "main", _fake_main)
+    monkeypatch.setattr(audit_package, "main", _fake_main)
     audit_path = audit.__file__
     assert audit_path is not None
 

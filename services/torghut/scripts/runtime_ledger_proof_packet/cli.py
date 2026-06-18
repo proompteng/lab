@@ -7,7 +7,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
+from scripts.runtime_ledger_proof_packet.common import (
     DEFAULT_RUNTIME_LEDGER_PROOF_MODE,
     DEFAULT_RUNTIME_LEDGER_PROOF_POLICY,
     DEFAULT_SERVICE_FETCH_TIMEOUT_SECONDS,
@@ -15,12 +15,12 @@ from scripts.assemble_runtime_ledger_proof_packet_modules.common import (
     _decimal,
     _text,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.io_artifacts import (
+from scripts.runtime_ledger_proof_packet.io_artifacts import (
     _apply_service_base_url_defaults,
     _attach_and_upload_artifact,
     _load_optional_json_object,
 )
-from scripts.assemble_runtime_ledger_proof_packet_modules.packet_builder import (
+from scripts.runtime_ledger_proof_packet.packet_builder import (
     build_runtime_ledger_proof_packet,
 )
 

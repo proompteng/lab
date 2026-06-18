@@ -191,7 +191,7 @@ class TestOrderPreferencesPositionsAndFlattening(_TestLocalIntradayTsmomReplayBa
         signal = self._signal(bid="524.90", ask="525.10", price="525.00")
 
         with patch(
-            "scripts.local_intraday_tsmom_replay_modules.order_lifecycle.settings.trading_execution_prefer_limit",
+            "scripts.intraday_tsmom_replay.order_lifecycle.settings.trading_execution_prefer_limit",
             False,
         ):
             updated = _apply_order_preferences(decision, signal)
@@ -215,7 +215,7 @@ class TestOrderPreferencesPositionsAndFlattening(_TestLocalIntradayTsmomReplayBa
         signal = self._signal(bid="524.90", ask="525.10", price="525.00")
 
         with patch(
-            "scripts.local_intraday_tsmom_replay_modules.order_lifecycle.settings.trading_execution_prefer_limit",
+            "scripts.intraday_tsmom_replay.order_lifecycle.settings.trading_execution_prefer_limit",
             False,
         ):
             updated = _apply_order_preferences(
@@ -245,7 +245,7 @@ class TestOrderPreferencesPositionsAndFlattening(_TestLocalIntradayTsmomReplayBa
         signal = self._signal(bid="524.90", ask="525.10", price="525.00")
 
         with patch(
-            "scripts.local_intraday_tsmom_replay_modules.order_lifecycle.settings.trading_execution_prefer_limit",
+            "scripts.intraday_tsmom_replay.order_lifecycle.settings.trading_execution_prefer_limit",
             True,
         ):
             updated = _apply_order_preferences(decision, signal)

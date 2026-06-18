@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from scripts.assemble_runtime_ledger_proof_packet_modules.cli import main
-from scripts.assemble_runtime_ledger_proof_packet_modules.packet_builder import (
+from scripts.runtime_ledger_proof_packet.cli import main
+from scripts.runtime_ledger_proof_packet.packet_builder import (
     build_runtime_ledger_proof_packet,
 )
 

@@ -6,7 +6,7 @@ import time
 from http.client import HTTPConnection, HTTPSConnection
 
 from app.trading.paper_route_target_plan import paper_route_target_plan_targets
-from scripts.materialize_bounded_paper_route_targets_modules import (
+from scripts.paper_route_target_materialization import (
     ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER,
     ACTIVE_TARGET_WINDOW_SKIP_REASON,
     DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,

@@ -156,7 +156,7 @@ class TestReplayEnvironmentAndExecutionHelpers(_TestLocalIntradayTsmomReplayBase
             )
 
         with patch(
-            "scripts.local_intraday_tsmom_replay_modules.strategy_loading.subprocess.run",
+            "scripts.intraday_tsmom_replay.strategy_loading.subprocess.run",
             return_value=Namespace(returncode=1, stdout="", stderr="denied"),
         ):
             with self.assertRaisesRegex(
@@ -170,7 +170,7 @@ class TestReplayEnvironmentAndExecutionHelpers(_TestLocalIntradayTsmomReplayBase
                 )
 
         with patch(
-            "scripts.local_intraday_tsmom_replay_modules.strategy_loading.subprocess.run",
+            "scripts.intraday_tsmom_replay.strategy_loading.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd=["kubectl"], timeout=2),
         ):
             with self.assertRaisesRegex(
@@ -269,7 +269,7 @@ class TestReplayEnvironmentAndExecutionHelpers(_TestLocalIntradayTsmomReplayBase
             )
 
         with patch(
-            "scripts.local_intraday_tsmom_replay_modules.signal_rows._http_query",
+            "scripts.intraday_tsmom_replay.signal_rows._http_query",
             side_effect=fake_http_query,
         ):
             rows = _fetch_chunk(
@@ -299,7 +299,7 @@ class TestReplayEnvironmentAndExecutionHelpers(_TestLocalIntradayTsmomReplayBase
         )()
 
         with patch(
-            "scripts.local_intraday_tsmom_replay_modules.strategy_loading.subprocess.run",
+            "scripts.intraday_tsmom_replay.strategy_loading.subprocess.run",
             return_value=completed,
         ) as run_mock:
             output = _http_query(

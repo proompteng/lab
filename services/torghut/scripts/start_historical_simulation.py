@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.start_historical_simulation_modules import (  # noqa: F401
+from scripts.historical_simulation_startup import (  # noqa: F401
     APPLY_CONFIRMATION_PHRASE,
     Any,
     COMPONENT_ARTIFACTS,
