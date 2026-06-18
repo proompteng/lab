@@ -56,7 +56,8 @@ Required outcome for all three warm reruns:
 Suggested supporting commands:
 
 ```bash
-python services/torghut/scripts/start_historical_simulation.py --mode run ...
+cd services/torghut
+uv run python -m scripts.historical_simulation_startup --mode run ...
 python services/torghut/scripts/run_simulation_analysis.py activity ...
 ```
 

@@ -14,7 +14,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     datetime,
     patch,
     replace,
-    start_historical_simulation,
+    historical_simulation_startup,
     timezone,
 )
 
@@ -76,7 +76,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                 with self.assertRaisesRegex(
                     RuntimeError, "restore_state_missing:checkpoint_dir,savepoint_dir"
                 ):
-                    start_historical_simulation._apply(
+                    historical_simulation_startup._apply(
                         resources=resources,
                         manifest=manifest,
                         kafka_config=kafka_config,
@@ -248,7 +248,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                         return_value=None,
                     ),
                 )
-                report = start_historical_simulation._apply(
+                report = historical_simulation_startup._apply(
                     resources=resources,
                     manifest=manifest,
                     kafka_config=kafka_config,
@@ -420,7 +420,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                         return_value=None,
                     ),
                 )
-                report = start_historical_simulation._apply(
+                report = historical_simulation_startup._apply(
                     resources=resources,
                     manifest=manifest,
                     kafka_config=kafka_config,
@@ -503,7 +503,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                 ) as release_lock,
             ):
                 with self.assertRaisesRegex(RuntimeError, "topic_create_failed"):
-                    start_historical_simulation._apply(
+                    historical_simulation_startup._apply(
                         resources=resources,
                         manifest=manifest,
                         kafka_config=kafka_config,
@@ -545,7 +545,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
             "scripts.historical_simulation_startup.storage_and_database._http_clickhouse_query",
             side_effect=_fake_clickhouse_query,
         ):
-            start_historical_simulation._ensure_clickhouse_runtime_tables(
+            historical_simulation_startup._ensure_clickhouse_runtime_tables(
                 config=ClickHouseRuntimeConfig(
                     http_url="http://clickhouse:8123",
                     username="torghut",
@@ -621,7 +621,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                 side_effect=_fake_clickhouse_query,
             ),
         ):
-            start_historical_simulation._ensure_clickhouse_runtime_tables(
+            historical_simulation_startup._ensure_clickhouse_runtime_tables(
                 config=ClickHouseRuntimeConfig(
                     http_url="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
                     username="torghut",
@@ -695,7 +695,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                 "scripts.historical_simulation_startup.storage_and_database.time.sleep"
             ) as sleep_mock,
         ):
-            start_historical_simulation._wait_for_clickhouse_table(
+            historical_simulation_startup._wait_for_clickhouse_table(
                 config=ClickHouseRuntimeConfig(
                     http_url="http://clickhouse:8123",
                     username="torghut",
@@ -737,7 +737,7 @@ class TestStartHistoricalSimulationApplyB(StartHistoricalSimulationTestCaseBase)
                 "scripts.historical_simulation_startup.storage_and_database.time.sleep"
             ) as sleep_mock,
         ):
-            start_historical_simulation._wait_for_clickhouse_database(
+            historical_simulation_startup._wait_for_clickhouse_database(
                 config=ClickHouseRuntimeConfig(
                     http_url="http://clickhouse:8123",
                     username="torghut",

@@ -568,7 +568,7 @@ Use a single command to plan/run/apply/report/teardown historical simulation run
 
 ```bash
 cd services/torghut
-uv run python scripts/start_historical_simulation.py \
+uv run python -m scripts.historical_simulation_startup \
   --mode plan \
   --run-id sim-2026-02-27-01 \
   --dataset-manifest config/simulation/example-dataset.yaml
@@ -578,7 +578,7 @@ Run end-to-end lifecycle (`apply -> monitor -> report -> teardown`) with an expl
 
 ```bash
 cd services/torghut
-uv run python scripts/start_historical_simulation.py \
+uv run python -m scripts.historical_simulation_startup \
   --mode run \
   --run-id sim-2026-02-27-01 \
   --dataset-manifest config/simulation/example-dataset.yaml \
@@ -595,7 +595,7 @@ deriving research fixtures from replay internals.
 
 ```bash
 cd services/torghut
-uv run python scripts/start_historical_simulation.py \
+uv run python -m scripts.historical_simulation_startup \
   --mode apply \
   --run-id sim-2026-02-27-01 \
   --dataset-manifest config/simulation/example-dataset.yaml \
@@ -629,7 +629,7 @@ Teardown restores previously captured TA + Torghut runtime config:
 
 ```bash
 cd services/torghut
-uv run python scripts/start_historical_simulation.py \
+uv run python -m scripts.historical_simulation_startup \
   --mode teardown \
   --run-id sim-2026-02-27-01 \
   --dataset-manifest config/simulation/example-dataset.yaml

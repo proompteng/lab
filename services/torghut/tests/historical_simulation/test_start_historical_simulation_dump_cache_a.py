@@ -14,7 +14,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     json,
     patch,
     replace,
-    start_historical_simulation,
+    historical_simulation_startup,
 )
 
 
@@ -179,7 +179,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             }
         )
         dump_bytes = f"{dump_line}\n".encode("utf-8")
-        dump_sha256 = start_historical_simulation.hashlib.sha256(dump_bytes).hexdigest()
+        dump_sha256 = historical_simulation_startup.hashlib.sha256(
+            dump_bytes
+        ).hexdigest()
         cache_artifact_path = (
             "s3://argo-workflows/torghut-simulation-cache/cache-key/source-dump.ndjson"
         )
@@ -208,7 +210,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
         artifact_manifest = {
             "dataset_id": resources.dataset_id,
             "run_id": "prior-run",
-            "lineage": start_historical_simulation._cache_lineage_payload(manifest),
+            "lineage": historical_simulation_startup._cache_lineage_payload(manifest),
             "dump_format": "ndjson",
             "cache_policy": "prefer_cache",
             "replay_profile": "compact",
@@ -292,7 +294,9 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             }
         )
         dump_bytes = f"{dump_line}\n".encode("utf-8")
-        dump_sha256 = start_historical_simulation.hashlib.sha256(dump_bytes).hexdigest()
+        dump_sha256 = historical_simulation_startup.hashlib.sha256(
+            dump_bytes
+        ).hexdigest()
         manifest = {
             "dataset_id": resources.dataset_id,
             "dataset_snapshot_ref": "dataset-a@snapshot-1",
@@ -308,7 +312,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             },
             "window": {"start": "2026-01-01T00:00:00Z", "end": "2026-01-01T01:00:00Z"},
         }
-        cache_metadata = start_historical_simulation._cache_metadata(manifest)
+        cache_metadata = historical_simulation_startup._cache_metadata(manifest)
         cache_artifact_path = cache_metadata["cache_artifact_path"]
         cache_manifest_path = cache_metadata["cache_manifest_path"]
         self.assertTrue(cache_metadata["cache_key"])
@@ -317,7 +321,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
         artifact_manifest = {
             "dataset_id": resources.dataset_id,
             "run_id": "prior-run",
-            "lineage": start_historical_simulation._cache_lineage_payload(manifest),
+            "lineage": historical_simulation_startup._cache_lineage_payload(manifest),
             "dump_format": "ndjson",
             "cache_policy": "prefer_cache",
             "replay_profile": "compact",
@@ -386,7 +390,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             },
             "window": {"start": "2026-01-01T00:00:00Z", "end": "2026-01-01T01:00:00Z"},
         }
-        cache_metadata = start_historical_simulation._cache_metadata(manifest)
+        cache_metadata = historical_simulation_startup._cache_metadata(manifest)
         artifact_manifest = {
             "dataset_id": "dataset-a",
             "run_id": "prior-run",
@@ -432,9 +436,11 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                 "scripts.historical_simulation_startup.state_and_cache._simulation_cache_client_from_env",
                 return_value=(_FakeCephClient(), "argo-workflows"),
             ):
-                report = start_historical_simulation._restore_cached_dump_if_available(
-                    manifest=manifest,
-                    dump_path=dump_path,
+                report = (
+                    historical_simulation_startup._restore_cached_dump_if_available(
+                        manifest=manifest,
+                        dump_path=dump_path,
+                    )
                 )
 
         self.assertIsNone(report)
@@ -465,9 +471,11 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                     "non-hit cache decisions must not attempt restore"
                 ),
             ):
-                report = start_historical_simulation._restore_cached_dump_if_available(
-                    manifest=manifest,
-                    dump_path=dump_path,
+                report = (
+                    historical_simulation_startup._restore_cached_dump_if_available(
+                        manifest=manifest,
+                        dump_path=dump_path,
+                    )
                 )
 
         self.assertIsNone(report)
@@ -481,7 +489,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             dump_path.write_bytes(b"x" * (5 * 1024 * 1024))
 
             timeout_seconds = (
-                start_historical_simulation._simulation_cache_upload_timeout_seconds(
+                historical_simulation_startup._simulation_cache_upload_timeout_seconds(
                     dump_path
                 )
             )
@@ -535,14 +543,14 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
             dump_path.write_bytes(b"{}\n")
             dump_manifest_path = (
-                start_historical_simulation._dump_artifact_manifest_path(dump_path)
+                historical_simulation_startup._dump_artifact_manifest_path(dump_path)
             )
             dump_manifest_path.write_text(
                 json.dumps(
                     {
                         "dataset_id": "dataset-a",
                         "run_id": "sim-1",
-                        "lineage": start_historical_simulation._cache_lineage_payload(
+                        "lineage": historical_simulation_startup._cache_lineage_payload(
                             manifest
                         ),
                         "dump_format": "ndjson",
@@ -572,7 +580,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
                     return_value=None,
                 ),
             ):
-                report = start_historical_simulation._upload_dump_to_cache(
+                report = historical_simulation_startup._upload_dump_to_cache(
                     manifest=manifest,
                     dump_path=dump_path,
                 )

@@ -12,11 +12,10 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from app.trading.profitability_archive import archive_historical_simulation_run
-from scripts.start_historical_simulation import _build_resources, _load_manifest
+from scripts.historical_simulation_startup import _build_resources, _load_manifest
 
 _SERVICE_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPTS_ROOT = Path(__file__).resolve().parent
-_START_SIMULATION_SCRIPT = _SCRIPTS_ROOT / "start_historical_simulation.py"
 _ANALYZE_SIMULATION_SCRIPT = _SCRIPTS_ROOT / "analyze_historical_simulation.py"
 
 
@@ -136,7 +135,8 @@ def _execute_manifest_and_collect_run_dir(
     _run_subprocess(
         [
             python_bin,
-            str(_START_SIMULATION_SCRIPT),
+            "-m",
+            "scripts.historical_simulation_startup",
             "--run-id",
             run_id,
             "--dataset-manifest",

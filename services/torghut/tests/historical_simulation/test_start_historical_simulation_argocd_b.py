@@ -11,7 +11,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     call,
     patch,
     re,
-    start_historical_simulation,
+    historical_simulation_startup,
     yaml,
 )
 
@@ -40,7 +40,9 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         )
         self.assertEqual(
             ignored_names,
-            set(start_historical_simulation.SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_KEYS),
+            set(
+                historical_simulation_startup.SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_KEYS
+            ),
         )
         self.assertNotIn("TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED", ignored_names)
         self.assertNotIn("TRADING_ORDER_FEED_ASSIGNMENT_MODE", ignored_names)
@@ -61,13 +63,13 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         self,
     ) -> None:
         self.assertEqual(
-            start_historical_simulation._argocd_application_mode_from_sync_policy(
+            historical_simulation_startup._argocd_application_mode_from_sync_policy(
                 {"syncOptions": ["CreateNamespace=true"]}
             ),
             "manual",
         )
         self.assertEqual(
-            start_historical_simulation._argocd_application_mode_from_sync_policy(
+            historical_simulation_startup._argocd_application_mode_from_sync_policy(
                 {"automated": {"enabled": True}}
             ),
             "auto",
@@ -79,7 +81,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         policy = {"syncOptions": ["CreateNamespace=true"]}
 
         manual_policy = (
-            start_historical_simulation._manual_argocd_application_sync_policy(policy)
+            historical_simulation_startup._manual_argocd_application_sync_policy(policy)
         )
 
         self.assertEqual(manual_policy, policy)
@@ -98,7 +100,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         }
 
         manual_policy = (
-            start_historical_simulation._manual_argocd_application_sync_policy(policy)
+            historical_simulation_startup._manual_argocd_application_sync_policy(policy)
         )
 
         self.assertEqual(
@@ -273,10 +275,10 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
         ignore_differences_mock.assert_called_once_with(
             config=config,
             app_name="torghut",
-            required_ignore_differences=start_historical_simulation._simulation_runtime_argocd_ignore_differences(
+            required_ignore_differences=historical_simulation_startup._simulation_runtime_argocd_ignore_differences(
                 resources=resources
             ),
-            desired_ignore_differences=start_historical_simulation._merge_argocd_application_ignore_differences(
+            desired_ignore_differences=historical_simulation_startup._merge_argocd_application_ignore_differences(
                 current_ignore_differences=baseline_ignore_differences,
                 resources=resources,
             ),
@@ -312,7 +314,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
             ta_deployment="torghut-ta-sim",
         )
         runtime_ignore_differences = (
-            start_historical_simulation._simulation_runtime_argocd_ignore_differences(
+            historical_simulation_startup._simulation_runtime_argocd_ignore_differences(
                 resources=resources
             )
         )
@@ -357,7 +359,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 "scripts.historical_simulation_startup.argocd_rollouts._prepare_argocd_for_run"
             ) as prepare_mock,
         ):
-            report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(
+            report = historical_simulation_startup._ensure_argocd_manual_before_runtime_mutation(
                 config=config,
                 resources=resources,
             )
@@ -433,7 +435,7 @@ class TestStartHistoricalSimulationArgocdB(StartHistoricalSimulationTestCaseBase
                 },
             ) as prepare_mock,
         ):
-            report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(
+            report = historical_simulation_startup._ensure_argocd_manual_before_runtime_mutation(
                 config=config,
                 resources=resources,
             )

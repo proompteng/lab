@@ -226,7 +226,7 @@ spec:
 
           mkdir -p "$OUTPUT_ROOT"
           echo "RUN_LOG invoking_python"
-          /opt/venv/bin/python -u /app/scripts/start_historical_simulation.py "${SCRIPT_ARGS[@]}"
+          /opt/venv/bin/python -u -m scripts.historical_simulation_startup "${SCRIPT_ARGS[@]}"
     outputs:
       artifacts:
         - name: simulation-output

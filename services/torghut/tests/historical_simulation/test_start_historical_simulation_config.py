@@ -23,7 +23,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     historical_simulation_verification,
     json,
     patch,
-    start_historical_simulation,
+    historical_simulation_startup,
 )
 
 
@@ -89,7 +89,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         self,
     ) -> None:
         self.assertEqual(
-            start_historical_simulation._cluster_service_host_candidates(
+            historical_simulation_startup._cluster_service_host_candidates(
                 "karapace.kafka.svc"
             ),
             ["karapace.kafka.svc", "karapace.kafka.svc.cluster.local"],
@@ -99,7 +99,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         self,
     ) -> None:
         self.assertEqual(
-            start_historical_simulation._cluster_service_host_candidates(
+            historical_simulation_startup._cluster_service_host_candidates(
                 "karapace.kafka"
             ),
             [
@@ -113,7 +113,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         self,
     ) -> None:
         self.assertEqual(
-            start_historical_simulation._kafka_host_candidates(
+            historical_simulation_startup._kafka_host_candidates(
                 "kafka-pool-b-5.kafka-kafka-brokers.kafka.svc"
             ),
             [
@@ -128,7 +128,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         )
 
     def test_ta_restore_policy_defaults_compact_profiles_to_stateless(self) -> None:
-        policy = start_historical_simulation._ta_restore_policy(
+        policy = historical_simulation_startup._ta_restore_policy(
             {
                 "window": {
                     "start": "2026-03-06T14:30:00Z",
@@ -144,7 +144,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         self.assertEqual(policy["source"], "profile_default:compact")
 
     def test_ta_restore_policy_defaults_full_day_profiles_to_stateless(self) -> None:
-        policy = start_historical_simulation._ta_restore_policy(
+        policy = historical_simulation_startup._ta_restore_policy(
             {
                 "window": {
                     "start": "2026-03-06T14:30:00Z",
@@ -360,7 +360,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
             },
         }
 
-        normalized = start_historical_simulation._canonicalize_warm_lane_manifest(
+        normalized = historical_simulation_startup._canonicalize_warm_lane_manifest(
             manifest,
             resources=resources,
         )
@@ -464,7 +464,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         )
         with TemporaryDirectory() as tmpdir:
             app_root = Path(tmpdir) / "app"
-            script_path = app_root / "scripts" / "start_historical_simulation.py"
+            script_path = app_root / "scripts" / "historical_simulation_startup.py"
             schema_path = app_root / "docs" / "torghut" / "schemas" / "ta-signals.avsc"
             script_path.parent.mkdir(parents=True)
             script_path.write_text("# test", encoding="utf-8")
@@ -731,7 +731,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         )
 
         self.assertFalse(
-            start_historical_simulation._is_transient_postgres_error(error)
+            historical_simulation_startup._is_transient_postgres_error(error)
         )
 
     def test_find_vector_extension_blocking_revision(self) -> None:

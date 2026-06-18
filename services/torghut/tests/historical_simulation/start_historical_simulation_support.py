@@ -15,8 +15,8 @@ from unittest import TestCase
 from unittest.mock import call, patch
 
 import yaml
-from scripts import historical_simulation_verification, start_historical_simulation
-from scripts.start_historical_simulation import (
+from scripts import historical_simulation_verification, historical_simulation_startup
+from scripts.historical_simulation_startup import (
     ArgocdAutomationConfig,
     ClickHouseRuntimeConfig,
     KafkaRuntimeConfig,
@@ -78,8 +78,6 @@ from scripts.start_historical_simulation import (
     _verify_isolation_guards,
 )
 
-
-__all__: tuple[str, ...] = ()
 
 __all__: tuple[str, ...] = (
     "Any",
@@ -155,7 +153,7 @@ __all__: tuple[str, ...] = (
     "patch",
     "re",
     "replace",
-    "start_historical_simulation",
+    "historical_simulation_startup",
     "timezone",
     "uuid",
     "yaml",

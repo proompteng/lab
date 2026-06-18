@@ -11,7 +11,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _torghut_env_overrides_from_manifest,
     datetime,
     patch,
-    start_historical_simulation,
+    historical_simulation_startup,
     timezone,
     uuid,
 )
@@ -148,7 +148,7 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
                 return_value=True,
             ),
         ):
-            report = start_historical_simulation._ensure_postgres_runtime_permissions(
+            report = historical_simulation_startup._ensure_postgres_runtime_permissions(
                 config
             )
 
@@ -248,7 +248,7 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
                 RuntimeError,
                 "required_simulation_metadata_tables_missing:vnext_completion_gate_results",
             ):
-                start_historical_simulation._assert_required_simulation_metadata_tables(
+                historical_simulation_startup._assert_required_simulation_metadata_tables(
                     config
                 )
 
@@ -262,7 +262,7 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
             sidecar.write_bytes(b"\x00" * 8)
             migration.write_text("# real migration\n")
 
-            start_historical_simulation._remove_appledouble_sidecars(versions_dir)
+            historical_simulation_startup._remove_appledouble_sidecars(versions_dir)
 
             self.assertFalse(sidecar.exists())
             self.assertTrue(migration.exists())
@@ -327,7 +327,7 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
                 side_effect=_fake_retry,
             ),
         ):
-            start_historical_simulation._reset_postgres_runtime_state(config)
+            historical_simulation_startup._reset_postgres_runtime_state(config)
 
         rendered = [(str(statement), params) for statement, params in statements]
         self.assertIn("UPDATE simulation_run_progress", rendered[0][0])
@@ -419,7 +419,7 @@ class TestStartHistoricalSimulationPostgres(StartHistoricalSimulationTestCaseBas
                 side_effect=_fake_retry,
             ),
         ):
-            seeded_at = start_historical_simulation._seed_simulation_trade_cursor(
+            seeded_at = historical_simulation_startup._seed_simulation_trade_cursor(
                 config=config,
                 manifest=manifest,
                 account_label="TORGHUT_SIM",

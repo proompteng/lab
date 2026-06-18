@@ -19,7 +19,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     historical_simulation_verification,
     patch,
     replace,
-    start_historical_simulation,
+    historical_simulation_startup,
     timezone,
 )
 
@@ -303,7 +303,7 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
                 side_effect=_fake_clickhouse_query,
             ),
         ):
-            start_historical_simulation._ensure_clickhouse_database(
+            historical_simulation_startup._ensure_clickhouse_database(
                 config=ClickHouseRuntimeConfig(
                     http_url="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
                     username="torghut",
@@ -487,7 +487,7 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
                         return_value=None,
                     ),
                 )
-                report = start_historical_simulation._apply(
+                report = historical_simulation_startup._apply(
                     resources=resources,
                     manifest=manifest,
                     kafka_config=kafka_config,

@@ -14,7 +14,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _build_resources,
     _run_full_lifecycle,
     patch,
-    start_historical_simulation,
+    historical_simulation_startup,
 )
 
 
@@ -71,7 +71,7 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
             verify_timeout_seconds=900,
             verify_poll_seconds=5,
         )
-        autonomy_config = start_historical_simulation.AutonomyLaneConfig(
+        autonomy_config = historical_simulation_startup.AutonomyLaneConfig(
             enabled=True,
             signals_path=Path("/tmp/signals.json"),
             strategy_config_path=Path("/tmp/strategy.yaml"),
