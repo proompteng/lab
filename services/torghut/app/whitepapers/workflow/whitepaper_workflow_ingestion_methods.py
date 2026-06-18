@@ -55,7 +55,7 @@ else:
     _WhitepaperWorkflowIngestionBase = object
 
 
-class _WhitepaperWorkflowIngestionMethods(_WhitepaperWorkflowIngestionBase):
+class WhitepaperWorkflowIngestionMethods(_WhitepaperWorkflowIngestionBase):
     def __init__(self) -> None:
         self.ceph_client: Any | None = CephS3Client.from_env()
         self.inngest_client: inngest.Inngest | None = None
@@ -662,6 +662,3 @@ class _WhitepaperWorkflowIngestionMethods(_WhitepaperWorkflowIngestionBase):
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-WhitepaperWorkflowIngestionMethods = _WhitepaperWorkflowIngestionMethods

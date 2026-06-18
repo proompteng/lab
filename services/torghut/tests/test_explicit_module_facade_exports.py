@@ -185,6 +185,19 @@ def test_app_and_script_modules_do_not_use_public_root_backchannels() -> None:
     assert offenders == []
 
 
+def test_app_and_script_modules_do_not_use_split_module_public_alias_blocks() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    marker = "Public aliases used by split modules"
+    offenders = sorted(
+        str(path.relative_to(service_root))
+        for tree_name in ("app", "scripts")
+        for path in (service_root / tree_name).rglob("*.py")
+        if marker in path.read_text(encoding="utf-8")
+    )
+
+    assert offenders == []
+
+
 def test_generated_split_package_directories_are_absent() -> None:
     service_root = Path(__file__).resolve().parents[1]
     split_package_suffix = "_" + "modules"

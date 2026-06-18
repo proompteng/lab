@@ -48,7 +48,7 @@ from .quant_health import (
 )
 
 
-def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
+def load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
     count_errors: list[str] = []
     truncated_counts: list[str] = []
     try:
@@ -236,7 +236,7 @@ def _coerce_aware_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _build_profit_data_readiness_summary(
+def build_profit_data_readiness_summary(
     state: object,
     *,
     clickhouse_ta_status: Mapping[str, Any] | None = None,
@@ -296,7 +296,7 @@ def _build_profit_data_readiness_summary(
     }
 
 
-def _load_persisted_profit_rejection_summary(
+def load_persisted_profit_rejection_summary(
     session: RuntimeLedgerReadSession,
     *,
     account_label: str | None,
@@ -356,7 +356,7 @@ def _load_persisted_profit_rejection_summary(
     }
 
 
-def _build_profit_rejection_summary(
+def build_profit_rejection_summary(
     state: object,
     *,
     session: Session | None = None,
@@ -378,7 +378,7 @@ def _build_profit_rejection_summary(
     if total == 0:
         total = rejected + blocked + filled + planned
     if total <= 0 and session is not None:
-        return _load_persisted_profit_rejection_summary(
+        return load_persisted_profit_rejection_summary(
             session,
             account_label=account_label,
             now=now or datetime.now(timezone.utc),
@@ -397,7 +397,7 @@ def _build_profit_rejection_summary(
     }
 
 
-def _build_profit_live_controls(state: object) -> dict[str, object]:
+def build_profit_live_controls(state: object) -> dict[str, object]:
     rollback_ready = not bool(getattr(state, "emergency_stop_active", False)) and bool(
         getattr(state, "rollback_incident_evidence_path", None)
     )
@@ -415,10 +415,3 @@ def _build_profit_live_controls(state: object) -> dict[str, object]:
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-build_profit_data_readiness_summary = _build_profit_data_readiness_summary
-build_profit_live_controls = _build_profit_live_controls
-build_profit_rejection_summary = _build_profit_rejection_summary
-load_persisted_profit_rejection_summary = _load_persisted_profit_rejection_summary
-load_profit_promotion_table_counts = _load_profit_promotion_table_counts

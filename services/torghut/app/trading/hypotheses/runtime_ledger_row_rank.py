@@ -59,7 +59,7 @@ _candidate_blocker_class = getattr(
     _shared_context_private_26, "_candidate_blocker_class"
 )
 _candidate_blocker_rank = getattr(_shared_context_private_26, "_candidate_blocker_rank")
-_coerce_decimal = getattr(_shared_context_private_26, "_coerce_decimal")
+_coerce_decimal = getattr(_shared_context_private_26, "coerce_decimal")
 _decimal_to_string = getattr(_shared_context_private_26, "_decimal_to_string")
 _empty_payload_dict = getattr(_shared_context_private_26, "_empty_payload_dict")
 _empty_payload_dict_list = getattr(
@@ -72,8 +72,8 @@ _normalize_dependency_capability = getattr(
     _shared_context_private_26, "_normalize_dependency_capability"
 )
 _optional_bool = getattr(_shared_context_private_26, "_optional_bool")
-_optional_decimal = getattr(_shared_context_private_26, "_optional_decimal")
-_optional_int = getattr(_shared_context_private_26, "_optional_int")
+_optional_decimal = getattr(_shared_context_private_26, "optional_decimal")
+_optional_int = getattr(_shared_context_private_26, "optional_int")
 _parse_iso8601 = getattr(_shared_context_private_26, "_parse_iso8601")
 _ranked_candidate_dossiers = getattr(
     _shared_context_private_26, "_ranked_candidate_dossiers"
@@ -81,85 +81,85 @@ _ranked_candidate_dossiers = getattr(
 _resolve_required_dependency_capabilities = getattr(
     _shared_context_private_26, "_resolve_required_dependency_capabilities"
 )
-_sequence = getattr(_shared_context_private_26, "_sequence")
+_sequence = getattr(_shared_context_private_26, "sequence")
 _stable_string_list = getattr(_shared_context_private_26, "_stable_string_list")
 _DelayAdjustedDepthStressInputs = getattr(
-    _extract_stage_renewal_bonds_private_68, "_DelayAdjustedDepthStressInputs"
+    _extract_stage_renewal_bonds_private_68, "DelayAdjustedDepthStressInputs"
 )
 _NON_AUTHORITY_TCA_DECISION_MODES = getattr(
-    _extract_stage_renewal_bonds_private_68, "_NON_AUTHORITY_TCA_DECISION_MODES"
+    _extract_stage_renewal_bonds_private_68, "NON_AUTHORITY_TCA_DECISION_MODES"
 )
 _NON_AUTHORITY_TCA_SOURCE_KINDS = getattr(
-    _extract_stage_renewal_bonds_private_68, "_NON_AUTHORITY_TCA_SOURCE_KINDS"
+    _extract_stage_renewal_bonds_private_68, "NON_AUTHORITY_TCA_SOURCE_KINDS"
 )
 _TcaReadinessInputs = getattr(
-    _extract_stage_renewal_bonds_private_68, "_TcaReadinessInputs"
+    _extract_stage_renewal_bonds_private_68, "TcaReadinessInputs"
 )
 _extract_controller_ingestion_settlement = getattr(
-    _extract_stage_renewal_bonds_private_68, "_extract_controller_ingestion_settlement"
+    _extract_stage_renewal_bonds_private_68, "extract_controller_ingestion_settlement"
 )
 _extract_foreclosure_carry_rollout_witness = getattr(
     _extract_stage_renewal_bonds_private_68,
-    "_extract_foreclosure_carry_rollout_witness",
+    "extract_foreclosure_carry_rollout_witness",
 )
 _extract_repair_slot_escrow = getattr(
-    _extract_stage_renewal_bonds_private_68, "_extract_repair_slot_escrow"
+    _extract_stage_renewal_bonds_private_68, "extract_repair_slot_escrow"
 )
 _extract_stage_debt_repair_admission = getattr(
-    _extract_stage_renewal_bonds_private_68, "_extract_stage_debt_repair_admission"
+    _extract_stage_renewal_bonds_private_68, "extract_stage_debt_repair_admission"
 )
 _extract_stage_renewal_bonds = getattr(
-    _extract_stage_renewal_bonds_private_68, "_extract_stage_renewal_bonds"
+    _extract_stage_renewal_bonds_private_68, "extract_stage_renewal_bonds"
 )
 _extract_verify_trust_foreclosure_board = getattr(
-    _extract_stage_renewal_bonds_private_68, "_extract_verify_trust_foreclosure_board"
+    _extract_stage_renewal_bonds_private_68, "extract_verify_trust_foreclosure_board"
 )
 _latest_tca_timestamp = getattr(
-    _extract_stage_renewal_bonds_private_68, "_latest_tca_timestamp"
+    _extract_stage_renewal_bonds_private_68, "latest_tca_timestamp"
 )
 _manifest_pair_contract_blockers = getattr(
-    _extract_stage_renewal_bonds_private_68, "_manifest_pair_contract_blockers"
+    _extract_stage_renewal_bonds_private_68, "manifest_pair_contract_blockers"
 )
 _normalized_route_token = getattr(
-    _extract_stage_renewal_bonds_private_68, "_normalized_route_token"
+    _extract_stage_renewal_bonds_private_68, "normalized_route_token"
 )
 _resolve_delay_adjusted_depth_stress_inputs = getattr(
     _extract_stage_renewal_bonds_private_68,
-    "_resolve_delay_adjusted_depth_stress_inputs",
+    "resolve_delay_adjusted_depth_stress_inputs",
 )
 _resolve_tca_readiness_inputs = getattr(
-    _extract_stage_renewal_bonds_private_68, "_resolve_tca_readiness_inputs"
+    _extract_stage_renewal_bonds_private_68, "resolve_tca_readiness_inputs"
 )
 _route_tca_adverse_slippage = getattr(
-    _extract_stage_renewal_bonds_private_68, "_route_tca_adverse_slippage"
+    _extract_stage_renewal_bonds_private_68, "route_tca_adverse_slippage"
 )
 _route_tca_authority_blockers = getattr(
-    _extract_stage_renewal_bonds_private_68, "_route_tca_authority_blockers"
+    _extract_stage_renewal_bonds_private_68, "route_tca_authority_blockers"
 )
-_route_tca_bool = getattr(_extract_stage_renewal_bonds_private_68, "_route_tca_bool")
+_route_tca_bool = getattr(_extract_stage_renewal_bonds_private_68, "route_tca_bool")
 _route_tca_diagnostic = getattr(
-    _extract_stage_renewal_bonds_private_68, "_route_tca_diagnostic"
+    _extract_stage_renewal_bonds_private_68, "route_tca_diagnostic"
 )
 _route_tca_target_blockers = getattr(
-    _extract_stage_renewal_bonds_private_68, "_route_tca_target_blockers"
+    _extract_stage_renewal_bonds_private_68, "route_tca_target_blockers"
 )
-_route_tca_text = getattr(_extract_stage_renewal_bonds_private_68, "_route_tca_text")
+_route_tca_text = getattr(_extract_stage_renewal_bonds_private_68, "route_tca_text")
 _runtime_ledger_rows_for_hypothesis = getattr(
-    _extract_stage_renewal_bonds_private_68, "_runtime_ledger_rows_for_hypothesis"
+    _extract_stage_renewal_bonds_private_68, "runtime_ledger_rows_for_hypothesis"
 )
 _runtime_ledger_target_blockers = getattr(
-    _extract_stage_renewal_bonds_private_68, "_runtime_ledger_target_blockers"
+    _extract_stage_renewal_bonds_private_68, "runtime_ledger_target_blockers"
 )
 _runtime_target_token = getattr(
-    _extract_stage_renewal_bonds_private_68, "_runtime_target_token"
+    _extract_stage_renewal_bonds_private_68, "runtime_target_token"
 )
-_runtime_text = getattr(_extract_stage_renewal_bonds_private_68, "_runtime_text")
+_runtime_text = getattr(_extract_stage_renewal_bonds_private_68, "runtime_text")
 _weighted_decimal_average = getattr(
     _extract_stage_renewal_bonds_private_68, "_weighted_decimal_average"
 )
 
 
-def _runtime_ledger_row_rank(
+def runtime_ledger_row_rank(
     row: Mapping[str, Any],
     *,
     candidate_id: str | None,
@@ -183,7 +183,7 @@ def _runtime_ledger_row_rank(
     )
 
 
-def _runtime_ledger_latest_row(
+def runtime_ledger_latest_row(
     rows: Sequence[Mapping[str, Any]],
     *,
     candidate_id: str | None,
@@ -193,7 +193,7 @@ def _runtime_ledger_latest_row(
         return None
     return max(
         rows,
-        key=lambda row: _runtime_ledger_row_rank(
+        key=lambda row: runtime_ledger_row_rank(
             row,
             candidate_id=candidate_id,
             strategy_family=strategy_family,
@@ -201,14 +201,14 @@ def _runtime_ledger_latest_row(
     )
 
 
-def _hash_count(value: object) -> int:
+def hash_count(value: object) -> int:
     if isinstance(value, Mapping):
         mapping = cast(Mapping[object, object], value)
         return sum(1 for key in mapping.keys() if str(key).strip())
     return 0
 
 
-def _dedupe_runtime_ledger_blockers(blockers: Sequence[str]) -> tuple[str, ...]:
+def dedupe_runtime_ledger_blockers(blockers: Sequence[str]) -> tuple[str, ...]:
     seen: set[str] = set()
     deduped: list[str] = []
     for blocker in blockers:
@@ -220,7 +220,7 @@ def _dedupe_runtime_ledger_blockers(blockers: Sequence[str]) -> tuple[str, ...]:
     return tuple(deduped)
 
 
-def _runtime_ledger_provenance_blockers(
+def runtime_ledger_provenance_blockers(
     *,
     ledger_schema_version: str | None,
     pnl_basis: str | None,
@@ -248,7 +248,7 @@ def _runtime_ledger_provenance_blockers(
     return tuple(blockers)
 
 
-def _runtime_ledger_window_bound_blockers(
+def runtime_ledger_window_bound_blockers(
     *,
     bucket_started_at: datetime | None,
     bucket_ended_at: datetime | None,
@@ -260,7 +260,7 @@ def _runtime_ledger_window_bound_blockers(
     return ()
 
 
-def _runtime_ledger_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
+def runtime_ledger_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
     raw: object = (
         row.get("blockers")
         or row.get("blockers_json")
@@ -282,12 +282,12 @@ def _runtime_ledger_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(deduped)
 
 
-def _resolve_runtime_ledger_readiness_inputs(
+def resolve_runtime_ledger_readiness_inputs(
     runtime_ledger_summary: Mapping[str, Any] | None,
     *,
     manifest: HypothesisManifest,
 ) -> _RuntimeLedgerReadinessInputs:
-    row = _runtime_ledger_latest_row(
+    row = runtime_ledger_latest_row(
         _runtime_ledger_rows_for_hypothesis(
             runtime_ledger_summary,
             hypothesis_id=manifest.hypothesis_id,
@@ -319,29 +319,29 @@ def _resolve_runtime_ledger_readiness_inputs(
             pnl_basis=None,
         )
 
-    execution_policy_hash_count = _hash_count(row.get("execution_policy_hash_counts"))
-    cost_model_hash_count = _hash_count(row.get("cost_model_hash_counts"))
-    lineage_hash_count = _hash_count(row.get("lineage_hash_counts"))
+    execution_policy_hash_count = hash_count(row.get("execution_policy_hash_counts"))
+    cost_model_hash_count = hash_count(row.get("cost_model_hash_counts"))
+    lineage_hash_count = hash_count(row.get("lineage_hash_counts"))
     ledger_schema_version = _runtime_text(row.get("ledger_schema_version"))
     pnl_basis = _runtime_text(row.get("pnl_basis"))
     bucket_started_at = _parse_iso8601(row.get("bucket_started_at"))
     bucket_ended_at = _parse_iso8601(row.get("bucket_ended_at"))
-    blockers = _dedupe_runtime_ledger_blockers(
+    blockers = dedupe_runtime_ledger_blockers(
         (
-            *_runtime_ledger_blockers(row),
+            *runtime_ledger_blockers(row),
             *_runtime_ledger_target_blockers(
                 row,
                 candidate_id=manifest.candidate_id,
                 strategy_family=manifest.strategy_family,
             ),
-            *_runtime_ledger_provenance_blockers(
+            *runtime_ledger_provenance_blockers(
                 ledger_schema_version=ledger_schema_version,
                 pnl_basis=pnl_basis,
                 execution_policy_hash_count=execution_policy_hash_count,
                 cost_model_hash_count=cost_model_hash_count,
                 lineage_hash_count=lineage_hash_count,
             ),
-            *_runtime_ledger_window_bound_blockers(
+            *runtime_ledger_window_bound_blockers(
                 bucket_started_at=bucket_started_at,
                 bucket_ended_at=bucket_ended_at,
             ),
@@ -392,7 +392,7 @@ def resolve_hypothesis_registry_path(path_value: str | None = None) -> Path | No
     return service_root / path
 
 
-def _load_manifest_payload(path: Path) -> Any:
+def load_manifest_payload(path: Path) -> Any:
     raw = path.read_text(encoding="utf-8")
     if not raw.strip():
         raise ValueError(f"hypothesis manifest is empty: {path}")
@@ -444,7 +444,7 @@ def load_hypothesis_registry(
 
     for path in manifest_paths:
         try:
-            payload = _load_manifest_payload(path)
+            payload = load_manifest_payload(path)
             if not isinstance(payload, Mapping):
                 raise ValueError("hypothesis manifest payload must be an object")
             manifest = HypothesisManifest.model_validate(payload)
@@ -477,7 +477,7 @@ def validate_hypothesis_registry_from_settings() -> None:
     load_hypothesis_registry(raise_on_error=True)
 
 
-def _fallback_quorum_from_legacy_status(
+def fallback_quorum_from_legacy_status(
     payload: Mapping[str, Any],
 ) -> JangarDependencyQuorumStatus:
     workflows = payload.get("workflows")
@@ -686,9 +686,9 @@ def load_jangar_dependency_quorum(
                 or None,
             )
         else:
-            status = _fallback_quorum_from_legacy_status(payload)
+            status = fallback_quorum_from_legacy_status(payload)
     else:
-        status = _fallback_quorum_from_legacy_status(payload)
+        status = fallback_quorum_from_legacy_status(payload)
 
     if ttl_seconds > 0:
         with _JANGAR_QUORUM_CACHE_LOCK:
@@ -705,15 +705,3 @@ __all__ = (
     "validate_hypothesis_registry_from_settings",
     "load_jangar_dependency_quorum",
 )
-
-# Public aliases used by split modules.
-dedupe_runtime_ledger_blockers = _dedupe_runtime_ledger_blockers
-fallback_quorum_from_legacy_status = _fallback_quorum_from_legacy_status
-hash_count = _hash_count
-load_manifest_payload = _load_manifest_payload
-resolve_runtime_ledger_readiness_inputs = _resolve_runtime_ledger_readiness_inputs
-runtime_ledger_blockers = _runtime_ledger_blockers
-runtime_ledger_latest_row = _runtime_ledger_latest_row
-runtime_ledger_provenance_blockers = _runtime_ledger_provenance_blockers
-runtime_ledger_row_rank = _runtime_ledger_row_rank
-runtime_ledger_window_bound_blockers = _runtime_ledger_window_bound_blockers

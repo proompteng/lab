@@ -26,7 +26,7 @@ from .shared_context import (
 )
 
 
-def _extract_stage_renewal_bonds(
+def extract_stage_renewal_bonds(
     payload: Mapping[str, Any],
     quorum: Mapping[str, Any],
 ) -> list[dict[str, object]]:
@@ -38,7 +38,7 @@ def _extract_stage_renewal_bonds(
     )
 
 
-def _extract_controller_ingestion_settlement(
+def extract_controller_ingestion_settlement(
     payload: Mapping[str, Any],
     quorum: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -50,7 +50,7 @@ def _extract_controller_ingestion_settlement(
     )
 
 
-def _extract_verify_trust_foreclosure_board(
+def extract_verify_trust_foreclosure_board(
     payload: Mapping[str, Any],
     quorum: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -62,7 +62,7 @@ def _extract_verify_trust_foreclosure_board(
     )
 
 
-def _extract_repair_slot_escrow(
+def extract_repair_slot_escrow(
     payload: Mapping[str, Any],
     quorum: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -74,7 +74,7 @@ def _extract_repair_slot_escrow(
     )
 
 
-def _extract_stage_debt_repair_admission(
+def extract_stage_debt_repair_admission(
     payload: Mapping[str, Any],
     quorum: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -86,7 +86,7 @@ def _extract_stage_debt_repair_admission(
     )
 
 
-def _extract_foreclosure_carry_rollout_witness(
+def extract_foreclosure_carry_rollout_witness(
     payload: Mapping[str, Any],
     quorum: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -103,7 +103,7 @@ def _extract_foreclosure_carry_rollout_witness(
 
 
 @dataclass(frozen=True)
-class _TcaReadinessInputs:
+class TcaReadinessInputs:
     order_count: int
     avg_abs_slippage_bps: Decimal
     avg_realized_shortfall_bps: Decimal
@@ -117,7 +117,7 @@ class _TcaReadinessInputs:
     route_symbol_diagnostics: tuple[dict[str, object], ...]
 
 
-_NON_AUTHORITY_TCA_SOURCE_KINDS = {
+NON_AUTHORITY_TCA_SOURCE_KINDS = {
     EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
     "aggregate",
     "aggregate_only",
@@ -131,7 +131,7 @@ _NON_AUTHORITY_TCA_SOURCE_KINDS = {
     "synthetic",
 }
 
-_NON_AUTHORITY_TCA_DECISION_MODES = {
+NON_AUTHORITY_TCA_DECISION_MODES = {
     "bounded_paper_collection",
     "bounded_paper_route_collection",
     "bounded_paper_route_collection_only",
@@ -143,7 +143,7 @@ _NON_AUTHORITY_TCA_DECISION_MODES = {
 
 
 @dataclass(frozen=True)
-class _RuntimeLedgerReadinessInputs:
+class RuntimeLedgerReadinessInputs:
     proof_present: bool
     candidate_id: str | None
     observed_stage: str | None
@@ -167,7 +167,7 @@ class _RuntimeLedgerReadinessInputs:
 
 
 @dataclass(frozen=True)
-class _DelayAdjustedDepthStressInputs:
+class DelayAdjustedDepthStressInputs:
     check_count: int
     passed: bool | None
     checked_at: datetime | None
@@ -194,7 +194,7 @@ def _weighted_decimal_average(
     return weighted_sum / Decimal(total_weight)
 
 
-def _latest_tca_timestamp(rows: Sequence[Mapping[str, Any]]) -> datetime | None:
+def latest_tca_timestamp(rows: Sequence[Mapping[str, Any]]) -> datetime | None:
     latest: datetime | None = None
     for row in rows:
         parsed = _parse_iso8601(row.get("last_computed_at"))
@@ -203,23 +203,23 @@ def _latest_tca_timestamp(rows: Sequence[Mapping[str, Any]]) -> datetime | None:
     return latest
 
 
-def _normalized_route_token(value: object) -> str | None:
-    text = _route_tca_text(value)
+def normalized_route_token(value: object) -> str | None:
+    text = route_tca_text(value)
     return text.lower().replace("-", "_") if text is not None else None
 
 
-def _route_tca_text(value: object) -> str | None:
+def route_tca_text(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
-def _route_tca_bool(value: object) -> bool | None:
+def route_tca_bool(value: object) -> bool | None:
     return _optional_bool(value)
 
 
-def _manifest_pair_contract_blockers(manifest: HypothesisManifest) -> tuple[str, ...]:
+def manifest_pair_contract_blockers(manifest: HypothesisManifest) -> tuple[str, ...]:
     if "pairs" not in manifest.strategy_family and "pairs" not in manifest.lane_id:
         return ()
 
@@ -236,7 +236,7 @@ def _manifest_pair_contract_blockers(manifest: HypothesisManifest) -> tuple[str,
     return tuple(blockers)
 
 
-def _route_tca_target_blockers(
+def route_tca_target_blockers(
     row: Mapping[str, Any],
     *,
     hypothesis_id: str | None,
@@ -245,8 +245,8 @@ def _route_tca_target_blockers(
     account_label: str | None,
 ) -> tuple[str, ...]:
     blockers: list[str] = []
-    expected_hypothesis_id = _route_tca_text(hypothesis_id)
-    actual_hypothesis_id = _route_tca_text(row.get("hypothesis_id"))
+    expected_hypothesis_id = route_tca_text(hypothesis_id)
+    actual_hypothesis_id = route_tca_text(row.get("hypothesis_id"))
     if (
         expected_hypothesis_id is not None
         and actual_hypothesis_id is not None
@@ -254,8 +254,8 @@ def _route_tca_target_blockers(
     ):
         blockers.append("route_tca_hypothesis_id_mismatch")
 
-    expected_candidate_id = _route_tca_text(candidate_id)
-    actual_candidate_id = _route_tca_text(row.get("candidate_id"))
+    expected_candidate_id = route_tca_text(candidate_id)
+    actual_candidate_id = route_tca_text(row.get("candidate_id"))
     if (
         expected_candidate_id is not None
         and actual_candidate_id is not None
@@ -263,8 +263,8 @@ def _route_tca_target_blockers(
     ):
         blockers.append("route_tca_candidate_id_mismatch")
 
-    expected_strategy_family = _normalized_route_token(strategy_family)
-    actual_strategy_family = _normalized_route_token(row.get("strategy_family"))
+    expected_strategy_family = normalized_route_token(strategy_family)
+    actual_strategy_family = normalized_route_token(row.get("strategy_family"))
     if (
         expected_strategy_family is not None
         and actual_strategy_family is not None
@@ -272,8 +272,8 @@ def _route_tca_target_blockers(
     ):
         blockers.append("route_tca_strategy_family_mismatch")
 
-    expected_account_label = _route_tca_text(account_label)
-    actual_account_label = _route_tca_text(row.get("account_label"))
+    expected_account_label = route_tca_text(account_label)
+    actual_account_label = route_tca_text(row.get("account_label"))
     if (
         expected_account_label is not None
         and actual_account_label is not None
@@ -284,41 +284,41 @@ def _route_tca_target_blockers(
     return tuple(blockers)
 
 
-def _route_tca_authority_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
+def route_tca_authority_blockers(row: Mapping[str, Any]) -> tuple[str, ...]:
     blockers: list[str] = []
-    source_kind = _normalized_route_token(
+    source_kind = normalized_route_token(
         row.get("source_kind")
         or row.get("source")
         or row.get("ledger_schema_version")
         or row.get("schema_version")
     )
-    if source_kind in _NON_AUTHORITY_TCA_SOURCE_KINDS:
+    if source_kind in NON_AUTHORITY_TCA_SOURCE_KINDS:
         blockers.append("route_tca_non_authority_source")
-    source_decision_mode = _normalized_route_token(row.get("source_decision_mode"))
-    if source_decision_mode in _NON_AUTHORITY_TCA_DECISION_MODES:
+    source_decision_mode = normalized_route_token(row.get("source_decision_mode"))
+    if source_decision_mode in NON_AUTHORITY_TCA_DECISION_MODES:
         blockers.append("route_tca_non_authority_source_decision_mode")
-    profit_proof_eligible = _route_tca_bool(
+    profit_proof_eligible = route_tca_bool(
         row.get("source_decision_mode_profit_proof_eligible")
     )
     if source_decision_mode is not None and profit_proof_eligible is False:
         blockers.append("route_tca_non_authority_source_decision_mode")
     for key in ("aggregate_only", "replay_only", "synthetic", "non_authority"):
-        if _route_tca_bool(row.get(key)) is True:
+        if route_tca_bool(row.get(key)) is True:
             blockers.append(f"route_tca_{key}")
-    state = _normalized_route_token(row.get("state") or row.get("source_state"))
+    state = normalized_route_token(row.get("state") or row.get("source_state"))
     if state in {"stale", "expired"}:
         blockers.append("route_tca_stale")
     return tuple(dict.fromkeys(blockers))
 
 
-def _route_tca_adverse_slippage(row: Mapping[str, Any]) -> Decimal | None:
+def route_tca_adverse_slippage(row: Mapping[str, Any]) -> Decimal | None:
     realized_shortfall = _optional_decimal(row.get("avg_realized_shortfall_bps"))
     if realized_shortfall is not None:
         return max(realized_shortfall, Decimal("0"))
     return _optional_decimal(row.get("avg_abs_slippage_bps"))
 
 
-def _route_tca_diagnostic(
+def route_tca_diagnostic(
     *,
     row: Mapping[str, Any],
     symbol: str,
@@ -355,11 +355,11 @@ def _route_tca_diagnostic(
     return diagnostic
 
 
-def _resolve_delay_adjusted_depth_stress_inputs(
+def resolve_delay_adjusted_depth_stress_inputs(
     *,
     state: object,
     readiness: Mapping[str, Any],
-) -> _DelayAdjustedDepthStressInputs:
+) -> DelayAdjustedDepthStressInputs:
     metrics = getattr(state, "metrics", None)
     report = _as_payload_dict(
         readiness.get("delay_adjusted_depth_stress_report")
@@ -398,7 +398,7 @@ def _resolve_delay_adjusted_depth_stress_inputs(
         ).strip()
         or None
     )
-    return _DelayAdjustedDepthStressInputs(
+    return DelayAdjustedDepthStressInputs(
         check_count=check_count,
         passed=passed,
         checked_at=checked_at,
@@ -406,7 +406,7 @@ def _resolve_delay_adjusted_depth_stress_inputs(
     )
 
 
-def _resolve_tca_readiness_inputs(
+def resolve_tca_readiness_inputs(
     tca_summary: Mapping[str, Any],
     *,
     max_allowed_slippage_bps: Decimal,
@@ -416,7 +416,7 @@ def _resolve_tca_readiness_inputs(
     candidate_id: str | None = None,
     strategy_family: str | None = None,
     account_label: str | None = None,
-) -> _TcaReadinessInputs:
+) -> TcaReadinessInputs:
     aggregate_order_count = max(0, _optional_int(tca_summary.get("order_count")) or 0)
     aggregate_avg_abs_slippage = _coerce_decimal(
         tca_summary.get("avg_abs_slippage_bps")
@@ -425,7 +425,7 @@ def _resolve_tca_readiness_inputs(
         tca_summary.get("avg_realized_shortfall_bps")
     )
     aggregate_last_computed_at = _parse_iso8601(tca_summary.get("last_computed_at"))
-    aggregate = _TcaReadinessInputs(
+    aggregate = TcaReadinessInputs(
         order_count=aggregate_order_count,
         avg_abs_slippage_bps=aggregate_avg_abs_slippage,
         avg_realized_shortfall_bps=aggregate_avg_realized_shortfall,
@@ -494,21 +494,21 @@ def _resolve_tca_readiness_inputs(
             if scope_symbol_set and symbol not in scope_symbol_set
             else ()
         )
-        target_blockers = _route_tca_target_blockers(
+        target_blockers = route_tca_target_blockers(
             row,
             hypothesis_id=hypothesis_id,
             candidate_id=candidate_id,
             strategy_family=strategy_family,
             account_label=account_label,
         )
-        authority_blockers = _route_tca_authority_blockers(row)
+        authority_blockers = route_tca_authority_blockers(row)
         row_blockers: list[str] = [
             *scope_blockers,
             *target_blockers,
             *authority_blockers,
         ]
         avg_abs_slippage = _optional_decimal(row.get("avg_abs_slippage_bps"))
-        route_adverse_slippage = _route_tca_adverse_slippage(row)
+        route_adverse_slippage = route_tca_adverse_slippage(row)
         if order_count <= 0:
             missing_symbol_count += 1
             row_blockers.append("execution_tca_symbol_missing")
@@ -516,7 +516,7 @@ def _resolve_tca_readiness_inputs(
                 append_repair_symbol(symbol)
             route_blockers.extend(row_blockers)
             diagnostics.append(
-                _route_tca_diagnostic(
+                route_tca_diagnostic(
                     row=row,
                     symbol=symbol,
                     state="missing",
@@ -533,7 +533,7 @@ def _resolve_tca_readiness_inputs(
         ):
             routeable_rows.append(row)
             diagnostics.append(
-                _route_tca_diagnostic(
+                route_tca_diagnostic(
                     row=row,
                     symbol=symbol,
                     state="final_authority_routeable",
@@ -552,7 +552,7 @@ def _resolve_tca_readiness_inputs(
                 append_repair_symbol(symbol)
             route_blockers.extend(row_blockers)
             diagnostics.append(
-                _route_tca_diagnostic(
+                route_tca_diagnostic(
                     row=row,
                     symbol=symbol,
                     state="bounded_repair_only",
@@ -569,7 +569,7 @@ def _resolve_tca_readiness_inputs(
         append_repair_symbol(symbol)
         route_blockers.append("execution_tca_symbol_missing")
         diagnostics.append(
-            _route_tca_diagnostic(
+            route_tca_diagnostic(
                 row={},
                 symbol=symbol,
                 state="missing",
@@ -588,7 +588,7 @@ def _resolve_tca_readiness_inputs(
         max(0, _optional_int(row.get("order_count")) or 0) for row in routeable_rows
     )
     if route_order_count <= 0:
-        return _TcaReadinessInputs(
+        return TcaReadinessInputs(
             order_count=0,
             avg_abs_slippage_bps=aggregate_avg_abs_slippage,
             avg_realized_shortfall_bps=aggregate_avg_realized_shortfall,
@@ -616,11 +616,11 @@ def _resolve_tca_readiness_inputs(
         if route_avg_realized_shortfall is not None
         else aggregate_avg_realized_shortfall
     )
-    return _TcaReadinessInputs(
+    return TcaReadinessInputs(
         order_count=route_order_count,
         avg_abs_slippage_bps=avg_abs_slippage,
         avg_realized_shortfall_bps=avg_realized_shortfall,
-        last_computed_at=_latest_tca_timestamp(routeable_rows)
+        last_computed_at=latest_tca_timestamp(routeable_rows)
         or aggregate_last_computed_at,
         route_filter_applied=True,
         routeable_symbols=routeable_symbols,
@@ -632,7 +632,7 @@ def _resolve_tca_readiness_inputs(
     )
 
 
-def _runtime_ledger_rows_for_hypothesis(
+def runtime_ledger_rows_for_hypothesis(
     runtime_ledger_summary: Mapping[str, Any] | None,
     *,
     hypothesis_id: str,
@@ -663,35 +663,35 @@ def _runtime_ledger_rows_for_hypothesis(
     return rows
 
 
-def _runtime_text(value: object) -> str | None:
+def runtime_text(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
-def _runtime_target_token(value: object) -> str | None:
-    text = _runtime_text(value)
+def runtime_target_token(value: object) -> str | None:
+    text = runtime_text(value)
     return text.lower().replace("-", "_") if text is not None else None
 
 
-def _runtime_ledger_target_blockers(
+def runtime_ledger_target_blockers(
     row: Mapping[str, Any],
     *,
     candidate_id: str | None,
     strategy_family: str | None,
 ) -> tuple[str, ...]:
     blockers: list[str] = []
-    expected_candidate_id = _runtime_text(candidate_id)
-    actual_candidate_id = _runtime_text(row.get("candidate_id"))
+    expected_candidate_id = runtime_text(candidate_id)
+    actual_candidate_id = runtime_text(row.get("candidate_id"))
     if expected_candidate_id is not None:
         if actual_candidate_id is None:
             blockers.append("runtime_ledger_candidate_id_missing")
         elif actual_candidate_id != expected_candidate_id:
             blockers.append("runtime_ledger_candidate_id_mismatch")
 
-    expected_strategy_family = _runtime_target_token(strategy_family)
-    actual_strategy_family = _runtime_target_token(row.get("strategy_family"))
+    expected_strategy_family = runtime_target_token(strategy_family)
+    actual_strategy_family = runtime_target_token(row.get("strategy_family"))
     if (
         expected_strategy_family is not None
         and actual_strategy_family is not None
@@ -704,31 +704,3 @@ def _runtime_ledger_target_blockers(
 weighted_decimal_average = _weighted_decimal_average
 
 __all__ = ("weighted_decimal_average",)
-
-# Public aliases used by split modules.
-DelayAdjustedDepthStressInputs = _DelayAdjustedDepthStressInputs
-extract_controller_ingestion_settlement = _extract_controller_ingestion_settlement
-extract_foreclosure_carry_rollout_witness = _extract_foreclosure_carry_rollout_witness
-extract_repair_slot_escrow = _extract_repair_slot_escrow
-extract_stage_debt_repair_admission = _extract_stage_debt_repair_admission
-extract_stage_renewal_bonds = _extract_stage_renewal_bonds
-extract_verify_trust_foreclosure_board = _extract_verify_trust_foreclosure_board
-latest_tca_timestamp = _latest_tca_timestamp
-manifest_pair_contract_blockers = _manifest_pair_contract_blockers
-NON_AUTHORITY_TCA_DECISION_MODES = _NON_AUTHORITY_TCA_DECISION_MODES
-NON_AUTHORITY_TCA_SOURCE_KINDS = _NON_AUTHORITY_TCA_SOURCE_KINDS
-normalized_route_token = _normalized_route_token
-resolve_delay_adjusted_depth_stress_inputs = _resolve_delay_adjusted_depth_stress_inputs
-resolve_tca_readiness_inputs = _resolve_tca_readiness_inputs
-route_tca_adverse_slippage = _route_tca_adverse_slippage
-route_tca_authority_blockers = _route_tca_authority_blockers
-route_tca_bool = _route_tca_bool
-route_tca_diagnostic = _route_tca_diagnostic
-route_tca_target_blockers = _route_tca_target_blockers
-route_tca_text = _route_tca_text
-runtime_ledger_rows_for_hypothesis = _runtime_ledger_rows_for_hypothesis
-runtime_ledger_target_blockers = _runtime_ledger_target_blockers
-runtime_target_token = _runtime_target_token
-runtime_text = _runtime_text
-RuntimeLedgerReadinessInputs = _RuntimeLedgerReadinessInputs
-TcaReadinessInputs = _TcaReadinessInputs

@@ -174,7 +174,7 @@ def _record_signal_continuity_recovery_cycle(
     )
 
 
-def _extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
+def extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
     raw = str(error).strip()
     if not raw.startswith("{"):
         return None
@@ -188,7 +188,7 @@ def _extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
 
 
 def _format_order_submit_rejection(error: Exception) -> str:
-    payload = _extract_json_error_payload(error)
+    payload = extract_json_error_payload(error)
     if payload:
         source = str(payload.get("source") or "").strip().lower()
         code = payload.get("code")
@@ -226,7 +226,7 @@ def _classify_llm_error(error: Exception) -> Optional[str]:
     return None
 
 
-def _price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
+def price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
     return {
         "as_of": snapshot.as_of.isoformat(),
         "price": str(snapshot.price) if snapshot.price is not None else None,
@@ -304,7 +304,7 @@ def _load_recent_decisions(
     return summaries
 
 
-def _resolve_signal_regime(signal: SignalEnvelope) -> Optional[str]:
+def resolve_signal_regime(signal: SignalEnvelope) -> Optional[str]:
     payload = signal.payload
     payload_map = cast(Mapping[str, Any], payload)
     macd = _optional_decimal(payload_map.get("macd"))
@@ -326,7 +326,7 @@ def _resolve_signal_regime(signal: SignalEnvelope) -> Optional[str]:
     return None
 
 
-def _resolve_decision_regime_label_with_source(
+def resolve_decision_regime_label_with_source(
     decision: StrategyDecision,
 ) -> tuple[Optional[str], str, str | None]:
     params = cast(Mapping[str, Any], decision.params)
@@ -366,9 +366,8 @@ def _resolve_decision_regime_label_with_source(
     return regime_label, "legacy", None if regime_label is not None else "missing"
 
 
-def _resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:
-    # kept for backwards compatibility with existing tests and callers
-    regime_label, _, _ = _resolve_decision_regime_label_with_source(decision)
+def resolve_decision_regime_label(decision: StrategyDecision) -> Optional[str]:
+    regime_label, _, _ = resolve_decision_regime_label_with_source(decision)
     return regime_label
 
 
@@ -946,7 +945,7 @@ __all__ = [
     "_committee_trace_has_veto",
     "_expected_fail_mode_for_stage",
     "_extract_decision_price",
-    "_extract_json_error_payload",
+    "extract_json_error_payload",
     "_extract_top_regime_posterior_probability",
     "_format_order_submit_rejection",
     "_hash_payload",
@@ -962,23 +961,17 @@ __all__ = [
     "_optional_int",
     "_position_market_value",
     "_position_qty",
-    "_price_snapshot_payload",
+    "price_snapshot_payload",
     "_project_open_orders_onto_positions",
     "_record_signal_continuity_recovery_cycle",
-    "_resolve_decision_regime_label",
-    "_resolve_decision_regime_label_with_source",
+    "resolve_decision_regime_label",
+    "resolve_decision_regime_label_with_source",
     "_resolve_llm_review_error_reject_reason",
     "_resolve_llm_unavailable_reject_reason",
-    "_resolve_signal_regime",
+    "resolve_signal_regime",
     "_runtime_dspy_metadata",
     "_runtime_uncertainty_gate_rank",
     "_select_strictest_runtime_uncertainty_gate",
     "_uncertainty_gate_staleness_reason",
     "build_llm_policy_resolution",
-    "resolve_decision_regime_label",
 ]
-
-# Public aliases used by split modules.
-extract_json_error_payload = _extract_json_error_payload
-price_snapshot_payload = _price_snapshot_payload
-resolve_decision_regime_label = _resolve_decision_regime_label

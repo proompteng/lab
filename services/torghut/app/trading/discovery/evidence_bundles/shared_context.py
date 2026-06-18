@@ -366,29 +366,29 @@ STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS = (
 )
 
 
-def _stable_hash(payload: Mapping[str, Any]) -> str:
+def stable_hash(payload: Mapping[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _mapping(value: Any) -> dict[str, Any]:
+def mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
 
 
-def _string(value: Any) -> str:
+def string(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _int(value: Any) -> int:
+def int_value(value: Any) -> int:
     try:
         return int(float(str(value or 0)))
     except (TypeError, ValueError):
         return 0
 
 
-def _decimal(value: Any) -> Decimal:
+def decimal(value: Any) -> Decimal:
     try:
         return Decimal(str(value or "0"))
     except (InvalidOperation, ValueError):
@@ -412,50 +412,50 @@ def _bool(value: Any) -> bool:
     return bool(value)
 
 
-def _decimal_mapping_total(mapping: Mapping[str, Any]) -> Decimal:
+def decimal_mapping_total(mapping: Mapping[str, Any]) -> Decimal:
     total = Decimal("0")
     for value in mapping.values():
-        total += _decimal(value)
+        total += decimal(value)
     return total
 
 
-def _int_mapping(value: Any) -> dict[str, int]:
+def int_mapping(value: Any) -> dict[str, int]:
     if not isinstance(value, Mapping):
         return {}
     counts: dict[str, int] = {}
     for key, item in cast(Mapping[Any, Any], value).items():
-        count = _int(item)
-        normalized_key = _string(key).lower()
+        count = int_value(item)
+        normalized_key = string(key).lower()
         if normalized_key:
             counts[normalized_key] = count
     return counts
 
 
-def _frontier_replay_config(candidate: Mapping[str, Any]) -> dict[str, Any]:
-    return _mapping(candidate.get("replay_config"))
+def frontier_replay_config(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    return mapping(candidate.get("replay_config"))
 
 
-def _frontier_replay_params(candidate: Mapping[str, Any]) -> dict[str, Any]:
-    return _mapping(_frontier_replay_config(candidate).get("params"))
+def frontier_replay_params(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    return mapping(frontier_replay_config(candidate).get("params"))
 
 
-def _frontier_strategy_overrides(candidate: Mapping[str, Any]) -> dict[str, Any]:
-    return _mapping(_frontier_replay_config(candidate).get("strategy_overrides"))
+def frontier_strategy_overrides(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    return mapping(frontier_replay_config(candidate).get("strategy_overrides"))
 
 
-def _string_list(value: Any) -> list[str]:
+def string_list(value: Any) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, str):
         return []
     return [
         normalized
-        for normalized in (_string(item) for item in cast(Sequence[Any], value))
+        for normalized in (string(item) for item in cast(Sequence[Any], value))
         if normalized
     ]
 
 
-def _order_type_execution_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
-    decision_counts = _int_mapping(source.get("decision_count_by_order_type"))
-    filled_counts = _int_mapping(source.get("filled_count_by_order_type"))
+def order_type_execution_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
+    decision_counts = int_mapping(source.get("decision_count_by_order_type"))
+    filled_counts = int_mapping(source.get("filled_count_by_order_type"))
     market_decision_count = max(0, decision_counts.get("market", 0))
     limit_decision_count = max(0, decision_counts.get("limit", 0))
     market_limit_sample_count = market_decision_count + limit_decision_count
@@ -465,7 +465,7 @@ def _order_type_execution_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     if filled_counts:
         metrics["filled_count_by_order_type"] = filled_counts
     if "limit_fill_rate" in source:
-        metrics["limit_fill_rate"] = _string(source.get("limit_fill_rate") or "0")
+        metrics["limit_fill_rate"] = string(source.get("limit_fill_rate") or "0")
     if market_limit_sample_count > 0:
         metrics["market_limit_order_mix_sample_count"] = market_limit_sample_count
         metrics["market_limit_order_mix_evidence_present"] = True
@@ -479,14 +479,14 @@ def _order_type_execution_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     return metrics
 
 
-def _order_lifecycle_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
-    lifecycle = _mapping(source.get("order_lifecycle"))
+def order_lifecycle_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
+    lifecycle = mapping(source.get("order_lifecycle"))
     if not lifecycle:
         return {}
 
     sample_count = max(
-        _int(lifecycle.get("fill_survival_sample_count")),
-        _int(lifecycle.get("submitted_order_count")),
+        int_value(lifecycle.get("fill_survival_sample_count")),
+        int_value(lifecycle.get("submitted_order_count")),
     )
     if "fill_survival_evidence_present" in lifecycle:
         evidence_present = _bool(lifecycle.get("fill_survival_evidence_present"))
@@ -494,8 +494,8 @@ def _order_lifecycle_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
         evidence_present = sample_count > 0
     fill_rate = lifecycle.get("fill_survival_fill_rate") or lifecycle.get("fill_rate")
     queue_ahead_depletion_sample_count = max(
-        _int(lifecycle.get("queue_ahead_depletion_sample_count")),
-        _int(lifecycle.get("queue_depletion_sample_count")),
+        int_value(lifecycle.get("queue_ahead_depletion_sample_count")),
+        int_value(lifecycle.get("queue_depletion_sample_count")),
     )
     queue_ahead_depletion_evidence_present = _bool(
         lifecycle.get("queue_ahead_depletion_evidence_present")
@@ -524,8 +524,8 @@ def _order_lifecycle_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
         ),
     }
     if fill_rate is not None:
-        metrics["fill_survival_fill_rate"] = _string(fill_rate)
-        metrics["delay_adjusted_depth_fill_survival_rate"] = _string(fill_rate)
+        metrics["fill_survival_fill_rate"] = string(fill_rate)
+        metrics["delay_adjusted_depth_fill_survival_rate"] = string(fill_rate)
     if sample_count > 0:
         metrics["delay_adjusted_depth_fill_survival_sample_count"] = sample_count
         metrics["delay_adjusted_depth_fill_survival_evidence_present"] = (
@@ -558,34 +558,34 @@ def _order_lifecycle_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
         if key in lifecycle:
             metrics[key] = lifecycle[key]
 
-    queue_ratio_p95 = _string(lifecycle.get("order_qty_to_touch_qty_ratio_p95"))
+    queue_ratio_p95 = string(lifecycle.get("order_qty_to_touch_qty_ratio_p95"))
     if queue_ratio_p95:
         metrics["delay_adjusted_depth_queue_ratio_p95"] = queue_ratio_p95
 
-    survivorship = _mapping(lifecycle.get("post_cost_survivorship"))
+    survivorship = mapping(lifecycle.get("post_cost_survivorship"))
     if survivorship:
-        survival_rate = _string(survivorship.get("post_cost_survival_rate"))
+        survival_rate = string(survivorship.get("post_cost_survival_rate"))
         if survival_rate:
             metrics["post_cost_survival_rate"] = survival_rate
-        metrics["gross_positive_killed_by_cost_count"] = _int(
+        metrics["gross_positive_killed_by_cost_count"] = int_value(
             survivorship.get("gross_positive_killed_by_cost_count")
         )
 
     return metrics
 
 
-def _order_type_ablation_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
+def order_type_ablation_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     raw_ablation = source.get("order_type_ablation")
     if not isinstance(raw_ablation, Mapping):
         return {}
     ablation = cast(Mapping[str, Any], raw_ablation)
     metrics: dict[str, Any] = {}
-    artifact_ref = _string(
+    artifact_ref = string(
         ablation.get("artifact_ref") or ablation.get("order_type_ablation_artifact_ref")
     )
     if artifact_ref:
         metrics["order_type_ablation_artifact_ref"] = artifact_ref
-    sample_count = _int(
+    sample_count = int_value(
         ablation.get("sample_count") or ablation.get("order_type_ablation_sample_count")
     )
     if sample_count > 0:
@@ -596,13 +596,13 @@ def _order_type_ablation_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
         passed = bool(ablation.get("passed"))
         metrics["order_type_ablation_passed"] = passed
         metrics["market_limit_execution_policy_passed"] = passed
-    selected_order_type = _string(
+    selected_order_type = string(
         ablation.get("selected_order_type")
         or ablation.get("order_type_ablation_selected_order_type")
     )
     if selected_order_type:
         metrics["order_type_ablation_selected_order_type"] = selected_order_type
-    opportunity_cost_bps = _string(
+    opportunity_cost_bps = string(
         ablation.get("opportunity_cost_bps")
         or ablation.get("order_type_opportunity_cost_bps")
     )
@@ -610,7 +610,7 @@ def _order_type_ablation_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
         metrics["order_type_opportunity_cost_bps"] = opportunity_cost_bps
         metrics["order_type_opportunity_cost_evidence_present"] = True
         metrics["opportunity_cost_evidence_present"] = True
-    limit_sample_count = _int(
+    limit_sample_count = int_value(
         ablation.get("limit_sample_count")
         or ablation.get("limit_fill_probability_sample_count")
     )
@@ -620,7 +620,7 @@ def _order_type_ablation_metrics(source: Mapping[str, Any]) -> dict[str, Any]:
     return metrics
 
 
-def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ...]:
+def artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ...]:
     refs: list[str] = []
     for key in (
         "route_tca_artifact_ref",
@@ -632,7 +632,7 @@ def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ..
         "exact_replay_ledger_artifact_ref",
         "adaptive_signal_falsification_artifact_ref",
     ):
-        ref = _string(scorecard.get(key))
+        ref = string(scorecard.get(key))
         if ref:
             refs.append(ref)
     for key in (
@@ -645,25 +645,25 @@ def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ..
     ):
         raw_refs = scorecard.get(key)
         if isinstance(raw_refs, str):
-            ref = _string(raw_refs)
+            ref = string(raw_refs)
             if ref:
                 refs.append(ref)
             continue
         for raw_ref in cast(Sequence[Any], raw_refs or ()):
-            ref = _string(raw_ref)
+            ref = string(raw_ref)
             if ref:
                 refs.append(ref)
     return tuple(dict.fromkeys(refs))
 
 
-def _runtime_ledger_lineage_handoff(
+def runtime_ledger_lineage_handoff(
     *,
     scorecard: Mapping[str, Any],
     promotion_readiness: Mapping[str, Any],
 ) -> dict[str, Any]:
-    return _mapping(
+    return mapping(
         scorecard.get("runtime_ledger_lineage_materialization_handoff")
-    ) or _mapping(
+    ) or mapping(
         promotion_readiness.get("runtime_ledger_lineage_materialization_handoff")
     )
 
@@ -693,24 +693,6 @@ __all__ = (
     "bool_value",
 )
 
-# Public aliases used by split modules.
-artifact_refs_from_scorecard = _artifact_refs_from_scorecard
-decimal = _decimal
-decimal_mapping_total = _decimal_mapping_total
-frontier_replay_config = _frontier_replay_config
-frontier_replay_params = _frontier_replay_params
-frontier_strategy_overrides = _frontier_strategy_overrides
-int_value = _int
-int_mapping = _int_mapping
-mapping = _mapping
-order_lifecycle_metrics = _order_lifecycle_metrics
-order_type_ablation_metrics = _order_type_ablation_metrics
-order_type_execution_metrics = _order_type_execution_metrics
-runtime_ledger_lineage_handoff = _runtime_ledger_lineage_handoff
-stable_hash = _stable_hash
-string = _string
-string_list = _string_list
-
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
@@ -738,23 +720,23 @@ __all__: tuple[str, ...] = (
     "STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS",
     "Sequence",
     "VALID_COST_CALIBRATION_STATUSES",
-    "_artifact_refs_from_scorecard",
+    "artifact_refs_from_scorecard",
     "_bool",
-    "_decimal",
-    "_decimal_mapping_total",
-    "_frontier_replay_config",
-    "_frontier_replay_params",
-    "_frontier_strategy_overrides",
-    "_int",
-    "_int_mapping",
-    "_mapping",
-    "_order_lifecycle_metrics",
-    "_order_type_ablation_metrics",
-    "_order_type_execution_metrics",
-    "_runtime_ledger_lineage_handoff",
-    "_stable_hash",
-    "_string",
-    "_string_list",
+    "decimal",
+    "decimal_mapping_total",
+    "frontier_replay_config",
+    "frontier_replay_params",
+    "frontier_strategy_overrides",
+    "int_value",
+    "int_mapping",
+    "mapping",
+    "order_lifecycle_metrics",
+    "order_type_ablation_metrics",
+    "order_type_execution_metrics",
+    "runtime_ledger_lineage_handoff",
+    "stable_hash",
+    "string",
+    "string_list",
     "annotations",
     "artifact_refs_from_scorecard",
     "bool_value",

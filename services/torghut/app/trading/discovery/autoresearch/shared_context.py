@@ -19,56 +19,56 @@ from app.trading.discovery.family_templates import (
 )
 
 
-_SCHEMA_VERSION = "torghut.strategy-autoresearch.v1"
+SCHEMA_VERSION = "torghut.strategy-autoresearch.v1"
 
 
-def _mapping(value: Any) -> dict[str, Any]:
+def mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     mapping_value = cast(Mapping[Any, Any], value)
     return {str(key): item for key, item in mapping_value.items()}
 
 
-def _string(value: Any) -> str:
+def string(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _string_list(value: Any) -> tuple[str, ...]:
+def string_list(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
     raw_values = cast(list[Any], value)
     resolved: list[str] = []
     for item in raw_values:
-        normalized = _string(item)
+        normalized = string(item)
         if normalized:
             resolved.append(normalized)
     return tuple(resolved)
 
 
-def _coerce_decimal(value: Any, *, default: str) -> Decimal:
+def coerce_decimal(value: Any, *, default: str) -> Decimal:
     if isinstance(value, Decimal):
         return value
     if isinstance(value, int | float):
         return Decimal(str(value))
-    text = _string(value)
+    text = string(value)
     return Decimal(text or default)
 
 
-def _json_clone(payload: Mapping[str, Any]) -> dict[str, Any]:
+def json_clone(payload: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(payload))
 
 
-def _stable_value_key(value: Any) -> str:
+def stable_value_key(value: Any) -> str:
     if isinstance(value, list | dict):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
     return str(value)
 
 
-def _dedupe_preserve_order(values: list[Any]) -> list[Any]:
+def dedupe_preserve_order(values: list[Any]) -> list[Any]:
     seen: set[str] = set()
     ordered: list[Any] = []
     for value in values:
-        stable_key = _stable_value_key(value)
+        stable_key = stable_value_key(value)
         if stable_key in seen:
             continue
         seen.add(stable_key)
@@ -76,7 +76,7 @@ def _dedupe_preserve_order(values: list[Any]) -> list[Any]:
     return ordered
 
 
-def _current_grid_value(
+def current_grid_value(
     *,
     current_values: Mapping[str, Any],
     sweep_grid: Mapping[str, Any],
@@ -90,17 +90,17 @@ def _current_grid_value(
     return None
 
 
-def _decimal_from_candidate(value: Any) -> Decimal | None:
+def decimal_from_candidate(value: Any) -> Decimal | None:
     if value is None:
         return None
     try:
-        return _coerce_decimal(value, default="")
+        return coerce_decimal(value, default="")
     except (InvalidOperation, ValueError):
         return None
 
 
-def _format_numeric_like(value: Decimal, *, current_value: Any) -> str:
-    current_text = _string(current_value)
+def format_numeric_like(value: Decimal, *, current_value: Any) -> str:
+    current_text = string(current_value)
     if current_text and "." not in current_text:
         return str(int(value))
     if current_text and "." in current_text:
@@ -389,7 +389,7 @@ class StrategyAutoresearchProgram:
     ledger_policy: Mapping[str, Any]
     research_sources: tuple[ResearchSource, ...]
     families: tuple[FamilyAutoresearchPlan, ...]
-    schema_version: str = _SCHEMA_VERSION
+    schema_version: str = SCHEMA_VERSION
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -410,24 +410,24 @@ class StrategyAutoresearchProgram:
         }
 
 
-def _load_mutation_space(payload: Mapping[str, Any]) -> MutationSpace:
-    mode = _string(payload.get("mode"))
+def load_mutation_space(payload: Mapping[str, Any]) -> MutationSpace:
+    mode = string(payload.get("mode"))
     if mode not in {"explicit_values", "numeric_step", "allowed_normalizations"}:
         raise ValueError(f"autoresearch_mutation_mode_invalid:{mode or 'missing'}")
-    values = _string_list(payload.get("values"))
+    values = string_list(payload.get("values"))
     delta_values: tuple[Decimal, ...] = ()
     raw_deltas = payload.get("deltas")
     if isinstance(raw_deltas, list):
         raw_delta_values = cast(list[Any], raw_deltas)
         delta_values = tuple(
-            _coerce_decimal(item, default="0") for item in raw_delta_values
+            coerce_decimal(item, default="0") for item in raw_delta_values
         )
     minimum = None
     if payload.get("minimum") is not None:
-        minimum = _coerce_decimal(payload.get("minimum"), default="0")
+        minimum = coerce_decimal(payload.get("minimum"), default="0")
     maximum = None
     if payload.get("maximum") is not None:
-        maximum = _coerce_decimal(payload.get("maximum"), default="0")
+        maximum = coerce_decimal(payload.get("maximum"), default="0")
     return MutationSpace(
         mode=mode,
         values=values,
@@ -438,20 +438,20 @@ def _load_mutation_space(payload: Mapping[str, Any]) -> MutationSpace:
     )
 
 
-def _resolve_program_path(path: Path) -> Path:
+def resolve_program_path(path: Path) -> Path:
     return path.resolve()
 
 
-def _resolve_seed_sweep_path(*, program_path: Path, raw_path: str) -> Path:
+def resolve_seed_sweep_path(*, program_path: Path, raw_path: str) -> Path:
     candidate = Path(raw_path)
     if candidate.is_absolute():
         return candidate
     return (program_path.parent / candidate).resolve()
 
 
-def _load_runtime_closure_policy(payload: Mapping[str, Any]) -> RuntimeClosurePolicy:
-    parity_window = _string(payload.get("parity_window")) or "full_window"
-    approval_window = _string(payload.get("approval_window")) or "holdout"
+def load_runtime_closure_policy(payload: Mapping[str, Any]) -> RuntimeClosurePolicy:
+    parity_window = string(payload.get("parity_window")) or "full_window"
+    approval_window = string(payload.get("approval_window")) or "holdout"
     if parity_window not in {"train", "holdout", "full_window"}:
         raise ValueError(
             f"autoresearch_runtime_closure_parity_window_invalid:{parity_window}"
@@ -461,13 +461,13 @@ def _load_runtime_closure_policy(payload: Mapping[str, Any]) -> RuntimeClosurePo
             f"autoresearch_runtime_closure_approval_window_invalid:{approval_window}"
         )
     shadow_validation_mode = (
-        _string(payload.get("shadow_validation_mode")) or "require_live_evidence"
+        string(payload.get("shadow_validation_mode")) or "require_live_evidence"
     )
     if shadow_validation_mode not in {"require_live_evidence", "skip"}:
         raise ValueError(
             f"autoresearch_runtime_closure_shadow_validation_mode_invalid:{shadow_validation_mode}"
         )
-    promotion_target = _string(payload.get("promotion_target")) or "shadow"
+    promotion_target = string(payload.get("promotion_target")) or "shadow"
     if promotion_target not in {"shadow", "paper", "live"}:
         raise ValueError(
             f"autoresearch_runtime_closure_promotion_target_invalid:{promotion_target}"
@@ -496,23 +496,6 @@ __all__ = (
     "StrategyAutoresearchProgram",
 )
 
-# Public aliases used by split modules.
-coerce_decimal = _coerce_decimal
-current_grid_value = _current_grid_value
-decimal_from_candidate = _decimal_from_candidate
-dedupe_preserve_order = _dedupe_preserve_order
-format_numeric_like = _format_numeric_like
-json_clone = _json_clone
-load_mutation_space = _load_mutation_space
-load_runtime_closure_policy = _load_runtime_closure_policy
-mapping = _mapping
-resolve_program_path = _resolve_program_path
-resolve_seed_sweep_path = _resolve_seed_sweep_path
-SCHEMA_VERSION = _SCHEMA_VERSION
-stable_value_key = _stable_value_key
-string = _string
-string_list = _string_list
-
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
@@ -535,21 +518,21 @@ __all__: tuple[str, ...] = (
     "StrategyAutoresearchProgram",
     "StrategyObjective",
     "UTC",
-    "_SCHEMA_VERSION",
-    "_coerce_decimal",
-    "_current_grid_value",
-    "_decimal_from_candidate",
-    "_dedupe_preserve_order",
-    "_format_numeric_like",
-    "_json_clone",
-    "_load_mutation_space",
-    "_load_runtime_closure_policy",
-    "_mapping",
-    "_resolve_program_path",
-    "_resolve_seed_sweep_path",
-    "_stable_value_key",
-    "_string",
-    "_string_list",
+    "SCHEMA_VERSION",
+    "coerce_decimal",
+    "current_grid_value",
+    "decimal_from_candidate",
+    "dedupe_preserve_order",
+    "format_numeric_like",
+    "json_clone",
+    "load_mutation_space",
+    "load_runtime_closure_policy",
+    "mapping",
+    "resolve_program_path",
+    "resolve_seed_sweep_path",
+    "stable_value_key",
+    "string",
+    "string_list",
     "annotations",
     "cast",
     "coerce_decimal",

@@ -103,3 +103,57 @@ def test_filter_base_line_messages_skips_existing_base_source(
         current_root=tmp_path,
         repo_root=tmp_path,
     ) == [new_message]
+
+
+def test_filter_base_line_messages_treats_private_definition_rename_as_existing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "app" / "example.py"
+    source.parent.mkdir()
+    source.write_text(
+        "def renamed_helper() -> None:\n"
+        "    pass\n"
+        "async def renamed_async_helper() -> None:\n"
+        "    pass\n"
+        "class RenamedService:\n",
+        encoding="utf-8",
+    )
+    messages = [
+        PylintMessage(
+            path="app/example.py",
+            line=1,
+            raw="app/example.py:1:0: R0915: Too many statements (too-many-statements)",
+        ),
+        PylintMessage(
+            path="app/example.py",
+            line=3,
+            raw="app/example.py:3:0: R0915: Too many statements (too-many-statements)",
+        ),
+        PylintMessage(
+            path="app/example.py",
+            line=5,
+            raw="app/example.py:5:0: R0902: Too many instance attributes (too-many-instance-attributes)",
+        ),
+    ]
+    base_lines = diff_gate._source_line_equivalents(
+        (
+            "def _renamed_helper() -> None:",
+            "async def _renamed_async_helper() -> None:",
+            "class _RenamedService:",
+        )
+    )
+    monkeypatch.setattr(
+        diff_gate,
+        "_base_torghut_app_script_lines",
+        lambda base, repo_root: base_lines,
+    )
+
+    assert (
+        diff_gate.filter_base_line_messages(
+            messages,
+            base="base",
+            current_root=tmp_path,
+            repo_root=tmp_path,
+        )
+        == []
+    )

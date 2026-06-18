@@ -99,7 +99,7 @@ from .delay_adjusted_depth_stress_passed import (
 )
 
 
-def _portfolio_trading_day_count(
+def portfolio_trading_day_count(
     selected: Sequence[CandidateEvidenceBundle],
     daily_net: Mapping[str, Decimal],
 ) -> int:
@@ -107,7 +107,7 @@ def _portfolio_trading_day_count(
     return max(expected, len(daily_net))
 
 
-def _portfolio_scorecard(
+def portfolio_scorecard(
     *,
     selected: Sequence[CandidateEvidenceBundle],
     target_net_pnl_per_day: Decimal,
@@ -115,7 +115,7 @@ def _portfolio_scorecard(
 ) -> dict[str, Any]:
     weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     daily_net = _portfolio_daily_net(selected, oracle_policy=oracle_policy)
-    trading_day_count = _portfolio_trading_day_count(selected, daily_net)
+    trading_day_count = portfolio_trading_day_count(selected, daily_net)
     missing_day_count = max(0, trading_day_count - len(daily_net))
     missing_sleeve_daily_net_count = _missing_sleeve_daily_net_count(
         selected, daily_net
@@ -644,7 +644,7 @@ def _portfolio_scorecard(
     return scorecard
 
 
-def _sleeve_score(bundle: CandidateEvidenceBundle) -> Decimal:
+def sleeve_score(bundle: CandidateEvidenceBundle) -> Decimal:
     scorecard = _scorecard(bundle)
     deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
     return (
@@ -661,11 +661,11 @@ def _sleeve_score(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
-def _scorecard_decimal(scorecard: Mapping[str, Any], field: str) -> Decimal:
+def scorecard_decimal(scorecard: Mapping[str, Any], field: str) -> Decimal:
     return _decimal(scorecard.get(field))
 
 
-def _oracle_blocker_count(scorecard: Mapping[str, Any]) -> Decimal:
+def oracle_blocker_count(scorecard: Mapping[str, Any]) -> Decimal:
     oracle = scorecard.get("profit_target_oracle")
     if not isinstance(oracle, Mapping):
         return Decimal("0")
@@ -676,7 +676,7 @@ def _oracle_blocker_count(scorecard: Mapping[str, Any]) -> Decimal:
     return Decimal("0")
 
 
-def _portfolio_selection_key(
+def portfolio_selection_key(
     *,
     selected: Sequence[CandidateEvidenceBundle],
     scorecard: Mapping[str, Any],
@@ -685,58 +685,58 @@ def _portfolio_selection_key(
     # the one with the smallest repair surface, not the one with the largest raw PnL.
     return (
         Decimal(1 if bool(scorecard.get("oracle_passed")) else 0),
-        -_oracle_blocker_count(scorecard),
+        -oracle_blocker_count(scorecard),
         Decimal(1 if bool(scorecard.get("target_met")) else 0),
-        _scorecard_decimal(scorecard, "active_day_ratio"),
-        _scorecard_decimal(scorecard, "positive_day_ratio"),
-        _scorecard_decimal(scorecard, "min_daily_net_pnl"),
+        scorecard_decimal(scorecard, "active_day_ratio"),
+        scorecard_decimal(scorecard, "positive_day_ratio"),
+        scorecard_decimal(scorecard, "min_daily_net_pnl"),
         (
             deployable_lower_bound_net_pnl_per_day(scorecard)
-            or _scorecard_decimal(scorecard, "net_pnl_per_day")
+            or scorecard_decimal(scorecard, "net_pnl_per_day")
         ),
         Decimal(1 if bool(scorecard.get("market_impact_stress_passed")) else 0),
-        _scorecard_decimal(scorecard, "market_impact_stress_net_pnl_per_day"),
-        -_scorecard_decimal(scorecard, "market_impact_stress_cost_bps"),
+        scorecard_decimal(scorecard, "market_impact_stress_net_pnl_per_day"),
+        -scorecard_decimal(scorecard, "market_impact_stress_cost_bps"),
         Decimal(1 if bool(scorecard.get("delay_adjusted_depth_stress_passed")) else 0),
-        _scorecard_decimal(scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"),
-        _scorecard_decimal(scorecard, "delay_adjusted_depth_fillable_notional_per_day"),
-        -_scorecard_decimal(scorecard, "delay_adjusted_depth_stress_ms"),
+        scorecard_decimal(scorecard, "delay_adjusted_depth_stress_net_pnl_per_day"),
+        scorecard_decimal(scorecard, "delay_adjusted_depth_fillable_notional_per_day"),
+        -scorecard_decimal(scorecard, "delay_adjusted_depth_stress_ms"),
         Decimal(
             1
             if bool(scorecard.get("implementation_uncertainty_stability_passed"))
             else 0
         ),
-        _scorecard_decimal(
+        scorecard_decimal(
             scorecard, "implementation_uncertainty_lower_net_pnl_per_day"
         ),
-        -_scorecard_decimal(
+        -scorecard_decimal(
             scorecard, "implementation_uncertainty_interval_width_per_day"
         ),
         Decimal(1 if bool(scorecard.get("conformal_tail_risk_passed")) else 0),
-        _scorecard_decimal(scorecard, "conformal_tail_risk_adjusted_net_pnl_per_day"),
-        -_scorecard_decimal(scorecard, "conformal_tail_risk_buffer_per_day"),
+        scorecard_decimal(scorecard, "conformal_tail_risk_adjusted_net_pnl_per_day"),
+        -scorecard_decimal(scorecard, "conformal_tail_risk_buffer_per_day"),
         Decimal(1 if bool(scorecard.get("double_oos_passed")) else 0),
-        _scorecard_decimal(scorecard, "double_oos_independent_window_count"),
-        _scorecard_decimal(scorecard, "double_oos_pass_rate"),
-        _scorecard_decimal(scorecard, "double_oos_net_pnl_per_day"),
-        _scorecard_decimal(scorecard, "double_oos_cost_shock_net_pnl_per_day"),
-        -_scorecard_decimal(scorecard, "missing_sleeve_daily_net_count"),
-        -_scorecard_decimal(scorecard, "best_day_share"),
-        -_scorecard_decimal(scorecard, "max_single_symbol_contribution_share"),
-        -_scorecard_decimal(scorecard, "max_cluster_contribution_share"),
-        _scorecard_decimal(scorecard, "avg_filled_notional_per_day"),
-        _scorecard_decimal(scorecard, "net_pnl_per_day"),
-        -_scorecard_decimal(scorecard, "max_gross_exposure_pct_equity"),
-        _scorecard_decimal(scorecard, "min_cash"),
-        -_scorecard_decimal(scorecard, "negative_cash_observation_count"),
-        -_scorecard_decimal(scorecard, "worst_day_loss"),
-        -_scorecard_decimal(scorecard, "max_drawdown"),
+        scorecard_decimal(scorecard, "double_oos_independent_window_count"),
+        scorecard_decimal(scorecard, "double_oos_pass_rate"),
+        scorecard_decimal(scorecard, "double_oos_net_pnl_per_day"),
+        scorecard_decimal(scorecard, "double_oos_cost_shock_net_pnl_per_day"),
+        -scorecard_decimal(scorecard, "missing_sleeve_daily_net_count"),
+        -scorecard_decimal(scorecard, "best_day_share"),
+        -scorecard_decimal(scorecard, "max_single_symbol_contribution_share"),
+        -scorecard_decimal(scorecard, "max_cluster_contribution_share"),
+        scorecard_decimal(scorecard, "avg_filled_notional_per_day"),
+        scorecard_decimal(scorecard, "net_pnl_per_day"),
+        -scorecard_decimal(scorecard, "max_gross_exposure_pct_equity"),
+        scorecard_decimal(scorecard, "min_cash"),
+        -scorecard_decimal(scorecard, "negative_cash_observation_count"),
+        -scorecard_decimal(scorecard, "worst_day_loss"),
+        -scorecard_decimal(scorecard, "max_drawdown"),
         Decimal(len(selected)),
-        sum((_sleeve_score(bundle) for bundle in selected), Decimal("0")),
+        sum((sleeve_score(bundle) for bundle in selected), Decimal("0")),
     )
 
 
-def _empty_selection_key() -> tuple[Decimal, ...]:
+def empty_selection_key() -> tuple[Decimal, ...]:
     return (
         Decimal("0"),
         Decimal("0"),
@@ -776,7 +776,7 @@ def _empty_selection_key() -> tuple[Decimal, ...]:
     )
 
 
-def _portfolio_addition_rejection(
+def portfolio_addition_rejection(
     *,
     bundle: CandidateEvidenceBundle,
     selected: Sequence[CandidateEvidenceBundle],
@@ -793,7 +793,7 @@ def _portfolio_addition_rejection(
     return None
 
 
-def _record_unique_rejection(
+def record_unique_rejection(
     rejected: list[dict[str, Any]],
     seen_rejections: set[tuple[str, str]],
     rejection: Mapping[str, Any],
@@ -806,14 +806,3 @@ def _record_unique_rejection(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-empty_selection_key = _empty_selection_key
-oracle_blocker_count = _oracle_blocker_count
-portfolio_addition_rejection = _portfolio_addition_rejection
-portfolio_scorecard = _portfolio_scorecard
-portfolio_selection_key = _portfolio_selection_key
-portfolio_trading_day_count = _portfolio_trading_day_count
-record_unique_rejection = _record_unique_rejection
-scorecard_decimal = _scorecard_decimal
-sleeve_score = _sleeve_score

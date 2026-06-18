@@ -22,7 +22,7 @@ from .shared_context import (
 )
 
 
-def _runtime_ledger_lineage_handoff_blockers(
+def runtime_ledger_lineage_handoff_blockers(
     *,
     scorecard: Mapping[str, Any],
     promotion_readiness: Mapping[str, Any],
@@ -70,7 +70,7 @@ def _runtime_ledger_lineage_handoff_blockers(
     return blockers
 
 
-def _p10(values: Sequence[Decimal]) -> Decimal:
+def p10(values: Sequence[Decimal]) -> Decimal:
     if not values:
         return Decimal("0")
     ordered = sorted(values)
@@ -78,7 +78,7 @@ def _p10(values: Sequence[Decimal]) -> Decimal:
     return ordered[index]
 
 
-def _delay_depth_fillability(
+def delay_depth_fillability(
     *,
     daily_filled_notional: Mapping[str, Any],
     daily_liquidity_notional: Mapping[str, Any],
@@ -106,14 +106,14 @@ def _delay_depth_fillability(
     return total_fillable_notional, missing_liquidity_day_count, active_day_fillable
 
 
-def _sum_mapping_int_values(mapping: Mapping[str, Any], key: str) -> int:
+def sum_mapping_int_values(mapping: Mapping[str, Any], key: str) -> int:
     total = 0
     for payload in mapping.values():
         total += _int(_mapping(payload).get(key))
     return total
 
 
-def _is_synthetic_dataset_snapshot(dataset_snapshot_id: str) -> bool:
+def is_synthetic_dataset_snapshot(dataset_snapshot_id: str) -> bool:
     normalized = dataset_snapshot_id.strip().lower()
     return any(
         token in normalized
@@ -127,7 +127,7 @@ def _is_synthetic_dataset_snapshot(dataset_snapshot_id: str) -> bool:
     )
 
 
-def _freshness_status_from_validation_status(status: str) -> str:
+def freshness_status_from_validation_status(status: str) -> str:
     normalized = status.strip().lower()
     if normalized == "valid":
         return "fresh"
@@ -136,7 +136,7 @@ def _freshness_status_from_validation_status(status: str) -> str:
     return normalized
 
 
-def _scorecard_with_freshness_lineage(
+def scorecard_with_freshness_lineage(
     *,
     scorecard: Mapping[str, Any],
     candidate: Mapping[str, Any],
@@ -150,7 +150,7 @@ def _scorecard_with_freshness_lineage(
         replay_tape.get("status") or replay_tape.get("validation_status")
     )
     if replay_status and "tape_freshness_status" not in enriched:
-        enriched["tape_freshness_status"] = _freshness_status_from_validation_status(
+        enriched["tape_freshness_status"] = freshness_status_from_validation_status(
             replay_status
         )
     if _bool(replay_tape.get("stale_override_used")) or replay_status.lower() in {
@@ -177,7 +177,7 @@ def _scorecard_with_freshness_lineage(
     return enriched
 
 
-def _decomposition_symbol_contribution_shares(
+def decomposition_symbol_contribution_shares(
     candidate: Mapping[str, Any],
 ) -> dict[str, str]:
     decomposition = _mapping(candidate.get("decomposition"))
@@ -192,14 +192,14 @@ def _decomposition_symbol_contribution_shares(
     return shares
 
 
-def _decomposition_activity_counts(candidate: Mapping[str, Any]) -> dict[str, int]:
+def decomposition_activity_counts(candidate: Mapping[str, Any]) -> dict[str, int]:
     decomposition = _mapping(candidate.get("decomposition"))
     families = _mapping(decomposition.get("families"))
     symbols = _mapping(decomposition.get("symbols"))
-    decision_count = _sum_mapping_int_values(families, "evaluations")
+    decision_count = sum_mapping_int_values(families, "evaluations")
     filled_count = max(
-        _sum_mapping_int_values(families, "fills"),
-        _sum_mapping_int_values(symbols, "filled_count"),
+        sum_mapping_int_values(families, "fills"),
+        sum_mapping_int_values(symbols, "filled_count"),
     )
     counts: dict[str, int] = {}
     if decision_count > 0:
@@ -210,7 +210,7 @@ def _decomposition_activity_counts(candidate: Mapping[str, Any]) -> dict[str, in
     return counts
 
 
-def _enrich_scorecard_with_replay_stress_metrics(
+def enrich_scorecard_with_replay_stress_metrics(
     *,
     scorecard: Mapping[str, Any],
     full_window: Mapping[str, Any],
@@ -309,13 +309,13 @@ def _enrich_scorecard_with_replay_stress_metrics(
         delay_depth_total_fillable_notional,
         delay_depth_missing_liquidity_day_count,
         _active_day_fillable,
-    ) = _delay_depth_fillability(
+    ) = delay_depth_fillability(
         daily_filled_notional=daily_filled_notional,
         daily_liquidity_notional=daily_liquidity_notional,
         stress_ms=DELAY_ADJUSTED_DEPTH_STRESS_MS,
     )
     grid_fillability = {
-        str(stress_ms): _delay_depth_fillability(
+        str(stress_ms): delay_depth_fillability(
             daily_filled_notional=daily_filled_notional,
             daily_liquidity_notional=daily_liquidity_notional,
             stress_ms=stress_ms,
@@ -328,7 +328,7 @@ def _enrich_scorecard_with_replay_stress_metrics(
         grid_worst_missing_liquidity_day_count,
         grid_worst_active_day_fillable,
     ) = grid_fillability[str(max_grid_stress_ms)]
-    p10_active_day_fillable = _p10(grid_worst_active_day_fillable)
+    p10_active_day_fillable = p10(grid_worst_active_day_fillable)
     worst_active_day_fillable = (
         min(grid_worst_active_day_fillable)
         if grid_worst_active_day_fillable
@@ -512,17 +512,3 @@ __all__ = (
     "CandidateEvidenceBundle",
     "evidence_bundle_id_for_payload",
 )
-
-# Public aliases used by split modules.
-decomposition_activity_counts = _decomposition_activity_counts
-decomposition_symbol_contribution_shares = _decomposition_symbol_contribution_shares
-delay_depth_fillability = _delay_depth_fillability
-enrich_scorecard_with_replay_stress_metrics = (
-    _enrich_scorecard_with_replay_stress_metrics
-)
-freshness_status_from_validation_status = _freshness_status_from_validation_status
-is_synthetic_dataset_snapshot = _is_synthetic_dataset_snapshot
-p10 = _p10
-runtime_ledger_lineage_handoff_blockers = _runtime_ledger_lineage_handoff_blockers
-scorecard_with_freshness_lineage = _scorecard_with_freshness_lineage
-sum_mapping_int_values = _sum_mapping_int_values

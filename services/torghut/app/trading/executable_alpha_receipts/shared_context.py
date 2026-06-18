@@ -36,25 +36,25 @@ EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION = (
     "torghut.executable-alpha-settlement-slots-ref.v1"
 )
 
-_EXECUTABLE_ALPHA_REPAIR_DESIGN_REF = (
+EXECUTABLE_ALPHA_REPAIR_DESIGN_REF = (
     "docs/torghut/design-system/v6/"
     "197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md"
 )
 
-_EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF = (
+EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF = (
     "docs/torghut/design-system/v6/"
     "199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md"
 )
 
-_EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET = (
+EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET = (
     "stop emitting executable_alpha_repair_receipts and keep Torghut max_notional=0"
 )
 
-_EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET = (
+EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET = (
     "stop emitting executable_alpha_settlement_slots and keep Torghut max_notional=0"
 )
 
-_NO_DELTA_RELEASE_CONDITIONS = [
+NO_DELTA_RELEASE_CONDITIONS = [
     "source_ref_changes",
     "evidence_window_changes",
     "blocker_set_changes",
@@ -71,15 +71,15 @@ GraduationState = Literal[
     "contradicted",
 ]
 
-_DEFAULT_FRESHNESS_SECONDS = 15 * 60
+DEFAULT_FRESHNESS_SECONDS = 15 * 60
 
-_LIVE_AAPL_HYPOTHESIS = "H-AAPL-ROUTE-REHAB"
+LIVE_AAPL_HYPOTHESIS = "H-AAPL-ROUTE-REHAB"
 
-_SIM_NVDA_HYPOTHESIS = "H-NVDA-SIM-PROOF-REFILL"
+SIM_NVDA_HYPOTHESIS = "H-NVDA-SIM-PROOF-REFILL"
 
-_BREADTH_HYPOTHESIS = "H-MEGACAP-BREADTH-PROBE"
+BREADTH_HYPOTHESIS = "H-MEGACAP-BREADTH-PROBE"
 
-_REPAIR_REASON_CLASSES = (
+REPAIR_REASON_CLASSES = (
     (
         "strategy_lineage_repair",
         {
@@ -121,7 +121,7 @@ _REPAIR_REASON_CLASSES = (
     ),
 )
 
-_REPAIR_CLASS_RANK = {
+REPAIR_CLASS_RANK = {
     "strategy_lineage_repair": 0,
     "evidence_window_refresh": 1,
     "autoresearch_portfolio_repair": 2,
@@ -131,7 +131,7 @@ _REPAIR_CLASS_RANK = {
     "capital_replay_board_refresh": 6,
 }
 
-_VALIDATION_COMMANDS_BY_CLASS = {
+VALIDATION_COMMANDS_BY_CLASS = {
     "strategy_lineage_repair": [
         "uv run --frozen pytest services/torghut/tests/test_profitability_proof_floor.py -k alpha",
         "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k lineage",
@@ -156,7 +156,7 @@ _VALIDATION_COMMANDS_BY_CLASS = {
     ],
 }
 
-_FEATURE_OR_DRIFT_REPAIR_REASONS = {
+FEATURE_OR_DRIFT_REPAIR_REASONS = {
     "drift_checks_missing",
     "feature_rows_missing",
     "required_feature_set_unavailable",
@@ -164,28 +164,26 @@ _FEATURE_OR_DRIFT_REPAIR_REASONS = {
     "hypothesis_window_evidence_stale",
 }
 
-_POST_COST_REPAIR_REASONS = {
+POST_COST_REPAIR_REASONS = {
     "post_cost_expectancy_non_positive",
     "post_cost_expectancy_missing",
 }
 
-_CLOSED_SESSION_REPAIR_REASONS = {
+CLOSED_SESSION_REPAIR_REASONS = {
     "closed_session_market_context_hold",
     "closed_session_signal_hold",
     "closed_session_tca_evidence_hold",
 }
 
-_ALPHA_RUNTIME_REPLAY_CLASS = "alpha_runtime_window_refresh"
+ALPHA_RUNTIME_REPLAY_CLASS = "alpha_runtime_window_refresh"
 
-_RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS = "runtime_ledger_economic_repair"
+RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS = "runtime_ledger_economic_repair"
 
-_RUNTIME_LEDGER_PAPER_PROBATION_REASON = "runtime_ledger_stage_not_live"
+RUNTIME_LEDGER_PAPER_PROBATION_REASON = "runtime_ledger_stage_not_live"
 
-_RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = {
-    _RUNTIME_LEDGER_PAPER_PROBATION_REASON
-}
+RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = {RUNTIME_LEDGER_PAPER_PROBATION_REASON}
 
-_ZERO_RUNTIME_EVIDENCE_REASONS = {
+ZERO_RUNTIME_EVIDENCE_REASONS = {
     "hypothesis_window_decisions_missing",
     "hypothesis_window_orders_missing",
     "hypothesis_window_trades_missing",
@@ -194,14 +192,14 @@ _ZERO_RUNTIME_EVIDENCE_REASONS = {
     "runtime_trade_count_zero",
 }
 
-_HARD_ALPHA_ECONOMIC_REASONS = {
+HARD_ALPHA_ECONOMIC_REASONS = {
     "post_cost_expectancy_below_manifest_threshold",
     "post_cost_expectancy_non_positive",
     "hypothesis_window_post_cost_expectancy_non_positive",
     "slippage_budget_exceeded",
 }
 
-_ALPHA_RUNTIME_REPAIR_REASONS = {
+ALPHA_RUNTIME_REPAIR_REASONS = {
     "hypothesis_window_evidence_stale",
     "hypothesis_window_evidence_missing",
     "sample_count_below_canary_minimum",
@@ -211,14 +209,14 @@ _ALPHA_RUNTIME_REPAIR_REASONS = {
 }
 
 
-def _text(value: object, default: str = "") -> str:
+def text(value: object, default: str = "") -> str:
     if value is None:
         return default
     normalized = str(value).strip()
     return normalized or default
 
 
-def _int(value: object, default: int = 0) -> int:
+def int_value(value: object, default: int = 0) -> int:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -233,7 +231,7 @@ def _int(value: object, default: int = 0) -> int:
     return default
 
 
-def _float(value: object) -> float | None:
+def float_value(value: object) -> float | None:
     if isinstance(value, bool):
         return float(int(value))
     if isinstance(value, (int, float)):
@@ -246,23 +244,25 @@ def _float(value: object) -> float | None:
     return None
 
 
-def _mapping(value: object) -> Mapping[str, Any]:
+def mapping(value: object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return cast(Mapping[str, Any], value)
     return {}
 
 
-def _sequence(value: object) -> Sequence[object]:
+def sequence(value: object) -> Sequence[object]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return cast(Sequence[object], value)
     return []
 
 
-def _string_list(value: object) -> list[str]:
-    return sorted({text for item in _sequence(value) if (text := _text(item))})
+def string_list(value: object) -> list[str]:
+    return sorted(
+        {normalized_text for item in sequence(value) if (normalized_text := text(item))}
+    )
 
 
-def _stable_hash(prefix: str, payload: Mapping[str, object]) -> str:
+def stable_hash(prefix: str, payload: Mapping[str, object]) -> str:
     encoded = json.dumps(
         {"prefix": prefix, **dict(payload)},
         sort_keys=True,
@@ -272,78 +272,78 @@ def _stable_hash(prefix: str, payload: Mapping[str, object]) -> str:
     return hashlib.sha256(encoded).hexdigest()[:24]
 
 
-def _route_records(proof_floor_receipt: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    route_book = _mapping(proof_floor_receipt.get("route_reacquisition_book"))
-    return [_mapping(item) for item in _sequence(route_book.get("records"))]
+def route_records(proof_floor_receipt: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    route_book = mapping(proof_floor_receipt.get("route_reacquisition_book"))
+    return [mapping(item) for item in sequence(route_book.get("records"))]
 
 
-def _route_board_rows(
+def route_board_rows(
     route_reacquisition_board: Mapping[str, Any],
 ) -> list[Mapping[str, Any]]:
-    return [_mapping(item) for item in _sequence(route_reacquisition_board.get("rows"))]
+    return [mapping(item) for item in sequence(route_reacquisition_board.get("rows"))]
 
 
-def _find_by_symbol(
+def find_by_symbol(
     items: Sequence[Mapping[str, Any]], symbol: str
 ) -> Mapping[str, Any]:
     wanted = symbol.upper()
     for item in items:
-        if _text(item.get("symbol")).upper() == wanted:
+        if text(item.get("symbol")).upper() == wanted:
             return item
     return {}
 
 
-def _first_with_state(
+def first_with_state(
     items: Sequence[Mapping[str, Any]], states: set[str]
 ) -> Mapping[str, Any]:
     for item in items:
-        if _text(item.get("state")) in states:
+        if text(item.get("state")) in states:
             return item
     return items[0] if items else {}
 
 
-def _proof_window(
+def proof_window(
     *,
     now: datetime,
     proof_floor_receipt: Mapping[str, Any],
     route_reacquisition_board: Mapping[str, Any],
 ) -> dict[str, object]:
     generated_at = (
-        _text(proof_floor_receipt.get("generated_at"))
-        or _text(route_reacquisition_board.get("generated_at"))
+        text(proof_floor_receipt.get("generated_at"))
+        or text(route_reacquisition_board.get("generated_at"))
         or now.isoformat()
     )
     fresh_until = (
-        _text(route_reacquisition_board.get("fresh_until"))
-        or (now + timedelta(seconds=_DEFAULT_FRESHNESS_SECONDS)).isoformat()
+        text(route_reacquisition_board.get("fresh_until"))
+        or (now + timedelta(seconds=DEFAULT_FRESHNESS_SECONDS)).isoformat()
     )
     return {
         "generated_at": generated_at,
         "fresh_until": fresh_until,
-        "route_state": _text(proof_floor_receipt.get("route_state"), "unknown"),
-        "capital_state": _text(proof_floor_receipt.get("capital_state"), "unknown"),
+        "route_state": text(proof_floor_receipt.get("route_state"), "unknown"),
+        "capital_state": text(proof_floor_receipt.get("capital_state"), "unknown"),
     }
 
 
-def _reason_list_from_target(target: Mapping[str, Any]) -> list[str]:
-    return _string_list(target.get("reasons")) + _string_list(
+def reason_list_from_target(target: Mapping[str, Any]) -> list[str]:
+    return string_list(target.get("reasons")) + string_list(
         target.get("informational_reasons")
     )
 
 
-def _repair_class_for_target(
+def repair_class_for_target(
     target: Mapping[str, Any],
 ) -> tuple[str, list[str], str, str, str]:
-    reason_codes = _reason_list_from_target(target)
+    reason_codes = reason_list_from_target(target)
     reason_set = set(reason_codes)
-    candidate_id = _text(target.get("candidate_id"))
-    strategy_id = _text(target.get("strategy_id"))
+    candidate_id = text(target.get("candidate_id"))
+    strategy_id = text(target.get("strategy_id"))
 
     if not candidate_id or not strategy_id:
         repair_class = "strategy_lineage_repair"
     else:
         repair_class = "capital_replay_board_refresh"
-        for candidate_class, reasons in _REPAIR_REASON_CLASSES:
+        for candidate_class, reasons in REPAIR_REASON_CLASSES:
             if reason_set.intersection(reasons):
                 repair_class = candidate_class
                 break
@@ -373,7 +373,7 @@ def _repair_class_for_target(
     else:
         evidence_window_status = "current"
 
-    state = _text(target.get("state"), "repair_only")
+    state = text(target.get("state"), "repair_only")
     alpha_readiness_state = (
         "promotion_candidate"
         if bool(target.get("promotion_eligible"))
@@ -391,40 +391,40 @@ def _repair_class_for_target(
     )
 
 
-def _top_alpha_repair(top_blocker: Mapping[str, Any]) -> bool:
+def top_alpha_repair(top_blocker: Mapping[str, Any]) -> bool:
     return (
-        _text(top_blocker.get("code")) == "repair_alpha_readiness"
-        or _text(top_blocker.get("reason")) == "alpha_readiness_not_promotion_eligible"
+        text(top_blocker.get("code")) == "repair_alpha_readiness"
+        or text(top_blocker.get("reason")) == "alpha_readiness_not_promotion_eligible"
     )
 
 
-def _receipt_by_hypothesis(
+def receipt_by_hypothesis(
     executable_alpha_receipts: Mapping[str, Any],
 ) -> dict[str, Mapping[str, Any]]:
     by_hypothesis: dict[str, Mapping[str, Any]] = {}
     for raw_receipt in [
-        *_sequence(executable_alpha_receipts.get("receipts")),
-        *_sequence(executable_alpha_receipts.get("candidate_receipts")),
+        *sequence(executable_alpha_receipts.get("receipts")),
+        *sequence(executable_alpha_receipts.get("candidate_receipts")),
     ]:
-        receipt = _mapping(raw_receipt)
-        hypothesis_id = _text(receipt.get("hypothesis_id"))
+        receipt = mapping(raw_receipt)
+        hypothesis_id = text(receipt.get("hypothesis_id"))
         if hypothesis_id and hypothesis_id not in by_hypothesis:
             by_hypothesis[hypothesis_id] = receipt
     return by_hypothesis
 
 
-def _targets_from_alpha_readiness(
+def targets_from_alpha_readiness(
     alpha_readiness: Mapping[str, Any],
 ) -> list[Mapping[str, Any]]:
     targets: list[Mapping[str, Any]] = [
-        _mapping(item) for item in _sequence(alpha_readiness.get("repair_targets"))
+        mapping(item) for item in sequence(alpha_readiness.get("repair_targets"))
     ]
     targets = [target for target in targets if target]
     if targets:
         return targets
     targets = []
-    for raw_hypothesis_id in _sequence(alpha_readiness.get("blocked_hypothesis_ids")):
-        hypothesis_id = _text(raw_hypothesis_id)
+    for raw_hypothesis_id in sequence(alpha_readiness.get("blocked_hypothesis_ids")):
+        hypothesis_id = text(raw_hypothesis_id)
         if hypothesis_id:
             targets.append(
                 {
@@ -437,14 +437,14 @@ def _targets_from_alpha_readiness(
     return targets
 
 
-def _expected_gate_delta(reason_codes: Sequence[str]) -> str:
+def expected_gate_delta(reason_codes: Sequence[str]) -> str:
     for reason in reason_codes:
         if reason:
             return f"retire_{reason}"
     return "retire_alpha_readiness_not_promotion_eligible"
 
 
-def _required_input_refs(
+def required_input_refs(
     *,
     source_revenue_repair_ref: str,
     repair_bid_settlement_ledger: Mapping[str, Any],
@@ -457,32 +457,32 @@ def _required_input_refs(
         capital_replay_board.get("board_id"),
         executable_alpha_receipt.get("receipt_id"),
     ):
-        text = _text(value)
-        if text:
-            refs.append(text)
-    return _string_list(refs)
+        ref_text = text(value)
+        if ref_text:
+            refs.append(ref_text)
+    return string_list(refs)
 
 
-def _receipt_revenue_lane_rank(receipt: Mapping[str, Any]) -> int:
-    reason_set = set(_string_list(receipt.get("reason_codes")))
-    if reason_set.intersection(_FEATURE_OR_DRIFT_REPAIR_REASONS):
+def receipt_revenue_lane_rank(receipt: Mapping[str, Any]) -> int:
+    reason_set = set(string_list(receipt.get("reason_codes")))
+    if reason_set.intersection(FEATURE_OR_DRIFT_REPAIR_REASONS):
         return 0
-    if reason_set.intersection(_POST_COST_REPAIR_REASONS):
+    if reason_set.intersection(POST_COST_REPAIR_REASONS):
         return 2
-    if reason_set.intersection(_CLOSED_SESSION_REPAIR_REASONS):
+    if reason_set.intersection(CLOSED_SESSION_REPAIR_REASONS):
         return 3
     return 1
 
 
-def _receipt_target_key(receipt: Mapping[str, Any]) -> tuple[int, int, str]:
+def receipt_target_key(receipt: Mapping[str, Any]) -> tuple[int, int, str]:
     return (
-        _REPAIR_CLASS_RANK.get(_text(receipt.get("repair_class")), 100),
-        _receipt_revenue_lane_rank(receipt),
-        _text(receipt.get("hypothesis_id")),
+        REPAIR_CLASS_RANK.get(text(receipt.get("repair_class")), 100),
+        receipt_revenue_lane_rank(receipt),
+        text(receipt.get("hypothesis_id")),
     )
 
 
-def _executable_alpha_repair_receipt(
+def executable_alpha_repair_receipt(
     *,
     generated_at: datetime,
     fresh_until: datetime,
@@ -500,14 +500,12 @@ def _executable_alpha_repair_receipt(
         lineage_status,
         evidence_window_status,
         alpha_readiness_state,
-    ) = _repair_class_for_target(target)
-    hypothesis_id = _text(target.get("hypothesis_id"), "unknown")
-    candidate_id = _text(target.get("candidate_id")) or None
-    strategy_id = _text(target.get("strategy_id")) or None
-    target_value_gate = _text(
-        top_blocker.get("value_gate"), "routeable_candidate_count"
-    )
-    expected_unblock_value = _int(top_blocker.get("expected_unblock_value"), 1)
+    ) = repair_class_for_target(target)
+    hypothesis_id = text(target.get("hypothesis_id"), "unknown")
+    candidate_id = text(target.get("candidate_id")) or None
+    strategy_id = text(target.get("strategy_id")) or None
+    target_value_gate = text(top_blocker.get("value_gate"), "routeable_candidate_count")
+    expected_unblock_value = int_value(top_blocker.get("expected_unblock_value"), 1)
     payload_for_id = {
         "schema_version": EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION,
         "source_revenue_repair_ref": source_revenue_repair_ref,
@@ -516,27 +514,27 @@ def _executable_alpha_repair_receipt(
         "target_value_gate": target_value_gate,
         "reason_codes": reason_codes,
     }
-    validation_commands = _VALIDATION_COMMANDS_BY_CLASS.get(
-        repair_class, _VALIDATION_COMMANDS_BY_CLASS["capital_replay_board_refresh"]
+    validation_commands = VALIDATION_COMMANDS_BY_CLASS.get(
+        repair_class, VALIDATION_COMMANDS_BY_CLASS["capital_replay_board_refresh"]
     )
-    required_output_receipts = _string_list(
+    required_output_receipts = string_list(
         [
-            _text(
+            text(
                 top_blocker.get("required_output_receipt"),
                 EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION,
             ),
-            *_string_list(top_blocker.get("required_receipts")),
+            *string_list(top_blocker.get("required_receipts")),
         ]
     )
     return {
         **payload_for_id,
         "receipt_id": "executable-alpha-repair-receipt:"
-        + _stable_hash("executable-alpha-repair-receipt", payload_for_id),
+        + stable_hash("executable-alpha-repair-receipt", payload_for_id),
         "generated_at": generated_at.isoformat(),
         "fresh_until": fresh_until.isoformat(),
-        "account_id": _text(repair_bid_settlement_ledger.get("account_id"), "unknown"),
-        "window": _text(repair_bid_settlement_ledger.get("session_id"), "unknown"),
-        "trading_mode": _text(
+        "account_id": text(repair_bid_settlement_ledger.get("account_id"), "unknown"),
+        "window": text(repair_bid_settlement_ledger.get("session_id"), "unknown"),
+        "trading_mode": text(
             repair_bid_settlement_ledger.get("trading_mode"), "unknown"
         ),
         "candidate_id": candidate_id,
@@ -547,8 +545,8 @@ def _executable_alpha_repair_receipt(
         "repair_class": repair_class,
         "target_value_gate": target_value_gate,
         "expected_unblock_value": expected_unblock_value,
-        "expected_gate_delta": _expected_gate_delta(reason_codes),
-        "required_input_refs": _required_input_refs(
+        "expected_gate_delta": expected_gate_delta(reason_codes),
+        "required_input_refs": required_input_refs(
             source_revenue_repair_ref=source_revenue_repair_ref,
             repair_bid_settlement_ledger=repair_bid_settlement_ledger,
             capital_replay_board=capital_replay_board,
@@ -568,7 +566,7 @@ def _executable_alpha_repair_receipt(
             },
         },
         "jangar_reentry": {
-            "governing_design_ref": _EXECUTABLE_ALPHA_REPAIR_DESIGN_REF,
+            "governing_design_ref": EXECUTABLE_ALPHA_REPAIR_DESIGN_REF,
             "required_material_reentry_receipt": "jangar.material-reentry-receipt.v1",
             "action_class": "dispatch_repair",
             "max_parallelism": 1,
@@ -576,7 +574,7 @@ def _executable_alpha_repair_receipt(
             "value_gates": [target_value_gate],
             "rollback_target": "keep max_notional=0 and live submit disabled",
         },
-        "rollback_target": _EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET,
+        "rollback_target": EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET,
     }
 
 
@@ -590,56 +588,6 @@ __all__ = (
     "EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION",
     "GraduationState",
 )
-
-# Public aliases used by split modules.
-ALPHA_RUNTIME_REPAIR_REASONS = _ALPHA_RUNTIME_REPAIR_REASONS
-ALPHA_RUNTIME_REPLAY_CLASS = _ALPHA_RUNTIME_REPLAY_CLASS
-BREADTH_HYPOTHESIS = _BREADTH_HYPOTHESIS
-CLOSED_SESSION_REPAIR_REASONS = _CLOSED_SESSION_REPAIR_REASONS
-DEFAULT_FRESHNESS_SECONDS = _DEFAULT_FRESHNESS_SECONDS
-EXECUTABLE_ALPHA_REPAIR_DESIGN_REF = _EXECUTABLE_ALPHA_REPAIR_DESIGN_REF
-executable_alpha_repair_receipt = _executable_alpha_repair_receipt
-EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET = _EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET
-EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF = _EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF
-EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET = (
-    _EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET
-)
-expected_gate_delta = _expected_gate_delta
-FEATURE_OR_DRIFT_REPAIR_REASONS = _FEATURE_OR_DRIFT_REPAIR_REASONS
-find_by_symbol = _find_by_symbol
-first_with_state = _first_with_state
-float_value = _float
-HARD_ALPHA_ECONOMIC_REASONS = _HARD_ALPHA_ECONOMIC_REASONS
-int_value = _int
-LIVE_AAPL_HYPOTHESIS = _LIVE_AAPL_HYPOTHESIS
-mapping = _mapping
-NO_DELTA_RELEASE_CONDITIONS = _NO_DELTA_RELEASE_CONDITIONS
-POST_COST_REPAIR_REASONS = _POST_COST_REPAIR_REASONS
-proof_window = _proof_window
-reason_list_from_target = _reason_list_from_target
-receipt_by_hypothesis = _receipt_by_hypothesis
-receipt_revenue_lane_rank = _receipt_revenue_lane_rank
-receipt_target_key = _receipt_target_key
-repair_class_for_target = _repair_class_for_target
-REPAIR_CLASS_RANK = _REPAIR_CLASS_RANK
-REPAIR_REASON_CLASSES = _REPAIR_REASON_CLASSES
-required_input_refs = _required_input_refs
-route_board_rows = _route_board_rows
-route_records = _route_records
-RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS = _RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS
-RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = (
-    _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
-)
-RUNTIME_LEDGER_PAPER_PROBATION_REASON = _RUNTIME_LEDGER_PAPER_PROBATION_REASON
-sequence = _sequence
-SIM_NVDA_HYPOTHESIS = _SIM_NVDA_HYPOTHESIS
-stable_hash = _stable_hash
-string_list = _string_list
-targets_from_alpha_readiness = _targets_from_alpha_readiness
-text = _text
-top_alpha_repair = _top_alpha_repair
-VALIDATION_COMMANDS_BY_CLASS = _VALIDATION_COMMANDS_BY_CLASS
-ZERO_RUNTIME_EVIDENCE_REASONS = _ZERO_RUNTIME_EVIDENCE_REASONS
 
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
@@ -680,50 +628,50 @@ __all__: tuple[str, ...] = (
     "Sequence",
     "VALIDATION_COMMANDS_BY_CLASS",
     "ZERO_RUNTIME_EVIDENCE_REASONS",
-    "_ALPHA_RUNTIME_REPAIR_REASONS",
-    "_ALPHA_RUNTIME_REPLAY_CLASS",
-    "_BREADTH_HYPOTHESIS",
-    "_CLOSED_SESSION_REPAIR_REASONS",
-    "_DEFAULT_FRESHNESS_SECONDS",
-    "_EXECUTABLE_ALPHA_REPAIR_DESIGN_REF",
-    "_EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET",
-    "_EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF",
-    "_EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET",
-    "_FEATURE_OR_DRIFT_REPAIR_REASONS",
-    "_HARD_ALPHA_ECONOMIC_REASONS",
-    "_LIVE_AAPL_HYPOTHESIS",
-    "_NO_DELTA_RELEASE_CONDITIONS",
-    "_POST_COST_REPAIR_REASONS",
-    "_REPAIR_CLASS_RANK",
-    "_REPAIR_REASON_CLASSES",
-    "_RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS",
-    "_RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS",
-    "_RUNTIME_LEDGER_PAPER_PROBATION_REASON",
-    "_SIM_NVDA_HYPOTHESIS",
-    "_VALIDATION_COMMANDS_BY_CLASS",
-    "_ZERO_RUNTIME_EVIDENCE_REASONS",
-    "_executable_alpha_repair_receipt",
-    "_expected_gate_delta",
-    "_find_by_symbol",
-    "_first_with_state",
-    "_float",
-    "_int",
-    "_mapping",
-    "_proof_window",
-    "_reason_list_from_target",
-    "_receipt_by_hypothesis",
-    "_receipt_revenue_lane_rank",
-    "_receipt_target_key",
-    "_repair_class_for_target",
-    "_required_input_refs",
-    "_route_board_rows",
-    "_route_records",
-    "_sequence",
-    "_stable_hash",
-    "_string_list",
-    "_targets_from_alpha_readiness",
-    "_text",
-    "_top_alpha_repair",
+    "ALPHA_RUNTIME_REPAIR_REASONS",
+    "ALPHA_RUNTIME_REPLAY_CLASS",
+    "BREADTH_HYPOTHESIS",
+    "CLOSED_SESSION_REPAIR_REASONS",
+    "DEFAULT_FRESHNESS_SECONDS",
+    "EXECUTABLE_ALPHA_REPAIR_DESIGN_REF",
+    "EXECUTABLE_ALPHA_REPAIR_ROLLBACK_TARGET",
+    "EXECUTABLE_ALPHA_SETTLEMENT_DESIGN_REF",
+    "EXECUTABLE_ALPHA_SETTLEMENT_ROLLBACK_TARGET",
+    "FEATURE_OR_DRIFT_REPAIR_REASONS",
+    "HARD_ALPHA_ECONOMIC_REASONS",
+    "LIVE_AAPL_HYPOTHESIS",
+    "NO_DELTA_RELEASE_CONDITIONS",
+    "POST_COST_REPAIR_REASONS",
+    "REPAIR_CLASS_RANK",
+    "REPAIR_REASON_CLASSES",
+    "RUNTIME_LEDGER_ECONOMIC_REPAIR_CLASS",
+    "RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS",
+    "RUNTIME_LEDGER_PAPER_PROBATION_REASON",
+    "SIM_NVDA_HYPOTHESIS",
+    "VALIDATION_COMMANDS_BY_CLASS",
+    "ZERO_RUNTIME_EVIDENCE_REASONS",
+    "executable_alpha_repair_receipt",
+    "expected_gate_delta",
+    "find_by_symbol",
+    "first_with_state",
+    "float_value",
+    "int_value",
+    "mapping",
+    "proof_window",
+    "reason_list_from_target",
+    "receipt_by_hypothesis",
+    "receipt_revenue_lane_rank",
+    "receipt_target_key",
+    "repair_class_for_target",
+    "required_input_refs",
+    "route_board_rows",
+    "route_records",
+    "sequence",
+    "stable_hash",
+    "string_list",
+    "targets_from_alpha_readiness",
+    "text",
+    "top_alpha_repair",
     "annotations",
     "cast",
     "datetime",

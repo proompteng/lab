@@ -46,7 +46,7 @@ else:
     _WhitepaperWorkflowRolloutBase = object
 
 
-class _WhitepaperWorkflowRolloutMethods(_WhitepaperWorkflowRolloutBase):
+class WhitepaperWorkflowRolloutMethods(_WhitepaperWorkflowRolloutBase):
     def _dispatch_engineering_agentrun(
         self,
         session: Session,
@@ -702,6 +702,3 @@ class _WhitepaperWorkflowRolloutMethods(_WhitepaperWorkflowRolloutBase):
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-WhitepaperWorkflowRolloutMethods = _WhitepaperWorkflowRolloutMethods

@@ -29,7 +29,7 @@ from .requirements import (
 
 
 @dataclass
-class _ArtifactEvaluation:
+class ArtifactEvaluation:
     reasons: list[str]
     details: list[dict[str, object]]
     refs: list[str]
@@ -57,7 +57,7 @@ class _ArtifactEvaluation:
         return self.reasons, self.details, self.refs
 
 
-def _load_required_evidence_artifact(
+def load_required_evidence_artifact(
     *,
     evidence_ref: str,
     required_artifacts: Sequence[str],
@@ -65,7 +65,7 @@ def _load_required_evidence_artifact(
     missing_reason: str | None,
     invalid_ref_reason: str,
     invalid_json_reason: str,
-) -> _ArtifactEvaluation:
+) -> ArtifactEvaluation:
     reasons: list[str] = []
     details: list[dict[str, object]] = []
     refs: list[str] = []
@@ -78,7 +78,7 @@ def _load_required_evidence_artifact(
     if artifact_path is None:
         reasons.append(invalid_ref_reason)
         details.append({"reason": invalid_ref_reason, "artifact_ref": artifact_ref})
-        return _ArtifactEvaluation(
+        return ArtifactEvaluation(
             reasons=reasons,
             details=details,
             refs=refs,
@@ -94,7 +94,7 @@ def _load_required_evidence_artifact(
         details.append(
             {"reason": invalid_json_reason, "artifact_ref": str(artifact_path)}
         )
-    return _ArtifactEvaluation(
+    return ArtifactEvaluation(
         reasons=reasons,
         details=details,
         refs=refs,
@@ -104,8 +104,8 @@ def _load_required_evidence_artifact(
     )
 
 
-def _require_schema_version(
-    evaluation: _ArtifactEvaluation,
+def require_schema_version(
+    evaluation: ArtifactEvaluation,
     *,
     expected: str,
     reason: str,
@@ -122,8 +122,8 @@ def _require_schema_version(
     evaluation.add(reason, **detail)
 
 
-def _require_status(
-    evaluation: _ArtifactEvaluation,
+def require_status(
+    evaluation: ArtifactEvaluation,
     *,
     expected: str,
     reason: str,
@@ -137,8 +137,8 @@ def _require_status(
         evaluation.add(reason, **{detail_key: status})
 
 
-def _require_min_int_field(
-    evaluation: _ArtifactEvaluation,
+def require_min_int_field(
+    evaluation: ArtifactEvaluation,
     *,
     field: str,
     minimum: int,
@@ -156,7 +156,7 @@ def _require_min_int_field(
 
 
 def _require_float_min_field(
-    evaluation: _ArtifactEvaluation,
+    evaluation: ArtifactEvaluation,
     *,
     field: str,
     minimum: float,
@@ -174,8 +174,8 @@ def _require_float_min_field(
         evaluation.add(threshold_reason, **{actual_key: value, minimum_key: minimum})
 
 
-def _require_float_max_field(
-    evaluation: _ArtifactEvaluation,
+def require_float_max_field(
+    evaluation: ArtifactEvaluation,
     *,
     field: str,
     maximum: float,
@@ -193,7 +193,7 @@ def _require_float_max_field(
         evaluation.add(threshold_reason, **{actual_key: value, maximum_key: maximum})
 
 
-def _append_detail(
+def append_detail(
     reasons: list[str],
     details: list[dict[str, object]],
     reason: str,
@@ -212,7 +212,7 @@ def _append_named_evidence_reason(
     **detail: object,
 ) -> None:
     reason = f"{evidence_name}_{suffix}"
-    _append_detail(
+    append_detail(
         reasons,
         reason_details,
         reason,
@@ -221,7 +221,7 @@ def _append_named_evidence_reason(
     )
 
 
-def _evaluate_simulation_calibration_evidence(
+def evaluate_simulation_calibration_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -238,7 +238,7 @@ def _evaluate_simulation_calibration_evidence(
     calibration = _as_dict(evidence.get("simulation_calibration"))
     evidence_ref = str(calibration.get("artifact_ref") or "").strip()
 
-    evaluation = _load_required_evidence_artifact(
+    evaluation = load_required_evidence_artifact(
         evidence_ref=evidence_ref,
         required_artifacts=_simulation_calibration_required_artifact_refs(
             policy_payload
@@ -251,12 +251,12 @@ def _evaluate_simulation_calibration_evidence(
     if evaluation.payload is None:
         return evaluation.result()
 
-    _require_schema_version(
+    require_schema_version(
         evaluation,
         expected="simulation-calibration-report-v1",
         reason="simulation_calibration_schema_version_invalid",
     )
-    _require_status(
+    require_status(
         evaluation,
         expected="calibrated",
         reason="simulation_calibration_status_not_calibrated",
@@ -269,7 +269,7 @@ def _evaluate_simulation_calibration_evidence(
             1,
         ),
     )
-    _require_min_int_field(
+    require_min_int_field(
         evaluation,
         field="order_count",
         minimum=minimum_order_count,
@@ -302,7 +302,7 @@ def _evaluate_simulation_calibration_evidence(
     )
     if max_avg_calibration_error_bps is None:
         max_avg_calibration_error_bps = 25.0
-    _require_float_max_field(
+    require_float_max_field(
         evaluation,
         field="avg_calibration_error_bps",
         maximum=max_avg_calibration_error_bps,
@@ -312,7 +312,7 @@ def _evaluate_simulation_calibration_evidence(
         maximum_key="maximum_avg_calibration_error_bps",
     )
 
-    _require_status(
+    require_status(
         evaluation,
         expected="pass",
         reason="simulation_calibration_confidence_gate_action_not_pass",
@@ -323,7 +323,7 @@ def _evaluate_simulation_calibration_evidence(
     return evaluation.result()
 
 
-def _evaluate_shadow_live_deviation_evidence(
+def evaluate_shadow_live_deviation_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -340,7 +340,7 @@ def _evaluate_shadow_live_deviation_evidence(
     deviation = _as_dict(evidence.get("shadow_live_deviation"))
     evidence_ref = str(deviation.get("artifact_ref") or "").strip()
 
-    evaluation = _load_required_evidence_artifact(
+    evaluation = load_required_evidence_artifact(
         evidence_ref=evidence_ref,
         required_artifacts=_shadow_live_deviation_required_artifact_refs(
             policy_payload
@@ -353,12 +353,12 @@ def _evaluate_shadow_live_deviation_evidence(
     if evaluation.payload is None:
         return evaluation.result()
 
-    _require_schema_version(
+    require_schema_version(
         evaluation,
         expected="shadow-live-deviation-report-v1",
         reason="shadow_live_deviation_schema_version_invalid",
     )
-    _require_status(
+    require_status(
         evaluation,
         expected="within_budget",
         reason="shadow_live_deviation_status_not_within_budget",
@@ -371,7 +371,7 @@ def _evaluate_shadow_live_deviation_evidence(
             1,
         ),
     )
-    _require_min_int_field(
+    require_min_int_field(
         evaluation,
         field="order_count",
         minimum=minimum_order_count,
@@ -385,7 +385,7 @@ def _evaluate_shadow_live_deviation_evidence(
     )
     if max_avg_abs_slippage_bps is None:
         max_avg_abs_slippage_bps = 20.0
-    _require_float_max_field(
+    require_float_max_field(
         evaluation,
         field="avg_abs_slippage_bps",
         maximum=max_avg_abs_slippage_bps,
@@ -400,7 +400,7 @@ def _evaluate_shadow_live_deviation_evidence(
     )
     if max_avg_abs_divergence_bps is None:
         max_avg_abs_divergence_bps = 15.0
-    _require_float_max_field(
+    require_float_max_field(
         evaluation,
         field="avg_abs_divergence_bps",
         maximum=max_avg_abs_divergence_bps,
@@ -430,7 +430,7 @@ def _load_fold_metrics_effective_count(
         None if fold_payload_path is None else _load_json_if_exists(fold_payload_path)
     )
     if fold_payload is None:
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "fold_metrics_evidence_artifact_invalid",
@@ -440,7 +440,7 @@ def _load_fold_metrics_effective_count(
 
     schema_version = str(fold_payload.get("schema_version", "")).strip()
     if schema_version and schema_version != "fold-metrics-v1":
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "fold_metrics_evidence_schema_invalid",
@@ -457,7 +457,7 @@ def _load_fold_metrics_effective_count(
     return fold_count
 
 
-def _evaluate_fold_metrics_evidence(
+def evaluate_fold_metrics_evidence(
     *,
     policy_payload: dict[str, Any],
     evidence: dict[str, Any],
@@ -476,7 +476,7 @@ def _evaluate_fold_metrics_evidence(
     )
     fold_count = _int_or_default(fold_metrics.get("count"), 0)
     if fold_count < min_fold_count:
-        _append_evidence_artifact_reasons(
+        append_evidence_artifact_reasons(
             reasons=reasons,
             reason_details=details,
             evidence_name="fold_metrics",
@@ -498,7 +498,7 @@ def _evaluate_fold_metrics_evidence(
     )
 
     if effective_fold_count < min_fold_count:
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "fold_metrics_evidence_insufficient",
@@ -517,14 +517,14 @@ def _load_stress_metrics_payload(
     artifact_root: Path,
 ) -> dict[str, Any] | None:
     if not stress_ref:
-        _append_detail(reasons, details, "stress_metrics_evidence_artifact_ref_missing")
+        append_detail(reasons, details, "stress_metrics_evidence_artifact_ref_missing")
         return None
 
     artifact_ref_path = _normalize_artifact_path(
         stress_ref, artifact_root=artifact_root
     )
     if artifact_ref_path is None:
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "stress_metrics_evidence_ref_not_trusted",
@@ -532,7 +532,7 @@ def _load_stress_metrics_payload(
         )
         return None
     if not artifact_ref_path.exists():
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "stress_metrics_evidence_artifact_missing",
@@ -542,7 +542,7 @@ def _load_stress_metrics_payload(
 
     stress_payload = _load_json_if_exists(artifact_ref_path)
     if stress_payload is None:
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "stress_metrics_evidence_artifact_invalid",
@@ -563,7 +563,7 @@ def _validate_stress_metrics_payload(
 ) -> None:
     schema_version = str(stress_payload.get("schema_version") or "").strip()
     if schema_version and schema_version != "stress-metrics-v1":
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "stress_metrics_evidence_schema_invalid",
@@ -576,7 +576,7 @@ def _validate_stress_metrics_payload(
         len(_list_from_any(stress_payload.get("items"))),
     )
     if payload_count < min_stress_count:
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "stress_metrics_evidence_insufficient",
@@ -605,14 +605,14 @@ def _append_stress_generated_at_reasons(
     generated_at_raw = str(stress_payload.get("generated_at") or "").strip()
     generated_at = _parse_datetime(generated_at_raw)
     if generated_at is None:
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "stress_metrics_evidence_generated_at_missing",
             artifact_ref=stress_ref,
         )
     elif (now - generated_at).total_seconds() > max_age_hours * 3600:
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "stress_metrics_evidence_stale",
@@ -622,7 +622,7 @@ def _append_stress_generated_at_reasons(
         )
 
 
-def _evaluate_stress_metrics_evidence(
+def evaluate_stress_metrics_evidence(
     *,
     policy_payload: dict[str, Any],
     evidence: dict[str, Any],
@@ -638,7 +638,7 @@ def _evaluate_stress_metrics_evidence(
         cast(dict[str, Any], stress_raw) if isinstance(stress_raw, dict) else {}
     )
     stress_ref = str(stress_metrics.get("artifact_ref") or "").strip()
-    _append_evidence_artifact_reasons(
+    append_evidence_artifact_reasons(
         reasons=reasons,
         reason_details=details,
         evidence_name="stress_metrics",
@@ -674,7 +674,7 @@ def _evaluate_stress_metrics_evidence(
         )
 
     if stress_count < min_stress_count:
-        _append_detail(
+        append_detail(
             reasons,
             details,
             "stress_metrics_evidence_insufficient",
@@ -760,7 +760,7 @@ def _append_artifact_age_reason(
         )
 
 
-def _append_evidence_artifact_reasons(
+def append_evidence_artifact_reasons(
     *,
     reasons: list[str],
     reason_details: list[dict[str, object]],
@@ -818,7 +818,7 @@ def _append_evidence_artifact_reasons(
     )
 
 
-def _evaluate_rationale_evidence(
+def evaluate_rationale_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -878,18 +878,3 @@ def _evaluate_rationale_evidence(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-append_detail = _append_detail
-append_evidence_artifact_reasons = _append_evidence_artifact_reasons
-ArtifactEvaluation = _ArtifactEvaluation
-evaluate_fold_metrics_evidence = _evaluate_fold_metrics_evidence
-evaluate_rationale_evidence = _evaluate_rationale_evidence
-evaluate_shadow_live_deviation_evidence = _evaluate_shadow_live_deviation_evidence
-evaluate_simulation_calibration_evidence = _evaluate_simulation_calibration_evidence
-evaluate_stress_metrics_evidence = _evaluate_stress_metrics_evidence
-load_required_evidence_artifact = _load_required_evidence_artifact
-require_float_max_field = _require_float_max_field
-require_min_int_field = _require_min_int_field
-require_schema_version = _require_schema_version
-require_status = _require_status

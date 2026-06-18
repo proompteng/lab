@@ -69,52 +69,52 @@ def _extract_report_slices(report_payload: dict[str, Any]) -> dict[str, dict[str
 
 
 def _empty_slice_metrics() -> dict[str, str]:
-    return _calibration_helpers()._empty_slice_metrics()
+    return _calibration_helpers().empty_slice_metrics()
 
 
 def _slice_deltas(
     candidate: dict[str, str],
     baseline: dict[str, str],
 ) -> dict[str, str]:
-    return _calibration_helpers()._slice_deltas(candidate, baseline)
+    return _calibration_helpers().slice_deltas(candidate, baseline)
 
 
 def _benchmark_summary(benchmark: Any) -> dict[str, Decimal]:
-    return _calibration_helpers()._benchmark_summary(benchmark)
+    return _calibration_helpers().benchmark_summary(benchmark)
 
 
 def _confidence_summary(
     confidence_values: list[Decimal], net_pnl: Decimal
 ) -> dict[str, object]:
-    return _calibration_helpers()._confidence_summary(confidence_values, net_pnl)
+    return _calibration_helpers().confidence_summary(confidence_values, net_pnl)
 
 
 def _significance_summary(benchmark: Any) -> dict[str, object]:
-    return _calibration_helpers()._significance_summary(benchmark)
+    return _calibration_helpers().significance_summary(benchmark)
 
 
 def _validate_profitability_schema_versions(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers()._validate_profitability_schema_versions(*args, **kwargs)
+    _calibration_helpers().validate_profitability_schema_versions(*args, **kwargs)
 
 
 def _validate_profitability_risk_metrics(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers()._validate_profitability_risk_metrics(*args, **kwargs)
+    _calibration_helpers().validate_profitability_risk_metrics(*args, **kwargs)
 
 
 def _validate_profitability_cost_metrics(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers()._validate_profitability_cost_metrics(*args, **kwargs)
+    _calibration_helpers().validate_profitability_cost_metrics(*args, **kwargs)
 
 
 def _validate_profitability_confidence_metrics(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers()._validate_profitability_confidence_metrics(*args, **kwargs)
+    _calibration_helpers().validate_profitability_confidence_metrics(*args, **kwargs)
 
 
 def _validate_profitability_significance_metrics(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers()._validate_profitability_significance_metrics(*args, **kwargs)
+    _calibration_helpers().validate_profitability_significance_metrics(*args, **kwargs)
 
 
 def _validate_profitability_reproducibility(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers()._validate_profitability_reproducibility(*args, **kwargs)
+    _calibration_helpers().validate_profitability_reproducibility(*args, **kwargs)
 
 
 class SignalSource(Protocol):

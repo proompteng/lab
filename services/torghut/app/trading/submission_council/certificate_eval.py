@@ -44,7 +44,7 @@ from .certificate_loading import (
 )
 
 
-def _segment_summary(
+def segment_summary(
     *,
     state: object,
     runtime_items: Sequence[Mapping[str, Any]],
@@ -132,7 +132,7 @@ def _segment_summary(
     }
 
 
-def _evaluate_certificate_candidates(
+def evaluate_certificate_candidates(
     *,
     evidence: Sequence[Mapping[str, object]],
     segment_summary: Mapping[str, Mapping[str, object]],
@@ -284,7 +284,7 @@ def _evaluate_certificate_candidates(
     return evaluated, valid
 
 
-def _runtime_hypothesis_ids_for_gate_scope(
+def runtime_hypothesis_ids_for_gate_scope(
     runtime_items: Sequence[Mapping[str, Any]],
     *,
     eligibility_key: str,
@@ -298,7 +298,7 @@ def _runtime_hypothesis_ids_for_gate_scope(
     }
 
 
-def _runtime_ledger_hypothesis_ids_for_gate_scope(
+def runtime_ledger_hypothesis_ids_for_gate_scope(
     runtime_ledger_candidates: Sequence[Mapping[str, object]],
 ) -> set[str]:
     return {
@@ -309,7 +309,7 @@ def _runtime_ledger_hypothesis_ids_for_gate_scope(
     }
 
 
-def _candidate_reason_codes_for_gate_scope(
+def candidate_reason_codes_for_gate_scope(
     evaluated_tuples: Sequence[Mapping[str, object]],
     *,
     hypothesis_ids: set[str],
@@ -327,7 +327,7 @@ def _candidate_reason_codes_for_gate_scope(
     ]
 
 
-def _default_lineage_ref(
+def default_lineage_ref(
     *,
     status: str = "unverified",
     candidate_id: str | None = None,
@@ -348,7 +348,7 @@ def _default_lineage_ref(
     }
 
 
-def _attach_lineage_refs(
+def attach_lineage_refs(
     session: RuntimeLedgerReadSession,
     *,
     evaluated_rows: Sequence[Mapping[str, object]],
@@ -422,7 +422,7 @@ def _attach_lineage_refs(
             if reason_code not in reason_codes:
                 reason_codes.append(reason_code)
             evaluated_row["reason_codes"] = _normalize_reason_codes(reason_codes)
-            evaluated_row["lineage_ref"] = _default_lineage_ref(
+            evaluated_row["lineage_ref"] = default_lineage_ref(
                 status="unavailable",
                 candidate_id=_safe_text(evaluated_row.get("candidate_id")),
                 hypothesis_id=_safe_text(evaluated_row.get("hypothesis_id")),
@@ -467,7 +467,7 @@ def _attach_lineage_refs(
             and not dataset_rows
             and declared_dataset_snapshot_ref is None
         ) or (hypothesis_id is not None and not hypothesis_rows)
-        lineage_ref = _default_lineage_ref(
+        lineage_ref = default_lineage_ref(
             status=(
                 "missing"
                 if lineage_missing
@@ -515,14 +515,3 @@ def _attach_lineage_refs(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-attach_lineage_refs = _attach_lineage_refs
-candidate_reason_codes_for_gate_scope = _candidate_reason_codes_for_gate_scope
-default_lineage_ref = _default_lineage_ref
-evaluate_certificate_candidates = _evaluate_certificate_candidates
-runtime_hypothesis_ids_for_gate_scope = _runtime_hypothesis_ids_for_gate_scope
-runtime_ledger_hypothesis_ids_for_gate_scope = (
-    _runtime_ledger_hypothesis_ids_for_gate_scope
-)
-segment_summary = _segment_summary

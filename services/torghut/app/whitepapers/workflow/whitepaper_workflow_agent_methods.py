@@ -46,7 +46,7 @@ else:
     _WhitepaperWorkflowAgentBase = object
 
 
-class _WhitepaperWorkflowAgentMethods(_WhitepaperWorkflowAgentBase):
+class WhitepaperWorkflowAgentMethods(_WhitepaperWorkflowAgentBase):
     def search_semantic(
         self,
         session: Session,
@@ -705,6 +705,3 @@ class _WhitepaperWorkflowAgentMethods(_WhitepaperWorkflowAgentBase):
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-WhitepaperWorkflowAgentMethods = _WhitepaperWorkflowAgentMethods

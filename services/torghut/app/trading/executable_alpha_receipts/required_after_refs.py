@@ -32,7 +32,7 @@ from .build_executable_alpha_repair_receipts import (
 )
 
 
-def _required_after_refs(replay_class: str) -> list[str]:
+def required_after_refs(replay_class: str) -> list[str]:
     refs = [
         "fresh_market_context_receipt",
         "scoped_quant_health_receipt",
@@ -45,7 +45,7 @@ def _required_after_refs(replay_class: str) -> list[str]:
     return ["fresh_tca_route_receipt", *refs]
 
 
-def _guardrails(
+def guardrails(
     *,
     route_record: Mapping[str, Any],
     blockers: Sequence[str],
@@ -74,7 +74,7 @@ def _guardrails(
     ]
 
 
-def _live_gate_evaluated_hypotheses(
+def live_gate_evaluated_hypotheses(
     live_submission_gate: Mapping[str, Any],
 ) -> list[Mapping[str, Any]]:
     evaluated = [
@@ -98,17 +98,17 @@ def _live_gate_evaluated_hypotheses(
     return unique
 
 
-def _alpha_runtime_repair_reason_codes(item: Mapping[str, Any]) -> list[str]:
+def alpha_runtime_repair_reason_codes(item: Mapping[str, Any]) -> list[str]:
     reasons = _string_list(item.get("reason_codes"))
     if not reasons:
         reasons = _string_list(item.get("reasons"))
     return reasons
 
 
-def _alpha_runtime_replay_key(
+def alpha_runtime_replay_key(
     item: Mapping[str, Any],
 ) -> tuple[int, int, int, int, str]:
-    reasons = set(_alpha_runtime_repair_reason_codes(item))
+    reasons = set(alpha_runtime_repair_reason_codes(item))
     blocked_segments = len(_sequence(item.get("blocked_segments")))
     return (
         len(reasons.intersection(_ZERO_RUNTIME_EVIDENCE_REASONS)),
@@ -119,20 +119,20 @@ def _alpha_runtime_replay_key(
     )
 
 
-def _top_alpha_runtime_replay_target(
+def top_alpha_runtime_replay_target(
     live_submission_gate: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     candidates = [
         item
-        for item in _live_gate_evaluated_hypotheses(live_submission_gate)
+        for item in live_gate_evaluated_hypotheses(live_submission_gate)
         if _text(item.get("hypothesis_id"))
     ]
     if not candidates:
         return {}
-    return sorted(candidates, key=_alpha_runtime_replay_key)[0]
+    return sorted(candidates, key=alpha_runtime_replay_key)[0]
 
 
-def _runtime_ledger_repair_candidates(
+def runtime_ledger_repair_candidates(
     live_submission_gate: Mapping[str, Any],
 ) -> list[Mapping[str, Any]]:
     return [
@@ -144,7 +144,7 @@ def _runtime_ledger_repair_candidates(
     ]
 
 
-def _runtime_ledger_repair_key(
+def runtime_ledger_repair_key(
     item: Mapping[str, Any],
 ) -> tuple[int, int, int, int, float, float, float, str]:
     filled_notional = _float(item.get("filled_notional")) or 0.0
@@ -162,17 +162,17 @@ def _runtime_ledger_repair_key(
     )
 
 
-def _top_runtime_ledger_economic_repair_candidate(
+def top_runtime_ledger_economic_repair_candidate(
     live_submission_gate: Mapping[str, Any],
 ) -> Mapping[str, Any]:
-    candidates = _runtime_ledger_repair_candidates(live_submission_gate)
+    candidates = runtime_ledger_repair_candidates(live_submission_gate)
     if not candidates:
         return {}
-    return sorted(candidates, key=_runtime_ledger_repair_key, reverse=True)[0]
+    return sorted(candidates, key=runtime_ledger_repair_key, reverse=True)[0]
 
 
-def _alpha_runtime_confidence(item: Mapping[str, Any]) -> str:
-    reasons = set(_alpha_runtime_repair_reason_codes(item))
+def alpha_runtime_confidence(item: Mapping[str, Any]) -> str:
+    reasons = set(alpha_runtime_repair_reason_codes(item))
     if reasons.intersection(_ZERO_RUNTIME_EVIDENCE_REASONS):
         return "low"
     if reasons.intersection(_HARD_ALPHA_ECONOMIC_REASONS):
@@ -180,7 +180,7 @@ def _alpha_runtime_confidence(item: Mapping[str, Any]) -> str:
     return "medium"
 
 
-def _runtime_ledger_paper_probation_eligible(
+def runtime_ledger_paper_probation_eligible(
     item: Mapping[str, Any],
     *,
     reason_codes: Sequence[str],
@@ -199,7 +199,7 @@ def _runtime_ledger_paper_probation_eligible(
     )
 
 
-def _runtime_ledger_economic_repair_item(
+def runtime_ledger_economic_repair_item(
     *,
     item: Mapping[str, Any],
     account_label: str | None,
@@ -245,7 +245,7 @@ def _runtime_ledger_economic_repair_item(
         },
     )
     after_cost_edge_bps = _float(item.get("post_cost_expectancy_bps"))
-    paper_probation_eligible = _runtime_ledger_paper_probation_eligible(
+    paper_probation_eligible = runtime_ledger_paper_probation_eligible(
         item,
         reason_codes=reasons,
     )
@@ -387,7 +387,7 @@ def _runtime_ledger_economic_repair_item(
     }
 
 
-def _alpha_runtime_blockers(
+def alpha_runtime_blockers(
     *,
     item: Mapping[str, Any],
     proof_floor_receipt: Mapping[str, Any],
@@ -399,7 +399,7 @@ def _alpha_runtime_blockers(
 ) -> list[str]:
     blockers = set(_string_list(proof_floor_receipt.get("blocking_reasons")))
     blockers.update(_string_list(live_submission_gate.get("blocked_reasons")))
-    blockers.update(_alpha_runtime_repair_reason_codes(item))
+    blockers.update(alpha_runtime_repair_reason_codes(item))
     blockers.update(_empirical_blockers(empirical_jobs_status))
     blockers.update(_quant_blockers(quant_evidence))
     blockers.update(_market_context_blockers(market_context_status))
@@ -411,7 +411,7 @@ def _alpha_runtime_blockers(
     return sorted(blocker for blocker in blockers if blocker)
 
 
-def _alpha_runtime_replay_item(
+def alpha_runtime_replay_item(
     *,
     item: Mapping[str, Any],
     account_label: str | None,
@@ -426,8 +426,8 @@ def _alpha_runtime_replay_item(
     hypothesis_id = _text(item.get("hypothesis_id"), "unknown")
     candidate_id = _text(item.get("candidate_id"))
     strategy_id = _text(item.get("strategy_id"))
-    reasons = _alpha_runtime_repair_reason_codes(item)
-    blockers = _alpha_runtime_blockers(
+    reasons = alpha_runtime_repair_reason_codes(item)
+    blockers = alpha_runtime_blockers(
         item=item,
         proof_floor_receipt=proof_floor_receipt,
         live_submission_gate=live_submission_gate,
@@ -522,7 +522,7 @@ def _alpha_runtime_replay_item(
             "class": "runtime_window_replay_refresh",
             "max_runtime_seconds": 900,
         },
-        "confidence": _alpha_runtime_confidence(item),
+        "confidence": alpha_runtime_confidence(item),
         "max_runtime_seconds": 900,
         "max_notional": "0",
         "guardrails": [
@@ -564,7 +564,7 @@ def _alpha_runtime_replay_item(
     }
 
 
-def _replay_item(
+def replay_item(
     *,
     hypothesis_id: str,
     replay_class: str,
@@ -619,7 +619,7 @@ def _replay_item(
             market_context_status=market_context_status,
             jangar_contract_graduation_ref=jangar_contract_graduation_ref,
         ),
-        "required_after_refs": _required_after_refs(replay_class),
+        "required_after_refs": required_after_refs(replay_class),
         "expected_profit_unlock": {
             "expected_blocker_delta": expected_unblock_value,
             "expected_profit_effect": route_row.get("expected_profit_effect")
@@ -639,7 +639,7 @@ def _replay_item(
         if replay_class == "missing_symbol_breadth_probe"
         else 600,
         "max_notional": "0",
-        "guardrails": _guardrails(route_record=route_record, blockers=blockers),
+        "guardrails": guardrails(route_record=route_record, blockers=blockers),
         "falsification_rules": [
             "after_refs_missing_or_stale",
             "tca_slippage_above_guardrail",
@@ -663,22 +663,3 @@ def _replay_item(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-alpha_runtime_blockers = _alpha_runtime_blockers
-alpha_runtime_confidence = _alpha_runtime_confidence
-alpha_runtime_repair_reason_codes = _alpha_runtime_repair_reason_codes
-alpha_runtime_replay_item = _alpha_runtime_replay_item
-alpha_runtime_replay_key = _alpha_runtime_replay_key
-guardrails = _guardrails
-live_gate_evaluated_hypotheses = _live_gate_evaluated_hypotheses
-replay_item = _replay_item
-required_after_refs = _required_after_refs
-runtime_ledger_economic_repair_item = _runtime_ledger_economic_repair_item
-runtime_ledger_paper_probation_eligible = _runtime_ledger_paper_probation_eligible
-runtime_ledger_repair_candidates = _runtime_ledger_repair_candidates
-runtime_ledger_repair_key = _runtime_ledger_repair_key
-top_alpha_runtime_replay_target = _top_alpha_runtime_replay_target
-top_runtime_ledger_economic_repair_candidate = (
-    _top_runtime_ledger_economic_repair_candidate
-)

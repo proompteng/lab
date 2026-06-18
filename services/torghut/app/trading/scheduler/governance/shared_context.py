@@ -85,7 +85,7 @@ def _resolve_autonomy_artifact_root(raw_root: Path) -> Path:
     raise RuntimeError("unable_to_resolve_autonomy_artifact_root")
 
 
-def _int_from_mapping(payload: Mapping[str, Any], key: str) -> int:
+def int_from_mapping(payload: Mapping[str, Any], key: str) -> int:
     value = payload.get(key)
     if isinstance(value, bool):
         return int(value)
@@ -101,7 +101,7 @@ def _int_from_mapping(payload: Mapping[str, Any], key: str) -> int:
     return 0
 
 
-def _incident_payload_complete(payload: Mapping[str, Any]) -> bool:
+def incident_payload_complete(payload: Mapping[str, Any]) -> bool:
     keys = (
         "triggered_at",
         "reasons",
@@ -125,7 +125,7 @@ def _incident_payload_complete(payload: Mapping[str, Any]) -> bool:
     return True
 
 
-def _parse_iso_datetime(raw: str) -> datetime | None:
+def parse_iso_datetime(raw: str) -> datetime | None:
     text = raw.strip()
     if not text:
         return None
@@ -139,7 +139,7 @@ def _parse_iso_datetime(raw: str) -> datetime | None:
     return parsed
 
 
-class _TradingSchedulerGovernanceMixinFields:
+class TradingSchedulerGovernanceMixinFields:
     state: TradingState
 
     _pipeline: Optional[TradingPipeline]
@@ -147,7 +147,7 @@ class _TradingSchedulerGovernanceMixinFields:
     _pipelines: list[TradingPipeline]
 
 
-class _TradingSchedulerGovernanceMixinContract(Protocol):
+class TradingSchedulerGovernanceMixinContract(Protocol):
     state: TradingState
     _pipeline: Optional[TradingPipeline]
     _pipelines: list[TradingPipeline]
@@ -184,13 +184,6 @@ __all__ = (
     "resolve_autonomy_artifact_root",
 )
 
-# Public aliases used by split modules.
-incident_payload_complete = _incident_payload_complete
-int_from_mapping = _int_from_mapping
-parse_iso_datetime = _parse_iso_datetime
-TradingSchedulerGovernanceMixinFields = _TradingSchedulerGovernanceMixinFields
-TradingSchedulerGovernanceMixinContract = _TradingSchedulerGovernanceMixinContract
-
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
@@ -210,15 +203,15 @@ __all__: tuple[str, ...] = (
     "TradingSchedulerGovernanceMixinFields",
     "TradingState",
     "_FRESH_TAIL_NO_SIGNAL_REASONS",
-    "_TradingSchedulerGovernanceMixinFields",
+    "TradingSchedulerGovernanceMixinFields",
     "_coerce_recovery_reason_sequence",
-    "_incident_payload_complete",
-    "_int_from_mapping",
+    "incident_payload_complete",
+    "int_from_mapping",
     "_is_market_session_open",
     "_is_recoverable_emergency_stop_reason",
     "_latch_signal_continuity_alert_state",
     "_merge_emergency_stop_reasons",
-    "_parse_iso_datetime",
+    "parse_iso_datetime",
     "_record_signal_continuity_recovery_cycle",
     "_resolve_autonomy_artifact_root",
     "_signal_bootstrap_grace_active",

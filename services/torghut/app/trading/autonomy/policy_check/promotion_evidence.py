@@ -48,7 +48,7 @@ from .foundation_router import (
 )
 
 
-def _evaluate_promotion_evidence(
+def evaluate_promotion_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -87,12 +87,10 @@ def _evaluate_promotion_evidence(
     )
     reasons.extend(portfolio_reasons)
     details.extend(portfolio_details)
-    alpha_readiness_reasons, alpha_readiness_details = (
-        _evaluate_alpha_readiness_summary(
-            policy_payload=policy_payload,
-            gate_report_payload=gate_report_payload,
-            promotion_target=promotion_target,
-        )
+    alpha_readiness_reasons, alpha_readiness_details = evaluate_alpha_readiness_summary(
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+        promotion_target=promotion_target,
     )
     reasons.extend(alpha_readiness_reasons)
     details.extend(alpha_readiness_details)
@@ -394,7 +392,7 @@ def _evaluate_portfolio_promotion_summary(
     return reasons, details
 
 
-def _evaluate_alpha_readiness_summary(
+def evaluate_alpha_readiness_summary(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -490,7 +488,3 @@ def _extract_evidence_authority_payload(payload: dict[str, Any]) -> dict[str, An
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-evaluate_alpha_readiness_summary = _evaluate_alpha_readiness_summary
-evaluate_promotion_evidence = _evaluate_promotion_evidence

@@ -120,30 +120,30 @@ from ..common import (
     WhitepaperKafkaWorker,
     WhitepaperRolloutTransition,
     WhitepaperWorkflowService,
-    ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS as _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
-    ALPACA_HEALTH_CACHE_LOCK as _ALPACA_HEALTH_CACHE_LOCK,
-    ALPACA_HEALTH_STATE as _ALPACA_HEALTH_STATE,
-    OPTIONS_CATALOG_FRESHNESS_CACHE as _OPTIONS_CATALOG_FRESHNESS_CACHE,
-    OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK as _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
-    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL as _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS as _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK as _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
-    READINESS_PROMOTION_AUTHORITY_KEYS as _READINESS_PROMOTION_AUTHORITY_KEYS,
-    RETRYABLE_TCA_RECOMPUTE_SQLSTATES as _RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
-    SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-    TRADING_DEPENDENCY_HEALTH_CACHE as _TRADING_DEPENDENCY_HEALTH_CACHE,
-    TRADING_DEPENDENCY_HEALTH_CACHE_LOCK as _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
-    TRADING_HEALTH_SURFACE_EVALUATIONS as _TRADING_HEALTH_SURFACE_EVALUATIONS,
-    TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR as _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
-    TRADING_HEALTH_SURFACE_EVALUATION_LOCK as _TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
-    TRADING_HEALTH_SURFACE_PAYLOAD_CACHE as _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
-    TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS as _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
-    TRADING_STATUS_READ_BUDGET_SECONDS as _TRADING_STATUS_READ_BUDGET_SECONDS,
-    ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS as _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
-    paper_route_target_plan_success_cache as _paper_route_target_plan_success_cache,
-    retryable_tca_recompute_error as _retryable_tca_recompute_error,
-    shared_mapping_items as _shared_mapping_items,
-    shared_paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
+    ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS as ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
+    ALPACA_HEALTH_CACHE_LOCK as ALPACA_HEALTH_CACHE_LOCK,
+    ALPACA_HEALTH_STATE as ALPACA_HEALTH_STATE,
+    OPTIONS_CATALOG_FRESHNESS_CACHE as OPTIONS_CATALOG_FRESHNESS_CACHE,
+    OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK as OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
+    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL as PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS as PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
+    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK as PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
+    READINESS_PROMOTION_AUTHORITY_KEYS as READINESS_PROMOTION_AUTHORITY_KEYS,
+    RETRYABLE_TCA_RECOMPUTE_SQLSTATES as RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
+    SIMPLE_LANE_ALLOWED_REJECT_REASONS as SIMPLE_LANE_ALLOWED_REJECT_REASONS,
+    TRADING_DEPENDENCY_HEALTH_CACHE as TRADING_DEPENDENCY_HEALTH_CACHE,
+    TRADING_DEPENDENCY_HEALTH_CACHE_LOCK as TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
+    TRADING_HEALTH_SURFACE_EVALUATIONS as TRADING_HEALTH_SURFACE_EVALUATIONS,
+    TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR as TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
+    TRADING_HEALTH_SURFACE_EVALUATION_LOCK as TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
+    TRADING_HEALTH_SURFACE_PAYLOAD_CACHE as TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
+    TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS as TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
+    TRADING_STATUS_READ_BUDGET_SECONDS as TRADING_STATUS_READ_BUDGET_SECONDS,
+    ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS as ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
+    paper_route_target_plan_success_cache as paper_route_target_plan_success_cache,
+    retryable_tca_recompute_error as retryable_tca_recompute_error,
+    shared_mapping_items as shared_mapping_items,
+    shared_paper_route_target_plan_from_payload as shared_paper_route_target_plan_from_payload,
     active_simulation_runtime_context,
     assert_runtime_gate_policy_contract,
     asynccontextmanager,
@@ -277,7 +277,7 @@ def _readiness_dependency_snapshot(
     )
 
 
-def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
+def consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
     dependency_quorum = load_jangar_dependency_quorum(
         omit_torghut_consumer_evidence=True,
     )
@@ -291,7 +291,7 @@ def _consumer_evidence_dependency_quorum() -> JangarDependencyQuorumStatus:
     )
 
 
-def _build_consumer_evidence_receipt_projection(
+def build_consumer_evidence_receipt_projection(
     *,
     forecast_service_status: Mapping[str, Any],
     empirical_jobs_status: Mapping[str, Any],
@@ -315,11 +315,11 @@ def _build_consumer_evidence_receipt_projection(
     return consumer_evidence_receipt, route_proven_profit_receipt
 
 
-def _consumer_evidence_summary_view(view: str | None) -> bool:
+def consumer_evidence_summary_view(view: str | None) -> bool:
     return (view or "").strip().lower() in {"compact", "summary", "jangar"}
 
 
-def _revenue_repair_topline_fields(
+def revenue_repair_topline_fields(
     revenue_repair_digest: Mapping[str, Any],
 ) -> dict[str, object]:
     keys = (
@@ -350,12 +350,12 @@ def _revenue_repair_topline_fields(
     }
 
 
-def _build_trading_consumer_evidence_payload(
+def build_trading_consumer_evidence_payload(
     *, summary: bool = False
 ) -> dict[str, object]:
     scheduler = get_trading_scheduler()
     state = scheduler.state
-    dependency_quorum = _consumer_evidence_dependency_quorum()
+    dependency_quorum = consumer_evidence_dependency_quorum()
     empirical_jobs = _empirical_jobs_status()
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
@@ -415,7 +415,7 @@ def _build_trading_consumer_evidence_payload(
         simple_lane_status=simple_lane_status,
     )
     consumer_evidence_receipt, route_proven_profit_receipt = (
-        _build_consumer_evidence_receipt_projection(
+        build_consumer_evidence_receipt_projection(
             forecast_service_status=forecast_service_status,
             empirical_jobs_status=empirical_jobs,
             proof_floor=proof_floor,
@@ -740,7 +740,7 @@ def _build_trading_consumer_evidence_payload(
         "clock_settlement_receipt": clock_settlement_receipt,
         "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
         "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
-        **_revenue_repair_topline_fields(revenue_repair_digest),
+        **revenue_repair_topline_fields(revenue_repair_digest),
         "alpha_readiness_strike_ledger": revenue_repair_digest.get(
             "alpha_readiness_strike_ledger"
         ),
@@ -815,8 +815,8 @@ def trading_consumer_evidence(
 ) -> dict[str, object]:
     """Return Jangar-facing Torghut evidence without recursive Jangar status fetches."""
 
-    return _build_trading_consumer_evidence_payload(
-        summary=_consumer_evidence_summary_view(view)
+    return build_trading_consumer_evidence_payload(
+        summary=consumer_evidence_summary_view(view)
     )
 
 
@@ -964,43 +964,6 @@ __all__ = (
     "get_lean_shadow_parity",
 )
 
-# Public aliases used by split modules.
-ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS
-ALPACA_HEALTH_CACHE_LOCK = _ALPACA_HEALTH_CACHE_LOCK
-ALPACA_HEALTH_STATE = _ALPACA_HEALTH_STATE
-build_consumer_evidence_receipt_projection = _build_consumer_evidence_receipt_projection
-build_trading_consumer_evidence_payload = _build_trading_consumer_evidence_payload
-consumer_evidence_dependency_quorum = _consumer_evidence_dependency_quorum
-consumer_evidence_summary_view = _consumer_evidence_summary_view
-OPTIONS_CATALOG_FRESHNESS_CACHE = _OPTIONS_CATALOG_FRESHNESS_CACHE
-OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK
-PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = (
-    _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL
-)
-PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = (
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS
-)
-paper_route_target_plan_success_cache = _paper_route_target_plan_success_cache
-PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK
-READINESS_PROMOTION_AUTHORITY_KEYS = _READINESS_PROMOTION_AUTHORITY_KEYS
-retryable_tca_recompute_error = _retryable_tca_recompute_error
-RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _RETRYABLE_TCA_RECOMPUTE_SQLSTATES
-revenue_repair_topline_fields = _revenue_repair_topline_fields
-shared_mapping_items = _shared_mapping_items
-shared_paper_route_target_plan_from_payload = (
-    _shared_paper_route_target_plan_from_payload
-)
-SIMPLE_LANE_ALLOWED_REJECT_REASONS = _SIMPLE_LANE_ALLOWED_REJECT_REASONS
-TRADING_DEPENDENCY_HEALTH_CACHE = _TRADING_DEPENDENCY_HEALTH_CACHE
-TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK
-TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR
-TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _TRADING_HEALTH_SURFACE_EVALUATION_LOCK
-TRADING_HEALTH_SURFACE_EVALUATIONS = _TRADING_HEALTH_SURFACE_EVALUATIONS
-TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE
-TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
-TRADING_STATUS_READ_BUDGET_SECONDS = _TRADING_STATUS_READ_BUDGET_SECONDS
-ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
-
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
@@ -1101,30 +1064,30 @@ __all__: tuple[str, ...] = (
     "WhitepaperRolloutTransition",
     "WhitepaperWorkflowService",
     "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
-    "_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS",
-    "_ALPACA_HEALTH_CACHE_LOCK",
-    "_ALPACA_HEALTH_STATE",
-    "_OPTIONS_CATALOG_FRESHNESS_CACHE",
-    "_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK",
-    "_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL",
-    "_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS",
-    "_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK",
-    "_READINESS_PROMOTION_AUTHORITY_KEYS",
-    "_RETRYABLE_TCA_RECOMPUTE_SQLSTATES",
-    "_SIMPLE_LANE_ALLOWED_REJECT_REASONS",
-    "_TRADING_DEPENDENCY_HEALTH_CACHE",
-    "_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK",
-    "_TRADING_HEALTH_SURFACE_EVALUATIONS",
-    "_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR",
-    "_TRADING_HEALTH_SURFACE_EVALUATION_LOCK",
-    "_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE",
-    "_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
-    "_TRADING_STATUS_READ_BUDGET_SECONDS",
-    "_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
+    "ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS",
+    "ALPACA_HEALTH_CACHE_LOCK",
+    "ALPACA_HEALTH_STATE",
+    "OPTIONS_CATALOG_FRESHNESS_CACHE",
+    "OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK",
+    "PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL",
+    "PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS",
+    "PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK",
+    "READINESS_PROMOTION_AUTHORITY_KEYS",
+    "RETRYABLE_TCA_RECOMPUTE_SQLSTATES",
+    "SIMPLE_LANE_ALLOWED_REJECT_REASONS",
+    "TRADING_DEPENDENCY_HEALTH_CACHE",
+    "TRADING_DEPENDENCY_HEALTH_CACHE_LOCK",
+    "TRADING_HEALTH_SURFACE_EVALUATIONS",
+    "TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR",
+    "TRADING_HEALTH_SURFACE_EVALUATION_LOCK",
+    "TRADING_HEALTH_SURFACE_PAYLOAD_CACHE",
+    "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
+    "TRADING_STATUS_READ_BUDGET_SECONDS",
+    "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
     "_build_capital_reentry_cohort_ledger_payload",
     "_build_capital_replay_projection_payload",
     "_build_clock_settlement_payload",
-    "_build_consumer_evidence_receipt_projection",
+    "build_consumer_evidence_receipt_projection",
     "_build_control_plane_contract",
     "_build_evidence_clock_payloads",
     "_build_freshness_carry_ledger_payload",
@@ -1146,23 +1109,23 @@ __all__: tuple[str, ...] = (
     "_build_shadow_first_runtime_payload",
     "_build_simple_lane_status_payload",
     "_build_source_serving_repair_receipt_payload",
-    "_build_trading_consumer_evidence_payload",
-    "_consumer_evidence_dependency_quorum",
+    "build_trading_consumer_evidence_payload",
+    "consumer_evidence_dependency_quorum",
     "_consumer_evidence_jangar_continuity_packet",
-    "_consumer_evidence_summary_view",
+    "consumer_evidence_summary_view",
     "_empirical_jobs_status",
     "_forecast_service_status",
     "_lean_authority_status",
     "_load_clickhouse_ta_status",
     "_load_options_catalog_freshness_summary",
     "_load_tca_summary",
-    "_paper_route_target_plan_success_cache",
+    "paper_route_target_plan_success_cache",
     "_readiness_dependency_snapshot",
-    "_retryable_tca_recompute_error",
-    "_revenue_repair_topline_fields",
+    "retryable_tca_recompute_error",
+    "revenue_repair_topline_fields",
     "_route_claim_symbols",
-    "_shared_mapping_items",
-    "_shared_paper_route_target_plan_from_payload",
+    "shared_mapping_items",
+    "shared_paper_route_target_plan_from_payload",
     "active_simulation_runtime_context",
     "annotations",
     "assert_runtime_gate_policy_contract",

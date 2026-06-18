@@ -27,60 +27,60 @@ from .shared_context import (
 from . import shared_context as _shared_context_private_33
 
 _DEFAULT_DSPY_AGENT_NAME = getattr(
-    _shared_context_private_33, "_DEFAULT_DSPY_AGENT_NAME"
+    _shared_context_private_33, "DEFAULT_DSPY_AGENT_NAME"
 )
 _IDEMPOTENCY_HASH_HEX_LENGTH = getattr(
-    _shared_context_private_33, "_IDEMPOTENCY_HASH_HEX_LENGTH"
+    _shared_context_private_33, "IDEMPOTENCY_HASH_HEX_LENGTH"
 )
 _IMPLEMENTATION_SPEC_BY_LANE = getattr(
-    _shared_context_private_33, "_IMPLEMENTATION_SPEC_BY_LANE"
+    _shared_context_private_33, "IMPLEMENTATION_SPEC_BY_LANE"
 )
 _K8S_LABEL_VALUE_MAX_LENGTH = getattr(
-    _shared_context_private_33, "_K8S_LABEL_VALUE_MAX_LENGTH"
+    _shared_context_private_33, "K8S_LABEL_VALUE_MAX_LENGTH"
 )
 _PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = getattr(
-    _shared_context_private_33, "_PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS"
+    _shared_context_private_33, "PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS"
 )
 _PROMOTION_EVIDENCE_OVERRIDE_KEYS = getattr(
-    _shared_context_private_33, "_PROMOTION_EVIDENCE_OVERRIDE_KEYS"
+    _shared_context_private_33, "PROMOTION_EVIDENCE_OVERRIDE_KEYS"
 )
 _PROMOTION_MAX_FALLBACK_RATE = getattr(
-    _shared_context_private_33, "_PROMOTION_MAX_FALLBACK_RATE"
+    _shared_context_private_33, "PROMOTION_MAX_FALLBACK_RATE"
 )
 _PROMOTION_MIN_SCHEMA_VALID_RATE = getattr(
-    _shared_context_private_33, "_PROMOTION_MIN_SCHEMA_VALID_RATE"
+    _shared_context_private_33, "PROMOTION_MIN_SCHEMA_VALID_RATE"
 )
-_TERMINAL_PHASES = getattr(_shared_context_private_33, "_TERMINAL_PHASES")
+_TERMINAL_PHASES = getattr(_shared_context_private_33, "TERMINAL_PHASES")
 _extract_submitted_agentrun_id = getattr(
-    _shared_context_private_33, "_extract_submitted_agentrun_id"
+    _shared_context_private_33, "extract_submitted_agentrun_id"
 )
-_json_copy = getattr(_shared_context_private_33, "_json_copy")
+_json_copy = getattr(_shared_context_private_33, "json_copy")
 _lane_overrides_with_defaults = getattr(
-    _shared_context_private_33, "_lane_overrides_with_defaults"
+    _shared_context_private_33, "lane_overrides_with_defaults"
 )
 _load_eval_gate_snapshot = getattr(
-    _shared_context_private_33, "_load_eval_gate_snapshot"
+    _shared_context_private_33, "load_eval_gate_snapshot"
 )
 _load_local_artifact_payload = getattr(
-    _shared_context_private_33, "_load_local_artifact_payload"
+    _shared_context_private_33, "load_local_artifact_payload"
 )
-_normalize_local_path = getattr(_shared_context_private_33, "_normalize_local_path")
-_parse_iso_datetime = getattr(_shared_context_private_33, "_parse_iso_datetime")
+_normalize_local_path = getattr(_shared_context_private_33, "normalize_local_path")
+_parse_iso_datetime = getattr(_shared_context_private_33, "parse_iso_datetime")
 _sanitize_idempotency_key = getattr(
     _shared_context_private_33, "_sanitize_idempotency_key"
 )
-_to_bool = getattr(_shared_context_private_33, "_to_bool")
-_to_float = getattr(_shared_context_private_33, "_to_float")
+_to_bool = getattr(_shared_context_private_33, "to_bool")
+_to_float = getattr(_shared_context_private_33, "to_float")
 
 
-def _resolve_promotion_gate_snapshot(
+def resolve_promotion_gate_snapshot(
     lane_overrides: Mapping[str, Any],
     requested_eval_report_ref: str,
     *,
     artifact_root: str,
 ) -> dict[str, Any]:
     expected_eval_report_ref = f"{artifact_root.rstrip('/')}/eval/dspy-eval-report.json"
-    snapshot = _load_eval_snapshot_for_promotion(
+    snapshot = load_eval_snapshot_for_promotion(
         expected_eval_report_ref,
         artifact_root=artifact_root,
         requested_eval_report_ref=requested_eval_report_ref,
@@ -90,7 +90,7 @@ def _resolve_promotion_gate_snapshot(
     return snapshot
 
 
-def _load_eval_snapshot_for_promotion(
+def load_eval_snapshot_for_promotion(
     eval_report_ref: str,
     *,
     artifact_root: str,
@@ -105,7 +105,7 @@ def _load_eval_snapshot_for_promotion(
     artifact_root_path = Path(artifact_root).resolve()
     expected_path = artifact_root_path / "eval" / "dspy-eval-report.json"
 
-    requested_rejection = _requested_eval_report_ref_rejection(
+    requested_rejection = requested_eval_report_ref_rejection(
         snapshot,
         requested_eval_report_ref=requested_eval_report_ref,
         artifact_root_path=artifact_root_path,
@@ -115,7 +115,7 @@ def _load_eval_snapshot_for_promotion(
         return requested_rejection
 
     resolved_ref_path = _normalize_local_path(eval_report_ref)
-    resolved_rejection = _resolved_eval_report_ref_rejection(
+    resolved_rejection = resolved_eval_report_ref_rejection(
         snapshot,
         resolved_ref_path=resolved_ref_path,
         artifact_root_path=artifact_root_path,
@@ -142,7 +142,7 @@ def _load_eval_snapshot_for_promotion(
     return snapshot
 
 
-def _requested_eval_report_ref_rejection(
+def requested_eval_report_ref_rejection(
     snapshot: dict[str, Any],
     *,
     requested_eval_report_ref: str,
@@ -153,7 +153,7 @@ def _requested_eval_report_ref_rejection(
         return None
     requested_ref_path = _normalize_local_path(requested_eval_report_ref)
     if requested_ref_path is None:
-        return _untrusted_eval_snapshot(snapshot, reason="reference_not_local")
+        return untrusted_eval_snapshot(snapshot, reason="reference_not_local")
     if requested_ref_path == expected_path:
         return None
     reason = (
@@ -161,14 +161,14 @@ def _requested_eval_report_ref_rejection(
         if not requested_ref_path.is_relative_to(artifact_root_path)
         else "reference_override_disallowed"
     )
-    return _untrusted_eval_snapshot(
+    return untrusted_eval_snapshot(
         snapshot,
         reason=reason,
         path=requested_ref_path,
     )
 
 
-def _resolved_eval_report_ref_rejection(
+def resolved_eval_report_ref_rejection(
     snapshot: dict[str, Any],
     *,
     resolved_ref_path: Path | None,
@@ -176,18 +176,18 @@ def _resolved_eval_report_ref_rejection(
     expected_path: Path,
 ) -> dict[str, Any] | None:
     if resolved_ref_path is None:
-        return _untrusted_eval_snapshot(snapshot, reason="reference_not_local")
+        return untrusted_eval_snapshot(snapshot, reason="reference_not_local")
     if not resolved_ref_path.is_relative_to(artifact_root_path):
-        return _untrusted_eval_snapshot(snapshot, reason="outside_artifact_root")
+        return untrusted_eval_snapshot(snapshot, reason="outside_artifact_root")
     if resolved_ref_path != expected_path:
-        return _untrusted_eval_snapshot(
+        return untrusted_eval_snapshot(
             snapshot,
             reason="reference_override_disallowed",
         )
     return None
 
 
-def _untrusted_eval_snapshot(
+def untrusted_eval_snapshot(
     snapshot: dict[str, Any],
     *,
     reason: str,
@@ -201,20 +201,20 @@ def _untrusted_eval_snapshot(
     return snapshot
 
 
-def _promotion_gate_failures(
+def promotion_gate_failures(
     gate_snapshot: Mapping[str, Any], *, now: datetime
 ) -> list[str]:
     return [
-        *_promotion_gate_trust_failures(gate_snapshot),
-        *_promotion_gate_created_at_failures(gate_snapshot, now=now),
-        *_promotion_gate_compatibility_failures(gate_snapshot),
-        *_promotion_gate_schema_failures(gate_snapshot),
-        *_promotion_gate_determinism_failures(gate_snapshot),
-        *_promotion_gate_fallback_failures(gate_snapshot),
+        *promotion_gate_trust_failures(gate_snapshot),
+        *promotion_gate_created_at_failures(gate_snapshot, now=now),
+        *promotion_gate_compatibility_failures(gate_snapshot),
+        *promotion_gate_schema_failures(gate_snapshot),
+        *promotion_gate_determinism_failures(gate_snapshot),
+        *promotion_gate_fallback_failures(gate_snapshot),
     ]
 
 
-def _promotion_gate_trust_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
+def promotion_gate_trust_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
     if not gate_snapshot.get("eval_report_trusted", False):
         trust_reason = str(gate_snapshot.get("eval_report_trust_reason") or "")
         if trust_reason == "outside_artifact_root":
@@ -231,7 +231,7 @@ def _promotion_gate_trust_failures(gate_snapshot: Mapping[str, Any]) -> list[str
     return []
 
 
-def _promotion_gate_created_at_failures(
+def promotion_gate_created_at_failures(
     gate_snapshot: Mapping[str, Any], *, now: datetime
 ) -> list[str]:
     created_at = gate_snapshot.get("created_at")
@@ -244,7 +244,7 @@ def _promotion_gate_created_at_failures(
     return []
 
 
-def _promotion_gate_compatibility_failures(
+def promotion_gate_compatibility_failures(
     gate_snapshot: Mapping[str, Any],
 ) -> list[str]:
     gate_compatibility = (
@@ -255,7 +255,7 @@ def _promotion_gate_compatibility_failures(
     return []
 
 
-def _promotion_gate_schema_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
+def promotion_gate_schema_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
     schema_valid_rate = _to_float(gate_snapshot.get("schema_valid_rate"))
     if schema_valid_rate is None:
         return ["schema_valid_rate_missing"]
@@ -264,7 +264,7 @@ def _promotion_gate_schema_failures(gate_snapshot: Mapping[str, Any]) -> list[st
     return []
 
 
-def _promotion_gate_determinism_failures(
+def promotion_gate_determinism_failures(
     gate_snapshot: Mapping[str, Any],
 ) -> list[str]:
     deterministic_compatibility = _to_bool(
@@ -277,7 +277,7 @@ def _promotion_gate_determinism_failures(
     return []
 
 
-def _promotion_gate_fallback_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
+def promotion_gate_fallback_failures(gate_snapshot: Mapping[str, Any]) -> list[str]:
     fallback_rate = _to_float(gate_snapshot.get("fallback_rate"))
     if fallback_rate is None:
         return ["fallback_rate_missing"]
@@ -287,7 +287,7 @@ def _promotion_gate_fallback_failures(gate_snapshot: Mapping[str, Any]) -> list[
 
 
 @dataclass(frozen=True)
-class _DSPyWorkflowRequest:
+class DSPyWorkflowRequest:
     session: Session
     base_url: str
     repository: str
@@ -312,21 +312,21 @@ class _DSPyWorkflowRequest:
 
 
 @dataclass
-class _DSPyWorkflowSnapshots:
+class DSPyWorkflowSnapshots:
     compile_result: DSPyCompileResult | None
     eval_report: DSPyEvalReport | None
     promotion_record: DSPyPromotionRecord | None
 
 
 @dataclass
-class _DSPyWorkflowState:
+class DSPyWorkflowState:
     responses: dict[DSPyWorkflowLane, dict[str, Any]]
     lineage_by_lane: dict[str, dict[str, Any]]
-    snapshots: _DSPyWorkflowSnapshots
+    snapshots: DSPyWorkflowSnapshots
 
 
 @dataclass(frozen=True)
-class _DSPyLaneContext:
+class DSPyLaneContext:
     lane: DSPyWorkflowLane
     lane_index: int
     lane_overrides: dict[str, Any]
@@ -342,23 +342,23 @@ def orchestrate_dspy_agentrun_workflow(
     **kwargs: Any,
 ) -> dict[DSPyWorkflowLane, dict[str, Any]]:
     """Execute dataset-build -> compile -> eval -> [gepa] -> promote and persist lineage rows."""
-    request = _dspy_workflow_request_from_kwargs(session, kwargs)
-    return _orchestrate_dspy_workflow(request)
+    request = dspy_workflow_request_from_kwargs(session, kwargs)
+    return orchestrate_dspy_workflow(request)
 
 
-def _dspy_workflow_request_from_kwargs(
+def dspy_workflow_request_from_kwargs(
     session: Session,
     kwargs: Mapping[str, Any],
-) -> _DSPyWorkflowRequest:
+) -> DSPyWorkflowRequest:
     options = dict(kwargs)
-    request = _DSPyWorkflowRequest(
+    request = DSPyWorkflowRequest(
         session=session,
-        base_url=str(_pop_required_workflow_kwarg(options, "base_url")),
-        repository=str(_pop_required_workflow_kwarg(options, "repository")),
-        base=str(_pop_required_workflow_kwarg(options, "base")),
-        head=str(_pop_required_workflow_kwarg(options, "head")),
-        artifact_root=str(_pop_required_workflow_kwarg(options, "artifact_root")),
-        run_prefix=str(_pop_required_workflow_kwarg(options, "run_prefix")),
+        base_url=str(pop_required_workflow_kwarg(options, "base_url")),
+        repository=str(pop_required_workflow_kwarg(options, "repository")),
+        base=str(pop_required_workflow_kwarg(options, "base")),
+        head=str(pop_required_workflow_kwarg(options, "head")),
+        artifact_root=str(pop_required_workflow_kwarg(options, "artifact_root")),
+        run_prefix=str(pop_required_workflow_kwarg(options, "run_prefix")),
         auth_token=cast(str | None, options.pop("auth_token", None)),
         issue_number=str(options.pop("issue_number", "0")),
         priority_id=cast(str | None, options.pop("priority_id", None)),
@@ -387,35 +387,35 @@ def _dspy_workflow_request_from_kwargs(
     return request
 
 
-def _pop_required_workflow_kwarg(options: dict[str, Any], key: str) -> Any:
+def pop_required_workflow_kwarg(options: dict[str, Any], key: str) -> Any:
     if key not in options:
         raise TypeError(f"missing required workflow argument: {key}")
     return options.pop(key)
 
 
-def _orchestrate_dspy_workflow(
-    request: _DSPyWorkflowRequest,
+def orchestrate_dspy_workflow(
+    request: DSPyWorkflowRequest,
 ) -> dict[DSPyWorkflowLane, dict[str, Any]]:
-    _validate_dspy_workflow_request(request)
-    state = _DSPyWorkflowState(
+    validate_dspy_workflow_request(request)
+    state = DSPyWorkflowState(
         responses={},
         lineage_by_lane={},
-        snapshots=_DSPyWorkflowSnapshots(
+        snapshots=DSPyWorkflowSnapshots(
             compile_result=None,
             eval_report=None,
             promotion_record=None,
         ),
     )
-    for lane_index, lane in enumerate(_dspy_workflow_lanes(request)):
+    for lane_index, lane in enumerate(dspy_workflow_lanes(request)):
         try:
-            _orchestrate_dspy_workflow_lane(request, state, lane, lane_index)
+            orchestrate_dspy_workflow_lane(request, state, lane, lane_index)
         except Exception:
             request.session.rollback()
             raise
     return state.responses
 
 
-def _validate_dspy_workflow_request(request: _DSPyWorkflowRequest) -> None:
+def validate_dspy_workflow_request(request: DSPyWorkflowRequest) -> None:
     normalized_run_prefix = request.run_prefix.strip()
     if not normalized_run_prefix:
         raise ValueError("run_prefix_required")
@@ -424,7 +424,7 @@ def _validate_dspy_workflow_request(request: _DSPyWorkflowRequest) -> None:
         raise ValueError("artifact_root_required")
 
 
-def _dspy_workflow_lanes(request: _DSPyWorkflowRequest) -> list[DSPyWorkflowLane]:
+def dspy_workflow_lanes(request: DSPyWorkflowRequest) -> list[DSPyWorkflowLane]:
     lanes: list[DSPyWorkflowLane] = ["dataset-build", "compile", "eval"]
     if request.include_gepa_experiment:
         lanes.append("gepa-experiment")
@@ -432,31 +432,31 @@ def _dspy_workflow_lanes(request: _DSPyWorkflowRequest) -> list[DSPyWorkflowLane
     return lanes
 
 
-def _orchestrate_dspy_workflow_lane(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
+def orchestrate_dspy_workflow_lane(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
     lane: DSPyWorkflowLane,
     lane_index: int,
 ) -> None:
-    context = _build_dspy_lane_context(request, state, lane, lane_index)
+    context = build_dspy_lane_context(request, state, lane, lane_index)
     if request.execution_mode == "local":
-        _execute_and_persist_local_dspy_lane(request, state, context)
+        execute_and_persist_local_dspy_lane(request, state, context)
         return
-    _submit_and_persist_remote_dspy_lane(request, state, context)
+    submit_and_persist_remote_dspy_lane(request, state, context)
 
 
-def _build_dspy_lane_context(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
+def build_dspy_lane_context(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
     lane: DSPyWorkflowLane,
     lane_index: int,
-) -> _DSPyLaneContext:
+) -> DSPyLaneContext:
     lane_overrides, requested_eval_report_ref = _lane_overrides_with_defaults(
         lane=lane,
         lane_overrides=(request.lane_parameter_overrides or {}).get(lane, {}),
         artifact_root=artifact_root_normalized(request),
     )
-    gate_snapshot = _prepare_promotion_gate_snapshot(
+    gate_snapshot = prepare_promotion_gate_snapshot(
         request,
         state,
         lane=lane,
@@ -464,10 +464,10 @@ def _build_dspy_lane_context(
         lane_overrides=lane_overrides,
         requested_eval_report_ref=requested_eval_report_ref,
     )
-    run_key = _dspy_lane_run_key(request, lane)
-    idempotency_key = _dspy_lane_idempotency_key(request, lane)
+    run_key = dspy_lane_run_key(request, lane)
+    idempotency_key = dspy_lane_idempotency_key(request, lane)
     artifact_path = f"{artifact_root_normalized(request)}/{lane}"
-    payload = _build_dspy_lane_payload(
+    payload = build_dspy_lane_payload(
         request,
         lane=lane,
         idempotency_key=idempotency_key,
@@ -480,7 +480,7 @@ def _build_dspy_lane_context(
         "implementationSpecRef": _IMPLEMENTATION_SPEC_BY_LANE[lane],
         "gateSnapshot": gate_snapshot,
     }
-    return _DSPyLaneContext(
+    return DSPyLaneContext(
         lane=lane,
         lane_index=lane_index,
         lane_overrides=lane_overrides,
@@ -492,22 +492,22 @@ def _build_dspy_lane_context(
     )
 
 
-def artifact_root_normalized(request: _DSPyWorkflowRequest) -> str:
+def artifact_root_normalized(request: DSPyWorkflowRequest) -> str:
     return request.artifact_root.strip().rstrip("/")
 
 
-def _dspy_lane_run_key(request: _DSPyWorkflowRequest, lane: DSPyWorkflowLane) -> str:
+def dspy_lane_run_key(request: DSPyWorkflowRequest, lane: DSPyWorkflowLane) -> str:
     return f"{request.run_prefix.strip()}:{lane}"
 
 
-def _dspy_lane_idempotency_key(
-    request: _DSPyWorkflowRequest, lane: DSPyWorkflowLane
+def dspy_lane_idempotency_key(
+    request: DSPyWorkflowRequest, lane: DSPyWorkflowLane
 ) -> str:
     return _sanitize_idempotency_key(f"{request.run_prefix.strip()}-{lane}")
 
 
-def _build_dspy_lane_payload(
-    request: _DSPyWorkflowRequest,
+def build_dspy_lane_payload(
+    request: DSPyWorkflowRequest,
     *,
     lane: DSPyWorkflowLane,
     idempotency_key: str,
@@ -532,9 +532,9 @@ def _build_dspy_lane_payload(
     )
 
 
-def _prepare_promotion_gate_snapshot(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
+def prepare_promotion_gate_snapshot(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
     *,
     lane: DSPyWorkflowLane,
     lane_index: int,
@@ -543,17 +543,17 @@ def _prepare_promotion_gate_snapshot(
 ) -> dict[str, Any] | None:
     if lane != "promote":
         return None
-    _ensure_promotion_artifact_hash(request, state, lane_index, lane_overrides)
-    gate_snapshot = _resolve_promotion_gate_snapshot(
+    ensure_promotion_artifact_hash(request, state, lane_index, lane_overrides)
+    gate_snapshot = resolve_promotion_gate_snapshot(
         lane_overrides,
         requested_eval_report_ref=requested_eval_report_ref,
         artifact_root=artifact_root_normalized(request),
     )
-    gate_failures = _promotion_gate_failures(
+    gate_failures = promotion_gate_failures(
         gate_snapshot, now=datetime.now(timezone.utc)
     )
     if gate_failures:
-        _persist_blocked_promotion_lane(
+        persist_blocked_promotion_lane(
             request,
             state,
             lane_index=lane_index,
@@ -564,21 +564,21 @@ def _prepare_promotion_gate_snapshot(
     return gate_snapshot
 
 
-def _ensure_promotion_artifact_hash(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
+def ensure_promotion_artifact_hash(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
     lane_index: int,
     lane_overrides: dict[str, Any],
 ) -> None:
     if str(lane_overrides.get("artifactHash") or "").strip():
         return
-    _refresh_dspy_workflow_snapshots(
+    refresh_dspy_workflow_snapshots(
         state, lane="compile", artifact_root=request.artifact_root
     )
     if state.snapshots.compile_result is not None:
         lane_overrides["artifactHash"] = state.snapshots.compile_result.artifact_hash
         return
-    _persist_blocked_promotion_lane(
+    persist_blocked_promotion_lane(
         request,
         state,
         lane_index=lane_index,
@@ -587,9 +587,9 @@ def _ensure_promotion_artifact_hash(
     raise RuntimeError("dspy_promote_artifact_hash_missing")
 
 
-def _persist_blocked_promotion_lane(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
+def persist_blocked_promotion_lane(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
     *,
     lane_index: int,
     gate_failures: list[str],
@@ -598,11 +598,11 @@ def _persist_blocked_promotion_lane(
     lane: DSPyWorkflowLane = "promote"
     upsert_workflow_artifact_record(
         request.session,
-        run_key=_dspy_lane_run_key(request, lane),
+        run_key=dspy_lane_run_key(request, lane),
         lane=lane,
         status="blocked",
         implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
-        idempotency_key=_dspy_lane_idempotency_key(request, lane),
+        idempotency_key=dspy_lane_idempotency_key(request, lane),
         request_payload=None,
         response_payload=None,
         compile_result=None,
@@ -625,10 +625,10 @@ def _persist_blocked_promotion_lane(
     request.session.commit()
 
 
-def _execute_and_persist_local_dspy_lane(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
-    context: _DSPyLaneContext,
+def execute_and_persist_local_dspy_lane(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
+    context: DSPyLaneContext,
 ) -> None:
     response_payload = _execute_local_dspy_lane(
         session=request.session,
@@ -643,10 +643,10 @@ def _execute_and_persist_local_dspy_lane(
         promotion_record_snapshot=state.snapshots.promotion_record,
     )
     state.responses[context.lane] = response_payload
-    _refresh_dspy_workflow_snapshots(
+    refresh_dspy_workflow_snapshots(
         state, lane=context.lane, artifact_root=request.artifact_root
     )
-    _upsert_dspy_lane_terminal_record(
+    upsert_dspy_lane_terminal_record(
         request,
         state,
         context,
@@ -660,10 +660,10 @@ def _execute_and_persist_local_dspy_lane(
     request.session.commit()
 
 
-def _submit_and_persist_remote_dspy_lane(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
-    context: _DSPyLaneContext,
+def submit_and_persist_remote_dspy_lane(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
+    context: DSPyLaneContext,
 ) -> None:
     response_payload = submit_agents_agentrun(
         base_url=request.base_url,
@@ -673,13 +673,13 @@ def _submit_and_persist_remote_dspy_lane(
         timeout_seconds=request.timeout_seconds,
     )
     state.responses[context.lane] = response_payload
-    _upsert_dspy_lane_submitted_record(request, state, context, response_payload)
+    upsert_dspy_lane_submitted_record(request, state, context, response_payload)
     request.session.commit()
-    terminal_phase = _wait_for_dspy_lane_terminal_phase(request, response_payload)
-    _refresh_dspy_workflow_snapshots(
+    terminal_phase = wait_for_dspy_lane_terminal_phase(request, response_payload)
+    refresh_dspy_workflow_snapshots(
         state, lane=context.lane, artifact_root=request.artifact_root
     )
-    _upsert_dspy_lane_terminal_record(
+    upsert_dspy_lane_terminal_record(
         request,
         state,
         context,
@@ -694,8 +694,8 @@ def _submit_and_persist_remote_dspy_lane(
         )
 
 
-def _wait_for_dspy_lane_terminal_phase(
-    request: _DSPyWorkflowRequest,
+def wait_for_dspy_lane_terminal_phase(
+    request: DSPyWorkflowRequest,
     response_payload: Mapping[str, Any],
 ) -> str:
     return wait_for_agents_agentrun_terminal_status(
@@ -709,10 +709,10 @@ def _wait_for_dspy_lane_terminal_phase(
     )
 
 
-def _upsert_dspy_lane_submitted_record(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
-    context: _DSPyLaneContext,
+def upsert_dspy_lane_submitted_record(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
+    context: DSPyLaneContext,
     response_payload: Mapping[str, Any],
 ) -> None:
     upsert_workflow_artifact_record(
@@ -740,10 +740,10 @@ def _upsert_dspy_lane_submitted_record(
     )
 
 
-def _upsert_dspy_lane_terminal_record(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
-    context: _DSPyLaneContext,
+def upsert_dspy_lane_terminal_record(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
+    context: DSPyLaneContext,
     *,
     status: str,
     request_payload: Mapping[str, Any],
@@ -758,17 +758,17 @@ def _upsert_dspy_lane_terminal_record(
         idempotency_key=context.idempotency_key,
         request_payload=request_payload,
         response_payload=response_payload,
-        compile_result=_compile_result_for_lane(state, context.lane),
-        eval_report=_eval_report_for_lane(state, context.lane),
-        promotion_record=_promotion_record_for_lane(state, context.lane),
-        metadata=_dspy_lane_terminal_metadata(request, state, context, status),
+        compile_result=compile_result_for_lane(state, context.lane),
+        eval_report=eval_report_for_lane(state, context.lane),
+        promotion_record=promotion_record_for_lane(state, context.lane),
+        metadata=dspy_lane_terminal_metadata(request, state, context, status),
     )
 
 
-def _dspy_lane_terminal_metadata(
-    request: _DSPyWorkflowRequest,
-    state: _DSPyWorkflowState,
-    context: _DSPyLaneContext,
+def dspy_lane_terminal_metadata(
+    request: DSPyWorkflowRequest,
+    state: DSPyWorkflowState,
+    context: DSPyLaneContext,
     terminal_phase: str,
 ) -> dict[str, Any]:
     return {
@@ -789,8 +789,8 @@ def _dspy_lane_terminal_metadata(
     }
 
 
-def _compile_result_for_lane(
-    state: _DSPyWorkflowState, lane: DSPyWorkflowLane
+def compile_result_for_lane(
+    state: DSPyWorkflowState, lane: DSPyWorkflowLane
 ) -> DSPyCompileResult | None:
     return (
         state.snapshots.compile_result
@@ -799,20 +799,20 @@ def _compile_result_for_lane(
     )
 
 
-def _eval_report_for_lane(
-    state: _DSPyWorkflowState, lane: DSPyWorkflowLane
+def eval_report_for_lane(
+    state: DSPyWorkflowState, lane: DSPyWorkflowLane
 ) -> DSPyEvalReport | None:
     return state.snapshots.eval_report if lane in {"eval", "promote"} else None
 
 
-def _promotion_record_for_lane(
-    state: _DSPyWorkflowState, lane: DSPyWorkflowLane
+def promotion_record_for_lane(
+    state: DSPyWorkflowState, lane: DSPyWorkflowLane
 ) -> DSPyPromotionRecord | None:
     return state.snapshots.promotion_record if lane == "promote" else None
 
 
-def _refresh_dspy_workflow_snapshots(
-    state: _DSPyWorkflowState,
+def refresh_dspy_workflow_snapshots(
+    state: DSPyWorkflowState,
     *,
     lane: DSPyWorkflowLane,
     artifact_root: str,
@@ -820,7 +820,7 @@ def _refresh_dspy_workflow_snapshots(
     if lane in {"compile", "eval", "promote"}:
         state.snapshots.compile_result = (
             state.snapshots.compile_result
-            or _load_dspy_model_snapshot(
+            or load_dspy_model_snapshot(
                 f"{artifact_root.strip().rstrip('/')}/compile/dspy-compile-result.json",
                 DSPyCompileResult,
             )
@@ -828,7 +828,7 @@ def _refresh_dspy_workflow_snapshots(
     if lane in {"eval", "promote"}:
         state.snapshots.eval_report = (
             state.snapshots.eval_report
-            or _load_dspy_model_snapshot(
+            or load_dspy_model_snapshot(
                 f"{artifact_root.strip().rstrip('/')}/eval/dspy-eval-report.json",
                 DSPyEvalReport,
             )
@@ -836,14 +836,14 @@ def _refresh_dspy_workflow_snapshots(
     if lane == "promote":
         state.snapshots.promotion_record = (
             state.snapshots.promotion_record
-            or _load_dspy_model_snapshot(
+            or load_dspy_model_snapshot(
                 f"{artifact_root.strip().rstrip('/')}/promote/dspy-promotion-record.json",
                 DSPyPromotionRecord,
             )
         )
 
 
-def _load_dspy_model_snapshot(artifact_ref: str, model_type: Any) -> Any | None:
+def load_dspy_model_snapshot(artifact_ref: str, model_type: Any) -> Any | None:
     payload = _load_local_artifact_payload(artifact_ref)
     if payload is None:
         return None
@@ -867,45 +867,3 @@ __all__ = (
     "orchestrate_dspy_agentrun_workflow",
     "artifact_root_normalized",
 )
-
-# Public aliases used by split modules.
-build_dspy_lane_context = _build_dspy_lane_context
-build_dspy_lane_payload = _build_dspy_lane_payload
-compile_result_for_lane = _compile_result_for_lane
-dspy_lane_idempotency_key = _dspy_lane_idempotency_key
-dspy_lane_run_key = _dspy_lane_run_key
-dspy_lane_terminal_metadata = _dspy_lane_terminal_metadata
-dspy_workflow_lanes = _dspy_workflow_lanes
-dspy_workflow_request_from_kwargs = _dspy_workflow_request_from_kwargs
-DSPyLaneContext = _DSPyLaneContext
-DSPyWorkflowRequest = _DSPyWorkflowRequest
-DSPyWorkflowSnapshots = _DSPyWorkflowSnapshots
-DSPyWorkflowState = _DSPyWorkflowState
-ensure_promotion_artifact_hash = _ensure_promotion_artifact_hash
-eval_report_for_lane = _eval_report_for_lane
-execute_and_persist_local_dspy_lane = _execute_and_persist_local_dspy_lane
-load_dspy_model_snapshot = _load_dspy_model_snapshot
-load_eval_snapshot_for_promotion = _load_eval_snapshot_for_promotion
-orchestrate_dspy_workflow = _orchestrate_dspy_workflow
-orchestrate_dspy_workflow_lane = _orchestrate_dspy_workflow_lane
-persist_blocked_promotion_lane = _persist_blocked_promotion_lane
-pop_required_workflow_kwarg = _pop_required_workflow_kwarg
-prepare_promotion_gate_snapshot = _prepare_promotion_gate_snapshot
-promotion_gate_compatibility_failures = _promotion_gate_compatibility_failures
-promotion_gate_created_at_failures = _promotion_gate_created_at_failures
-promotion_gate_determinism_failures = _promotion_gate_determinism_failures
-promotion_gate_failures = _promotion_gate_failures
-promotion_gate_fallback_failures = _promotion_gate_fallback_failures
-promotion_gate_schema_failures = _promotion_gate_schema_failures
-promotion_gate_trust_failures = _promotion_gate_trust_failures
-promotion_record_for_lane = _promotion_record_for_lane
-refresh_dspy_workflow_snapshots = _refresh_dspy_workflow_snapshots
-requested_eval_report_ref_rejection = _requested_eval_report_ref_rejection
-resolve_promotion_gate_snapshot = _resolve_promotion_gate_snapshot
-resolved_eval_report_ref_rejection = _resolved_eval_report_ref_rejection
-submit_and_persist_remote_dspy_lane = _submit_and_persist_remote_dspy_lane
-untrusted_eval_snapshot = _untrusted_eval_snapshot
-upsert_dspy_lane_submitted_record = _upsert_dspy_lane_submitted_record
-upsert_dspy_lane_terminal_record = _upsert_dspy_lane_terminal_record
-validate_dspy_workflow_request = _validate_dspy_workflow_request
-wait_for_dspy_lane_terminal_phase = _wait_for_dspy_lane_terminal_phase

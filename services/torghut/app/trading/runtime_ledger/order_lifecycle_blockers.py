@@ -89,7 +89,7 @@ def _tigerbeetle_journal_blockers(*args: Any, **kwargs: Any) -> list[str]:
     return _lifecycle_helpers()._tigerbeetle_journal_blockers(*args, **kwargs)
 
 
-def _order_lifecycle_blockers(
+def order_lifecycle_blockers(
     *,
     lifecycle_rows: Sequence[_NormalizedFill],
     fill_lifecycle_rows: Sequence[_NormalizedFill],
@@ -186,14 +186,14 @@ def _order_lifecycle_blockers(
     return blockers
 
 
-def _source_materialization_blockers(
+def source_materialization_blockers(
     lifecycle_rows: Sequence[_NormalizedFill],
 ) -> list[str]:
     """Fail closed on order-feed source rows missing row-level runtime refs."""
 
     blockers: list[str] = []
     for row in lifecycle_rows:
-        if not _row_requires_promotion_source_authority(row):
+        if not row_requires_promotion_source_authority(row):
             continue
         if row.event_type not in _SUBMITTED_ORDER_EVENTS | _FILL_EVENTS:
             continue
@@ -214,7 +214,7 @@ def _source_materialization_blockers(
     return _dedupe(blockers)
 
 
-def _row_requires_promotion_source_authority(row: _NormalizedFill) -> bool:
+def row_requires_promotion_source_authority(row: _NormalizedFill) -> bool:
     """Return true for source rows that claim promotion-grade runtime authority.
 
     Lifecycle-only ``order_feed_lifecycle`` rows can prove order state without
@@ -229,7 +229,7 @@ def _row_requires_promotion_source_authority(row: _NormalizedFill) -> bool:
     )
 
 
-def _apply_fill_to_position(
+def apply_fill_to_position(
     *,
     state: _PositionState,
     fill: _NormalizedFill,
@@ -245,7 +245,7 @@ def _apply_fill_to_position(
     remaining_cost = fill.cost_amount
 
     if state.qty == 0 or _same_direction(state.qty, side_sign):
-        _open_position(
+        open_position(
             state=state,
             side_sign=side_sign,
             qty=remaining_qty,
@@ -288,7 +288,7 @@ def _apply_fill_to_position(
         remaining_cost -= fill_cost_allocated
 
     if remaining_qty > 0:
-        _open_position(
+        open_position(
             state=state,
             side_sign=side_sign,
             qty=remaining_qty,
@@ -297,7 +297,7 @@ def _apply_fill_to_position(
         )
 
 
-def _open_position(
+def open_position(
     *,
     state: _PositionState,
     side_sign: Decimal,
@@ -327,29 +327,29 @@ def _normalize_fill_row(
     row_index: int,
 ) -> _NormalizedFill:
     executed_at = _coerce_datetime(
-        _row_value(
+        row_value(
             row, "executed_at", "filled_at", "event_ts", "created_at", "computed_at"
         )
     )
     account_label = _coerce_text(
-        _row_value(row, "account_label", "alpaca_account_label")
+        row_value(row, "account_label", "alpaca_account_label")
     )
-    strategy_id = _coerce_text(_row_value(row, "strategy_id", "strategy_name"))
-    symbol = _coerce_text(_row_value(row, "symbol"))
-    event_type = _coerce_event_type(row)
-    side = _coerce_side(_row_value(row, "side", "action", "order_side"))
-    filled_qty = _positive_decimal(_row_value(row, "filled_qty", "qty", "quantity"))
+    strategy_id = _coerce_text(row_value(row, "strategy_id", "strategy_name"))
+    symbol = _coerce_text(row_value(row, "symbol"))
+    event_type = coerce_event_type(row)
+    side = _coerce_side(row_value(row, "side", "action", "order_side"))
+    filled_qty = _positive_decimal(row_value(row, "filled_qty", "qty", "quantity"))
     avg_fill_price = _positive_decimal(
-        _row_value(row, "avg_fill_price", "filled_avg_price", "fill_price", "price")
+        row_value(row, "avg_fill_price", "filled_avg_price", "fill_price", "price")
     )
     filled_notional = _positive_decimal(
-        _row_value(row, "filled_notional", "notional", "fill_notional")
+        row_value(row, "filled_notional", "notional", "fill_notional")
     )
     filled_qty_delta = _positive_decimal(
-        _row_value(row, "filled_qty_delta", "fill_qty_delta", "delta_filled_qty")
+        row_value(row, "filled_qty_delta", "fill_qty_delta", "delta_filled_qty")
     )
     filled_notional_delta = _positive_decimal(
-        _row_value(
+        row_value(
             row,
             "filled_notional_delta",
             "fill_notional_delta",
@@ -357,9 +357,9 @@ def _normalize_fill_row(
         )
     )
     fill_quantity_basis = _coerce_fill_quantity_basis(
-        _row_value(row, "fill_quantity_basis", "quantity_basis")
+        row_value(row, "fill_quantity_basis", "quantity_basis")
     )
-    order_feed_lifecycle_source = _is_order_feed_lifecycle_source_row(
+    order_feed_lifecycle_source = is_order_feed_lifecycle_source_row(
         row, event_type=event_type
     )
     order_feed_source_fill = event_type in _FILL_EVENTS and order_feed_lifecycle_source
@@ -372,7 +372,7 @@ def _normalize_fill_row(
                     filled_notional = filled_notional_delta
                 elif avg_fill_price is not None:
                     filled_notional = filled_qty_delta * avg_fill_price
-        elif _is_linked_materialized_order_event_fill(row) and (
+        elif is_linked_materialized_order_event_fill(row) and (
             filled_notional_delta is not None and avg_fill_price is not None
         ):
             filled_notional = filled_notional_delta
@@ -389,7 +389,7 @@ def _normalize_fill_row(
     ):
         filled_notional = filled_qty * avg_fill_price
     cost_amount = _non_negative_decimal(
-        _row_value(
+        row_value(
             row,
             "cost_amount",
             "total_cost",
@@ -404,7 +404,7 @@ def _normalize_fill_row(
         )
     )
     cost_basis = _coerce_text(
-        _row_value(
+        row_value(
             row,
             "cost_basis",
             "cost_source",
@@ -414,24 +414,24 @@ def _normalize_fill_row(
         )
     )
     decision_id = _coerce_text(
-        _row_value(row, "decision_id", "trade_decision_id", "decision_hash")
+        row_value(row, "decision_id", "trade_decision_id", "decision_hash")
     )
     execution_id = _coerce_text(
-        _row_value(row, "execution_id", "execution_correlation_id")
+        row_value(row, "execution_id", "execution_correlation_id")
     )
     execution_order_event_id = _coerce_text(
-        _row_value(row, "execution_order_event_id", "event_fingerprint")
+        row_value(row, "execution_order_event_id", "event_fingerprint")
     )
     source_window_id = _coerce_text(
-        _row_value(row, "source_window_id", "runtime_ledger_source_window_id")
+        row_value(row, "source_window_id", "runtime_ledger_source_window_id")
     )
-    source_offset_present = _source_offset_present(row)
+    has_source_offset = source_offset_present(row)
     source_materialization = _coerce_text(
-        _row_value(row, "source_materialization", "source")
+        row_value(row, "source_materialization", "source")
     )
-    authority_class = _coerce_text(_row_value(row, "authority_class"))
+    authority_class = _coerce_text(row_value(row, "authority_class"))
     order_id = _coerce_text(
-        _row_value(
+        row_value(
             row,
             "order_id",
             "alpaca_order_id",
@@ -441,7 +441,7 @@ def _normalize_fill_row(
         )
     )
     execution_policy_hash = _coerce_text(
-        _row_value(
+        row_value(
             row,
             "execution_policy_hash",
             "execution_policy_sha256",
@@ -449,10 +449,10 @@ def _normalize_fill_row(
         )
     )
     cost_model_hash = _coerce_text(
-        _row_value(row, "cost_model_hash", "fee_model_hash", "cost_model_sha256")
+        row_value(row, "cost_model_hash", "fee_model_hash", "cost_model_sha256")
     )
     lineage_hash = _coerce_text(
-        _row_value(
+        row_value(
             row,
             "lineage_hash",
             "candidate_lineage_hash",
@@ -461,7 +461,7 @@ def _normalize_fill_row(
         )
     )
     replay_data_hash = _coerce_text(
-        _row_value(
+        row_value(
             row,
             "replay_data_hash",
             "replay_tape_content_sha256",
@@ -473,9 +473,9 @@ def _normalize_fill_row(
     blockers: list[str] = []
     if _has_tca_pnl_shortcut(row):
         blockers.append("tca_shortfall_not_runtime_pnl")
-    bucket_blockers = _runtime_source_collection_mode_blockers(row)
-    blockers.extend(_runtime_source_hard_mode_blockers(row))
-    if _is_non_promotion_runtime_source_row(row):
+    bucket_blockers = runtime_source_collection_mode_blockers(row)
+    blockers.extend(runtime_source_hard_mode_blockers(row))
+    if is_non_promotion_runtime_source_row(row):
         blockers.append("runtime_source_not_promotion_authority")
     blockers.extend(_tigerbeetle_journal_blockers(row))
     if executed_at is None and event_type != "diagnostic":
@@ -528,7 +528,7 @@ def _normalize_fill_row(
         execution_id=execution_id,
         execution_order_event_id=execution_order_event_id,
         source_window_id=source_window_id,
-        source_offset_present=source_offset_present,
+        source_offset_present=has_source_offset,
         source_materialization=source_materialization,
         authority_class=authority_class,
         execution_policy_hash=execution_policy_hash,
@@ -542,9 +542,9 @@ def _normalize_fill_row(
     )
 
 
-def _coerce_event_type(row: RuntimeLedgerFill | Mapping[str, object]) -> str:
+def coerce_event_type(row: RuntimeLedgerFill | Mapping[str, object]) -> str:
     raw = _coerce_text(
-        _row_value(
+        row_value(
             row,
             "ledger_event_type",
             "runtime_ledger_event_type",
@@ -577,18 +577,18 @@ def _coerce_event_type(row: RuntimeLedgerFill | Mapping[str, object]) -> str:
             return candidate
 
     if (
-        _row_value(row, "filled_qty", "qty", "quantity", "avg_fill_price", "fill_price")
+        row_value(row, "filled_qty", "qty", "quantity", "avg_fill_price", "fill_price")
         is not None
     ):
         return "fill"
-    if _row_value(row, "alpaca_order_id", "client_order_id", "order_id") is not None:
+    if row_value(row, "alpaca_order_id", "client_order_id", "order_id") is not None:
         return "order_submitted"
-    if _row_value(row, "decision_id", "trade_decision_id", "decision_hash") is not None:
+    if row_value(row, "decision_id", "trade_decision_id", "decision_hash") is not None:
         return "decision"
     return "diagnostic"
 
 
-def _row_value(
+def row_value(
     row: RuntimeLedgerFill | Mapping[str, object],
     *keys: str,
 ) -> object | None:
@@ -620,21 +620,21 @@ def _coerce_fill_quantity_basis(value: object | None) -> str | None:
     return normalized or None
 
 
-def _is_order_feed_lifecycle_source_row(
+def is_order_feed_lifecycle_source_row(
     row: RuntimeLedgerFill | Mapping[str, object],
     *,
     event_type: str,
 ) -> bool:
     if event_type not in _LIFECYCLE_EVENTS:
         return False
-    return _is_order_feed_source_row(row)
+    return is_order_feed_source_row(row)
 
 
-def _is_order_feed_source_row(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
+def is_order_feed_source_row(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
     source = _coerce_text(
-        _row_value(row, "source", "pnl_derivation", "source_materialization")
+        row_value(row, "source", "pnl_derivation", "source_materialization")
     )
-    authority_class = _coerce_text(_row_value(row, "authority_class"))
+    authority_class = _coerce_text(row_value(row, "authority_class"))
     if source in {
         "order_feed_lifecycle",
         "execution_order_event",
@@ -650,7 +650,7 @@ def _is_order_feed_source_row(row: RuntimeLedgerFill | Mapping[str, object]) -> 
     }:
         return True
     return any(
-        _row_value(row, key) is not None
+        row_value(row, key) is not None
         for key in (
             "execution_order_event_id",
             "event_fingerprint",
@@ -660,11 +660,11 @@ def _is_order_feed_source_row(row: RuntimeLedgerFill | Mapping[str, object]) -> 
     )
 
 
-def _is_order_feed_source_fill(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
-    return _is_order_feed_source_row(row)
+def is_order_feed_source_fill(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
+    return is_order_feed_source_row(row)
 
 
-def _is_linked_materialized_order_event_fill(
+def is_linked_materialized_order_event_fill(
     row: RuntimeLedgerFill | Mapping[str, object],
 ) -> bool:
     """Return true for row-level order-feed fills with source/economics lineage.
@@ -676,49 +676,49 @@ def _is_linked_materialized_order_event_fill(
     execution, decision, source-window, offset, and materialization lineage.
     """
 
-    if _is_non_promotion_runtime_source_row(row):
+    if is_non_promotion_runtime_source_row(row):
         return False
     materialization = _coerce_text(
-        _row_value(row, "source_materialization", "authority_class", "source")
+        row_value(row, "source_materialization", "authority_class", "source")
     )
     if materialization not in _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS:
         return False
     return (
-        _row_value(row, "execution_order_event_id", "event_fingerprint") is not None
-        and _row_value(row, "execution_id", "execution_correlation_id") is not None
-        and _row_value(row, "trade_decision_id", "decision_id", "decision_hash")
+        row_value(row, "execution_order_event_id", "event_fingerprint") is not None
+        and row_value(row, "execution_id", "execution_correlation_id") is not None
+        and row_value(row, "trade_decision_id", "decision_id", "decision_hash")
         is not None
-        and _row_value(row, "source_window_id", "runtime_ledger_source_window_id")
+        and row_value(row, "source_window_id", "runtime_ledger_source_window_id")
         is not None
-        and _source_offset_present(row)
+        and source_offset_present(row)
     )
 
 
-def _source_offset_present(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
-    source_offsets = _row_value(row, "source_offsets")
+def source_offset_present(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
+    source_offsets = row_value(row, "source_offsets")
     if isinstance(source_offsets, Mapping):
         typed_offsets = cast(Mapping[str, object], source_offsets)
         return (
-            _row_value(typed_offsets, "topic") is not None
-            and _row_value(typed_offsets, "partition") is not None
-            and _row_value(typed_offsets, "offset") is not None
+            row_value(typed_offsets, "topic") is not None
+            and row_value(typed_offsets, "partition") is not None
+            and row_value(typed_offsets, "offset") is not None
         )
     return (
-        _row_value(row, "source_topic") is not None
-        and _row_value(row, "source_partition") is not None
-        and _row_value(row, "source_offset") is not None
-    ) or _row_value(row, "source_offset") is not None
+        row_value(row, "source_topic") is not None
+        and row_value(row, "source_partition") is not None
+        and row_value(row, "source_offset") is not None
+    ) or row_value(row, "source_offset") is not None
 
 
-def _is_non_promotion_runtime_source_row(
+def is_non_promotion_runtime_source_row(
     row: RuntimeLedgerFill | Mapping[str, object],
 ) -> bool:
-    promotion_authority = _row_value(
+    promotion_authority = row_value(
         row, "promotion_authority", "promotion_authority_eligible"
     )
     if promotion_authority is False:
         return True
-    if _runtime_source_hard_mode_blockers(row):
+    if runtime_source_hard_mode_blockers(row):
         return True
     for key in (
         "authority_class",
@@ -730,7 +730,7 @@ def _is_non_promotion_runtime_source_row(
         "source_materialization",
         "promotion_authority",
     ):
-        text = _coerce_text(_row_value(row, key))
+        text = _coerce_text(row_value(row, key))
         if text is None:
             continue
         normalized = text.lower().replace("-", "_")
@@ -741,7 +741,7 @@ def _is_non_promotion_runtime_source_row(
     return False
 
 
-def _runtime_source_collection_mode_blockers(
+def runtime_source_collection_mode_blockers(
     row: RuntimeLedgerFill | Mapping[str, object],
 ) -> list[str]:
     blockers: list[str] = []
@@ -759,7 +759,7 @@ def _runtime_source_collection_mode_blockers(
         "source_materialization",
         "source_mode",
     ):
-        text = _coerce_text(_row_value(row, key))
+        text = _coerce_text(row_value(row, key))
         if text is None:
             continue
         normalized = text.lower().replace("-", "_").replace(" ", "_")
@@ -768,7 +768,7 @@ def _runtime_source_collection_mode_blockers(
     return _dedupe(blockers)
 
 
-def _runtime_source_hard_mode_blockers(
+def runtime_source_hard_mode_blockers(
     row: RuntimeLedgerFill | Mapping[str, object],
 ) -> list[str]:
     blockers: list[str] = []
@@ -786,7 +786,7 @@ def _runtime_source_hard_mode_blockers(
         "source_materialization",
         "source_mode",
     ):
-        text = _coerce_text(_row_value(row, key))
+        text = _coerce_text(row_value(row, key))
         if text is None:
             continue
         normalized = text.lower().replace("-", "_").replace(" ", "_")
@@ -803,20 +803,3 @@ __all__ = (
     "coerce_fill_quantity_basis",
     "normalize_fill_row",
 )
-
-# Public aliases used by split modules.
-apply_fill_to_position = _apply_fill_to_position
-coerce_event_type = _coerce_event_type
-is_linked_materialized_order_event_fill = _is_linked_materialized_order_event_fill
-is_non_promotion_runtime_source_row = _is_non_promotion_runtime_source_row
-is_order_feed_lifecycle_source_row = _is_order_feed_lifecycle_source_row
-is_order_feed_source_fill = _is_order_feed_source_fill
-is_order_feed_source_row = _is_order_feed_source_row
-open_position = _open_position
-order_lifecycle_blockers = _order_lifecycle_blockers
-row_requires_promotion_source_authority = _row_requires_promotion_source_authority
-row_value = _row_value
-runtime_source_collection_mode_blockers = _runtime_source_collection_mode_blockers
-runtime_source_hard_mode_blockers = _runtime_source_hard_mode_blockers
-source_offset_present = _source_offset_present
-source_materialization_blockers = _source_materialization_blockers

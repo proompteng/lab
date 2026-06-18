@@ -71,7 +71,7 @@ _RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = (
 
 
 @dataclass(frozen=True)
-class _RuntimeLedgerImportCandidate:
+class RuntimeLedgerImportCandidate:
     raw: Mapping[str, object]
     hypothesis_id: str | None
     candidate_id: str | None
@@ -158,37 +158,37 @@ def _runtime_ledger_source_evidence_payload(
     return evidence
 
 
-def _runtime_ledger_paper_probation_import_plan(
+def runtime_ledger_paper_probation_import_plan(
     candidates: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
     targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
     seen_target_keys: set[tuple[str, ...]] = set()
     for raw_candidate in candidates:
-        candidate = _runtime_ledger_import_candidate(raw_candidate)
+        candidate = runtime_ledger_import_candidate(raw_candidate)
         if candidate.missing_fields:
-            skipped_targets.append(_missing_import_target(candidate))
+            skipped_targets.append(missing_import_target(candidate))
             continue
 
         if candidate.paper_probation_blockers:
-            skipped_targets.append(_blocked_import_target(candidate))
+            skipped_targets.append(blocked_import_target(candidate))
             continue
 
-        target_key = _runtime_ledger_import_target_key(candidate)
+        target_key = runtime_ledger_import_target_key(candidate)
         bucket_ref = _runtime_ledger_paper_probation_bucket_ref(candidate.raw)
         if target_key in seen_target_keys:
-            skipped_targets.append(_duplicate_import_target(candidate, bucket_ref))
+            skipped_targets.append(duplicate_import_target(candidate, bucket_ref))
             continue
         seen_target_keys.add(target_key)
 
-        targets.append(_runtime_ledger_import_target(candidate, bucket_ref))
+        targets.append(runtime_ledger_import_target(candidate, bucket_ref))
 
-    return _runtime_ledger_import_plan_payload(targets, skipped_targets)
+    return runtime_ledger_import_plan_payload(targets, skipped_targets)
 
 
-def _runtime_ledger_import_candidate(
+def runtime_ledger_import_candidate(
     candidate: Mapping[str, object],
-) -> _RuntimeLedgerImportCandidate:
+) -> RuntimeLedgerImportCandidate:
     strategy_id = _safe_text(candidate.get("strategy_id"))
     strategy_name = _runtime_ledger_paper_probation_strategy_name(candidate)
     window_start, window_end, defaulted_window = (
@@ -198,7 +198,7 @@ def _runtime_ledger_import_candidate(
     blockers = (
         [] if source_collection else _runtime_ledger_paper_probation_blockers(candidate)
     )
-    return _RuntimeLedgerImportCandidate(
+    return RuntimeLedgerImportCandidate(
         raw=candidate,
         hypothesis_id=_safe_text(candidate.get("hypothesis_id")),
         candidate_id=_safe_text(candidate.get("candidate_id")),
@@ -224,8 +224,8 @@ def _runtime_ledger_import_candidate(
     )
 
 
-def _missing_import_target(
-    candidate: _RuntimeLedgerImportCandidate,
+def missing_import_target(
+    candidate: RuntimeLedgerImportCandidate,
 ) -> dict[str, object]:
     return {
         "hypothesis_id": candidate.hypothesis_id,
@@ -235,8 +235,8 @@ def _missing_import_target(
     }
 
 
-def _blocked_import_target(
-    candidate: _RuntimeLedgerImportCandidate,
+def blocked_import_target(
+    candidate: RuntimeLedgerImportCandidate,
 ) -> dict[str, object]:
     return {
         "hypothesis_id": candidate.hypothesis_id,
@@ -253,8 +253,8 @@ def _blocked_import_target(
     }
 
 
-def _duplicate_import_target(
-    candidate: _RuntimeLedgerImportCandidate,
+def duplicate_import_target(
+    candidate: RuntimeLedgerImportCandidate,
     bucket_ref: str | None,
 ) -> dict[str, object]:
     return {
@@ -269,8 +269,8 @@ def _duplicate_import_target(
     }
 
 
-def _runtime_ledger_import_target_key(
-    candidate: _RuntimeLedgerImportCandidate,
+def runtime_ledger_import_target_key(
+    candidate: RuntimeLedgerImportCandidate,
 ) -> tuple[str, ...]:
     return (
         candidate.hypothesis_id or "",
@@ -286,21 +286,21 @@ def _runtime_ledger_import_target_key(
     )
 
 
-def _runtime_ledger_import_target(
-    candidate: _RuntimeLedgerImportCandidate,
+def runtime_ledger_import_target(
+    candidate: RuntimeLedgerImportCandidate,
     bucket_ref: str | None,
 ) -> dict[str, object]:
-    target = _runtime_ledger_base_import_target(candidate)
+    target = runtime_ledger_base_import_target(candidate)
     target.update(_runtime_ledger_source_evidence_payload(candidate.raw))
     if candidate.source_collection:
-        target.update(_source_collection_import_target_metadata(candidate))
+        target.update(source_collection_import_target_metadata(candidate))
     if bucket_ref:
         target["runtime_ledger_bucket_ref"] = bucket_ref
     return target
 
 
-def _runtime_ledger_base_import_target(
-    candidate: _RuntimeLedgerImportCandidate,
+def runtime_ledger_base_import_target(
+    candidate: RuntimeLedgerImportCandidate,
 ) -> dict[str, object]:
     bounded_probe_payload = _bounded_paper_route_probe_collection_payload(
         authorized=candidate.paper_probation_satisfied or candidate.source_collection
@@ -355,24 +355,24 @@ def _runtime_ledger_base_import_target(
             if candidate.source_collection
             else ""
         ),
-        "source_collection_reason_codes": _source_collection_reason_codes(candidate),
+        "source_collection_reason_codes": source_collection_reason_codes(candidate),
         "proof_mode": "probation",
         "canary_collection_authorized": candidate.paper_probation_satisfied,
         **authority.as_target_fields(),
         **bounded_probe_payload,
         "evidence_collection_stage": "paper",
         "probation_allowed": candidate.paper_probation_satisfied,
-        "probation_reason": _runtime_ledger_import_probation_reason(candidate),
-        "candidate_blockers": _candidate_reason_codes(candidate),
-        "handoff": _runtime_ledger_import_handoff(candidate),
+        "probation_reason": runtime_ledger_import_probation_reason(candidate),
+        "candidate_blockers": candidate_reason_codes(candidate),
+        "handoff": runtime_ledger_import_handoff(candidate),
         "promotion_gate": "runtime_ledger_live_or_live_paper_required",
-        "selected_by": _runtime_ledger_import_selector(candidate),
+        "selected_by": runtime_ledger_import_selector(candidate),
         "selection_reason": candidate.selection_reason,
     }
 
 
-def _source_collection_reason_codes(
-    candidate: _RuntimeLedgerImportCandidate,
+def source_collection_reason_codes(
+    candidate: RuntimeLedgerImportCandidate,
 ) -> list[object]:
     if not candidate.source_collection:
         return []
@@ -383,7 +383,7 @@ def _source_collection_reason_codes(
     )
 
 
-def _candidate_reason_codes(candidate: _RuntimeLedgerImportCandidate) -> list[str]:
+def candidate_reason_codes(candidate: RuntimeLedgerImportCandidate) -> list[str]:
     return _normalize_reason_codes(
         [
             str(reason).strip()
@@ -395,28 +395,28 @@ def _candidate_reason_codes(candidate: _RuntimeLedgerImportCandidate) -> list[st
     )
 
 
-def _runtime_ledger_import_probation_reason(
-    candidate: _RuntimeLedgerImportCandidate,
+def runtime_ledger_import_probation_reason(
+    candidate: RuntimeLedgerImportCandidate,
 ) -> str:
     if candidate.source_collection:
         return "source_window_evidence_collection_pending"
     return "source_backed_paper_stage_runtime_ledger_positive_after_costs"
 
 
-def _runtime_ledger_import_handoff(candidate: _RuntimeLedgerImportCandidate) -> str:
+def runtime_ledger_import_handoff(candidate: RuntimeLedgerImportCandidate) -> str:
     if candidate.source_collection:
         return "runtime_ledger_source_collection_import"
     return "runtime_ledger_paper_probation_import"
 
 
-def _runtime_ledger_import_selector(candidate: _RuntimeLedgerImportCandidate) -> str:
+def runtime_ledger_import_selector(candidate: RuntimeLedgerImportCandidate) -> str:
     if candidate.source_collection:
         return "runtime_ledger_source_collection"
     return "runtime_ledger_paper_probation"
 
 
-def _source_collection_import_target_metadata(
-    candidate: _RuntimeLedgerImportCandidate,
+def source_collection_import_target_metadata(
+    candidate: RuntimeLedgerImportCandidate,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "paper_route_probe_window_start": candidate.window_start or "",
@@ -486,7 +486,7 @@ def _source_collection_import_target_metadata(
     return metadata
 
 
-def _runtime_ledger_import_plan_payload(
+def runtime_ledger_import_plan_payload(
     targets: Sequence[Mapping[str, object]],
     skipped_targets: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
@@ -549,7 +549,7 @@ def _runtime_ledger_import_plan_payload(
     }
 
 
-def _runtime_ledger_import_plan_has_target(
+def runtime_ledger_import_plan_has_target(
     plan: Mapping[str, object],
     *,
     hypothesis_id: str,
@@ -567,7 +567,7 @@ def _runtime_ledger_import_plan_has_target(
     return False
 
 
-def _bounded_paper_route_manifest_collection_targets(
+def bounded_paper_route_manifest_collection_targets(
     registry_items: Sequence[Mapping[str, object]],
     *,
     existing_plan: Mapping[str, object],
@@ -593,7 +593,7 @@ def _bounded_paper_route_manifest_collection_targets(
             or candidate_id != _HPAIRS_BOUNDED_COLLECTION_CANDIDATE_ID
         ):
             continue
-        if _runtime_ledger_import_plan_has_target(
+        if runtime_ledger_import_plan_has_target(
             existing_plan,
             hypothesis_id=hypothesis_id,
             candidate_id=candidate_id,
@@ -680,13 +680,13 @@ def _bounded_paper_route_manifest_collection_targets(
     return targets
 
 
-def _with_bounded_paper_route_manifest_collection_targets(
+def with_bounded_paper_route_manifest_collection_targets(
     plan: Mapping[str, object],
     *,
     registry_items: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
     merged_plan = dict(plan)
-    manifest_targets = _bounded_paper_route_manifest_collection_targets(
+    manifest_targets = bounded_paper_route_manifest_collection_targets(
         registry_items,
         existing_plan=merged_plan,
     )
@@ -728,7 +728,7 @@ def _with_bounded_paper_route_manifest_collection_targets(
     return merged_plan
 
 
-def _paper_probation_eligible_total_with_runtime_ledger(
+def paper_probation_eligible_total_with_runtime_ledger(
     *,
     legacy_total: int,
     runtime_items: Sequence[Mapping[str, Any]],
@@ -750,53 +750,25 @@ def _paper_probation_eligible_total_with_runtime_ledger(
 
 __all__ = [
     "_RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS",
-    "_RuntimeLedgerImportCandidate",
-    "_blocked_import_target",
-    "_bounded_paper_route_manifest_collection_targets",
-    "_candidate_reason_codes",
-    "_duplicate_import_target",
-    "_missing_import_target",
-    "_paper_probation_eligible_total_with_runtime_ledger",
-    "_runtime_ledger_base_import_target",
-    "_runtime_ledger_import_candidate",
-    "_runtime_ledger_import_handoff",
-    "_runtime_ledger_import_plan_has_target",
-    "_runtime_ledger_import_plan_payload",
-    "_runtime_ledger_import_probation_reason",
-    "_runtime_ledger_import_selector",
-    "_runtime_ledger_import_target",
-    "_runtime_ledger_import_target_key",
-    "_runtime_ledger_paper_probation_import_plan",
+    "RuntimeLedgerImportCandidate",
+    "blocked_import_target",
+    "bounded_paper_route_manifest_collection_targets",
+    "candidate_reason_codes",
+    "duplicate_import_target",
+    "missing_import_target",
+    "paper_probation_eligible_total_with_runtime_ledger",
+    "runtime_ledger_base_import_target",
+    "runtime_ledger_import_candidate",
+    "runtime_ledger_import_handoff",
+    "runtime_ledger_import_plan_has_target",
+    "runtime_ledger_import_plan_payload",
+    "runtime_ledger_import_probation_reason",
+    "runtime_ledger_import_selector",
+    "runtime_ledger_import_target",
+    "runtime_ledger_import_target_key",
+    "runtime_ledger_paper_probation_import_plan",
     "_runtime_ledger_source_evidence_payload",
-    "_source_collection_import_target_metadata",
-    "_source_collection_reason_codes",
-    "_with_bounded_paper_route_manifest_collection_targets",
+    "source_collection_import_target_metadata",
+    "source_collection_reason_codes",
+    "with_bounded_paper_route_manifest_collection_targets",
 ]
-
-# Public aliases used by split modules.
-blocked_import_target = _blocked_import_target
-bounded_paper_route_manifest_collection_targets = (
-    _bounded_paper_route_manifest_collection_targets
-)
-candidate_reason_codes = _candidate_reason_codes
-duplicate_import_target = _duplicate_import_target
-missing_import_target = _missing_import_target
-paper_probation_eligible_total_with_runtime_ledger = (
-    _paper_probation_eligible_total_with_runtime_ledger
-)
-runtime_ledger_base_import_target = _runtime_ledger_base_import_target
-runtime_ledger_import_candidate = _runtime_ledger_import_candidate
-runtime_ledger_import_handoff = _runtime_ledger_import_handoff
-runtime_ledger_import_plan_has_target = _runtime_ledger_import_plan_has_target
-runtime_ledger_import_plan_payload = _runtime_ledger_import_plan_payload
-runtime_ledger_import_probation_reason = _runtime_ledger_import_probation_reason
-runtime_ledger_import_selector = _runtime_ledger_import_selector
-runtime_ledger_import_target = _runtime_ledger_import_target
-runtime_ledger_import_target_key = _runtime_ledger_import_target_key
-runtime_ledger_paper_probation_import_plan = _runtime_ledger_paper_probation_import_plan
-RuntimeLedgerImportCandidate = _RuntimeLedgerImportCandidate
-source_collection_import_target_metadata = _source_collection_import_target_metadata
-source_collection_reason_codes = _source_collection_reason_codes
-with_bounded_paper_route_manifest_collection_targets = (
-    _with_bounded_paper_route_manifest_collection_targets
-)

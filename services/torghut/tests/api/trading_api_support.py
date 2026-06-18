@@ -70,9 +70,9 @@ from app.models import (
     VNextEmpiricalJobRun,
 )
 
-_ALPACA_HEALTH_STATE = common_api._ALPACA_HEALTH_STATE
-_OPTIONS_CATALOG_FRESHNESS_CACHE = common_api._OPTIONS_CATALOG_FRESHNESS_CACHE
-_TRADING_DEPENDENCY_HEALTH_CACHE = common_api._TRADING_DEPENDENCY_HEALTH_CACHE
+_ALPACA_HEALTH_STATE = common_api.ALPACA_HEALTH_STATE
+_OPTIONS_CATALOG_FRESHNESS_CACHE = common_api.OPTIONS_CATALOG_FRESHNESS_CACHE
+_TRADING_DEPENDENCY_HEALTH_CACHE = common_api.TRADING_DEPENDENCY_HEALTH_CACHE
 _assert_dspy_cutover_migration_guard = app_bootstrap.assert_dspy_cutover_migration_guard
 _build_hypothesis_runtime_payload = health_checks_api._build_hypothesis_runtime_payload
 _build_live_submission_gate_payload = (
@@ -667,12 +667,12 @@ class TradingApiTestCaseBase(TestCase):
             del app.state.trading_scheduler
 
     def _clear_trading_health_surface_cache(self) -> None:
-        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
             refresh_futures = list(
-                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.values()
+                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.values()
             )
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
         for refresh_future in refresh_futures:
             refresh_future.cancel()
 

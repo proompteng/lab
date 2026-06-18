@@ -48,14 +48,14 @@ from .paper_probation import (
 
 
 from .runtime_certificates import (
-    certificate_evidence_authority_score as _certificate_evidence_authority_score,
-    runtime_ledger_selection_score as _runtime_ledger_selection_score,
-    runtime_ledger_repair_reason_codes as _runtime_ledger_repair_reason_codes,
-    runtime_ledger_repair_score as _runtime_ledger_repair_score,
+    certificate_evidence_authority_score as certificate_evidence_authority_score,
+    runtime_ledger_selection_score as runtime_ledger_selection_score,
+    runtime_ledger_repair_reason_codes as runtime_ledger_repair_reason_codes,
+    runtime_ledger_repair_score as runtime_ledger_repair_score,
 )
 
 
-def _load_runtime_ledger_repair_candidates(
+def load_runtime_ledger_repair_candidates(
     session: RuntimeLedgerReadSession,
     *,
     registry_items: Sequence[Mapping[str, object]],
@@ -113,7 +113,7 @@ def _load_runtime_ledger_repair_candidates(
         if not payload:
             continue
         manifest = manifests.get(_safe_text(payload.get("hypothesis_id")) or "") or {}
-        reason_codes = _runtime_ledger_repair_reason_codes(
+        reason_codes = runtime_ledger_repair_reason_codes(
             payload,
             manifest=manifest,
         )
@@ -158,10 +158,10 @@ def _load_runtime_ledger_repair_candidates(
             }
         )
 
-    return sorted(candidates, key=_runtime_ledger_repair_score, reverse=True)[:limit]
+    return sorted(candidates, key=runtime_ledger_repair_score, reverse=True)[:limit]
 
 
-def _certificate_evidence_selection_key(
+def certificate_evidence_selection_key(
     row: Mapping[str, object],
     *,
     now: datetime | None,
@@ -191,8 +191,8 @@ def _certificate_evidence_selection_key(
         )
     observed_stage = _safe_text(getattr(metric_window, "observed_stage", None))
     stage_score = {"live": 2, "paper": 1}.get(observed_stage or "", 0)
-    runtime_ledger_score = _runtime_ledger_selection_score(runtime_ledger_bucket)
-    authority_score = _certificate_evidence_authority_score(
+    runtime_ledger_score = runtime_ledger_selection_score(runtime_ledger_bucket)
+    authority_score = certificate_evidence_authority_score(
         observed_stage=observed_stage,
         runtime_ledger_bucket=runtime_ledger_bucket,
     )
@@ -229,7 +229,7 @@ def _certificate_evidence_selection_key(
     )
 
 
-def _extract_runtime_summary(
+def extract_runtime_summary(
     hypothesis_summary: Mapping[str, Any] | None,
 ) -> tuple[Mapping[str, Any], list[Mapping[str, Any]]]:
     if not isinstance(hypothesis_summary, Mapping):
@@ -262,7 +262,7 @@ def _extract_runtime_summary(
     return hypothesis_summary, items
 
 
-def _refresh_runtime_summary_totals(
+def refresh_runtime_summary_totals(
     summary: Mapping[str, Any],
     runtime_items: Sequence[Mapping[str, Any]],
 ) -> dict[str, object]:
@@ -364,13 +364,3 @@ def build_submission_gate_market_context_status(state: object) -> dict[str, obje
 
 
 __all__ = ("build_submission_gate_market_context_status",)
-
-# Public aliases used by split modules.
-certificate_evidence_authority_score = _certificate_evidence_authority_score
-certificate_evidence_selection_key = _certificate_evidence_selection_key
-extract_runtime_summary = _extract_runtime_summary
-load_runtime_ledger_repair_candidates = _load_runtime_ledger_repair_candidates
-refresh_runtime_summary_totals = _refresh_runtime_summary_totals
-runtime_ledger_repair_reason_codes = _runtime_ledger_repair_reason_codes
-runtime_ledger_repair_score = _runtime_ledger_repair_score
-runtime_ledger_selection_score = _runtime_ledger_selection_score

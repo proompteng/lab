@@ -53,7 +53,7 @@ else:
     _WhitepaperWorkflowApiBase = object
 
 
-class _WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
+class WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
     def _compiled_experiment_specs_from_templates(
         self,
         *,
@@ -730,6 +730,3 @@ class _WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-WhitepaperWorkflowApiMethods = _WhitepaperWorkflowApiMethods

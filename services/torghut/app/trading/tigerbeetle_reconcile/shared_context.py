@@ -152,7 +152,7 @@ def payload_value(row: TigerBeetleTransferRef, key: str) -> str | None:
     return None if value is None else str(value)
 
 
-def _u128_text(value: object) -> str | None:
+def u128_text(value: object) -> str | None:
     if value is None:
         return None
     try:
@@ -161,33 +161,33 @@ def _u128_text(value: object) -> str | None:
         return None
 
 
-def _account_payload_matches(
+def account_payload_matches(
     ref: TigerBeetleTransferRef,
     key: str,
     expected_account_id: int,
 ) -> bool:
     payload_text = payload_value(ref, key)
-    return payload_text is None or _u128_text(payload_text) == u128_decimal(
+    return payload_text is None or u128_text(payload_text) == u128_decimal(
         expected_account_id
     )
 
 
-def _payload_mapping(row: TigerBeetleTransferRef) -> Mapping[str, object]:
+def payload_mapping(row: TigerBeetleTransferRef) -> Mapping[str, object]:
     raw_payload = cast(object, row.payload_json)
     if isinstance(raw_payload, Mapping):
         return cast(Mapping[str, object], raw_payload)
     return {}
 
 
-def _stable_ref_payload(row: TigerBeetleTransferRef) -> Mapping[str, object]:
-    stable_ref = _payload_mapping(row).get("stable_ref")
+def stable_ref_payload(row: TigerBeetleTransferRef) -> Mapping[str, object]:
+    stable_ref = payload_mapping(row).get("stable_ref")
     if isinstance(stable_ref, Mapping):
         return cast(Mapping[str, object], stable_ref)
     return {}
 
 
 def _stable_ref_matches(row: TigerBeetleTransferRef) -> bool:
-    stable_ref = _stable_ref_payload(row)
+    stable_ref = stable_ref_payload(row)
     if not stable_ref:
         return True
     components = stable_ref.get("components")
@@ -232,7 +232,7 @@ def _stable_ref_archives_event_transfer(
     ref: TigerBeetleTransferRef,
     event: ExecutionOrderEvent,
 ) -> bool:
-    stable_ref = _stable_ref_payload(ref)
+    stable_ref = stable_ref_payload(ref)
     if not stable_ref:
         return False
     if not _stable_ref_matches(ref):
@@ -258,7 +258,7 @@ def _stable_ref_archives_event_transfer(
     )
 
 
-def _ref_matches_expected_event(
+def ref_matches_expected_event(
     session: Session,
     ref: TigerBeetleTransferRef,
     *,
@@ -285,7 +285,7 @@ def _ref_matches_expected_event(
         return False
     expected = plan.transfer_spec
     core_matches = (
-        _u128_text(ref.transfer_id) == u128_decimal(expected.transfer_id)
+        u128_text(ref.transfer_id) == u128_decimal(expected.transfer_id)
         and ref.transfer_kind == plan.transfer_kind
         and ref.amount == Decimal(expected.amount)
         and ref.ledger == expected.ledger
@@ -293,9 +293,9 @@ def _ref_matches_expected_event(
     )
     if not core_matches:
         return False
-    accounts_match = _account_payload_matches(
+    accounts_match = account_payload_matches(
         ref, "debit_account_id", expected.debit_account_id
-    ) and _account_payload_matches(
+    ) and account_payload_matches(
         ref,
         "credit_account_id",
         expected.credit_account_id,
@@ -303,7 +303,7 @@ def _ref_matches_expected_event(
     return accounts_match or _stable_ref_archives_event_transfer(ref, event)
 
 
-def _ref_sample(
+def ref_sample(
     ref: TigerBeetleTransferRef,
     *,
     blocker: str,
@@ -339,16 +339,16 @@ def _ref_sample(
     return sample
 
 
-def _append_sample(samples: list[dict[str, object]], sample: dict[str, object]) -> None:
+def append_sample(samples: list[dict[str, object]], sample: dict[str, object]) -> None:
     if len(samples) < SAMPLE_LIMIT:
         samples.append(sample)
 
 
-def _transfer_lookup_key(value: object) -> str | None:
-    return _u128_text(_attr(value, "id"))
+def transfer_lookup_key(value: object) -> str | None:
+    return u128_text(_attr(value, "id"))
 
 
-def _order_event_ref_exists(
+def order_event_ref_exists(
     session: Session,
     event: ExecutionOrderEvent,
     *,
@@ -380,7 +380,7 @@ def _order_event_ref_exists(
     )
 
 
-def _source_ref_exists(
+def source_ref_exists(
     session: Session,
     *,
     settings_obj: Settings,
@@ -444,7 +444,7 @@ def _payload_string_list(payload: Mapping[str, object], key: str) -> list[str]:
     return [str(value)]
 
 
-def _source_materialization_payload() -> dict[str, object]:
+def source_materialization_payload() -> dict[str, object]:
     return {
         "account_ref_table": "tigerbeetle_account_refs",
         "transfer_ref_table": "tigerbeetle_transfer_refs",
@@ -455,7 +455,7 @@ def _source_materialization_payload() -> dict[str, object]:
     }
 
 
-def _compact_reconciliation_ref_counts(
+def compact_reconciliation_ref_counts(
     ref_counts: Mapping[str, object],
     *,
     cluster_id: int,
@@ -474,7 +474,7 @@ def _compact_reconciliation_ref_counts(
     source_materialization = (
         dict(cast(Mapping[str, object], raw_source_materialization))
         if isinstance(raw_source_materialization, Mapping)
-        else _source_materialization_payload()
+        else source_materialization_payload()
     )
     compact: dict[str, object] = {
         "schema_version": "torghut.tigerbeetle-ref-counts.v1",
@@ -500,7 +500,7 @@ def _compact_reconciliation_ref_counts(
     return compact
 
 
-def _as_aware_utc(value: datetime) -> datetime:
+def as_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
@@ -555,7 +555,7 @@ def _archived_runtime_ledger_amount_micros(
         or ref.runtime_ledger_bucket_id is not None
     ):
         return None
-    payload = _payload_mapping(ref)
+    payload = payload_mapping(ref)
     raw_amount = payload.get("amount_source") or payload.get(
         "net_strategy_pnl_after_costs"
     )
@@ -567,10 +567,10 @@ def _archived_runtime_ledger_amount_micros(
         return None
 
 
-def _archived_source_amount_micros(ref: TigerBeetleTransferRef) -> Decimal | None:
+def archived_source_amount_micros(ref: TigerBeetleTransferRef) -> Decimal | None:
     if ref.source_type not in {SOURCE_TYPE_EXECUTION, SOURCE_TYPE_EXECUTION_TCA_METRIC}:
         return None
-    payload = _payload_mapping(ref)
+    payload = payload_mapping(ref)
     raw_amount = payload.get("amount_source")
     if raw_amount is None:
         return None
@@ -580,10 +580,10 @@ def _archived_source_amount_micros(ref: TigerBeetleTransferRef) -> Decimal | Non
         return None
 
 
-def _legacy_unversioned_source_ref(ref: TigerBeetleTransferRef) -> bool:
+def legacy_unversioned_source_ref(ref: TigerBeetleTransferRef) -> bool:
     if ref.source_type not in {SOURCE_TYPE_EXECUTION, SOURCE_TYPE_EXECUTION_TCA_METRIC}:
         return False
-    payload = _payload_mapping(ref)
+    payload = payload_mapping(ref)
     return (
         ":" not in str(ref.source_id or "")
         and payload.get("amount_source") is None
@@ -595,7 +595,7 @@ def _expected_source_amount_micros(
     session: Session,
     ref: TigerBeetleTransferRef,
 ) -> Decimal | None:
-    archived_amount = _archived_source_amount_micros(ref)
+    archived_amount = archived_source_amount_micros(ref)
     if archived_amount is not None:
         return archived_amount
     source_uuid = _uuid_or_none(ref.source_id)
@@ -612,8 +612,8 @@ def _expected_source_amount_micros(
     return None
 
 
-def _runtime_ledger_ref_is_signed(ref: TigerBeetleTransferRef) -> bool:
-    payload = _payload_mapping(ref)
+def runtime_ledger_ref_is_signed(ref: TigerBeetleTransferRef) -> bool:
+    payload = payload_mapping(ref)
     signed_amount = payload.get("signed_amount_micros")
     pnl_direction = str(payload.get("pnl_direction") or "")
     debit_account_id = payload.get("debit_account_id")
@@ -631,7 +631,7 @@ def _runtime_ledger_ref_is_signed(ref: TigerBeetleTransferRef) -> bool:
 
 
 def _runtime_ledger_payload_account_ids(ref: TigerBeetleTransferRef) -> list[str]:
-    payload = _payload_mapping(ref)
+    payload = payload_mapping(ref)
     account_ids = _payload_string_list(payload, "account_ids")
     for key in ("debit_account_id", "credit_account_id"):
         value = payload.get(key)
@@ -699,24 +699,6 @@ __all__ = (
     "uuid_or_none",
 )
 
-# Public aliases used by split modules.
-account_payload_matches = _account_payload_matches
-append_sample = _append_sample
-archived_source_amount_micros = _archived_source_amount_micros
-as_aware_utc = _as_aware_utc
-compact_reconciliation_ref_counts = _compact_reconciliation_ref_counts
-legacy_unversioned_source_ref = _legacy_unversioned_source_ref
-order_event_ref_exists = _order_event_ref_exists
-payload_mapping = _payload_mapping
-ref_matches_expected_event = _ref_matches_expected_event
-ref_sample = _ref_sample
-runtime_ledger_ref_is_signed = _runtime_ledger_ref_is_signed
-source_materialization_payload = _source_materialization_payload
-source_ref_exists = _source_ref_exists
-stable_ref_payload = _stable_ref_payload
-transfer_lookup_key = _transfer_lookup_key
-u128_text = _u128_text
-
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
@@ -769,33 +751,33 @@ __all__: tuple[str, ...] = (
     "TigerBeetleReconciliationRun",
     "TigerBeetleTransferRef",
     "UUID",
-    "_account_payload_matches",
-    "_append_sample",
+    "account_payload_matches",
+    "append_sample",
     "_archived_runtime_ledger_amount_micros",
-    "_archived_source_amount_micros",
-    "_as_aware_utc",
+    "archived_source_amount_micros",
+    "as_aware_utc",
     "_attr",
-    "_compact_reconciliation_ref_counts",
+    "compact_reconciliation_ref_counts",
     "_cost_amount_micros",
     "_execution_amount_micros",
     "_expected_source_amount_micros",
-    "_legacy_unversioned_source_ref",
-    "_order_event_ref_exists",
+    "legacy_unversioned_source_ref",
+    "order_event_ref_exists",
     "_payload_int",
-    "_payload_mapping",
+    "payload_mapping",
     "_payload_string_list",
-    "_ref_matches_expected_event",
-    "_ref_sample",
+    "ref_matches_expected_event",
+    "ref_sample",
     "_runtime_ledger_amount_micros",
     "_runtime_ledger_payload_account_ids",
-    "_runtime_ledger_ref_is_signed",
-    "_source_materialization_payload",
-    "_source_ref_exists",
+    "runtime_ledger_ref_is_signed",
+    "source_materialization_payload",
+    "source_ref_exists",
     "_stable_ref_archives_event_transfer",
     "_stable_ref_matches",
-    "_stable_ref_payload",
-    "_transfer_lookup_key",
-    "_u128_text",
+    "stable_ref_payload",
+    "transfer_lookup_key",
+    "u128_text",
     "_usd_to_micros",
     "_uuid_or_none",
     "account_payload_matches",

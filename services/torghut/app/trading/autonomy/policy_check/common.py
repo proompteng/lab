@@ -40,14 +40,14 @@ from ...parity import (
 )
 
 
-_PROFITABILITY_STAGE_ORDER: tuple[str, ...] = (
+PROFITABILITY_STAGE_ORDER: tuple[str, ...] = (
     "research",
     "validation",
     "execution",
     "governance",
 )
 
-_PROFITABILITY_STAGE_REQUIRED_CHECKS: dict[str, tuple[str, ...]] = {
+PROFITABILITY_STAGE_REQUIRED_CHECKS: dict[str, tuple[str, ...]] = {
     "research": (
         "candidate_spec_present",
         "candidate_generation_manifest_present",
@@ -124,7 +124,7 @@ class RollbackReadinessResult:
 
 
 @dataclass(frozen=True)
-class _BenchmarkParityThresholds:
+class BenchmarkParityThresholds:
     min_advisory_output_rate: float
     max_policy_violation_degradation: float
     max_fallback_rate: float
@@ -137,7 +137,7 @@ class _BenchmarkParityThresholds:
 
 
 @dataclass(frozen=True)
-class _DeeplobBdlobThresholds:
+class DeeplobBdlobThresholds:
     min_feature_quality_pass_rate: float
     min_prediction_quality_score: float
     min_cost_adjusted_edge_bps: float
@@ -149,12 +149,6 @@ __all__ = (
     "PromotionPrerequisiteResult",
     "RollbackReadinessResult",
 )
-
-# Public aliases used by split modules.
-BenchmarkParityThresholds = _BenchmarkParityThresholds
-DeeplobBdlobThresholds = _DeeplobBdlobThresholds
-PROFITABILITY_STAGE_ORDER = _PROFITABILITY_STAGE_ORDER
-PROFITABILITY_STAGE_REQUIRED_CHECKS = _PROFITABILITY_STAGE_REQUIRED_CHECKS
 
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
@@ -188,10 +182,10 @@ __all__: tuple[str, ...] = (
     "PromotionPrerequisiteResult",
     "RollbackReadinessResult",
     "Sequence",
-    "_BenchmarkParityThresholds",
-    "_DeeplobBdlobThresholds",
-    "_PROFITABILITY_STAGE_ORDER",
-    "_PROFITABILITY_STAGE_REQUIRED_CHECKS",
+    "BenchmarkParityThresholds",
+    "DeeplobBdlobThresholds",
+    "PROFITABILITY_STAGE_ORDER",
+    "PROFITABILITY_STAGE_REQUIRED_CHECKS",
     "annotations",
     "cast",
     "contract_from_artifact_payload",

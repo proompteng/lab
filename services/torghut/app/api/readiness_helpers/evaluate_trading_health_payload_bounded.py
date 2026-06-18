@@ -25,7 +25,7 @@ from .shared_context import (
 )
 
 
-def _evaluate_trading_health_payload_bounded(
+def evaluate_trading_health_payload_bounded(
     *,
     include_database_contract: bool = False,
     allow_stale_dependency_cache: bool = False,
@@ -182,6 +182,3 @@ def _evaluate_trading_health_payload_bounded(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-evaluate_trading_health_payload_bounded = _evaluate_trading_health_payload_bounded

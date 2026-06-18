@@ -45,7 +45,7 @@ else:
     _WhitepaperWorkflowPersistenceBase = object
 
 
-class _WhitepaperWorkflowPersistenceMethods(_WhitepaperWorkflowPersistenceBase):
+class WhitepaperWorkflowPersistenceMethods(_WhitepaperWorkflowPersistenceBase):
     def _requeue_existing_run(
         self,
         session: Session,
@@ -674,6 +674,3 @@ class _WhitepaperWorkflowPersistenceMethods(_WhitepaperWorkflowPersistenceBase):
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-WhitepaperWorkflowPersistenceMethods = _WhitepaperWorkflowPersistenceMethods

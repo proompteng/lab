@@ -21,7 +21,7 @@ from .requirements import (
 )
 
 
-def _evaluate_foundation_router_parity_evidence(
+def evaluate_foundation_router_parity_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -301,6 +301,3 @@ def _evaluate_foundation_router_parity_evidence(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-evaluate_foundation_router_parity_evidence = _evaluate_foundation_router_parity_evidence

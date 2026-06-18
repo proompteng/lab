@@ -328,7 +328,7 @@ def build_fill_price_error_budget_report_v1(
     )
 
 
-def _append_profitability_reason(
+def append_profitability_reason(
     *,
     reasons: list[str],
     details: list[dict[str, object]],
@@ -341,21 +341,21 @@ def _append_profitability_reason(
     details.append(detail_payload)
 
 
-def _validate_profitability_schema_versions(
+def validate_profitability_schema_versions(
     *,
     evidence: ProfitabilityEvidenceV4,
     reasons: list[str],
     details: list[dict[str, object]],
 ) -> None:
     if evidence.schema_version != "profitability-evidence-v4":
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="profitability_evidence_schema_invalid",
             payload={"expected": "profitability-evidence-v4"},
         )
     if evidence.benchmark.schema_version != "profitability-benchmark-v4":
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="profitability_benchmark_schema_invalid",
@@ -363,7 +363,7 @@ def _validate_profitability_schema_versions(
         )
 
 
-def _validate_profitability_risk_metrics(
+def validate_profitability_risk_metrics(
     *,
     evidence: ProfitabilityEvidenceV4,
     policy: ProfitabilityEvidenceThresholdsV4,
@@ -374,7 +374,7 @@ def _validate_profitability_risk_metrics(
         evidence.risk_adjusted_metrics.get("market_net_pnl_delta")
     ) or Decimal("0")
     if market_delta < policy.min_market_net_pnl_delta:
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="market_net_pnl_delta_below_threshold",
@@ -388,7 +388,7 @@ def _validate_profitability_risk_metrics(
         evidence.risk_adjusted_metrics.get("return_over_drawdown")
     ) or Decimal("0")
     if return_over_drawdown < policy.min_risk_adjusted_return_over_drawdown:
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="risk_adjusted_return_over_drawdown_below_threshold",
@@ -402,7 +402,7 @@ def _validate_profitability_risk_metrics(
         evidence.risk_adjusted_metrics.get("regime_slice_pass_ratio")
     ) or Decimal("0")
     if regime_ratio < policy.min_regime_slice_pass_ratio:
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="regime_slice_pass_ratio_below_threshold",
@@ -413,7 +413,7 @@ def _validate_profitability_risk_metrics(
         )
 
 
-def _validate_profitability_cost_metrics(
+def validate_profitability_cost_metrics(
     *,
     evidence: ProfitabilityEvidenceV4,
     policy: ProfitabilityEvidenceThresholdsV4,
@@ -423,7 +423,7 @@ def _validate_profitability_cost_metrics(
     cost_bps = _decimal(evidence.cost_fill_realism.get("cost_bps")) or Decimal("0")
     if cost_bps <= policy.max_cost_bps:
         return
-    _append_profitability_reason(
+    append_profitability_reason(
         reasons=reasons,
         details=details,
         reason="cost_bps_exceeds_threshold",
@@ -434,7 +434,7 @@ def _validate_profitability_cost_metrics(
     )
 
 
-def _validate_profitability_confidence_metrics(
+def validate_profitability_confidence_metrics(
     *,
     evidence: ProfitabilityEvidenceV4,
     policy: ProfitabilityEvidenceThresholdsV4,
@@ -445,7 +445,7 @@ def _validate_profitability_confidence_metrics(
         _as_int(evidence.confidence_calibration.get("sample_count")) or 0
     )
     if confidence_samples < policy.min_confidence_samples:
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="confidence_samples_below_minimum",
@@ -460,7 +460,7 @@ def _validate_profitability_confidence_metrics(
     ) or Decimal("1")
     if calibration_error <= policy.max_calibration_error:
         return
-    _append_profitability_reason(
+    append_profitability_reason(
         reasons=reasons,
         details=details,
         reason="calibration_error_exceeds_threshold",
@@ -471,7 +471,7 @@ def _validate_profitability_confidence_metrics(
     )
 
 
-def _validate_profitability_significance_metrics(
+def validate_profitability_significance_metrics(
     *,
     evidence: ProfitabilityEvidenceV4,
     policy: ProfitabilityEvidenceThresholdsV4,
@@ -481,7 +481,7 @@ def _validate_profitability_significance_metrics(
     significance = _as_dict(evidence.significance)
     schema_version = str(significance.get("schema_version", "")).strip()
     if schema_version != "significance_snapshot_v1":
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="significance_schema_invalid",
@@ -489,7 +489,7 @@ def _validate_profitability_significance_metrics(
         )
     sample_count = _as_int(significance.get("sample_count")) or 0
     if sample_count < policy.min_significance_samples:
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="significance_samples_below_minimum",
@@ -500,7 +500,7 @@ def _validate_profitability_significance_metrics(
         )
 
 
-def _validate_profitability_reproducibility(
+def validate_profitability_reproducibility(
     *,
     evidence: ProfitabilityEvidenceV4,
     policy: ProfitabilityEvidenceThresholdsV4,
@@ -514,7 +514,7 @@ def _validate_profitability_reproducibility(
         if str(key).strip() and str(value).strip()
     }
     if len(hashes) < policy.min_reproducibility_hashes:
-        _append_profitability_reason(
+        append_profitability_reason(
             reasons=reasons,
             details=details,
             reason="reproducibility_hash_count_below_minimum",
@@ -529,7 +529,7 @@ def _validate_profitability_reproducibility(
     )
     if not missing_hash_keys:
         return
-    _append_profitability_reason(
+    append_profitability_reason(
         reasons=reasons,
         details=details,
         reason="reproducibility_hash_keys_missing",
@@ -540,7 +540,7 @@ def _validate_profitability_reproducibility(
 def _extract_report_slices(report_payload: dict[str, Any]) -> dict[str, dict[str, str]]:
     metrics = _as_dict(report_payload.get("metrics"))
     slices: dict[str, dict[str, str]] = {
-        "market:all": _slice_metrics(
+        "market:all": slice_metrics(
             net_pnl=_decimal(metrics.get("net_pnl")),
             max_drawdown=_decimal(metrics.get("max_drawdown")),
             cost_bps=_decimal(metrics.get("cost_bps")),
@@ -576,7 +576,7 @@ def _extract_report_slices(report_payload: dict[str, Any]) -> dict[str, dict[str
             trade_count = sum(
                 (_as_int(item.get("trade_count")) or 0) for item in entries
             )
-            slices[f"regime:{regime}"] = _slice_metrics(
+            slices[f"regime:{regime}"] = slice_metrics(
                 net_pnl=net_pnl,
                 max_drawdown=max_drawdown,
                 cost_bps=_decimal_mean(cost_values),
@@ -586,7 +586,7 @@ def _extract_report_slices(report_payload: dict[str, Any]) -> dict[str, dict[str
     return slices
 
 
-def _slice_metrics(
+def slice_metrics(
     *,
     net_pnl: Decimal | None,
     max_drawdown: Decimal | None,
@@ -603,8 +603,8 @@ def _slice_metrics(
     }
 
 
-def _empty_slice_metrics() -> dict[str, str]:
-    return _slice_metrics(
+def empty_slice_metrics() -> dict[str, str]:
+    return slice_metrics(
         net_pnl=Decimal("0"),
         max_drawdown=Decimal("0"),
         cost_bps=Decimal("0"),
@@ -613,9 +613,7 @@ def _empty_slice_metrics() -> dict[str, str]:
     )
 
 
-def _slice_deltas(
-    candidate: dict[str, str], baseline: dict[str, str]
-) -> dict[str, str]:
+def slice_deltas(candidate: dict[str, str], baseline: dict[str, str]) -> dict[str, str]:
     candidate_net = _decimal(candidate.get("net_pnl")) or Decimal("0")
     baseline_net = _decimal(baseline.get("net_pnl")) or Decimal("0")
     candidate_dd = _decimal(candidate.get("max_drawdown")) or Decimal("0")
@@ -632,7 +630,7 @@ def _slice_deltas(
     }
 
 
-def _benchmark_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, Decimal]:
+def benchmark_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, Decimal]:
     market_delta = Decimal("0")
     regime_total = 0
     regime_pass = 0
@@ -651,7 +649,7 @@ def _benchmark_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, Decimal
     }
 
 
-def _confidence_summary(
+def confidence_summary(
     confidence_values: list[Decimal], net_pnl: Decimal
 ) -> dict[str, object]:
     target_coverage = Decimal("0.90")
@@ -724,7 +722,7 @@ def _confidence_summary(
     }
 
 
-def _significance_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, object]:
+def significance_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, object]:
     deltas = [
         _decimal(item.deltas.get("net_pnl_delta")) or Decimal("0")
         for item in benchmark.slices
@@ -783,21 +781,4 @@ __all__ = (
     "build_shadow_live_deviation_report_v1",
     "build_fill_price_error_budget_report_v1",
     "extract_report_slices",
-)
-
-# Public aliases used by split modules.
-append_profitability_reason = _append_profitability_reason
-benchmark_summary = _benchmark_summary
-confidence_summary = _confidence_summary
-empty_slice_metrics = _empty_slice_metrics
-significance_summary = _significance_summary
-slice_deltas = _slice_deltas
-slice_metrics = _slice_metrics
-validate_profitability_confidence_metrics = _validate_profitability_confidence_metrics
-validate_profitability_cost_metrics = _validate_profitability_cost_metrics
-validate_profitability_reproducibility = _validate_profitability_reproducibility
-validate_profitability_risk_metrics = _validate_profitability_risk_metrics
-validate_profitability_schema_versions = _validate_profitability_schema_versions
-validate_profitability_significance_metrics = (
-    _validate_profitability_significance_metrics
 )

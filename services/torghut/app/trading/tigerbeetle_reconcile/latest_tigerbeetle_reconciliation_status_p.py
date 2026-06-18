@@ -69,19 +69,19 @@ from .runtime_ledger_ref_coverage import (
 from . import runtime_ledger_ref_coverage as _runtime_ledger_ref_coverage_private_109
 
 _account_payload_matches = getattr(
-    _shared_context_private_52, "_account_payload_matches"
+    _shared_context_private_52, "account_payload_matches"
 )
-_append_sample = getattr(_shared_context_private_52, "_append_sample")
+_append_sample = getattr(_shared_context_private_52, "append_sample")
 _archived_runtime_ledger_amount_micros = getattr(
     _shared_context_private_52, "_archived_runtime_ledger_amount_micros"
 )
 _archived_source_amount_micros = getattr(
-    _shared_context_private_52, "_archived_source_amount_micros"
+    _shared_context_private_52, "archived_source_amount_micros"
 )
-_as_aware_utc = getattr(_shared_context_private_52, "_as_aware_utc")
+_as_aware_utc = getattr(_shared_context_private_52, "as_aware_utc")
 _attr = getattr(_shared_context_private_52, "_attr")
 _compact_reconciliation_ref_counts = getattr(
-    _shared_context_private_52, "_compact_reconciliation_ref_counts"
+    _shared_context_private_52, "compact_reconciliation_ref_counts"
 )
 _cost_amount_micros = getattr(_shared_context_private_52, "_cost_amount_micros")
 _execution_amount_micros = getattr(
@@ -91,17 +91,17 @@ _expected_source_amount_micros = getattr(
     _shared_context_private_52, "_expected_source_amount_micros"
 )
 _legacy_unversioned_source_ref = getattr(
-    _shared_context_private_52, "_legacy_unversioned_source_ref"
+    _shared_context_private_52, "legacy_unversioned_source_ref"
 )
-_order_event_ref_exists = getattr(_shared_context_private_52, "_order_event_ref_exists")
+_order_event_ref_exists = getattr(_shared_context_private_52, "order_event_ref_exists")
 _payload_int = getattr(_shared_context_private_52, "_payload_int")
-_payload_mapping = getattr(_shared_context_private_52, "_payload_mapping")
+_payload_mapping = getattr(_shared_context_private_52, "payload_mapping")
 _payload_string_list = getattr(_shared_context_private_52, "_payload_string_list")
 _payload_value = getattr(_shared_context_private_52, "payload_value")
 _ref_matches_expected_event = getattr(
-    _shared_context_private_52, "_ref_matches_expected_event"
+    _shared_context_private_52, "ref_matches_expected_event"
 )
-_ref_sample = getattr(_shared_context_private_52, "_ref_sample")
+_ref_sample = getattr(_shared_context_private_52, "ref_sample")
 _runtime_ledger_amount_micros = getattr(
     _shared_context_private_52, "_runtime_ledger_amount_micros"
 )
@@ -109,19 +109,19 @@ _runtime_ledger_payload_account_ids = getattr(
     _shared_context_private_52, "_runtime_ledger_payload_account_ids"
 )
 _runtime_ledger_ref_is_signed = getattr(
-    _shared_context_private_52, "_runtime_ledger_ref_is_signed"
+    _shared_context_private_52, "runtime_ledger_ref_is_signed"
 )
 _source_materialization_payload = getattr(
-    _shared_context_private_52, "_source_materialization_payload"
+    _shared_context_private_52, "source_materialization_payload"
 )
-_source_ref_exists = getattr(_shared_context_private_52, "_source_ref_exists")
+_source_ref_exists = getattr(_shared_context_private_52, "source_ref_exists")
 _stable_ref_archives_event_transfer = getattr(
     _shared_context_private_52, "_stable_ref_archives_event_transfer"
 )
 _stable_ref_matches = getattr(_shared_context_private_52, "_stable_ref_matches")
-_stable_ref_payload = getattr(_shared_context_private_52, "_stable_ref_payload")
-_transfer_lookup_key = getattr(_shared_context_private_52, "_transfer_lookup_key")
-_u128_text = getattr(_shared_context_private_52, "_u128_text")
+_stable_ref_payload = getattr(_shared_context_private_52, "stable_ref_payload")
+_transfer_lookup_key = getattr(_shared_context_private_52, "transfer_lookup_key")
+_u128_text = getattr(_shared_context_private_52, "u128_text")
 _usd_to_micros = getattr(_shared_context_private_52, "_usd_to_micros")
 _uuid_or_none = getattr(_shared_context_private_52, "_uuid_or_none")
 _latest_run_compact_status_payload = getattr(

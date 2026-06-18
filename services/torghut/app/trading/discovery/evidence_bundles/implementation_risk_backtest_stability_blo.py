@@ -19,7 +19,7 @@ from .evidence_bundle_from_frontier_candidate import (
 )
 
 
-def _implementation_risk_backtest_stability_blockers(
+def implementation_risk_backtest_stability_blockers(
     scorecard: Mapping[str, Any],
 ) -> list[str]:
     if not _implementation_risk_backtest_stability_required(scorecard):
@@ -51,7 +51,7 @@ def _implementation_risk_backtest_stability_blockers(
     return blockers
 
 
-def _bootstrap_robust_optimization_required(scorecard: Mapping[str, Any]) -> bool:
+def bootstrap_robust_optimization_required(scorecard: Mapping[str, Any]) -> bool:
     if any(
         _bool(scorecard.get(key))
         for key in (
@@ -98,10 +98,10 @@ def _bootstrap_robust_optimization_required(scorecard: Mapping[str, Any]) -> boo
     )
 
 
-def _bootstrap_robust_optimization_blockers(
+def bootstrap_robust_optimization_blockers(
     scorecard: Mapping[str, Any],
 ) -> list[str]:
-    if not _bootstrap_robust_optimization_required(scorecard):
+    if not bootstrap_robust_optimization_required(scorecard):
         return []
 
     blockers: list[str] = []
@@ -140,7 +140,7 @@ def _bootstrap_robust_optimization_blockers(
     return blockers
 
 
-def _adaptive_signal_falsification_required(scorecard: Mapping[str, Any]) -> bool:
+def adaptive_signal_falsification_required(scorecard: Mapping[str, Any]) -> bool:
     if any(
         _bool(scorecard.get(key))
         for key in (
@@ -193,7 +193,7 @@ def _adaptive_signal_falsification_required(scorecard: Mapping[str, Any]) -> boo
     )
 
 
-def _scorecard_or_null_comparator_value(
+def scorecard_or_null_comparator_value(
     *,
     scorecard: Mapping[str, Any],
     null_comparator: Mapping[str, Any],
@@ -204,12 +204,12 @@ def _scorecard_or_null_comparator_value(
     return null_comparator.get(key)
 
 
-def _adaptive_signal_falsification_blockers(
+def adaptive_signal_falsification_blockers(
     *,
     scorecard: Mapping[str, Any],
     null_comparator: Mapping[str, Any],
 ) -> list[str]:
-    if not _adaptive_signal_falsification_required(scorecard):
+    if not adaptive_signal_falsification_required(scorecard):
         return []
 
     blockers: list[str] = []
@@ -226,7 +226,7 @@ def _adaptive_signal_falsification_blockers(
     if not _bool(null_comparator.get("baseline_outperformed")):
         blockers.append("adaptive_signal_baseline_not_outperformed")
 
-    raw_null_delta = _scorecard_or_null_comparator_value(
+    raw_null_delta = scorecard_or_null_comparator_value(
         scorecard=scorecard,
         null_comparator=null_comparator,
         key="candidate_vs_null_return_delta",
@@ -236,7 +236,7 @@ def _adaptive_signal_falsification_blockers(
     elif _decimal(raw_null_delta) <= 0:
         blockers.append("candidate_vs_null_return_delta_non_positive")
 
-    raw_incumbent_delta = _scorecard_or_null_comparator_value(
+    raw_incumbent_delta = scorecard_or_null_comparator_value(
         scorecard=scorecard,
         null_comparator=null_comparator,
         key="candidate_vs_incumbent_return_delta",
@@ -277,7 +277,7 @@ def _adaptive_signal_falsification_blockers(
     return blockers
 
 
-def _ofi_response_horizon_required(scorecard: Mapping[str, Any]) -> bool:
+def ofi_response_horizon_required(scorecard: Mapping[str, Any]) -> bool:
     if any(
         _bool(scorecard.get(key))
         for key in (
@@ -314,7 +314,7 @@ def _ofi_response_horizon_required(scorecard: Mapping[str, Any]) -> bool:
     )
 
 
-def _route_tca_present(scorecard: Mapping[str, Any]) -> bool:
+def route_tca_present(scorecard: Mapping[str, Any]) -> bool:
     return (
         _bool(scorecard.get("route_tca_evidence_present"))
         or _string(scorecard.get("route_tca_artifact_ref")) != ""
@@ -322,8 +322,8 @@ def _route_tca_present(scorecard: Mapping[str, Any]) -> bool:
     )
 
 
-def _ofi_response_horizon_blockers(scorecard: Mapping[str, Any]) -> list[str]:
-    if not _ofi_response_horizon_required(scorecard):
+def ofi_response_horizon_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    if not ofi_response_horizon_required(scorecard):
         return []
 
     blockers: list[str] = []
@@ -364,14 +364,14 @@ def _ofi_response_horizon_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         or quote_sample_count > 0
     ):
         blockers.append("executable_quote_evidence_missing")
-    if not _route_tca_present(scorecard):
+    if not route_tca_present(scorecard):
         blockers.append("ofi_route_tca_evidence_missing")
     if _decimal(scorecard.get("post_cost_net_pnl_after_ofi_response_horizon")) <= 0:
         blockers.append("ofi_response_horizon_net_pnl_non_positive")
     return blockers
 
 
-def _alpha_decay_predictability_required(scorecard: Mapping[str, Any]) -> bool:
+def alpha_decay_predictability_required(scorecard: Mapping[str, Any]) -> bool:
     if any(
         _bool(scorecard.get(key))
         for key in (
@@ -418,8 +418,8 @@ def _alpha_decay_predictability_required(scorecard: Mapping[str, Any]) -> bool:
     )
 
 
-def _alpha_decay_predictability_blockers(scorecard: Mapping[str, Any]) -> list[str]:
-    if not _alpha_decay_predictability_required(scorecard):
+def alpha_decay_predictability_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    if not alpha_decay_predictability_required(scorecard):
         return []
 
     blockers: list[str] = []
@@ -486,7 +486,7 @@ def _alpha_decay_predictability_blockers(scorecard: Mapping[str, Any]) -> list[s
         blockers.append("model_inference_latency_missing")
     elif _decimal(raw_latency_ms) > max_latency_ms:
         blockers.append("model_inference_latency_above_max")
-    if not _route_tca_present(scorecard):
+    if not route_tca_present(scorecard):
         blockers.append("predictability_decay_route_tca_evidence_missing")
     if (
         _decimal(
@@ -499,7 +499,7 @@ def _alpha_decay_predictability_blockers(scorecard: Mapping[str, Any]) -> list[s
     return blockers
 
 
-def _stochastic_liquidity_resilience_required(scorecard: Mapping[str, Any]) -> bool:
+def stochastic_liquidity_resilience_required(scorecard: Mapping[str, Any]) -> bool:
     if any(
         _bool(scorecard.get(key))
         for key in (
@@ -550,10 +550,10 @@ def _stochastic_liquidity_resilience_required(scorecard: Mapping[str, Any]) -> b
     )
 
 
-def _stochastic_liquidity_resilience_blockers(
+def stochastic_liquidity_resilience_blockers(
     scorecard: Mapping[str, Any],
 ) -> list[str]:
-    if not _stochastic_liquidity_resilience_required(scorecard):
+    if not stochastic_liquidity_resilience_required(scorecard):
         return []
 
     blockers: list[str] = []
@@ -615,7 +615,7 @@ def _stochastic_liquidity_resilience_blockers(
         > required_max_shortfall_bps
     ):
         blockers.append("liquidity_regime_shortfall_above_max")
-    if not _route_tca_present(scorecard):
+    if not route_tca_present(scorecard):
         blockers.append("liquidity_resilience_route_tca_evidence_missing")
     if (
         _decimal(
@@ -632,7 +632,7 @@ def _stochastic_liquidity_resilience_blockers(
     return blockers
 
 
-def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+def conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     requires_cost_buffer = any(
         _bool(scorecard.get(key))
         for key in (
@@ -715,21 +715,3 @@ def _conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-adaptive_signal_falsification_blockers = _adaptive_signal_falsification_blockers
-adaptive_signal_falsification_required = _adaptive_signal_falsification_required
-alpha_decay_predictability_blockers = _alpha_decay_predictability_blockers
-alpha_decay_predictability_required = _alpha_decay_predictability_required
-bootstrap_robust_optimization_blockers = _bootstrap_robust_optimization_blockers
-bootstrap_robust_optimization_required = _bootstrap_robust_optimization_required
-conformal_tail_risk_blockers = _conformal_tail_risk_blockers
-implementation_risk_backtest_stability_blockers = (
-    _implementation_risk_backtest_stability_blockers
-)
-ofi_response_horizon_blockers = _ofi_response_horizon_blockers
-ofi_response_horizon_required = _ofi_response_horizon_required
-route_tca_present = _route_tca_present
-scorecard_or_null_comparator_value = _scorecard_or_null_comparator_value
-stochastic_liquidity_resilience_blockers = _stochastic_liquidity_resilience_blockers
-stochastic_liquidity_resilience_required = _stochastic_liquidity_resilience_required

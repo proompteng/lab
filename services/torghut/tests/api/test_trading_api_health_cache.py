@@ -69,9 +69,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     ) -> None:
         original_timeout = common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
         common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
-        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
         def _slow_health_payload(**_kwargs: object) -> tuple[dict[str, object], int]:
             time.sleep(0.2)
@@ -88,9 +88,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             time.sleep(0.25)
         finally:
             common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
-            with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-                common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
         self.assertLess(elapsed, 0.5)
         self.assertEqual(response.status_code, 503)
@@ -129,9 +129,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 },
             },
         }
-        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.pop(
+        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.pop(
                 health_cache_key,
                 None,
             )
@@ -149,9 +149,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             time.sleep(0.25)
         finally:
             common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
-            with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-                common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
         self.assertEqual(response.status_code, 503)
         payload = response.json()
@@ -210,11 +210,11 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 503,
             )
 
-        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = completed_future
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = completed_future
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
                 "payload": cached_payload,
                 "status_code": 503,
                 "checked_at": datetime.now(timezone.utc),
@@ -229,9 +229,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 self.assertTrue(refresh_called.wait(1.0))
                 self.assertEqual(len(refresh_calls), 1)
         finally:
-            with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-                common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
         self.assertEqual(response.status_code, 503)
         payload = response.json()
@@ -272,15 +272,15 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 503,
             )
 
-        refresh_future = common_api._TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
+        refresh_future = common_api.TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
             _refresh_health_payload,
         )
         self.assertTrue(refresh_started.wait(1.0))
-        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = refresh_future
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = refresh_future
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
                 "payload": cached_payload,
                 "status_code": 503,
                 "checked_at": datetime.now(timezone.utc),
@@ -291,9 +291,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
         finally:
             release_refresh.set()
             refresh_future.result(timeout=1.0)
-            with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-                common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
         self.assertEqual(response.status_code, 503)
         payload = response.json()
@@ -340,10 +340,10 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 503,
             )
 
-        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
                 "payload": cached_payload,
                 "status_code": 503,
                 "checked_at": datetime.now(timezone.utc),
@@ -362,15 +362,15 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
         finally:
             release_refresh.set()
             common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
-            with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
                 refresh_futures = list(
-                    common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.values()
+                    common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.values()
                 )
             for refresh_future in refresh_futures:
                 refresh_future.result(timeout=1.0)
-            with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-                common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
         self.assertLess(elapsed, 0.5)
         self.assertEqual(response.status_code, 503)
@@ -402,10 +402,10 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 503,
             )
 
-        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = completed_future
+        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = completed_future
 
         try:
             with patch(
@@ -414,9 +414,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             ):
                 response = self.client.get("/trading/health")
         finally:
-            with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-                common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["reason"], "fresh_health_payload")
@@ -504,9 +504,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
                 "final_promotion_allowed": True,
             },
         }
-        with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-            common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
                 "payload": cached_payload,
                 "status_code": 503,
                 "checked_at": datetime.now(timezone.utc),
@@ -525,9 +525,9 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             time.sleep(0.25)
         finally:
             common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
-            with common_api._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-                common_api._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-                common_api._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
 
         self.assertEqual(response.status_code, 503)
         payload = response.json()
