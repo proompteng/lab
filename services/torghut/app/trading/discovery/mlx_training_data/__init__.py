@@ -23,6 +23,8 @@ from .shared_context import (
     MlxRankBucketLift,
     MlxRankedRowsPolicyResult,
     hard_veto_count as _hard_veto_count,
+    import_array_backend as _import_array_backend,
+    import_torch_array_backend as _import_torch_array_backend,
     sequence_strings as _sequence_strings,
 )
 from .paper_contract_feature_values import (
@@ -65,6 +67,8 @@ __all__ = [
     "MlxRankBucketLift",
     "MlxRankedRowsPolicyResult",
     "_hard_veto_count",
+    "_import_array_backend",
+    "_import_torch_array_backend",
     "_sequence_strings",
     "candidate_spec_capital_features",
     "capital_budget_penalty",

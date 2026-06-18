@@ -1,5 +1,5 @@
 from __future__ import annotations
-import logging as _logging_for_module
+from . import shared_context as _whitepaper_shared_context
 from .shared_context import (
     asyncio,
     hashlib,
@@ -81,7 +81,8 @@ from .whitepaper_workflow_service import (
     WhitepaperKafkaWorker,
 )
 
-logger = _logging_for_module.getLogger(__name__)
+_http_request_bytes = getattr(_whitepaper_shared_context, "_http_request_bytes")
+logger = getattr(_whitepaper_shared_context, "logger")
 __all__ = [
     "asyncio",
     "hashlib",
@@ -161,4 +162,5 @@ __all__ = [
     "WhitepaperWorkflowService",
     "WhitepaperKafkaIssueIngestor",
     "WhitepaperKafkaWorker",
+    "_http_request_bytes",
 ]

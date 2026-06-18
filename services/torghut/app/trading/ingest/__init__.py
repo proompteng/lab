@@ -40,6 +40,12 @@ from .shared_context import (
     SignalBatch,
 )
 from .clickhouse_signal_ingestor_persistence_methods import ClickHouseSignalIngestor
+from .clickhouse_signal_ingestor_persistence_methods import (
+    normalized_signal_symbols as _normalized_signal_symbols,
+    normalized_signal_timeframes as _normalized_signal_timeframes,
+    timeframes_to_iso_durations as _timeframes_to_iso_durations,
+)
+from .shared_context import coerce_count as _coerce_count
 
 logger = _logging_for_module.getLogger(__name__)
 __all__ = [
@@ -82,4 +88,8 @@ __all__ = [
     "ENVELOPE_SIGNAL_COLUMNS",
     "SignalBatch",
     "ClickHouseSignalIngestor",
+    "_coerce_count",
+    "_normalized_signal_symbols",
+    "_normalized_signal_timeframes",
+    "_timeframes_to_iso_durations",
 ]

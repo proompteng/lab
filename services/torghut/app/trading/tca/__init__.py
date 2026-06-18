@@ -24,6 +24,7 @@ from .execution_tca_metrics import (
     upsert_execution_tca_metric,
 )
 from .lineage_read_model import build_tca_gate_inputs, refresh_execution_tca_metrics
+from ..tigerbeetle_journal.ledger_journal import TigerBeetleLedgerJournal
 
 logger = logging.getLogger("app.trading.tca")
 
@@ -42,6 +43,7 @@ __all__ = [
     "AdaptiveExecutionPolicyDecision",
     "EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION",
     "POST_COST_PNL_BASIS",
+    "TigerBeetleLedgerJournal",
     "build_tca_gate_inputs",
     "derive_adaptive_execution_policy",
     "logger",

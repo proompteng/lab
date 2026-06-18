@@ -36,6 +36,9 @@ from .shared_context import (
     TradingState,
 )
 from .governance_mixin_runtime_methods import TradingSchedulerGovernanceMixin
+from .shared_context import (
+    resolve_autonomy_artifact_root as _resolve_autonomy_artifact_root,
+)
 
 logger = _logging_for_module.getLogger(__name__)
 __all__ = [
@@ -74,4 +77,5 @@ __all__ = [
     "TradingState",
     "logger",
     "TradingSchedulerGovernanceMixin",
+    "_resolve_autonomy_artifact_root",
 ]

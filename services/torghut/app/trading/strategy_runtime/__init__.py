@@ -68,6 +68,34 @@ from .late_day_continuation_long_plugin import (
     EndOfDayReversalLongPlugin,
     StrategyRuntime,
 )
+from . import coerce_plugin_result as _plugin_result_helpers
+from . import empty_meta as _empty_meta_helpers
+from . import evaluate_microbar_cross_sectional as _microbar_evaluator_helpers
+
+_microbar_entry_window_minutes = getattr(
+    _empty_meta_helpers, "_microbar_entry_window_minutes"
+)
+_microbar_exit_minute_after_open = getattr(
+    _empty_meta_helpers, "_microbar_exit_minute_after_open"
+)
+_microbar_minutes_elapsed = getattr(_empty_meta_helpers, "_microbar_minutes_elapsed")
+_microbar_pair_max_legs = getattr(_empty_meta_helpers, "_microbar_pair_max_legs")
+_microbar_pair_rank_thresholds = getattr(
+    _empty_meta_helpers, "_microbar_pair_rank_thresholds"
+)
+_microbar_pair_side_count = getattr(_empty_meta_helpers, "_microbar_pair_side_count")
+_microbar_rank_thresholds = getattr(_empty_meta_helpers, "_microbar_rank_thresholds")
+_microbar_rank_universe_size = getattr(
+    _empty_meta_helpers, "_microbar_rank_universe_size"
+)
+_microbar_required_features = getattr(
+    _empty_meta_helpers, "_microbar_required_features"
+)
+_microbar_universe_size = getattr(_empty_meta_helpers, "_microbar_universe_size")
+_evaluate_microbar_cross_sectional = getattr(
+    _microbar_evaluator_helpers, "_evaluate_microbar_cross_sectional"
+)
+_trace_suppression_reason = getattr(_plugin_result_helpers, "_trace_suppression_reason")
 
 __all__ = [
     "hashlib",
@@ -129,4 +157,16 @@ __all__ = [
     "LateDayContinuationLongPlugin",
     "EndOfDayReversalLongPlugin",
     "StrategyRuntime",
+    "_evaluate_microbar_cross_sectional",
+    "_microbar_entry_window_minutes",
+    "_microbar_exit_minute_after_open",
+    "_microbar_minutes_elapsed",
+    "_microbar_pair_max_legs",
+    "_microbar_pair_rank_thresholds",
+    "_microbar_pair_side_count",
+    "_microbar_rank_thresholds",
+    "_microbar_rank_universe_size",
+    "_microbar_required_features",
+    "_microbar_universe_size",
+    "_trace_suppression_reason",
 ]

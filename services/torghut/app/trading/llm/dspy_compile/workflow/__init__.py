@@ -42,6 +42,7 @@ from .shared_context import (
     get_agents_agentrun,
     wait_for_agents_agentrun_terminal_status,
     normalize_string_parameter as _normalize_string_parameter,
+    sanitize_idempotency_key as _sanitize_idempotency_key,
 )
 from .resolve_promotion_gate_snapshot import (
     dataclass,
@@ -93,4 +94,5 @@ __all__ = [
     "dataclass",
     "orchestrate_dspy_agentrun_workflow",
     "_normalize_string_parameter",
+    "_sanitize_idempotency_key",
 ]

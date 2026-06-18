@@ -26,6 +26,31 @@ from .shared_context import (
     PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES,
 )
 from .selected_from_state import optimize_portfolio_candidate
+from . import portfolio_trading_day_count as _portfolio_trading_day_count
+from . import shared_context as _shared_context
+
+_candidate_passes_minimums = getattr(_shared_context, "_candidate_passes_minimums")
+_capital_safety_rejection = getattr(_shared_context, "_capital_safety_rejection")
+_daily_net = getattr(_shared_context, "_daily_net")
+_edge_risk_gross_exposure_budget_weights = getattr(
+    _shared_context, "_edge_risk_gross_exposure_budget_weights"
+)
+_exact_replay_ledger_artifact_refs = getattr(
+    _shared_context, "_exact_replay_ledger_artifact_refs"
+)
+_exact_replay_ledger_fill_count = getattr(
+    _shared_context, "_exact_replay_ledger_fill_count"
+)
+_exact_replay_ledger_row_count = getattr(
+    _shared_context, "_exact_replay_ledger_row_count"
+)
+_gross_exposure_allocation_priority = getattr(
+    _shared_context, "_gross_exposure_allocation_priority"
+)
+_negative_cash_observation_count = getattr(
+    _shared_context, "_negative_cash_observation_count"
+)
+_oracle_blocker_count = getattr(_portfolio_trading_day_count, "_oracle_blocker_count")
 
 __all__ = [
     "Decimal",
@@ -53,4 +78,14 @@ __all__ = [
     "PORTFOLIO_RUNTIME_LEDGER_PNL_SOURCE",
     "PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES",
     "optimize_portfolio_candidate",
+    "_candidate_passes_minimums",
+    "_capital_safety_rejection",
+    "_daily_net",
+    "_edge_risk_gross_exposure_budget_weights",
+    "_exact_replay_ledger_artifact_refs",
+    "_exact_replay_ledger_fill_count",
+    "_exact_replay_ledger_row_count",
+    "_gross_exposure_allocation_priority",
+    "_negative_cash_observation_count",
+    "_oracle_blocker_count",
 ]

@@ -30,6 +30,8 @@ from .proof_floor_core import (
 
 from .receipt_builder import build_profitability_proof_floor_receipt
 
+_route_universe_adverse_slippage_clear = route_universe_adverse_slippage_clear
+
 __all__ = (
     "BLOCKING_STATES",
     "LIVE_MICRO_STAGES",
@@ -56,5 +58,6 @@ __all__ = (
     "tca_symbol_routes",
     "text_value",
     "truthy",
+    "_route_universe_adverse_slippage_clear",
     "build_profitability_proof_floor_receipt",
 )

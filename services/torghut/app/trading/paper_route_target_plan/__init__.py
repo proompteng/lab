@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from http.client import HTTPConnection, HTTPSConnection
+
 from .materialization import (
     blocked_target_readiness,
     materialize_bounded_paper_route_target_plan,
@@ -31,6 +33,8 @@ from .target_plan import (
 )
 
 __all__ = [
+    "HTTPConnection",
+    "HTTPSConnection",
     "PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL",
     "PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS",
     "PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID",
