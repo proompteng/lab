@@ -9,6 +9,7 @@ COPY flink-integration ./flink-integration
 COPY websockets ./websockets
 COPY technical-analysis ./technical-analysis
 COPY technical-analysis-flink ./technical-analysis-flink
+COPY hyperliquid-feed ./hyperliquid-feed
 
 RUN chmod +x ./gradlew
 RUN ./gradlew :websockets:installDist --no-daemon
