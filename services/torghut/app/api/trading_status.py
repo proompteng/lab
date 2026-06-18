@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
@@ -66,6 +66,9 @@ from .proof_floor_payloads import (
 from .proxy import capture_module_exports
 from .status_helpers import (
     TradingStatusReadBudget,
+    budget_unavailable_hypothesis_runtime_payload,
+    budget_unavailable_llm_evaluation_payload,
+    budget_unavailable_tca_summary_payload,
     deferred_hypothesis_payload_for_live_submission_gate,
     hypothesis_payload_read_model_unavailable,
     load_trading_status_hypothesis_runtime,
@@ -86,6 +89,11 @@ _budget_exhausted_live_submission_gate_payload = (
 _budget_exhausted_options_catalog_freshness_payload = (
     budget_exhausted_options_catalog_freshness_payload
 )
+_budget_unavailable_hypothesis_runtime_payload = (
+    budget_unavailable_hypothesis_runtime_payload
+)
+_budget_unavailable_llm_evaluation_payload = budget_unavailable_llm_evaluation_payload
+_budget_unavailable_tca_summary_payload = budget_unavailable_tca_summary_payload
 _build_control_plane_contract = build_control_plane_contract
 _build_live_submission_gate_payload = build_api_live_submission_gate_payload
 _build_shadow_first_runtime_payload = build_shadow_first_runtime_payload
@@ -112,6 +120,66 @@ _load_rejected_signal_outcome_learning_summary = (
     load_rejected_signal_outcome_learning_summary
 )
 router = APIRouter()
+
+_FAST_STATUS_GATE_REASONS = {
+    "emergency_stop_active",
+    "kill_switch_enabled",
+    "live_submit_activation_expired",
+    "live_submit_activation_expiry_invalid",
+    "live_submit_activation_missing",
+    "simple_submit_disabled",
+    "trading_disabled",
+}
+
+
+def _fast_status_gate_reason(live_submission_gate: dict[str, object]) -> str | None:
+    raw_reasons: list[object] = [
+        live_submission_gate.get("reason"),
+        live_submission_gate.get("blocked_reason"),
+    ]
+    blocked_reasons = live_submission_gate.get("blocked_reasons")
+    if isinstance(blocked_reasons, list):
+        raw_reasons.extend(cast(list[object], blocked_reasons))
+    for raw_reason in raw_reasons:
+        reason = str(raw_reason or "").strip()
+        if reason in _FAST_STATUS_GATE_REASONS:
+            return reason
+    return None
+
+
+def _skip_expensive_status_reads_after_closed_gate(
+    status_read_budget: TradingStatusReadBudget,
+    *,
+    reason: str,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    Any,
+]:
+    llm_reason = status_read_budget.skip_reason(
+        "llm_evaluation",
+        reason_code=reason,
+    )
+    tca_reason = status_read_budget.skip_reason(
+        "tca_summary",
+        reason_code=reason,
+    )
+    hypothesis_reason = status_read_budget.skip_reason(
+        "hypothesis_runtime",
+        reason_code=reason,
+    )
+    hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
+        _budget_unavailable_hypothesis_runtime_payload(reason=hypothesis_reason)
+    )
+    return (
+        _budget_unavailable_llm_evaluation_payload(llm_reason),
+        _budget_unavailable_tca_summary_payload(tca_reason),
+        hypothesis_payload,
+        hypothesis_summary,
+        hypothesis_dependency_quorum,
+    )
 
 
 @router.get("/trading/status")
@@ -165,22 +233,40 @@ def trading_status() -> dict[str, object]:
             )
         if not bool(live_submission_gate.get("read_model_unavailable")):
             setattr(scheduler, "_last_live_submission_gate", dict(live_submission_gate))
-    llm_evaluation = _load_trading_status_llm_evaluation(status_read_budget)
-    tca_summary = _load_trading_status_tca_summary(
-        status_read_budget,
-        scheduler=scheduler,
+    fast_status_gate_reason = (
+        None
+        if live_submission_gate_skip_reason is not None
+        else _fast_status_gate_reason(live_submission_gate)
     )
-    hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
-        _load_trading_status_hypothesis_runtime(
+    if fast_status_gate_reason is not None:
+        (
+            llm_evaluation,
+            tca_summary,
+            hypothesis_payload,
+            hypothesis_summary,
+            hypothesis_dependency_quorum,
+        ) = _skip_expensive_status_reads_after_closed_gate(
             status_read_budget,
-            scheduler,
-            tca_summary=tca_summary,
-            market_context_status=market_context_status,
-            feature_readiness=clickhouse_ta_status,
+            reason=fast_status_gate_reason,
         )
-    )
+    else:
+        llm_evaluation = _load_trading_status_llm_evaluation(status_read_budget)
+        tca_summary = _load_trading_status_tca_summary(
+            status_read_budget,
+            scheduler=scheduler,
+        )
+        hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
+            _load_trading_status_hypothesis_runtime(
+                status_read_budget,
+                scheduler,
+                tca_summary=tca_summary,
+                market_context_status=market_context_status,
+                feature_readiness=clickhouse_ta_status,
+            )
+        )
     if (
         live_submission_gate_skip_reason is None
+        and fast_status_gate_reason is None
         and not _hypothesis_payload_read_model_unavailable(hypothesis_payload)
         and status_read_budget.remaining_seconds() >= 2.0
     ):

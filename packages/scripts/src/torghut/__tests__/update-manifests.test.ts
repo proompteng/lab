@@ -26,7 +26,6 @@ const createFixture = () => {
   const paperAccountFlattenManifestPath = join(dir, 'paper-account-flatten-cronjob.yaml')
   const whitepaperSemanticBackfillManifestPath = join(dir, 'whitepaper-semantic-backfill-job.yaml')
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
-  const tigerBeetleJournalOrderEventsManifestPath = join(dir, 'tigerbeetle-journal-order-events-cronjob.yaml')
   const optionsCatalogManifestPath = join(dir, 'options-catalog-deployment.yaml')
   const optionsEnricherManifestPath = join(dir, 'options-enricher-deployment.yaml')
   writeFileSync(
@@ -107,7 +106,6 @@ spec:
     paperAccountFlattenManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
-    tigerBeetleJournalOrderEventsManifestPath,
   ]) {
     const metadataEnv =
       path === whitepaperAutoresearchWorkflowManifestPath || path === empiricalPromotionRenewalManifestPath
@@ -132,42 +130,6 @@ ${metadataEnv}            - name: TORGHUT_IMAGE_DIGEST
       'utf8',
     )
   }
-  writeFileSync(
-    tigerBeetleJournalOrderEventsManifestPath,
-    `apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: torghut-tigerbeetle-journal-order-events-live
-spec:
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          containers:
-            - name: journal-order-events-live
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
-              env:
-                - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:1111111111111111111111111111111111111111111111111111111111111111
----
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: torghut-tigerbeetle-journal-order-events-sim
-spec:
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          containers:
-            - name: journal-order-events-sim
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
-              env:
-                - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:1111111111111111111111111111111111111111111111111111111111111111
-`,
-    'utf8',
-  )
   for (const path of [optionsCatalogManifestPath, optionsEnricherManifestPath]) {
     writeFileSync(
       path,
@@ -208,7 +170,6 @@ spec:
     paperAccountFlattenManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
-    tigerBeetleJournalOrderEventsManifestPath,
     optionsCatalogManifestPath,
     optionsEnricherManifestPath,
   }
@@ -243,7 +204,6 @@ const updateOptionsForFixture = (
   paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
   whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
   tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
-  tigerBeetleJournalOrderEventsManifestPath: relative(repoRoot, fixture.tigerBeetleJournalOrderEventsManifestPath),
   optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
   optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
   ...overrides,
@@ -323,10 +283,6 @@ describe('update-manifests', () => {
     const paperAccountFlattenManifest = readFileSync(fixture.paperAccountFlattenManifestPath, 'utf8')
     const whitepaperSemanticBackfillManifest = readFileSync(fixture.whitepaperSemanticBackfillManifestPath, 'utf8')
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
-    const tigerBeetleJournalOrderEventsManifest = readFileSync(
-      fixture.tigerBeetleJournalOrderEventsManifestPath,
-      'utf8',
-    )
     const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
     const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
     expect(serviceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
@@ -367,7 +323,6 @@ describe('update-manifests', () => {
       paperAccountFlattenManifest,
       whitepaperSemanticBackfillManifest,
       tigerBeetleSmokeManifest,
-      tigerBeetleJournalOrderEventsManifest,
     ]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
@@ -376,16 +331,6 @@ describe('update-manifests', () => {
     }
     expect(whitepaperAutoresearchWorkflowManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(empiricalPromotionRenewalManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
-    expect(
-      tigerBeetleJournalOrderEventsManifest.match(
-        /image: registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e/g,
-      )?.length,
-    ).toBe(2)
-    expect(
-      tigerBeetleJournalOrderEventsManifest.match(
-        /value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e/g,
-      )?.length,
-    ).toBe(2)
     for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
@@ -397,7 +342,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(21)
+    expect(result.changedPaths.length).toBe(20)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -419,7 +364,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(19)
+    expect(result.changedPaths.length).toBe(18)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

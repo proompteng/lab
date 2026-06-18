@@ -11,7 +11,6 @@ resources:
   - db-migrations-job.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-smoke-job.yaml
-  - tigerbeetle-journal-order-events-cronjob.yaml
   - knative-service.yaml
   - knative-service-sim.yaml
   - tailscale-service.yaml

@@ -614,7 +614,6 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             "argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml",
             "argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml",
             "argocd/applications/torghut/paper-account-flatten-cronjob.yaml",
-            "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml",
         )
         checked_cronjobs = 0
         for relative_path in cronjob_paths:
@@ -630,7 +629,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
                 )
                 self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
                 checked_cronjobs += 1
-        self.assertEqual(checked_cronjobs, 8)
+        self.assertEqual(checked_cronjobs, 6)
 
         replay_cronworkflow = _load_yaml_mapping(
             "argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"

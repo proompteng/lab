@@ -8,13 +8,11 @@ from tests.live_config_manifest_contract.support import (
     _TestLiveConfigManifestContractBase,
     _assert_exact_live_execution_chip_universe,
     _assert_exact_quote_covered_paper_strategy_universe,
-    _container_env,
     _load_cronjob_container,
     _load_torghut_feature_flags,
     _load_torghut_knative_env,
     _load_torghut_knative_manifest,
     _load_yaml_mapping,
-    _load_yaml_mappings,
     _manifest_bool,
     _repo_root,
     cast,
@@ -27,165 +25,26 @@ from tests.live_config_manifest_contract.support import (
 class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
     _TestLiveConfigManifestContractBase
 ):
-    def test_tigerbeetle_journal_order_events_cronjob_covers_live_and_sim(
+    def test_tigerbeetle_journal_order_events_is_manual_operator_tool_only(
         self,
     ) -> None:
         relative_path = (
             "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
         )
-        manifests = _load_yaml_mappings(relative_path)
-        by_name = {
-            cast(Mapping[str, object], manifest.get("metadata", {})).get(
-                "name"
-            ): manifest
-            for manifest in manifests
-        }
-
-        self.assertEqual(
-            set(by_name),
-            {
-                "torghut-tigerbeetle-journal-order-events-live",
-                "torghut-tigerbeetle-journal-order-events-sim",
-            },
+        self.assertFalse((_repo_root() / relative_path).exists())
+        kustomization = _load_yaml_mapping(
+            "argocd/applications/torghut/kustomization.yaml"
+        )
+        resources = kustomization.get("resources")
+        self.assertIsInstance(resources, list)
+        self.assertNotIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
+        self.assertTrue(
+            (
+                _repo_root()
+                / "services/torghut/scripts/run_tigerbeetle_journal_cron.py"
+            ).is_file()
         )
 
-        def cronjob_parts(
-            name: str,
-        ) -> tuple[Mapping[str, object], Mapping[str, object], Mapping[str, object]]:
-            manifest = by_name[name]
-            spec = cast(Mapping[str, object], manifest.get("spec", {}))
-            job_spec = cast(
-                Mapping[str, object],
-                cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
-            )
-            template = cast(
-                Mapping[str, object],
-                cast(Mapping[str, object], job_spec.get("template", {})),
-            )
-            pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-            containers = cast(
-                list[Mapping[str, object]],
-                pod_spec.get("containers", []),
-            )
-            if not containers:
-                raise AssertionError(f"{name} missing job container")
-            return spec, job_spec, containers[0]
-
-        common_resources = {
-            "requests": {
-                "cpu": "250m",
-                "memory": "512Mi",
-                "ephemeral-storage": "128Mi",
-            },
-            "limits": {
-                "cpu": "1",
-                "memory": "2Gi",
-                "ephemeral-storage": "512Mi",
-            },
-        }
-
-        live_spec, live_job_spec, live_container = cronjob_parts(
-            "torghut-tigerbeetle-journal-order-events-live"
-        )
-        sim_spec, sim_job_spec, sim_container = cronjob_parts(
-            "torghut-tigerbeetle-journal-order-events-sim"
-        )
-
-        self.assertEqual(live_spec.get("schedule"), "*/6 * * * *")
-        self.assertEqual(sim_spec.get("schedule"), "21,51 * * * *")
-        for spec, job_spec, container in (
-            (live_spec, live_job_spec, live_container),
-            (sim_spec, sim_job_spec, sim_container),
-        ):
-            self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-            self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
-            self.assertEqual(spec.get("successfulJobsHistoryLimit"), 2)
-            self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
-            self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
-            self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
-            self.assertEqual(job_spec.get("backoffLimit"), 0)
-            template = cast(
-                Mapping[str, object],
-                cast(Mapping[str, object], job_spec.get("template", {})),
-            )
-            pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-            self.assertEqual(pod_spec.get("restartPolicy"), "Never")
-            self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-            self.assertNotIn("nodeSelector", pod_spec)
-            self.assertEqual(container.get("command"), ["/bin/bash", "-lc"])
-            self.assertIn(
-                "registry.ide-newton.ts.net/lab/torghut@sha256:",
-                str(container.get("image")),
-            )
-            self.assertEqual(
-                cast(Mapping[str, object], container.get("resources", {})),
-                common_resources,
-            )
-            value_env = _container_env(container)
-            self.assertEqual(value_env["TORGHUT_TIGERBEETLE_ENABLED"], "true")
-            self.assertEqual(value_env["TORGHUT_TIGERBEETLE_REQUIRED"], "false")
-            self.assertEqual(value_env["TORGHUT_TIGERBEETLE_CLUSTER_ID"], "2001")
-            self.assertEqual(
-                value_env["TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES"],
-                "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
-            )
-            self.assertEqual(value_env["TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS"], "10")
-            self.assertEqual(
-                value_env["TORGHUT_TIGERBEETLE_JOURNAL_ENABLED"],
-                "true",
-            )
-            self.assertEqual(
-                value_env["TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"],
-                "false",
-            )
-            self.assertEqual(value_env["PYTHONUNBUFFERED"], "1")
-            args = "\n".join(str(item) for item in container.get("args", []))
-            self.assertIn("scripts/run_tigerbeetle_journal_cron.py", args)
-            self.assertNotIn("scripts/journal_tigerbeetle_order_events.py", args)
-            self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
-            self.assertNotIn("status=0", args)
-            self.assertNotIn("|| status=1", args)
-            self.assertNotIn('exit "$status"', args)
-            self.assertIn("--preset", args)
-            self.assertIn("--supervise-timeout-seconds 120", args)
-            self.assertIn("--json", args)
-            security_context = cast(
-                Mapping[str, object],
-                container.get("securityContext", {}),
-            )
-            seccomp_profile = cast(
-                Mapping[str, object],
-                security_context.get("seccompProfile", {}),
-            )
-            self.assertEqual(seccomp_profile.get("type"), "Unconfined")
-
-        live_env = {
-            item.get("name"): item
-            for item in cast(list[Mapping[str, object]], live_container.get("env", []))
-        }
-        live_db_dsn = cast(Mapping[str, object], live_env["DB_DSN"])
-        live_db_value_from = cast(
-            Mapping[str, object],
-            live_db_dsn.get("valueFrom", {}),
-        )
-        self.assertEqual(
-            live_db_value_from.get("secretKeyRef"),
-            {"name": "torghut-db-app", "key": "uri"},
-        )
-        self.assertNotIn("SIM_DB_DSN", live_env)
-        live_args = "\n".join(str(item) for item in live_container.get("args", []))
-        self.assertIn("--preset live", live_args)
-        self.assertIn("--execution-batch-size 250", live_args)
-        self.assertIn("--tca-metric-batch-size 100", live_args)
-        self.assertIn("--order-event-batch-size 50", live_args)
-        self.assertIn("--runtime-ledger-batch-size 100", live_args)
-        self.assertIn("--journal-batch-chunk-size 25", live_args)
-        self.assertIn("--supervise-timeout-seconds 120", live_args)
-        self.assertNotIn("--dsn-env DB_DSN", live_args)
-        self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
-        self.assertNotIn("--account-label TORGHUT_SIM", live_args)
-        self.assertNotIn("--batch-size", live_args)
-        self.assertNotIn("--max-batches", live_args)
         live_execution_commands = [
             command
             for command in tigerbeetle_journal_runner._live_commands(
@@ -257,38 +116,6 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             tigerbeetle_journal_runner.LIVE_RECONCILE_LIMIT,
         )
 
-        sim_env = {
-            item.get("name"): item
-            for item in cast(list[Mapping[str, object]], sim_container.get("env", []))
-        }
-        self.assertNotIn("DB_DSN", sim_env)
-        self.assertEqual(
-            sim_env["SIM_DB_DSN"].get("value"),
-            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
-            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
-        )
-        for name, key in {
-            "TORGHUT_SIM_DB_HOST": "host",
-            "TORGHUT_SIM_DB_PORT": "port",
-            "TORGHUT_SIM_DB_USER": "username",
-            "TORGHUT_SIM_DB_PASSWORD": "password",
-        }.items():
-            value_from = cast(Mapping[str, object], sim_env[name].get("valueFrom", {}))
-            self.assertEqual(
-                value_from.get("secretKeyRef"),
-                {"name": "torghut-db-app", "key": key},
-            )
-        sim_args = "\n".join(str(item) for item in sim_container.get("args", []))
-        self.assertIn("--preset sim", sim_args)
-        self.assertIn("--sim-batch-size 100", sim_args)
-        self.assertIn("--runtime-ledger-batch-size 100", sim_args)
-        self.assertIn("--journal-batch-chunk-size 25", sim_args)
-        self.assertNotIn("--dsn-env SIM_DB_DSN", sim_args)
-        self.assertNotIn("--account-label TORGHUT_SIM", sim_args)
-        self.assertNotIn("--batch-size", sim_args)
-        self.assertNotIn("--max-batches", sim_args)
-        self.assertNotIn("--event-scan-limit", sim_args)
-        self.assertNotIn("--reconcile-limit", sim_args)
         sim_runtime_commands = [
             command
             for command in tigerbeetle_journal_runner._sim_commands()

@@ -100,7 +100,6 @@ describe('Torghut manifest scheduling', () => {
       'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
       'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml',
       'argocd/applications/torghut/paper-account-flatten-cronjob.yaml',
-      'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml',
     ]
 
     let checkedCronJobs = 0
@@ -114,7 +113,7 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(8)
+    expect(checkedCronJobs).toBe(6)
 
     const replayCronWorkflow = parseManifest(
       'argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml',
