@@ -262,6 +262,23 @@ describe('Torghut manifest scheduling', () => {
     )
   })
 
+  it('documents the Hyperliquid testnet credential check before enabling the ExternalSecret', () => {
+    const readme = readFileSync(join(repoRoot, 'argocd/applications/torghut-hyperliquid-runtime/README.md'), 'utf8')
+    const bootstrapScript = readFileSync(
+      join(repoRoot, 'scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh'),
+      'utf8',
+    )
+
+    expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh status')
+    expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh check')
+    expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh create')
+    expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh reconcile')
+    expect(readme).toContain('After `check` reports the 1Password item is present')
+    expect(readme).toContain('Keep the ExternalSecret out of steady-state')
+    expect(bootstrapScript).toContain('$0 check')
+    expect(bootstrapScript).toContain('check_item()')
+  })
+
   it('keeps options TA recoverable across transient Kafka source startup failures', () => {
     const config = parseManifest('argocd/applications/torghut-options/ta/configmap.yaml')
     const data = getAtPath(config, ['data'])
