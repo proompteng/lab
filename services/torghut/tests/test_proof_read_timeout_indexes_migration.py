@@ -1,30 +1,17 @@
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-from types import ModuleType
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from tests.migration_testing import load_migration_module
 
-def _load_migration_module() -> ModuleType:
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "migrations"
-        / "versions"
-        / "0052_proof_read_timeout_indexes.py"
-    )
-    spec = importlib.util.spec_from_file_location("torghut_migration_0052", path)
-    if spec is None or spec.loader is None:
-        raise AssertionError("failed_to_load_migration_0052")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+
+MIGRATION_FILENAME = "0052_proof_read_timeout_indexes.py"
 
 
 class TestProofReadTimeoutIndexesMigration(TestCase):
     def test_revision_follows_current_head(self) -> None:
-        module = _load_migration_module()
+        module = load_migration_module(MIGRATION_FILENAME)
 
         self.assertEqual(module.revision, "0052_proof_read_timeout_indexes")
         self.assertEqual(
@@ -33,13 +20,13 @@ class TestProofReadTimeoutIndexesMigration(TestCase):
         )
 
     def test_index_names_fit_postgres_identifier_limit(self) -> None:
-        module = _load_migration_module()
+        module = load_migration_module(MIGRATION_FILENAME)
 
         for index_name, _table_name, _create_sql in module._INDEXES:
             self.assertLessEqual(len(index_name), 63, index_name)
 
     def test_upgrade_adds_concurrent_timeout_indexes(self) -> None:
-        module = _load_migration_module()
+        module = load_migration_module(MIGRATION_FILENAME)
         bind = MagicMock()
         bind.dialect.name = "postgresql"
         inspector = MagicMock()
@@ -61,7 +48,7 @@ class TestProofReadTimeoutIndexesMigration(TestCase):
         self.assertIn("ix_trade_decisions_created_id", executed_sql)
 
     def test_downgrade_drops_concurrent_timeout_indexes(self) -> None:
-        module = _load_migration_module()
+        module = load_migration_module(MIGRATION_FILENAME)
         bind = MagicMock()
         bind.dialect.name = "postgresql"
         inspector = MagicMock()

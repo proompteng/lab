@@ -1,24 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-from types import ModuleType
 from unittest import TestCase
 
+from tests.migration_testing import load_migration_module
 
-def _load_migration_module() -> ModuleType:
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "migrations"
-        / "versions"
-        / "0031_autoresearch_candidate_spec_epoch_uniqueness.py"
-    )
-    spec = importlib.util.spec_from_file_location("torghut_migration_0031", path)
-    if spec is None or spec.loader is None:  # pragma: no cover - importlib guard
-        raise AssertionError("failed_to_load_migration_0031")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+
+MIGRATION_FILENAME = "0031_autoresearch_candidate_spec_epoch_uniqueness.py"
 
 
 class _FakeOp:
@@ -51,7 +38,7 @@ class TestAutoresearchCandidateSpecMigration(TestCase):
     def test_upgrade_drops_existing_unique_constraint_before_epoch_scoped_index(
         self,
     ) -> None:
-        module = _load_migration_module()
+        module = load_migration_module(MIGRATION_FILENAME)
         fake_op = _FakeOp()
         original_op = module.op
         try:
@@ -84,7 +71,7 @@ class TestAutoresearchCandidateSpecMigration(TestCase):
         )
 
     def test_downgrade_restores_candidate_spec_unique_constraint(self) -> None:
-        module = _load_migration_module()
+        module = load_migration_module(MIGRATION_FILENAME)
         fake_op = _FakeOp()
         original_op = module.op
         try:
