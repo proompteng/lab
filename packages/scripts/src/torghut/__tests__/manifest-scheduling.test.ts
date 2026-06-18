@@ -200,10 +200,10 @@ describe('Torghut manifest scheduling', () => {
     expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
   })
 
-  it('keeps Hyperliquid runtime shadow mode wired to a gated execution secret', () => {
+  it('keeps Hyperliquid runtime testnet trading wired to a gated execution secret', () => {
     const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
     const runtimeData = getAtPath(runtimeConfig, ['data'])
-    expect(runtimeData.HYPERLIQUID_RUNTIME_TRADING_ENABLED).toBe('false')
+    expect(runtimeData.HYPERLIQUID_RUNTIME_TRADING_ENABLED).toBe('true')
 
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
@@ -262,7 +262,7 @@ describe('Torghut manifest scheduling', () => {
     )
   })
 
-  it('documents the Hyperliquid testnet credential check before enabling trading', () => {
+  it('documents the Hyperliquid testnet credential and funding gate', () => {
     const readme = readFileSync(join(repoRoot, 'argocd/applications/torghut-hyperliquid-runtime/README.md'), 'utf8')
     const bootstrapScript = readFileSync(
       join(repoRoot, 'scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh'),
@@ -273,9 +273,9 @@ describe('Torghut manifest scheduling', () => {
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh check')
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh create')
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh reconcile')
-    expect(readme).toContain('After `check` reports the 1Password item is present')
-    expect(readme).toContain('keep `externalsecret.yaml` in `kustomization.yaml`')
-    expect(readme).toContain('Keep `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false`')
+    expect(readme).toContain('Before enabling trading')
+    expect(readme).toContain('must be funded or authorized')
+    expect(readme).toContain('HYPERLIQUID_RUNTIME_TRADING_ENABLED=true')
     expect(bootstrapScript).toContain('$0 check')
     expect(bootstrapScript).toContain('check_item()')
   })
