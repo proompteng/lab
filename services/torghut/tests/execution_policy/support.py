@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
@@ -25,7 +26,7 @@ def _config(**overrides: object) -> ExecutionPolicyConfig:
         backoff_multiplier=2.0,
         backoff_max_seconds=1.0,
     )
-    return ExecutionPolicyConfig(**{**base.__dict__, **overrides})
+    return replace(base, **overrides)
 
 
 def _decision(

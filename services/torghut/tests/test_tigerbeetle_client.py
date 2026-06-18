@@ -25,10 +25,7 @@ from app.trading.tigerbeetle_ledger_model import (
     TigerBeetleTransferSpec,
 )
 
-
-class _Event:
-    def __init__(self, **kwargs: object) -> None:
-        self.__dict__.update(kwargs)
+_TigerBeetleEvent = SimpleNamespace
 
 
 class TestTigerBeetleClient(TestCase):
@@ -190,8 +187,8 @@ class TestTigerBeetleClient(TestCase):
 
         fake_module = SimpleNamespace(
             ClientSync=_BlockingSync,
-            Account=_Event,
-            Transfer=_Event,
+            Account=_TigerBeetleEvent,
+            Transfer=_TigerBeetleEvent,
         )
         with (
             patch.dict(sys.modules, {"tigerbeetle": fake_module}),
@@ -241,8 +238,8 @@ class TestTigerBeetleClient(TestCase):
 
         fake_module = SimpleNamespace(
             ClientSync=_BlockingHealthSync,
-            Account=_Event,
-            Transfer=_Event,
+            Account=_TigerBeetleEvent,
+            Transfer=_TigerBeetleEvent,
         )
         with (
             patch.dict(sys.modules, {"tigerbeetle": fake_module}),
@@ -281,8 +278,8 @@ class TestTigerBeetleClient(TestCase):
 
         fake_module = SimpleNamespace(
             ClientSync=_BlockingConnectSync,
-            Account=_Event,
-            Transfer=_Event,
+            Account=_TigerBeetleEvent,
+            Transfer=_TigerBeetleEvent,
         )
         with (
             patch.dict(sys.modules, {"tigerbeetle": fake_module}),
@@ -348,8 +345,8 @@ class TestTigerBeetleClient(TestCase):
 
         fake_module = SimpleNamespace(
             ClientSync=_FakeSync,
-            Account=_Event,
-            Transfer=_Event,
+            Account=_TigerBeetleEvent,
+            Transfer=_TigerBeetleEvent,
         )
         with (
             patch.dict(sys.modules, {"tigerbeetle": fake_module}),

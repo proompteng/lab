@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Optional, cast
 
@@ -603,7 +603,8 @@ class _TradingMetricsMethods(TradingMetricsFields):
 
 @dataclass
 class TradingMetrics(_TradingMetricsMethods):
-    pass
+    def to_payload(self) -> dict[str, object]:
+        return cast(dict[str, object], asdict(self))
 
 
 @dataclass

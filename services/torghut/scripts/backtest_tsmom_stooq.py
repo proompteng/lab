@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from datetime import date
 from typing import Optional
 
@@ -97,7 +98,7 @@ def main() -> int:
 
     config_payload = {
         key: (value.isoformat() if isinstance(value, date) else value)
-        for key, value in cfg.__dict__.items()
+        for key, value in asdict(cfg).items()
     }
     payload = {
         "config": config_payload,

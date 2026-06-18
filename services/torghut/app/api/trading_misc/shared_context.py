@@ -840,7 +840,7 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
         hypothesis_summary=hypothesis_summary,
     )
     return {
-        "metrics": metrics.__dict__,
+        "metrics": metrics.to_payload(),
         "build": {
             "version": BUILD_VERSION,
             "commit": main_runtime_value("BUILD_COMMIT"),

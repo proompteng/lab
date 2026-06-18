@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import cast
 from unittest import TestCase
 
 from app.metrics import render_trading_metrics
@@ -9,13 +10,23 @@ from app.trading.strategy_runtime import RuntimeObservation
 
 
 class TestTradingMetrics(TestCase):
+    def test_metrics_payload_is_detached_from_mutable_state(self) -> None:
+        metrics = TradingMetrics()
+        metrics.no_signal_reason_total["cursor_ahead_of_stream"] = 1
+
+        payload = metrics.to_payload()
+        reason_total = cast(dict[str, int], payload["no_signal_reason_total"])
+        reason_total["cursor_ahead_of_stream"] = 9
+
+        self.assertEqual(metrics.no_signal_reason_total["cursor_ahead_of_stream"], 1)
+
     def test_no_signal_reason_and_streak_are_exported(self) -> None:
         metrics = TradingMetrics()
         metrics.record_no_signal("cursor_ahead_of_stream")
         metrics.no_signal_streak = 2
         metrics.no_signal_reason_streak["cursor_ahead_of_stream"] = 1
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_no_signal_reason_total{reason="cursor_ahead_of_stream"} 1',
@@ -36,7 +47,7 @@ class TestTradingMetrics(TestCase):
         metrics.record_signal_staleness_alert("empty_batch_advanced")
         metrics.signal_lag_seconds = 61
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_signal_staleness_alert_total{reason="empty_batch_advanced"} 1',
@@ -66,7 +77,7 @@ class TestTradingMetrics(TestCase):
         metrics.market_session_open = 0
         metrics.signal_continuity_actionable = 1
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_signal_expected_staleness_total{reason="no_signals_in_window"} 1',
@@ -126,7 +137,7 @@ class TestTradingMetrics(TestCase):
         metrics.llm_escalate_total = 1
         metrics.llm_policy_fallback_total = 2
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_llm_market_context_reason_total{reason="market_context_domain_error"} 1',
@@ -166,7 +177,7 @@ class TestTradingMetrics(TestCase):
 
         payload = render_trading_metrics(
             {
-                **metrics.__dict__,
+                **metrics.to_payload(),
                 "hypothesis_state_total": {"blocked": 1, "shadow": 2},
                 "hypothesis_capital_stage_total": {"shadow": 3},
                 "alpha_readiness_hypotheses_total": 3,
@@ -206,7 +217,7 @@ class TestTradingMetrics(TestCase):
         )
         metrics.record_rejected_signal_event("missing_executable_quote")
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_decision_reject_reason_total{reason="qty_below_min"} 1',
@@ -234,7 +245,7 @@ class TestTradingMetrics(TestCase):
         metrics.record_decision_state("blocked")
         metrics.observe_planned_decision_age(17)
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_submission_block_total{reason="capital_stage_shadow"} 1',
@@ -268,7 +279,7 @@ class TestTradingMetrics(TestCase):
             deterministic_veto=True,
         )
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_llm_committee_requests_total{role="risk_critic"} 1',
@@ -291,7 +302,7 @@ class TestTradingMetrics(TestCase):
         metrics.order_feed_events_persisted_total = 2
         metrics.order_feed_duplicates_total = 1
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn("torghut_trading_order_feed_messages_total 3", payload)
         self.assertIn("torghut_trading_order_feed_events_persisted_total 2", payload)
@@ -304,7 +315,7 @@ class TestTradingMetrics(TestCase):
         metrics.execution_advisor_fallback_total["advisor_timeout"] = 1
         metrics.execution_advisor_fallback_total["advisor_state_stale"] = 4
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_execution_advisor_usage_total{status="applied"} 2',
@@ -329,7 +340,7 @@ class TestTradingMetrics(TestCase):
         metrics.domain_telemetry_event_total["torghut.execution.submitted"] = 2
         metrics.domain_telemetry_dropped_total["disabled"] = 5
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_domain_telemetry_event_total{event="torghut.decision.generated"} 3',
@@ -348,7 +359,7 @@ class TestTradingMetrics(TestCase):
         metrics = TradingMetrics()
         payload = render_trading_metrics(
             {
-                **metrics.__dict__,
+                **metrics.to_payload(),
                 "tca_summary": {
                     "order_count": 3,
                     "avg_slippage_bps": 12.5,
@@ -399,7 +410,7 @@ class TestTradingMetrics(TestCase):
         metrics.record_lean_strategy_shadow("pass")
         metrics.record_lean_canary_breach("fallback_ratio_exceeded")
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_lean_request_total{operation="submit_order"} 4',
@@ -436,7 +447,7 @@ class TestTradingMetrics(TestCase):
         metrics = TradingMetrics()
         payload = render_trading_metrics(
             {
-                **metrics.__dict__,
+                **metrics.to_payload(),
                 "allocator_multiplier_total": {
                     "vol=high|trend=up|liq=tight|stress|0.75": 3
                 },
@@ -451,7 +462,7 @@ class TestTradingMetrics(TestCase):
         metrics = TradingMetrics()
         payload = render_trading_metrics(
             {
-                **metrics.__dict__,
+                **metrics.to_payload(),
                 "route_provenance": {
                     "total": 25,
                     "missing": 1,
@@ -482,7 +493,7 @@ class TestTradingMetrics(TestCase):
         metrics.strategy_runtime_isolated_failures_total = 1
         metrics.strategy_runtime_fallback_total = 2
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_strategy_events_total{strategy_id="legacy-1"} 5', payload
@@ -513,7 +524,7 @@ class TestTradingMetrics(TestCase):
         metrics.forecast_calibration_error["chronos|AAPL|1m"] = "0.07"
         metrics.forecast_route_selection_total["chronos|AAPL|1m|trend"] = 5
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_forecast_router_inference_latency_ms{model_family="chronos"} 98',
@@ -573,7 +584,7 @@ class TestTradingMetrics(TestCase):
         metrics.feature_duplicate_ratio = 0.2
         metrics.feature_schema_mismatch_total = 2
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn('torghut_trading_feature_null_rate{field="price"} 0.5', payload)
         self.assertIn("torghut_trading_feature_staleness_ms_p95 1234", payload)
@@ -588,7 +599,7 @@ class TestTradingMetrics(TestCase):
         metrics.evidence_continuity_last_success_ts_seconds = 1700000100
         metrics.evidence_continuity_last_failed_runs = 2
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn("torghut_trading_evidence_continuity_checks_total 3", payload)
         self.assertIn("torghut_trading_evidence_continuity_failures_total 1", payload)
@@ -618,7 +629,7 @@ class TestTradingMetrics(TestCase):
         metrics.runtime_regime_gate_blocked_total["abstain"] = 1
         metrics.recalibration_runs_total["queued"] = 1
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_calibration_coverage_error{symbol="all",horizon="autonomy"} 0.02',
@@ -663,7 +674,7 @@ class TestTradingMetrics(TestCase):
         metrics.decision_regime_resolution_source_total["hmm"] = 1
         metrics.decision_regime_resolution_fallback_total["hmm_unknown"] = 2
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_decision_regime_resolution_source_total{source="allocator"} 3',
@@ -682,7 +693,7 @@ class TestTradingMetrics(TestCase):
         metrics = TradingMetrics()
         metrics.trading_shorts_enabled = 1
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_shorts_enabled{service="torghut"} 1',
@@ -710,7 +721,7 @@ class TestTradingMetrics(TestCase):
         metrics.simulation_position_state_total["short"] = 1
         metrics.simulation_preflight_failure_total["schema_registry_not_ready"] = 1
 
-        payload = render_trading_metrics(metrics.__dict__)
+        payload = render_trading_metrics(metrics.to_payload())
 
         self.assertIn(
             'torghut_trading_feature_quality_reject_reason_total{reason="non_monotonic_progression"} 1',

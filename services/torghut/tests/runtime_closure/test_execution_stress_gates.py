@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from tests.runtime_closure.support import (
     Decimal,
     Path,
     TemporaryDirectory,
     runtime_closure,
     RuntimeClosurePolicy,
-    StrategyAutoresearchProgram,
     StrategyObjective,
     build_mlx_snapshot_manifest,
     RuntimeClosureExecutionContext,
@@ -427,19 +428,17 @@ data:
                 + "\n",
                 encoding="utf-8",
             )
-            program = StrategyAutoresearchProgram(
-                **{
-                    **_program().__dict__,
-                    "runtime_closure_policy": RuntimeClosurePolicy(
-                        enabled=True,
-                        execute_parity_replay=False,
-                        execute_approval_replay=False,
-                        parity_window="full_window",
-                        approval_window="holdout",
-                        shadow_validation_mode="skip",
-                        promotion_target="shadow",
-                    ),
-                }
+            program = replace(
+                _program(),
+                runtime_closure_policy=RuntimeClosurePolicy(
+                    enabled=True,
+                    execute_parity_replay=False,
+                    execute_approval_replay=False,
+                    parity_window="full_window",
+                    approval_window="holdout",
+                    shadow_validation_mode="skip",
+                    promotion_target="shadow",
+                ),
             )
             best_candidate = {
                 "candidate_id": "cand-1",
@@ -519,31 +518,29 @@ data:
                 + "\n",
                 encoding="utf-8",
             )
-            program = StrategyAutoresearchProgram(
-                **{
-                    **_program().__dict__,
-                    "objective": StrategyObjective(
-                        target_net_pnl_per_day=Decimal("500"),
-                        min_active_day_ratio=Decimal("1.0"),
-                        min_positive_day_ratio=Decimal("0.6"),
-                        min_daily_notional=Decimal("300000"),
-                        max_best_day_share=Decimal("0.3"),
-                        max_worst_day_loss=Decimal("350"),
-                        max_drawdown=Decimal("900"),
-                        require_every_day_active=True,
-                        min_regime_slice_pass_rate=Decimal("0"),
-                        stop_when_objective_met=True,
-                    ),
-                    "runtime_closure_policy": RuntimeClosurePolicy(
-                        enabled=True,
-                        execute_parity_replay=True,
-                        execute_approval_replay=True,
-                        parity_window="full_window",
-                        approval_window="holdout",
-                        shadow_validation_mode="skip",
-                        promotion_target="shadow",
-                    ),
-                }
+            program = replace(
+                _program(),
+                objective=StrategyObjective(
+                    target_net_pnl_per_day=Decimal("500"),
+                    min_active_day_ratio=Decimal("1.0"),
+                    min_positive_day_ratio=Decimal("0.6"),
+                    min_daily_notional=Decimal("300000"),
+                    max_best_day_share=Decimal("0.3"),
+                    max_worst_day_loss=Decimal("350"),
+                    max_drawdown=Decimal("900"),
+                    require_every_day_active=True,
+                    min_regime_slice_pass_rate=Decimal("0"),
+                    stop_when_objective_met=True,
+                ),
+                runtime_closure_policy=RuntimeClosurePolicy(
+                    enabled=True,
+                    execute_parity_replay=True,
+                    execute_approval_replay=True,
+                    parity_window="full_window",
+                    approval_window="holdout",
+                    shadow_validation_mode="skip",
+                    promotion_target="shadow",
+                ),
             )
             best_candidate = {
                 "candidate_id": "cand-1",

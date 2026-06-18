@@ -322,11 +322,15 @@ class TorghutAlpacaClient:
             if isinstance(raw, Mapping):
                 return cast(Mapping[object, Any], raw)
             raise TypeError(f"Unsupported model_dump payload type: {type(raw)}")
-        if hasattr(model, "__dict__"):
-            return {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
         if isinstance(model, Mapping):
             return cast(Mapping[object, Any], model)
-        raise TypeError(f"Unsupported model type: {type(model)}")
+        try:
+            raw_vars = cast(Mapping[str, Any], vars(model))
+        except TypeError as exc:
+            raise TypeError(f"Unsupported model type: {type(model)}") from exc
+        return {
+            key: value for key, value in raw_vars.items() if not key.startswith("_")
+        }
 
     @staticmethod
     def _parse_timeframe(value: str) -> TimeFrame:
