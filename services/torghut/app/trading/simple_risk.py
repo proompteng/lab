@@ -141,6 +141,34 @@ def position_value_for_symbol(
     return total
 
 
+def _close_only_adjusted_decision(
+    decision: StrategyDecision,
+    *,
+    current_qty: Decimal,
+) -> tuple[StrategyDecision, dict[str, str | bool]]:
+    if not isinstance(decision.params.get("position_exit"), Mapping):
+        return decision, {}
+    requested_qty = _resolve_decimal(decision.qty)
+    if requested_qty is None or requested_qty <= 0:
+        return decision, {}
+    action = decision.action.strip().lower()
+    close_qty: Decimal | None = None
+    if action == "sell" and current_qty > 0:
+        close_qty = current_qty
+    elif action == "buy" and current_qty < 0:
+        close_qty = abs(current_qty)
+    if close_qty is None or requested_qty <= close_qty:
+        return decision, {}
+    return (
+        decision.model_copy(update={"qty": close_qty}),
+        {
+            "close_only_qty_clamped": True,
+            "close_only_requested_qty": str(requested_qty),
+            "close_only_position_qty": str(close_qty),
+        },
+    )
+
+
 def prepare_simple_decision(
     *,
     decision: StrategyDecision,
@@ -234,6 +262,10 @@ def _build_simple_risk_context(
 ) -> tuple[_SimpleRiskContext | None, SimpleRiskPreparation | None]:
     price = _extract_decision_price(decision)
     current_qty = position_qty_for_symbol(positions, decision.symbol)
+    decision, close_only_diagnostics = _close_only_adjusted_decision(
+        decision,
+        current_qty=current_qty,
+    )
     resolution = resolve_quantity_resolution(
         decision.symbol,
         action=decision.action,
@@ -257,6 +289,7 @@ def _build_simple_risk_context(
         "min_qty": str(min_qty),
         "quantity_resolution": resolution.to_payload(),
     }
+    diagnostics.update(close_only_diagnostics)
     if price is None or price <= 0:
         diagnostics["price"] = None if price is None else str(price)
         return None, _rejected_simple_risk_preparation(

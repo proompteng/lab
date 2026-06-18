@@ -407,6 +407,132 @@ class TestSimpleRisk(TestCase):
         self.assertFalse(result.approved)
         self.assertEqual(result.reject_reason, "shorting_not_allowed_for_asset")
 
+    def test_position_exit_sell_closes_fractional_long_without_short_increase(
+        self,
+    ) -> None:
+        decision = self._decision(action="sell", qty="1382", price="298.82")
+        decision = decision.model_copy(
+            update={
+                "rationale": "position_stop_loss_exit",
+                "params": {
+                    "price": "298.82",
+                    "position_exit": {"type": "long_stop_loss_bps"},
+                },
+            }
+        )
+
+        result = prepare_simple_decision(
+            decision=decision,
+            account={"buying_power": "0", "equity": "10000", "cash": "0"},
+            positions=[{"symbol": "AAPL", "qty": "0.1671", "side": "long"}],
+            fractional_equities_enabled=True,
+            allow_shorts=True,
+            max_notional_per_order=Decimal("100"),
+            max_notional_per_symbol=Decimal("250"),
+            max_gross_exposure_pct_equity=Decimal("0.05"),
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("0.1671"))
+        self.assertEqual(result.notional, Decimal("49.932822"))
+        self.assertEqual(result.diagnostics["close_only_requested_qty"], "1382")
+        self.assertEqual(result.diagnostics["close_only_position_qty"], "0.1671")
+        quantity_resolution = result.decision.params["simple_lane"][
+            "quantity_resolution"
+        ]
+        self.assertEqual(
+            quantity_resolution["reason"],
+            "sell_reducing_long_fractional_allowed",
+        )
+        self.assertFalse(quantity_resolution["short_increasing"])
+
+    def test_position_exit_sell_already_reducing_long_does_not_clamp(
+        self,
+    ) -> None:
+        decision = self._decision(action="sell", qty="0.1000", price="100")
+        decision = decision.model_copy(
+            update={
+                "rationale": "position_stop_loss_exit",
+                "params": {
+                    "price": "100",
+                    "position_exit": {"type": "long_stop_loss_bps"},
+                },
+            }
+        )
+
+        result = prepare_simple_decision(
+            decision=decision,
+            account={"buying_power": "0", "equity": "10000", "cash": "0"},
+            positions=[{"symbol": "AAPL", "qty": "0.1671", "side": "long"}],
+            fractional_equities_enabled=True,
+            allow_shorts=True,
+            max_notional_per_order=Decimal("100"),
+            max_notional_per_symbol=Decimal("250"),
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("0.1000"))
+        self.assertNotIn("close_only_requested_qty", result.diagnostics)
+
+    def test_position_exit_zero_qty_remains_invalid_without_close_only_clamp(
+        self,
+    ) -> None:
+        decision = self._decision(action="sell", qty="0", price="100")
+        decision = decision.model_copy(
+            update={
+                "rationale": "position_stop_loss_exit",
+                "params": {
+                    "price": "100",
+                    "position_exit": {"type": "long_stop_loss_bps"},
+                },
+            }
+        )
+
+        result = prepare_simple_decision(
+            decision=decision,
+            account={"buying_power": "0", "equity": "10000", "cash": "0"},
+            positions=[{"symbol": "AAPL", "qty": "0.1671", "side": "long"}],
+            fractional_equities_enabled=True,
+            allow_shorts=True,
+            max_notional_per_order=Decimal("100"),
+            max_notional_per_symbol=Decimal("250"),
+        )
+
+        self.assertFalse(result.approved)
+        self.assertEqual(result.reject_reason, "qty_below_min_after_clamp")
+        self.assertNotIn("close_only_requested_qty", result.diagnostics)
+
+    def test_position_exit_buy_covers_fractional_short_without_new_exposure(
+        self,
+    ) -> None:
+        decision = self._decision(action="buy", qty="5", price="100")
+        decision = decision.model_copy(
+            update={
+                "rationale": "position_stop_loss_exit",
+                "params": {
+                    "price": "100",
+                    "position_exit": {"type": "short_stop_loss_bps"},
+                },
+            }
+        )
+
+        result = prepare_simple_decision(
+            decision=decision,
+            account={"buying_power": "0", "equity": "10000", "cash": "0"},
+            positions=[{"symbol": "AAPL", "qty": "0.2500", "side": "short"}],
+            fractional_equities_enabled=True,
+            allow_shorts=True,
+            max_notional_per_order=Decimal("100"),
+            max_notional_per_symbol=Decimal("250"),
+            max_gross_exposure_pct_equity=Decimal("0.05"),
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("0.2500"))
+        self.assertEqual(result.diagnostics["buying_power_required_notional"], "0")
+        self.assertEqual(result.diagnostics["close_only_requested_qty"], "5")
+        self.assertEqual(result.diagnostics["close_only_position_qty"], "0.2500")
+
     def test_buying_power_required_notional_ignores_non_increasing_exposure(
         self,
     ) -> None:
