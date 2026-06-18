@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+
+from pytest import MonkeyPatch
 
 from app.hyperliquid_runtime import service as service_module
+from app.hyperliquid_runtime.clickhouse import ClickHouseStatus
 from app.hyperliquid_runtime.config import HyperliquidRuntimeConfig
+from app.hyperliquid_runtime.ledger import HyperliquidJournalEvent
 from app.hyperliquid_runtime.models import (
     DecisionRecord,
     FeatureSnapshot,
@@ -18,6 +22,7 @@ from app.hyperliquid_runtime.models import (
     RuntimeDependencyStatus,
 )
 from app.hyperliquid_runtime.repository import HyperliquidRuntimeRepository
+from app.hyperliquid_runtime.runtime_session import RuntimeSession
 from app.hyperliquid_runtime.service import HyperliquidRuntimeService
 from app.hyperliquid_runtime.strategy import generate_signal
 
@@ -31,30 +36,28 @@ def _config(**overrides: str) -> HyperliquidRuntimeConfig:
     return HyperliquidRuntimeConfig.from_env(env)
 
 
-def _feature(**overrides: object) -> FeatureSnapshot:
-    values: dict[str, object] = {
-        "market_id": "hl:perp:cash:cash:AAPL",
-        "coin": "cash:AAPL",
-        "dex": "cash",
-        "event_ts": datetime(2026, 6, 18, tzinfo=timezone.utc),
-        "price": Decimal("200"),
-        "momentum_1m_bps": Decimal("3"),
-        "momentum_3m_bps": Decimal("7"),
-        "momentum_5m_bps": Decimal("12"),
-        "momentum_15m_bps": Decimal("20"),
-        "momentum_1h_bps": Decimal("45"),
-        "volatility_bps": Decimal("60"),
-        "vwap_distance_bps": Decimal("5"),
-        "spread_bps": Decimal("4"),
-        "book_imbalance": Decimal("0.10"),
-        "liquidity_usd": Decimal("500000"),
-        "funding_rate": Decimal("0.0001"),
-        "open_interest_usd": Decimal("1000000"),
-        "regime": "trend",
-        "source_lag_seconds": 10,
-    }
-    values.update(overrides)
-    return FeatureSnapshot(**values)  # type: ignore[arg-type]
+def _feature() -> FeatureSnapshot:
+    return FeatureSnapshot(
+        market_id="hl:perp:cash:cash:AAPL",
+        coin="cash:AAPL",
+        dex="cash",
+        event_ts=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        price=Decimal("200"),
+        momentum_1m_bps=Decimal("3"),
+        momentum_3m_bps=Decimal("7"),
+        momentum_5m_bps=Decimal("12"),
+        momentum_15m_bps=Decimal("20"),
+        momentum_1h_bps=Decimal("45"),
+        volatility_bps=Decimal("60"),
+        vwap_distance_bps=Decimal("5"),
+        spread_bps=Decimal("4"),
+        book_imbalance=Decimal("0.10"),
+        liquidity_usd=Decimal("500000"),
+        funding_rate=Decimal("0.0001"),
+        open_interest_usd=Decimal("1000000"),
+        regime="trend",
+        source_lag_seconds=10,
+    )
 
 
 def _market() -> HyperliquidMarket:
@@ -115,7 +118,7 @@ class _MappingResult:
     def one(self) -> dict[str, object]:
         return self._rows[0]
 
-    def __iter__(self) -> Any:
+    def __iter__(self) -> Iterator[dict[str, object]]:
         return iter(self._rows)
 
 
@@ -143,7 +146,7 @@ class _FakeSession:
 
 def test_repository_writes_runtime_tables_and_reads_risk_state() -> None:
     session = _FakeSession()
-    repository = HyperliquidRuntimeRepository(session)  # type: ignore[arg-type]
+    repository = HyperliquidRuntimeRepository(session)
     signal = generate_signal(_feature(), parameter_version="test-v1")
 
     repository.upsert_markets([_market()])
@@ -232,12 +235,11 @@ class _FakeRepository:
 
 
 class _FakeClickHouse:
-    def status(self) -> Any:
-        return type(
-            "Status",
-            (),
-            {"statuses": (RuntimeDependencyStatus("clickhouse", True),)},
-        )()
+    def status(self) -> ClickHouseStatus:
+        return ClickHouseStatus(
+            ready=True,
+            statuses=(RuntimeDependencyStatus("clickhouse", True),),
+        )
 
     def load_catalog_rows(self) -> list[dict[str, object]]:
         return [
@@ -296,20 +298,38 @@ class _FakeExchange:
 
 class _FakeJournal:
     def __init__(self) -> None:
-        self.persisted: list[object] = []
+        self.persisted: list[HyperliquidJournalEvent] = []
 
-    def fill_events(self, fill: Fill) -> list[object]:
-        return [("fill", fill.fill_hash)]
+    def fill_events(self, fill: Fill) -> list[HyperliquidJournalEvent]:
+        return [_journal_event(fill.fill_hash, "fill")]
 
-    def order_events(self, intent: OrderIntent, _result: OrderResult) -> list[object]:
-        return [("order", intent.cloid)]
+    def order_events(
+        self, intent: OrderIntent, _result: OrderResult
+    ) -> list[HyperliquidJournalEvent]:
+        return [_journal_event(intent.cloid, "order")]
 
-    def persist_refs(self, _session: _FakeSession, events: list[object]) -> None:
+    def persist_refs(
+        self,
+        _session: RuntimeSession,
+        events: Sequence[HyperliquidJournalEvent],
+    ) -> int:
         self.persisted.extend(events)
+        return len(events)
+
+
+def _journal_event(source_id: str, transfer_kind: str) -> HyperliquidJournalEvent:
+    return HyperliquidJournalEvent(
+        source_id=source_id,
+        transfer_kind=transfer_kind,
+        amount_usd=Decimal("1"),
+        debit_account_key="testnet:debit",
+        credit_account_key="testnet:credit",
+        transfer_code=1,
+    )
 
 
 def test_runtime_service_orchestrates_signal_order_and_accounting(
-    monkeypatch: Any,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange()
@@ -325,13 +345,13 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
                 "0x2222222222222222222222222222222222222222222222222222222222222222"
             ),
         ),
-        clickhouse=_FakeClickHouse(),  # type: ignore[arg-type]
+        clickhouse=_FakeClickHouse(),
         exchange=exchange,
-        journal=journal,  # type: ignore[arg-type]
+        journal=journal,
     )
     session = _FakeSession()
 
-    result = service.run_once(session)  # type: ignore[arg-type]
+    result = service.run_once(session)
 
     assert session.committed
     assert result.markets_seen == 1
@@ -346,7 +366,7 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
 
 
 def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(
-    monkeypatch: Any,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange(fills=False)
@@ -356,13 +376,13 @@ def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(
     )
     service = HyperliquidRuntimeService(
         config=_config(),
-        clickhouse=_FakeClickHouse(),  # type: ignore[arg-type]
+        clickhouse=_FakeClickHouse(),
         exchange=exchange,
-        journal=journal,  # type: ignore[arg-type]
+        journal=journal,
     )
     session = _FakeSession()
 
-    result = service.run_once(session)  # type: ignore[arg-type]
+    result = service.run_once(session)
 
     assert session.committed
     assert result.markets_seen == 1
@@ -377,7 +397,7 @@ def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(
 
 
 def test_runtime_service_blocks_when_no_testnet_execution_markets(
-    monkeypatch: Any,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange(fills=False, supports_markets=False)
@@ -393,13 +413,13 @@ def test_runtime_service_blocks_when_no_testnet_execution_markets(
                 "0x2222222222222222222222222222222222222222222222222222222222222222"
             ),
         ),
-        clickhouse=_FakeClickHouse(),  # type: ignore[arg-type]
+        clickhouse=_FakeClickHouse(),
         exchange=exchange,
-        journal=journal,  # type: ignore[arg-type]
+        journal=journal,
     )
     session = _FakeSession()
 
-    result = service.run_once(session)  # type: ignore[arg-type]
+    result = service.run_once(session)
 
     assert session.committed
     assert result.markets_seen == 0

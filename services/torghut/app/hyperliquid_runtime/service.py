@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Protocol
 
-from sqlalchemy.orm import Session
-
-from .clickhouse import ClickHouseRuntimeReader
+from .clickhouse import ClickHouseStatus
 from .config import HyperliquidRuntimeConfig
 from .exchange import HyperliquidExchange
-from .ledger import HyperliquidTigerBeetleJournal
+from .ledger import HyperliquidJournalEvent
 from .models import (
     CycleResult,
     DecisionRecord,
+    Fill,
     FeatureSnapshot,
     HyperliquidMarket,
+    OrderIntent,
+    OrderResult,
     PerformanceSnapshot,
     RiskState,
     RuntimeDependencyStatus,
@@ -25,8 +28,49 @@ from .models import (
 )
 from .repository import HyperliquidRuntimeRepository
 from .risk import build_order_intent, evaluate_signal_risk
+from .runtime_session import RuntimeSession
 from .strategy import generate_signal
 from .universe import select_equity_like_markets
+
+
+class HyperliquidRuntimeClickHouse(Protocol):
+    """ClickHouse read surface required by one runtime cycle."""
+
+    def status(self) -> ClickHouseStatus:
+        """Return feed readiness."""
+        ...
+
+    def load_catalog_rows(self) -> list[dict[str, object]]:
+        """Load candidate market catalog rows."""
+        ...
+
+    def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]:
+        """Load latest feature rows for selected markets."""
+        ...
+
+
+class HyperliquidRuntimeJournal(Protocol):
+    """TigerBeetle journal surface required by one runtime cycle."""
+
+    def fill_events(self, fill: Fill) -> Sequence[HyperliquidJournalEvent]:
+        """Build journal events for a fill."""
+        ...
+
+    def order_events(
+        self,
+        intent: OrderIntent,
+        result: OrderResult,
+    ) -> Sequence[HyperliquidJournalEvent]:
+        """Build journal events for an order."""
+        ...
+
+    def persist_refs(
+        self,
+        session: RuntimeSession,
+        events: Sequence[HyperliquidJournalEvent],
+    ) -> int:
+        """Persist journal event references."""
+        ...
 
 
 class HyperliquidRuntimeService:
@@ -36,16 +80,16 @@ class HyperliquidRuntimeService:
         self,
         *,
         config: HyperliquidRuntimeConfig,
-        clickhouse: ClickHouseRuntimeReader,
+        clickhouse: HyperliquidRuntimeClickHouse,
         exchange: HyperliquidExchange,
-        journal: HyperliquidTigerBeetleJournal,
+        journal: HyperliquidRuntimeJournal,
     ) -> None:
         self._config = config
         self._clickhouse = clickhouse
         self._exchange = exchange
         self._journal = journal
 
-    def run_once(self, session: Session) -> CycleResult:
+    def run_once(self, session: RuntimeSession) -> CycleResult:
         observed_at = datetime.now(timezone.utc)
         repository = HyperliquidRuntimeRepository(session)
         context = self._load_cycle_context(session, repository)
@@ -68,7 +112,7 @@ class HyperliquidRuntimeService:
 
     def _load_cycle_context(
         self,
-        session: Session,
+        session: RuntimeSession,
         repository: HyperliquidRuntimeRepository,
     ) -> _CycleContext:
         clickhouse_status = self._clickhouse.status()
@@ -218,7 +262,7 @@ def _decision_record(
 
 @dataclass(frozen=True)
 class _CycleContext:
-    session: Session
+    session: RuntimeSession
     repository: HyperliquidRuntimeRepository
     markets: tuple[HyperliquidMarket, ...]
     features: tuple[FeatureSnapshot, ...]

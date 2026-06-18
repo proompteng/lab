@@ -9,7 +9,6 @@ from decimal import Decimal
 from typing import Iterable
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from .models import (
     DecisionRecord,
@@ -22,12 +21,13 @@ from .models import (
     RuntimeDependencyStatus,
     Signal,
 )
+from .runtime_session import RuntimeSession
 
 
 class HyperliquidRuntimeRepository:
     """Persistence facade for runtime tables created by migration 0054."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: RuntimeSession) -> None:
         self._session = session
 
     def upsert_markets(self, markets: Iterable[HyperliquidMarket]) -> None:

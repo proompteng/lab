@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from app.trading.tigerbeetle_ids import stable_u128, u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
@@ -27,6 +27,7 @@ from app.trading.tigerbeetle_ledger_model import (
 )
 
 from .models import Fill, OrderIntent, OrderResult
+from .runtime_session import RuntimeSession
 
 
 @dataclass(frozen=True)
@@ -154,8 +155,8 @@ class HyperliquidTigerBeetleJournal:
 
     def persist_refs(
         self,
-        session: Session,
-        events: list[HyperliquidJournalEvent],
+        session: RuntimeSession,
+        events: Sequence[HyperliquidJournalEvent],
     ) -> int:
         count = 0
         for event in events:
