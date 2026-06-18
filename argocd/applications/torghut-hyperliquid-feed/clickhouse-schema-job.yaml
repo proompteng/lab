@@ -27,25 +27,26 @@ spec:
             - -ec
           args:
             - |
+              set -euo pipefail
+              CLICKHOUSE_CLIENT=(
+                clickhouse-client
+                --host torghut-clickhouse.torghut.svc.cluster.local
+                --port 9000
+                --user "${CLICKHOUSE_USERNAME}"
+                --password "${CLICKHOUSE_PASSWORD}"
+                --connect_timeout 5
+                --send_timeout 30
+                --receive_timeout 120
+              )
               deadline=$((SECONDS + 300))
-              until clickhouse-client \
-                --host torghut-clickhouse.torghut.svc.cluster.local \
-                --port 9000 \
-                --user "${CLICKHOUSE_USERNAME}" \
-                --password "${CLICKHOUSE_PASSWORD}" \
-                --query 'SELECT 1'; do
+              until "${CLICKHOUSE_CLIENT[@]}" --query 'SELECT 1'; do
                 if [ "${SECONDS}" -ge "${deadline}" ]; then
                   echo "ClickHouse did not become ready in time" >&2
                   exit 1
                 fi
                 sleep 5
               done
-              clickhouse-client \
-                --host torghut-clickhouse.torghut.svc.cluster.local \
-                --port 9000 \
-                --user "${CLICKHOUSE_USERNAME}" \
-                --password "${CLICKHOUSE_PASSWORD}" \
-                --multiquery < /schema/schema.sql
+              "${CLICKHOUSE_CLIENT[@]}" --multiquery < /schema/schema.sql
           env:
             - name: CLICKHOUSE_USERNAME
               value: torghut

@@ -33,6 +33,7 @@ private val clickHouseIdentifierPattern = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
 data class ClickHouseReadinessUpdate(
   val ready: Boolean,
+  val tableFreshnessReady: Boolean = ready,
   val tableIngestLagMs: Map<String, Long?>,
 )
 
@@ -54,6 +55,7 @@ class ClickHouseSink(
 
   suspend fun enqueue(record: RoutedEnvelope) {
     if (!config.enabled) return
+    if (tableForTopic(record.topic) !in config.enabledTables) return
     channel.send(record)
   }
 
@@ -61,7 +63,7 @@ class ClickHouseSink(
     scope.launch(Dispatchers.IO) {
       if (!config.enabled) {
         metrics.setClickHouseReady(true)
-        emitReadiness(true)
+        emitReadiness(ready = true, tableFreshnessReady = true)
         return@launch
       }
       val batch = mutableListOf<RoutedEnvelope>()
@@ -90,11 +92,11 @@ class ClickHouseSink(
         insertRows(table, body)
         refreshTableFreshnessIfDue()
       }.onSuccess {
-        metrics.setClickHouseReady(it)
-        emitReadiness(it)
+        metrics.setClickHouseReady(true)
+        emitReadiness(ready = true, tableFreshnessReady = it)
       }.onFailure { error ->
         metrics.setClickHouseReady(false)
-        emitReadiness(false)
+        emitReadiness(ready = false, tableFreshnessReady = false)
         metrics.recordClickHouseError(table)
         clickHouseLogger.warn(error) { "clickhouse insert failed table=$table records=${tableRecords.size}" }
       }
@@ -224,8 +226,17 @@ class ClickHouseSink(
       else -> "hyperliquid_raw"
     }
 
-  private fun emitReadiness(ready: Boolean) {
-    onReady(ClickHouseReadinessUpdate(ready = ready, tableIngestLagMs = latestTableIngestLagMs))
+  private fun emitReadiness(
+    ready: Boolean,
+    tableFreshnessReady: Boolean,
+  ) {
+    onReady(
+      ClickHouseReadinessUpdate(
+        ready = ready,
+        tableFreshnessReady = tableFreshnessReady,
+        tableIngestLagMs = latestTableIngestLagMs,
+      ),
+    )
   }
 
   private fun clickHouseIdentifier(value: String): String {

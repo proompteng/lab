@@ -58,6 +58,7 @@ class HyperliquidFeedApp(
   private val wsReady = AtomicBoolean(false)
   private val kafkaReady = AtomicBoolean(false)
   private val clickHouseReady = AtomicBoolean(!config.clickHouse.enabled)
+  private val clickHouseTableFresh = AtomicBoolean(!config.clickHouse.enabled)
   private val alive = AtomicBoolean(true)
   private val clickHouseLastSuccessMs = AtomicLong(if (config.clickHouse.enabled) 0 else nowMs())
   private val clickHouseLastFailureMs = AtomicLong(0)
@@ -95,6 +96,7 @@ class HyperliquidFeedApp(
         ClickHouseSink(config.clickHouse, httpClient, metrics, json, network = config.network) { update ->
           val observedAt = nowMs()
           clickHouseTableIngestLagMs = update.tableIngestLagMs
+          clickHouseTableFresh.set(update.tableFreshnessReady)
           if (update.ready) {
             clickHouseLastSuccessMs.set(observedAt)
           } else {
@@ -155,6 +157,7 @@ class HyperliquidFeedApp(
       websocket = wsReady.get(),
       kafka = kafkaReady.get(),
       clickhouse = clickHouseReady.get(),
+      clickhouseTableFresh = clickHouseTableFresh.get(),
       clickhouseLastSuccessLagMs = clickHouseLastSuccessLagMs(),
       clickhouseLastFailureAgeMs = clickHouseLastFailureAgeMs(),
       clickhouseTableIngestLagMs = clickHouseTableIngestLagMs,

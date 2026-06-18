@@ -29,6 +29,7 @@ data class ClickHouseConfig(
   val requestTimeoutMs: Long,
   val readyMaxAgeMs: Long,
   val failureHoldMs: Long,
+  val enabledTables: Set<String>,
   val readyTables: Set<String> = setOf("hyperliquid_raw", "hyperliquid_candles"),
   val freshnessCheckMs: Long = 30_000,
 )
@@ -77,6 +78,8 @@ data class HyperliquidConfig(
         "hyperliquid_funding",
         "hyperliquid_status",
       )
+    private val supportedClickHouseTables =
+      supportedClickHouseReadyTables + "hyperliquid_market_catalog"
 
     fun fromEnv(env: Map<String, String>? = null): HyperliquidConfig {
       val mergedEnv = env ?: mergeEnv()
@@ -164,6 +167,14 @@ data class HyperliquidConfig(
           requestTimeoutMs = longEnv(mergedEnv, "CLICKHOUSE_REQUEST_TIMEOUT_MS", 10_000).coerceAtLeast(1_000),
           readyMaxAgeMs = longEnv(mergedEnv, "CLICKHOUSE_READY_MAX_AGE_MS", 120_000).coerceAtLeast(1_000),
           failureHoldMs = longEnv(mergedEnv, "CLICKHOUSE_FAILURE_HOLD_MS", 60_000).coerceAtLeast(1_000),
+          enabledTables =
+            csv(mergedEnv["CLICKHOUSE_ENABLED_TABLES"] ?: supportedClickHouseTables.joinToString(","))
+              .toSet()
+              .also { tables ->
+                if (tables.isEmpty()) error("CLICKHOUSE_ENABLED_TABLES must include at least one table")
+                val unknown = tables.filterNot { it in supportedClickHouseTables }
+                if (unknown.isNotEmpty()) error("Unsupported CLICKHOUSE_ENABLED_TABLES: ${unknown.joinToString(",")}")
+              },
           readyTables =
             csv(mergedEnv["CLICKHOUSE_READY_TABLES"] ?: "hyperliquid_raw,hyperliquid_candles")
               .toSet()
@@ -174,6 +185,10 @@ data class HyperliquidConfig(
               },
           freshnessCheckMs = longEnv(mergedEnv, "CLICKHOUSE_FRESHNESS_CHECK_MS", 30_000).coerceAtLeast(1_000),
         )
+      val disabledReadyTables = clickHouse.readyTables - clickHouse.enabledTables
+      if (disabledReadyTables.isNotEmpty()) {
+        error("CLICKHOUSE_READY_TABLES must be included in CLICKHOUSE_ENABLED_TABLES: ${disabledReadyTables.joinToString(",")}")
+      }
 
       return HyperliquidConfig(
         network = network,

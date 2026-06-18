@@ -7,6 +7,9 @@ metadata:
     argocd.argoproj.io/sync-wave: "-2"
 data:
   schema.sql: |-
+    SET distributed_ddl_task_timeout = 45;
+    SET distributed_ddl_output_mode = 'null_status_on_timeout';
+
     CREATE DATABASE IF NOT EXISTS torghut ON CLUSTER default;
 
     CREATE TABLE IF NOT EXISTS torghut.hyperliquid_raw ON CLUSTER default
