@@ -7,10 +7,16 @@ from app.hyperliquid_runtime.universe import classify_asset, select_equity_like_
 
 def test_classifies_equity_like_perps_only() -> None:
     assert classify_asset(coin="cash:AAPL", dex="cash") == "stocks"
+    assert classify_asset(coin="xyz:AAPL", dex="xyz") == "stocks"
     assert classify_asset(coin="USA500", dex="default") == "indices"
+    assert classify_asset(coin="xyz:SP500", dex="xyz") == "indices"
     assert classify_asset(coin="OPENAI", dex="xyz") == "preipo"
+    assert classify_asset(coin="xyz:OPENAI", dex="xyz") == "preipo"
     assert classify_asset(coin="BTC", dex="default") is None
     assert classify_asset(coin="GOLD", dex="cash") is None
+    assert classify_asset(coin="xyz:BRENTOIL", dex="xyz") is None
+    assert classify_asset(coin="xyz:JPY", dex="xyz") is None
+    assert classify_asset(coin="xyz:NOTVETTED", dex="xyz") is None
 
 
 def test_selects_liquid_allowed_markets_by_volume() -> None:

@@ -10,22 +10,74 @@ from .models import AssetClass, HyperliquidMarket
 
 
 _COMMODITY_COINS = {
+    "BRENTOIL",
+    "BRENT",
+    "CL",
+    "COPPER",
     "GOLD",
+    "NATGAS",
     "SILVER",
     "WTI",
-    "BRENT",
-    "COPPER",
-    "NATGAS",
+}
+_FX_COINS = {
+    "AUD",
+    "CAD",
+    "CHF",
+    "CNH",
+    "EUR",
+    "GBP",
+    "JPY",
 }
 _INDEX_COINS = {
-    "USA500",
-    "SPX",
+    "DJI",
+    "EWY",
     "NAS100",
     "NDX",
-    "US30",
-    "DJI",
-    "RUSSELL",
     "RUT",
+    "RUSSELL",
+    "SP500",
+    "SPX",
+    "USA500",
+    "US30",
+    "USATECH",
+    "XYZ100",
+}
+_STOCK_COINS = {
+    "AAPL",
+    "AMD",
+    "AMZN",
+    "ARM",
+    "AVGO",
+    "BB",
+    "CBRS",
+    "COIN",
+    "CRCL",
+    "CRWV",
+    "GOOGL",
+    "HOOD",
+    "INTC",
+    "LITE",
+    "META",
+    "MRVL",
+    "MSFT",
+    "MSTR",
+    "MU",
+    "NBIS",
+    "NVDA",
+    "ORCL",
+    "PLTR",
+    "RKLB",
+    "SMSN",
+    "SNDK",
+    "TSLA",
+    "WDC",
+}
+_VETTED_PREIPO_COINS = {
+    "BIRD",
+    "OPENAI",
+    "PURRDAT",
+    "SKHX",
+    "SPCX",
 }
 _STOCK_PREFIX = "cash:"
 _PREIPO_DEXES = {"xyz", "preipo"}
@@ -116,19 +168,22 @@ def classify_asset(
     """Classify public Hyperliquid perps into V1 allowed equity-like buckets."""
 
     normalized_coin = coin.strip()
-    symbol = normalized_coin.removeprefix(_STOCK_PREFIX).upper()
+    symbol = normalized_coin.removeprefix(_STOCK_PREFIX).split(":")[-1].upper()
     normalized_dex = dex.strip().lower()
-    if normalized_dex in _PREIPO_DEXES:
-        return "preipo"
     payload_class = _payload_asset_class(payload)
     if payload_class in {"stocks", "indices", "preipo"}:
         return cast(AssetClass, payload_class)
-    if symbol in _COMMODITY_COINS:
+    if symbol in _COMMODITY_COINS or symbol in _FX_COINS:
         return None
     if symbol in _INDEX_COINS:
         return "indices"
     if normalized_coin.startswith(_STOCK_PREFIX):
         return "stocks"
+    if normalized_dex in _PREIPO_DEXES:
+        if symbol in _VETTED_PREIPO_COINS:
+            return "preipo"
+        if symbol in _STOCK_COINS:
+            return "stocks"
     return None
 
 
