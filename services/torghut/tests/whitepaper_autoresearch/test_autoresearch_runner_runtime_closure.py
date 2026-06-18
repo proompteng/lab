@@ -348,7 +348,10 @@ class TestAutoresearchRunnerRuntimeClosure(WhitepaperAutoresearchRunnerTestCaseB
                 rows=_authoritative_exact_replay_ledger_rows(),
             )
         )
-        with patch.object(runner, "build_runtime_ledger_buckets", return_value=[]):
+        with patch(
+            "scripts.whitepaper_autoresearch_runner.runtime_closure.build_runtime_ledger_buckets",
+            return_value=[],
+        ):
             self.assertIsNone(
                 runner._runtime_closure_exact_replay_bucket(
                     ledger={
