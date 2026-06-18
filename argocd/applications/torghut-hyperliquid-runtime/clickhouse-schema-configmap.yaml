@@ -87,6 +87,49 @@ data:
         AND JSONExtractString(payload, 'i') IN ('1m', '3m', '5m', '15m', '1h')
     );
 
+    INSERT INTO torghut.hyperliquid_ta_features
+    SELECT
+      now64(3) AS ingest_ts,
+      event_ts,
+      network,
+      coalesce(market_id, symbol) AS market_id,
+      coalesce(coin, symbol) AS coin,
+      coalesce(dex, 'default') AS dex,
+      JSONExtractString(payload, 'i') AS interval,
+      toFloat64OrZero(JSONExtractString(payload, 'c')) AS price,
+      if(interval = '1m', _return_bps, 0) AS momentum_1m_bps,
+      if(interval = '3m', _return_bps, 0) AS momentum_3m_bps,
+      if(interval = '5m', _return_bps, 0) AS momentum_5m_bps,
+      if(interval = '15m', _return_bps, 0) AS momentum_15m_bps,
+      if(interval = '1h', _return_bps, 0) AS momentum_1h_bps,
+      _range_bps AS volatility_bps,
+      _vwap_distance_bps AS vwap_distance_bps,
+      0 AS spread_bps,
+      0 AS book_imbalance,
+      toFloat64OrZero(JSONExtractString(payload, 'v')) * price AS liquidity_usd,
+      0 AS funding_rate,
+      0 AS open_interest_usd,
+      multiIf(_return_bps > 8, 'trend_up', _return_bps < -8, 'trend_down', 'range') AS regime,
+      greatest(0, dateDiff('second', toDateTime(event_ts), now())) AS source_lag_seconds
+    FROM
+    (
+      SELECT
+        *,
+        toFloat64OrZero(JSONExtractString(payload, 'o')) AS _open,
+        toFloat64OrZero(JSONExtractString(payload, 'h')) AS _high,
+        toFloat64OrZero(JSONExtractString(payload, 'l')) AS _low,
+        toFloat64OrZero(JSONExtractString(payload, 'c')) AS _close,
+        if(_open = 0, 0, 10000 * (_close - _open) / _open) AS _return_bps,
+        if(_close = 0, 0, 10000 * (_high - _low) / _close) AS _range_bps,
+        ((_high + _low + _close) / 3) AS _typical_price,
+        if(_typical_price = 0, 0, 10000 * (_close - _typical_price) / _typical_price) AS _vwap_distance_bps
+      FROM torghut.hyperliquid_candles
+      WHERE channel = 'candle'
+        AND market_type = 'perp'
+        AND event_ts >= now() - INTERVAL 2 HOUR
+        AND JSONExtractString(payload, 'i') IN ('1m', '3m', '5m', '15m', '1h')
+    );
+
     CREATE VIEW IF NOT EXISTS torghut.hyperliquid_runtime_latest_features ON CLUSTER default
     AS
     SELECT
