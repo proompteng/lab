@@ -28,7 +28,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-options-enricher
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:69bb4da9bd0d45ad05a9e96db53ff2c47d32b9004e46ab18c967b31bd8d00f9f
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:ec0185cc472491811f1ddf4af60c4e555436c29d85877cb0e4ecb8d75e68d64b
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
@@ -71,9 +71,9 @@ spec:
                   name: torghut-options-alpaca
                   key: APCA_API_BASE_URL
             - name: TORGHUT_OPTIONS_VERSION
-              value: v0.596.0-745-gb05408212
+              value: v0.596.0-749-g66faedaf4
             - name: TORGHUT_OPTIONS_COMMIT
-              value: b0540821262ed14f206cd8a6582245c7704d0993
+              value: 66faedaf48b917bb1437d622f98845e4720319bd
           ports:
             - name: http
               containerPort: 8080
