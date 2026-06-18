@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  validate-manifests:
     if: github.event_name == 'pull_request'
     runs-on: arc-arm64
     steps:
@@ -67,18 +67,54 @@ jobs:
             mirror.gcr.io/golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 \
             sh services/headlamp/scripts/test-upstream.sh
 
+  validate-image-platform:
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: arc-amd64
+          - platform: linux/arm64
+            arch: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
       - name: Fetch pinned Headlamp upstream source
         run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
 
-      - name: Build Headlamp image
-        run: docker buildx build --platform linux/arm64 --load -t headlamp:test services/headlamp
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Verify multiplexer bundle is present
-        run: docker run --rm --entrypoint sh headlamp:test -lc "grep -R -n 'wsMultiplexer' /headlamp/frontend/assets >/dev/null"
+      - name: Build native Headlamp image
+        run: |
+          docker buildx build \
+            --platform '${{ matrix.platform }}' \
+            --load \
+            --build-arg 'LAB_GIT_SHA=${{ github.sha }}' \
+            -t 'headlamp:test-${{ matrix.arch }}' \
+            services/headlamp
 
-  deploy-main:
+      - name: Verify native multiplexer bundle is present
+        run: docker run --rm --platform '${{ matrix.platform }}' --entrypoint sh 'headlamp:test-${{ matrix.arch }}' -lc "grep -R -n 'wsMultiplexer' /headlamp/frontend/assets >/dev/null"
+
+  build-platform:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: arc-arm64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: arc-amd64
+          - platform: linux/arm64
+            arch: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -89,34 +125,88 @@ jobs:
       - name: Fetch pinned Headlamp upstream source
         run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
 
-      - name: Docker meta
+      - name: Resolve image tag
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            registry.ide-newton.ts.net/lab/headlamp
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}},value=${{ github.sha }}
-            type=sha
+        run: echo "tag=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push native Headlamp image
         uses: docker/build-push-action@v6
         with:
-          platforms: linux/arm64
+          platforms: ${{ matrix.platform }}
           context: ./services/headlamp
           file: ./services/headlamp/Dockerfile
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            registry.ide-newton.ts.net/lab/headlamp:sha-${{ steps.meta.outputs.tag }}-${{ matrix.arch }}
+            registry.ide-newton.ts.net/lab/headlamp:main-${{ matrix.arch }}
           push: true
           cache-from: |
-            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:latest
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache-${{ matrix.arch }}
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:main-${{ matrix.arch }}
             type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache
           cache-to: |
-            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache,mode=max
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache-${{ matrix.arch }},mode=max
             type=inline
+
+  publish-index:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-platform
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve image tag
+        id: meta
+        run: echo "tag=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create multi-arch Headlamp image index
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE='registry.ide-newton.ts.net/lab/headlamp'
+          TAG='${{ steps.meta.outputs.tag }}'
+          docker buildx imagetools create \
+            -t "${IMAGE}:sha-${TAG}" \
+            -t "${IMAGE}:main" \
+            "${IMAGE}:sha-${TAG}-amd64" \
+            "${IMAGE}:sha-${TAG}-arm64"
+
+      - name: Verify multi-arch Headlamp image index
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE='registry.ide-newton.ts.net/lab/headlamp'
+          TAG='${{ steps.meta.outputs.tag }}'
+          MANIFEST_JSON="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE}:sha-${TAG}")"
+          DIGEST="$(jq -r '.manifest.digest // empty' <<< "${MANIFEST_JSON}")"
+          if ! printf '%s' "${DIGEST}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+            echo "Failed to resolve digest for ${IMAGE}:sha-${TAG}" >&2
+            docker buildx imagetools inspect "${IMAGE}:sha-${TAG}" >&2
+            exit 1
+          fi
+
+          for platform in linux/amd64 linux/arm64; do
+            platform_digest="$(
+              jq -r --arg platform "${platform}" \
+                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
+                <<< "${MANIFEST_JSON}" | head -n 1
+            )"
+            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Image ${IMAGE}:sha-${TAG} is missing required platform ${platform}" >&2
+              docker buildx imagetools inspect "${IMAGE}:sha-${TAG}" >&2
+              exit 1
+            fi
+          done
+
+          echo "Published ${IMAGE}:sha-${TAG}@${DIGEST}"
