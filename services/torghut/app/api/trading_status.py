@@ -79,6 +79,9 @@ from .status_helpers import (
 from .trading_misc import (
     build_consumer_evidence_receipt_projection as _build_consumer_evidence_receipt_projection,
 )
+from app.trading.submission_authority import (
+    build_submission_authority_status as _build_submission_authority_status,
+)
 from .vnext_helpers import build_autonomy_bridge_status as _build_autonomy_bridge_status
 
 _TradingStatusReadBudget = TradingStatusReadBudget
@@ -326,6 +329,10 @@ def trading_status() -> dict[str, object]:
             )
     simple_lane_reject_reason_totals = _simple_lane_reject_reason_totals(state)
     simple_lane_status = _build_simple_lane_status_payload()
+    submission_authority = _build_submission_authority_status(
+        live_submission_gate,
+        simple_lane_status=simple_lane_status,
+    )
     proof_floor = _build_profitability_proof_floor_payload(
         state=state,
         torghut_revision=str(shadow_first_runtime["active_revision"]),
@@ -592,6 +599,7 @@ def trading_status() -> dict[str, object]:
         },
         "running": state.running,
         "live_submission_gate": live_submission_gate,
+        "submission_authority": submission_authority,
         "tigerbeetle_ledger": tigerbeetle_ledger,
         "portfolio_runtime_ledger_summary": runtime_ledger_portfolio_summary,
         "runtime_ledger_profit_distance_readback": (
