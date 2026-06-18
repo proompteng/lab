@@ -9,6 +9,8 @@ from tests.flatten_paper_account_positions.support import (
     StringIO,
     _TestFlattenPaperAccountPositionsBase,
     datetime,
+    flatten_cli,
+    flatten_core_module,
     flatten_script,
     json,
     patch,
@@ -121,9 +123,9 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
 
         with (
             patch.object(sys, "argv", argv),
-            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(flatten_cli, "TorghutAlpacaClient", return_value=client),
             patch.object(
-                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+                flatten_cli, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
             redirect_stdout(StringIO()) as output,
         ):
@@ -154,15 +156,15 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
 
         with (
             patch.object(sys, "argv", argv),
-            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(flatten_cli, "TorghutAlpacaClient", return_value=client),
             patch.object(
-                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+                flatten_cli, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
             patch.object(
-                flatten_script, "SessionLocal", return_value=FakeSessionContext()
+                flatten_core_module, "SessionLocal", return_value=FakeSessionContext()
             ),
             patch.object(
-                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+                flatten_cli, "snapshot_account_and_positions", return_value=snapshot
             ) as snapshot_account,
             redirect_stdout(StringIO()) as output,
         ):
@@ -543,15 +545,15 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
 
         with (
             patch.object(sys, "argv", argv),
-            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(flatten_cli, "TorghutAlpacaClient", return_value=client),
             patch.object(
-                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+                flatten_cli, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
             patch.object(
-                flatten_script, "SessionLocal", return_value=FakeSessionContext()
+                flatten_core_module, "SessionLocal", return_value=FakeSessionContext()
             ),
             patch.object(
-                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+                flatten_cli, "snapshot_account_and_positions", return_value=snapshot
             ),
             patch.object(
                 flatten_script.urllib.request,
@@ -627,15 +629,15 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
 
         with (
             patch.object(sys, "argv", argv),
-            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(flatten_cli, "TorghutAlpacaClient", return_value=client),
             patch.object(
-                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+                flatten_cli, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
             patch.object(
-                flatten_script, "SessionLocal", return_value=FakeSessionContext()
+                flatten_core_module, "SessionLocal", return_value=FakeSessionContext()
             ),
             patch.object(
-                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+                flatten_cli, "snapshot_account_and_positions", return_value=snapshot
             ),
             patch.object(
                 flatten_script.urllib.request,
@@ -706,15 +708,15 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
 
         with (
             patch.object(sys, "argv", argv),
-            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(flatten_cli, "TorghutAlpacaClient", return_value=client),
             patch.object(
-                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+                flatten_cli, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
             patch.object(
-                flatten_script, "SessionLocal", return_value=FakeSessionContext()
+                flatten_core_module, "SessionLocal", return_value=FakeSessionContext()
             ),
             patch.object(
-                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+                flatten_cli, "snapshot_account_and_positions", return_value=snapshot
             ),
             patch.object(
                 flatten_script.urllib.request,

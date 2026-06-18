@@ -17,6 +17,13 @@ from sqlalchemy.orm import Session
 from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
 from app.trading.models import StrategyDecision
 from scripts import flatten_paper_account_positions as flatten_script
+from scripts.paper_account_position_flattening import cli as flatten_cli
+from scripts.paper_account_position_flattening import (
+    flatten_core as flatten_core_module,
+)
+from scripts.paper_account_position_flattening import (
+    lineage_execution as flatten_lineage,
+)
 from scripts.flatten_paper_account_positions import (
     flatten_paper_account_positions,
 )
@@ -241,6 +248,9 @@ __all__ = [
     "cast",
     "create_engine",
     "datetime",
+    "flatten_cli",
+    "flatten_core_module",
+    "flatten_lineage",
     "flatten_paper_account_positions",
     "flatten_script",
     "json",

@@ -6,6 +6,8 @@ from tests.flatten_paper_account_positions.support import (
     StringIO,
     _TestFlattenPaperAccountPositionsBase,
     datetime,
+    flatten_cli,
+    flatten_core_module,
     flatten_script,
     json,
     patch,
@@ -132,12 +134,12 @@ class TestFlattenPaperAccountCliSnapshotGuards(_TestFlattenPaperAccountPositions
         with (
             patch.dict("os.environ", {"SIM_DB_DSN": "sqlite+pysqlite:///:memory:"}),
             patch.object(sys, "argv", argv),
-            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(flatten_cli, "TorghutAlpacaClient", return_value=client),
             patch.object(
-                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+                flatten_cli, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
             patch.object(
-                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+                flatten_cli, "snapshot_account_and_positions", return_value=snapshot
             ) as snapshot_account,
             redirect_stdout(StringIO()) as output,
         ):
@@ -169,13 +171,13 @@ class TestFlattenPaperAccountCliSnapshotGuards(_TestFlattenPaperAccountPositions
 
         with (
             patch.object(sys, "argv", argv),
-            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(flatten_cli, "TorghutAlpacaClient", return_value=client),
             patch.object(
-                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+                flatten_cli, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
-            patch.object(flatten_script, "SessionLocal") as session_local,
+            patch.object(flatten_core_module, "SessionLocal") as session_local,
             patch.object(
-                flatten_script, "snapshot_account_and_positions"
+                flatten_cli, "snapshot_account_and_positions"
             ) as snapshot_account,
             redirect_stdout(StringIO()) as output,
         ):
@@ -204,9 +206,9 @@ class TestFlattenPaperAccountCliSnapshotGuards(_TestFlattenPaperAccountPositions
 
         with (
             patch.object(sys, "argv", argv),
-            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(flatten_cli, "TorghutAlpacaClient", return_value=client),
             patch.object(
-                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+                flatten_cli, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
             redirect_stdout(StringIO()) as output,
         ):
