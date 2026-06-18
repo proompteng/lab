@@ -7,6 +7,7 @@ ITEM="${HYPERLIQUID_TESTNET_1PASSWORD_ITEM:-hyperliquid-testnet}"
 usage() {
   cat <<EOF
 Usage:
+  $0 status
   $0 check
   $0 create
   $0 reconcile
@@ -45,6 +46,86 @@ check_item() {
   op read --no-newline "op://${VAULT}/${ITEM}/account-address" >/dev/null
   op read --no-newline "op://${VAULT}/${ITEM}/api-wallet-private-key" >/dev/null
   echo "1Password item is present: op://${VAULT}/${ITEM}"
+}
+
+status() {
+  local ready=true
+
+  if command -v op >/dev/null 2>&1 && op whoami >/dev/null 2>&1; then
+    echo "1Password CLI: signed in"
+    if op item get "${ITEM}" --vault "${VAULT}" --format json >/dev/null 2>&1; then
+      echo "1Password item: present at op://${VAULT}/${ITEM}"
+    else
+      echo "1Password item: missing at op://${VAULT}/${ITEM}"
+      ready=false
+    fi
+
+    for field in account-address api-wallet-private-key; do
+      if op read --no-newline "op://${VAULT}/${ITEM}/${field}" >/dev/null 2>&1; then
+        echo "1Password field ${field}: present"
+      else
+        echo "1Password field ${field}: missing"
+        ready=false
+      fi
+    done
+  else
+    echo "1Password CLI: not signed in"
+    ready=false
+  fi
+
+  if command -v kubectl >/dev/null 2>&1; then
+    local external_secret_status=""
+    local external_secret_reason=""
+    local external_secret_message=""
+
+    if kubectl -n torghut get externalsecret torghut-hyperliquid-testnet >/dev/null 2>&1; then
+      external_secret_status="$(
+        kubectl -n torghut get externalsecret torghut-hyperliquid-testnet \
+          -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || true
+      )"
+      external_secret_reason="$(
+        kubectl -n torghut get externalsecret torghut-hyperliquid-testnet \
+          -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.reason}{end}' 2>/dev/null || true
+      )"
+      external_secret_message="$(
+        kubectl -n torghut get externalsecret torghut-hyperliquid-testnet \
+          -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.message}{end}' 2>/dev/null || true
+      )"
+
+      echo "ExternalSecret Ready: ${external_secret_status:-Unknown}"
+      if [[ -n "${external_secret_reason}" ]]; then
+        echo "ExternalSecret reason: ${external_secret_reason}"
+      fi
+      if [[ -n "${external_secret_message}" ]]; then
+        echo "ExternalSecret message: ${external_secret_message}"
+      fi
+
+      if [[ "${external_secret_status}" != "True" ]]; then
+        ready=false
+      fi
+    else
+      echo "ExternalSecret: missing in namespace torghut"
+      ready=false
+    fi
+
+    if kubectl -n torghut get secret torghut-hyperliquid-testnet >/dev/null 2>&1; then
+      echo "Kubernetes Secret: present"
+    else
+      echo "Kubernetes Secret: missing"
+      ready=false
+    fi
+  else
+    echo "kubectl: missing"
+    ready=false
+  fi
+
+  if [[ "${ready}" == "true" ]]; then
+    echo "Hyperliquid testnet secret bootstrap: ready"
+    return 0
+  fi
+
+  echo "Hyperliquid testnet secret bootstrap: not ready"
+  return 1
 }
 
 create_item() {
@@ -137,10 +218,18 @@ reconcile_external_secret() {
   kubectl -n torghut annotate externalsecret torghut-hyperliquid-testnet \
     "force-sync=$(date +%s)" \
     --overwrite
-  kubectl -n torghut get externalsecret torghut-hyperliquid-testnet
+  if ! kubectl -n torghut wait --for=condition=Ready externalsecret/torghut-hyperliquid-testnet --timeout=120s; then
+    echo "ExternalSecret did not become Ready after reconcile." >&2
+    status || true
+    exit 1
+  fi
+  status
 }
 
 case "${1:-}" in
+  status)
+    status
+    ;;
   check)
     check_item
     ;;
