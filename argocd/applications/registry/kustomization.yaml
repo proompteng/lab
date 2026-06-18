@@ -6,7 +6,5 @@ resources:
   - service.yaml
   - pvc.yaml
   - registry-configmap.yaml
-  - registry-gc-rbac.yaml
-  - registry-gc-cronjob.yaml
   - tailscale-ingress.yaml
   - ingressroute-registry-k8s-private.yaml
