@@ -200,7 +200,7 @@ describe('Torghut manifest scheduling', () => {
     expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
   })
 
-  it('keeps Hyperliquid runtime shadow mode free of optional execution secret drift', () => {
+  it('keeps Hyperliquid runtime shadow mode wired to an optional testnet execution secret', () => {
     const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
     const runtimeData = getAtPath(runtimeConfig, ['data'])
     expect(runtimeData.HYPERLIQUID_RUNTIME_TRADING_ENABLED).toBe('false')
@@ -222,6 +222,30 @@ describe('Torghut manifest scheduling', () => {
         value: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
       }),
     )
+    expect(runtimeEnv).toContainEqual(
+      expect.objectContaining({
+        name: 'HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS',
+        valueFrom: {
+          secretKeyRef: {
+            name: 'torghut-hyperliquid-testnet',
+            key: 'account-address',
+            optional: true,
+          },
+        },
+      }),
+    )
+    expect(runtimeEnv).toContainEqual(
+      expect.objectContaining({
+        name: 'HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY',
+        valueFrom: {
+          secretKeyRef: {
+            name: 'torghut-hyperliquid-testnet',
+            key: 'api-wallet-private-key',
+            optional: true,
+          },
+        },
+      }),
+    )
 
     const runtimeMigrationJob = parseManifest('argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml')
     const migrationContainer = getAtPath(runtimeMigrationJob, ['spec', 'template', 'spec', 'containers', 0])
@@ -233,7 +257,7 @@ describe('Torghut manifest scheduling', () => {
     const kustomization = parseManifest('argocd/applications/torghut-hyperliquid-runtime/kustomization.yaml')
     const resources = kustomization.resources
     expect(resources).toBeArray()
-    expect(resources).not.toContain('externalsecret.yaml')
+    expect(resources).toContain('externalsecret.yaml')
 
     const externalSecret = parseManifest('argocd/applications/torghut-hyperliquid-runtime/externalsecret.yaml')
     expect(externalSecret.kind).toBe('ExternalSecret')
