@@ -91,9 +91,19 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('Torghut sim paper-route target mirror did not materialize after bounded retry window')
   })
 
-  it('requests Argo refresh before polling deployed revisions', () => {
+  it('requests explicit Argo sync before polling deployed revisions', () => {
     expect(workflow).toContain('argocd.argoproj.io/refresh=hard --overwrite')
+    expect(workflow).toContain('request_argocd_sync()')
+    expect(workflow).toContain('{"prune": True}')
+    expect(workflow).toContain('kubectl patch application "${app}" -n argocd --type merge -p "${payload}"')
     expect(workflow).toContain('for app in torghut torghut-options; do')
+  })
+
+  it('bounds Argo convergence waits and prints resource diagnostics on timeout', () => {
+    expect(workflow).toContain('for attempt in $(seq 1 60); do')
+    expect(workflow).toContain('sleep 5')
+    expect(workflow).toContain('dump_argocd_app_diagnostics "${app}"')
+    expect(workflow).toContain('Argo application ${app} OutOfSync resources:')
   })
 
   it('fails when Torghut-managed images still have pull errors', () => {

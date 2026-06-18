@@ -109,10 +109,6 @@ jobs:
             git fetch --no-tags --depth=200 origin main
           fi
 
-          for app in torghut torghut-options; do
-            kubectl annotate application "${app}" -n argocd argocd.argoproj.io/refresh=hard --overwrite
-          done
-
           ensure_revision_known() {
             local revision="$1"
             if [ -z "${revision}" ]; then
@@ -125,8 +121,50 @@ jobs:
             git cat-file -e "${revision}^{commit}" >/dev/null 2>&1
           }
 
+          request_argocd_sync() {
+            local app="$1"
+            local revision="$2"
+            local active_operation
+            local payload
+
+            kubectl annotate application "${app}" -n argocd argocd.argoproj.io/refresh=hard --overwrite
+
+            active_operation="$(kubectl get application "${app}" -n argocd -o jsonpath='{.operation.sync.revision}' 2>/dev/null || true)"
+            if [ -n "${active_operation}" ]; then
+              echo "Argo application ${app} already has a sync operation for revision ${active_operation}"
+              return
+            fi
+
+            payload="$(
+              SYNC_REVISION="${revision}" python3 - <<'PY'
+import json
+import os
+
+sync = {"prune": True}
+revision = os.environ.get("SYNC_REVISION", "")
+if revision:
+    sync["revision"] = revision
+print(json.dumps({"operation": {"sync": sync}}))
+PY
+            )"
+            kubectl patch application "${app}" -n argocd --type merge -p "${payload}"
+          }
+
+          dump_argocd_app_diagnostics() {
+            local app="$1"
+
+            echo "Argo application ${app} status:"
+            kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.message}{"\n"}' || true
+            echo "Argo application ${app} OutOfSync resources:"
+            kubectl get application "${app}" -n argocd -o jsonpath='{range .status.resources[?(@.status=="OutOfSync")]}{.kind}{"/"}{.namespace}{"/"}{.name}{"\t"}{.status}{"\t"}{.health.status}{"\n"}{end}' || true
+          }
+
           for app in torghut torghut-options; do
-            for attempt in $(seq 1 90); do
+            request_argocd_sync "${app}" "${EXPECTED_REVISION}"
+          done
+
+          for app in torghut torghut-options; do
+            for attempt in $(seq 1 60); do
               STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
               SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
               HEALTH_STATUS="$(echo "${STATUS}" | awk '{print $2}')"
@@ -178,12 +216,13 @@ jobs:
                 fi
               fi
 
-              if [ "${attempt}" -eq 90 ]; then
+              if [ "${attempt}" -eq 60 ]; then
                 echo "Argo application ${app} did not become Synced/Healthy with expected revision"
+                dump_argocd_app_diagnostics "${app}"
                 exit 1
               fi
               echo "Attempt ${attempt}: ${app} sync=${SYNC_STATUS} health=${HEALTH_STATUS} revision=${REVISION} desired=${DESIRED_REVISION} operation=${OPERATION_PHASE} syncResult=${SYNC_RESULT_REVISION} history=${HISTORY_REVISION}"
-              sleep 10
+              sleep 5
             done
           done
 
