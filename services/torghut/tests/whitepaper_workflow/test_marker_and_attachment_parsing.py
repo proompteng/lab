@@ -21,6 +21,7 @@ from tests.whitepaper_workflow.support import (
     _FakeCephClient,
     _FakeInngestClient,
     _TestWhitepaperWorkflowBase,
+    _TestWhitepaperWorkflowService,
     _profile_ids_for_family,
     build_whitepaper_run_id,
     candidate_specs_module,
@@ -162,12 +163,16 @@ https://example.com/paper.pdf
             fake_ceph = _FakeCephClient()
             mock_from_env.side_effect = [None, fake_ceph]
 
-            service = WhitepaperWorkflowService()
-            service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+            with patch.object(
+                WhitepaperWorkflowService,
+                "_download_pdf",
+                return_value=b"%PDF-1.7 sample",
+            ):
+                service = WhitepaperWorkflowService()
 
-            outcome = service._store_issue_pdf(
-                attachment_url="https://example.com/paper.pdf"
-            )
+                outcome = service._store_issue_pdf(
+                    attachment_url="https://example.com/paper.pdf"
+                )
 
             self.assertEqual(mock_from_env.call_count, 2)
             self.assertEqual(outcome.ceph_bucket, "fresh-bucket")
@@ -176,9 +181,8 @@ https://example.com/paper.pdf
     def test_dispatch_uses_github_issue_number_from_issue_url_for_replay_payloads(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
 
         submitted_payloads: list[dict[str, Any]] = []
 
@@ -194,7 +198,7 @@ https://example.com/paper.pdf
                 },
             }
 
-        service._submit_agents_agentrun = _fake_submit  # type: ignore[method-assign]
+        service.submit_agents_agentrun_handler = _fake_submit
         replay_payload = self._issue_payload(issue_number=900000004)
         replay_issue = cast(dict[str, Any], replay_payload["issue"])
         replay_issue["html_url"] = "https://github.com/proompteng/lab/issues/3592"
@@ -225,18 +229,8 @@ https://example.com/paper.pdf
             self.assertEqual(kickoff.reason, "comment_without_requeue_keyword")
 
     def test_ingest_and_finalize_flow(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "ok": True,
-                "resource": {
-                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
-                    "status": {"phase": "Pending"},
-                },
-            }
-        )
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -318,18 +312,8 @@ https://example.com/paper.pdf
             self.assertEqual(pr_row.pr_number, 1234)
 
     def test_finalize_preserves_explicit_implementation_plan_md(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "ok": True,
-                "resource": {
-                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
-                    "status": {"phase": "Pending"},
-                },
-            }
-        )
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -378,21 +362,17 @@ https://example.com/paper.pdf
     def test_finalize_falls_back_to_local_indexing_when_finalize_enqueue_fails(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_SEMANTIC_INDEXING_ENABLED"] = "true"
         os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
         service.set_inngest_client(cast(Any, _FakeInngestClient()))
 
         indexed_run_ids: list[str] = []
-        service._enqueue_finalized_inngest_event = lambda _session, *, run: False  # type: ignore[method-assign]
-        service.index_synthesis_semantic_content = (  # type: ignore[method-assign]
-            lambda _session, *, run_id: (
-                indexed_run_ids.append(run_id)
-                or {"run_id": run_id, "indexed_chunks": 0}
-            )
+        service.enqueue_finalized_inngest_event_handler = lambda _session, *, run: False
+        service.index_synthesis_semantic_content_handler = lambda _session, *, run_id: (
+            indexed_run_ids.append(run_id) or {"run_id": run_id, "indexed_chunks": 0}
         )
 
         with Session(self.engine) as session:
@@ -427,18 +407,8 @@ https://example.com/paper.pdf
             self.assertEqual(indexed_run_ids, [run_row.run_id])
 
     def test_finalize_persists_claim_graph_and_compiled_experiments(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "ok": True,
-                "resource": {
-                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
-                    "status": {"phase": "Pending"},
-                },
-            }
-        )
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -558,16 +528,16 @@ https://example.com/paper.pdf
     def test_structured_output_helpers_cover_direct_nested_and_gating_merge(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
-        direct = service._structured_output_list(  # type: ignore[attr-defined]
+        service = _TestWhitepaperWorkflowService()
+        direct = service.structured_output_list(
             {"claims": [{"claim_id": "claim-1"}]},
             key="claims",
         )
-        nested = service._structured_output_list(  # type: ignore[attr-defined]
+        nested = service.structured_output_list(
             {"synthesis": {"claims": [{"claim_id": "claim-2"}]}},
             key="claims",
         )
-        compiled = service._compiled_experiment_specs_from_templates(  # type: ignore[attr-defined]
+        compiled = service.compiled_experiment_specs_from_templates(
             run_id="run-1",
             claims=[{"claim_id": "claim-1"}],
             relations=[],
@@ -580,7 +550,7 @@ https://example.com/paper.pdf
                 }
             ],
         )
-        contradictions = service._inferred_contradiction_events(  # type: ignore[attr-defined]
+        contradictions = service.inferred_contradiction_events(
             [
                 {
                     "relation_id": "rel-ignore",
@@ -599,7 +569,7 @@ https://example.com/paper.pdf
                 },
             ]
         )
-        merged = service._build_verdict_gating_payload(  # type: ignore[attr-defined]
+        merged = service.build_verdict_gating_payload(
             {"dspy_eval_report": {"score": 0.8}}
         )
 
@@ -613,8 +583,8 @@ https://example.com/paper.pdf
     def test_structured_outputs_compile_claims_when_experiment_specs_are_absent(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
-        compiled = service._compiled_experiment_specs_from_templates(  # type: ignore[attr-defined]
+        service = _TestWhitepaperWorkflowService()
+        compiled = service.compiled_experiment_specs_from_templates(
             run_id="run-claim-compiler",
             claims=[
                 {
@@ -654,9 +624,8 @@ https://example.com/paper.pdf
         )
 
     def test_sync_structured_outputs_skips_incomplete_records(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
 
         with Session(self.engine) as session:
@@ -674,7 +643,7 @@ https://example.com/paper.pdf
                 )
             ).scalar_one()
 
-            service._sync_structured_research_outputs(  # type: ignore[attr-defined]
+            service.sync_structured_research_outputs(
                 session,
                 run_row,
                 {
@@ -747,20 +716,17 @@ https://example.com/paper.pdf
             )
 
     def test_finalize_run_propagates_synthesis_indexing_failures(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_SEMANTIC_INDEXING_ENABLED"] = "true"
         os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
         service.set_inngest_client(cast(Any, _FakeInngestClient()))
 
-        service._enqueue_finalized_inngest_event = lambda _session, *, run: False  # type: ignore[method-assign]
-        service.index_synthesis_semantic_content = (  # type: ignore[method-assign]
-            lambda _session, *, run_id: (_ for _ in ()).throw(
-                RuntimeError(f"index failure for run {run_id}")
-            )
-        )
+        service.enqueue_finalized_inngest_event_handler = lambda _session, *, run: False
+        service.index_synthesis_semantic_content_handler = lambda _session, *, run_id: (
+            _ for _ in ()
+        ).throw(RuntimeError(f"index failure for run {run_id}"))
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(

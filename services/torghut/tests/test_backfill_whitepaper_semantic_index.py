@@ -37,6 +37,27 @@ class _FakeWorkflow:
         del source_scope
         return [text] if text else []
 
+    @staticmethod
+    def _download_pdf(_url: str) -> bytes:
+        return b"%PDF-1.4 fake"
+
+    @staticmethod
+    def _extract_pdf_text(_bytes: bytes) -> dict[str, object]:
+        return {
+            "full_text": "downloaded full text",
+            "metadata": {"pages": 1},
+        }
+
+    def _upsert_whitepaper_content(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        full_text: str,
+        extraction_meta: dict[str, object],
+    ) -> None:
+        del session, run, full_text, extraction_meta
+
     def index_full_text_semantic_content(
         self, session: Session, *, run_id: str, full_text: str
     ) -> dict[str, int]:
@@ -157,13 +178,6 @@ class TestBackfillWhitepaperSemanticIndex(TestCase):
             }
             session.commit()
 
-        raising_workflow._download_pdf = lambda _url: b"%PDF-1.4 fake"  # type: ignore[attr-defined]
-        raising_workflow._extract_pdf_text = lambda _bytes: {  # type: ignore[attr-defined]
-            "full_text": "downloaded full text",
-            "metadata": {"pages": 1},
-        }
-        raising_workflow._upsert_whitepaper_content = lambda *args, **kwargs: None  # type: ignore[attr-defined]
-
         with (
             patch(
                 "scripts.backfill_whitepaper_semantic_index.SessionLocal",
@@ -194,13 +208,6 @@ class TestBackfillWhitepaperSemanticIndex(TestCase):
             }
             session.commit()
 
-        workflow._download_pdf = lambda _url: b"%PDF-1.4 fake"  # type: ignore[attr-defined]
-        workflow._extract_pdf_text = lambda _bytes: {  # type: ignore[attr-defined]
-            "full_text": "downloaded full text",
-            "metadata": {"pages": 1},
-        }
-        workflow._upsert_whitepaper_content = lambda *args, **kwargs: None  # type: ignore[attr-defined]
-
         with (
             patch(
                 "scripts.backfill_whitepaper_semantic_index.SessionLocal",
@@ -230,13 +237,6 @@ class TestBackfillWhitepaperSemanticIndex(TestCase):
                 "attachment_url": "https://example.com/paper.pdf"
             }
             session.commit()
-
-        workflow._download_pdf = lambda _url: b"%PDF-1.4 fake"  # type: ignore[attr-defined]
-        workflow._extract_pdf_text = lambda _bytes: {  # type: ignore[attr-defined]
-            "full_text": "downloaded full text",
-            "metadata": {"pages": 1},
-        }
-        workflow._upsert_whitepaper_content = lambda *args, **kwargs: None  # type: ignore[attr-defined]
 
         with (
             patch(

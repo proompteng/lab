@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 
+from collections.abc import Mapping
 import json
 import os
 import tempfile
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -93,7 +94,7 @@ class _FakeKafkaConsumer:
         self.commit_calls += 1
 
 
-class _FakeKafkaSession:
+class _FakeKafkaSession(Session):
     def __init__(self) -> None:
         self.commit_calls = 0
         self.rollback_calls = 0
@@ -114,6 +115,171 @@ class _FakeInngestClient:
         payload = dict(data) if isinstance(data, dict) else {}
         self.events.append(payload)
         return [f"evt-{len(self.events)}"]
+
+
+class _DownloadPdfHandler(Protocol):
+    def __call__(self, url: str) -> bytes: ...
+
+
+class _SubmitAgentsAgentrunHandler(Protocol):
+    def __call__(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]: ...
+
+
+class _EnqueueFinalizedInngestEventHandler(Protocol):
+    def __call__(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+    ) -> bool: ...
+
+
+class _IndexSynthesisSemanticContentHandler(Protocol):
+    def __call__(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+    ) -> dict[str, Any]: ...
+
+
+class _EmbedTextsHandler(Protocol):
+    def __call__(self, texts: list[str]) -> tuple[str, int, list[list[float]]]: ...
+
+
+def _default_download_pdf(_url: str) -> bytes:
+    return b"%PDF-1.7 sample"
+
+
+def _default_submit_agents_agentrun(
+    _payload: Mapping[str, Any],
+    *,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "resource": {
+            "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
+            "status": {"phase": "Pending"},
+        },
+    }
+
+
+class _TestWhitepaperWorkflowService(WhitepaperWorkflowService):
+    def __init__(
+        self,
+        *,
+        download_pdf_handler: _DownloadPdfHandler | None = None,
+        submit_agents_agentrun_handler: _SubmitAgentsAgentrunHandler | None = None,
+    ) -> None:
+        self.ceph_client = None
+        self.inngest_client = None
+        self.download_pdf_handler = download_pdf_handler or _default_download_pdf
+        self.submit_agents_agentrun_handler = (
+            submit_agents_agentrun_handler or _default_submit_agents_agentrun
+        )
+        self.enqueue_finalized_inngest_event_handler: (
+            _EnqueueFinalizedInngestEventHandler | None
+        ) = None
+        self.index_synthesis_semantic_content_handler: (
+            _IndexSynthesisSemanticContentHandler | None
+        ) = None
+        self.embed_texts_handler: _EmbedTextsHandler | None = None
+
+    def _download_pdf(self, url: str) -> bytes:
+        return self.download_pdf_handler(url)
+
+    def _submit_agents_agentrun(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        return self.submit_agents_agentrun_handler(
+            payload,
+            idempotency_key=idempotency_key,
+        )
+
+    def _enqueue_finalized_inngest_event(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+    ) -> bool:
+        if self.enqueue_finalized_inngest_event_handler is None:
+            return super()._enqueue_finalized_inngest_event(session, run=run)
+        return self.enqueue_finalized_inngest_event_handler(session, run=run)
+
+    def index_synthesis_semantic_content(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+    ) -> dict[str, Any]:
+        if self.index_synthesis_semantic_content_handler is None:
+            return super().index_synthesis_semantic_content(session, run_id=run_id)
+        return self.index_synthesis_semantic_content_handler(session, run_id=run_id)
+
+    def _embed_texts(self, texts: list[str]) -> tuple[str, int, list[list[float]]]:
+        if self.embed_texts_handler is None:
+            return super()._embed_texts(texts)
+        return self.embed_texts_handler(texts)
+
+    def structured_output_list(
+        self, payload: Mapping[str, Any], *, key: str
+    ) -> list[dict[str, Any]]:
+        return self._structured_output_list(payload, key=key)
+
+    def compiled_experiment_specs_from_templates(
+        self,
+        *,
+        run_id: str,
+        claims: list[dict[str, Any]],
+        relations: list[dict[str, Any]],
+        templates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return self._compiled_experiment_specs_from_templates(
+            run_id=run_id,
+            claims=claims,
+            relations=relations,
+            templates=templates,
+        )
+
+    def inferred_contradiction_events(
+        self, relations: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        return self._inferred_contradiction_events(relations)
+
+    def build_verdict_gating_payload(self, verdict_payload: Mapping[str, Any]) -> Any:
+        return self._build_verdict_gating_payload(verdict_payload)
+
+    def sync_structured_research_outputs(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        payload: Mapping[str, Any],
+    ) -> None:
+        self._sync_structured_research_outputs(session, run, payload)
+
+    def persist_semantic_chunks_and_embeddings(
+        self,
+        session: Session,
+        *,
+        run: WhitepaperAnalysisRun,
+        source_scope: str,
+        chunks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self._persist_semantic_chunks_and_embeddings(
+            session,
+            run=run,
+            source_scope=source_scope,
+            chunks=chunks,
+        )
 
 
 class _FakeKafkaWorkflowService:
@@ -196,8 +362,6 @@ Attachment: {attachment_url}
         return payload
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Any",
     "Base",
@@ -230,6 +394,7 @@ __all__: tuple[str, ...] = (
     "_FakeKafkaSession",
     "_FakeKafkaWorkflowService",
     "_TestWhitepaperWorkflowBase",
+    "_TestWhitepaperWorkflowService",
     "_profile_ids_for_family",
     "build_whitepaper_run_id",
     "candidate_specs_module",
