@@ -110,7 +110,9 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
             return {}
 
         with (
-            patch("app.trading.hypotheses.urlopen") as jangar_status_fetch,
+            patch(
+                "app.trading.hypotheses.runtime_ledger_row_rank.urlopen"
+            ) as jangar_status_fetch,
             patch(
                 "app.api.status_helpers._load_llm_evaluation",
                 side_effect=_load_llm_evaluation,

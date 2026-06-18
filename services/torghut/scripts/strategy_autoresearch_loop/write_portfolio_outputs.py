@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, cast
@@ -59,13 +58,6 @@ from .write_results_tsv import (
     _summary_promotion_readiness_for_outputs,
     _write_results_tsv,
 )
-
-
-def _strategy_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("scripts.run_strategy_autoresearch_loop")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 def _write_portfolio_outputs(
@@ -511,22 +503,14 @@ def _persist_run_outputs(
         proposal_scores=proposal_scores,
         history=history,
     )
-    mlx_export_writer = _strategy_root_export(
-        "write_mlx_notebook_exports",
-        write_mlx_notebook_exports,
-    )
-    mlx_exports = mlx_export_writer(
+    mlx_exports = write_mlx_notebook_exports(
         run_root=run_root,
         manifest=manifest,
         descriptors=descriptors,
         proposal_scores=proposal_scores,
         proposal_diagnostics=proposal_diagnostics,
     )
-    notebook_writer = _strategy_root_export(
-        "write_autoresearch_notebooks",
-        write_autoresearch_notebooks,
-    )
-    notebook_paths = notebook_writer(run_root)
+    notebook_paths = write_autoresearch_notebooks(run_root)
     exact_replay_ledger_ranking = _write_exact_replay_ledger_ranking(
         run_root=run_root,
         program=program,
@@ -578,11 +562,7 @@ def _persist_run_outputs(
         ),
     }
     best_candidate = cast(dict[str, Any] | None, summary["best_candidate"])
-    portfolio_writer = _strategy_root_export(
-        "_write_portfolio_outputs",
-        _write_portfolio_outputs,
-    )
-    portfolio, portfolio_outputs = portfolio_writer(
+    portfolio, portfolio_outputs = _write_portfolio_outputs(
         run_root=run_root,
         program=program,
     )
@@ -590,11 +570,7 @@ def _persist_run_outputs(
     summary["best_portfolio_candidate"] = (
         portfolio.to_payload() if portfolio is not None else None
     )
-    runtime_closure_writer = _strategy_root_export(
-        "write_runtime_closure_bundle",
-        write_runtime_closure_bundle,
-    )
-    runtime_closure = runtime_closure_writer(
+    runtime_closure = write_runtime_closure_bundle(
         run_root=run_root,
         runner_run_id=runner_run_id,
         program=program,

@@ -434,11 +434,11 @@ class TestStrategyAutoresearchLoopA(StrategyAutoresearchTestCase):
 
             with (
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                    "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                     side_effect=responses,
                 ),
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._iter_signal_rows",
                     return_value=iter(signal_rows),
                 ),
             ):
@@ -644,7 +644,7 @@ class TestStrategyAutoresearchLoopA(StrategyAutoresearchTestCase):
 
             with (
                 patch(
-                    "scripts.run_strategy_autoresearch_loop._select_effective_replay_tape_window",
+                    "scripts.strategy_autoresearch_loop.load_yaml._select_effective_replay_tape_window",
                     return_value=(
                         date(2026, 3, 23),
                         date(2026, 3, 23),
@@ -652,11 +652,11 @@ class TestStrategyAutoresearchLoopA(StrategyAutoresearchTestCase):
                     ),
                 ) as select_window,
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._iter_signal_rows",
                     return_value=iter(signal_rows),
                 ),
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                    "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                     side_effect=run_frontier,
                 ),
             ):
@@ -747,7 +747,7 @@ class TestStrategyAutoresearchLoopA(StrategyAutoresearchTestCase):
             )
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                 side_effect=ValueError(
                     "strategy_not_found:breakout-continuation-long-v1"
                 ),

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -39,13 +38,6 @@ from .shared_context import (
     resolve_autonomy_artifact_root as _resolve_autonomy_artifact_root,
     logger,
 )
-
-
-def _governance_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.scheduler.governance")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 if TYPE_CHECKING:
@@ -536,10 +528,7 @@ class _TradingSchedulerGovernanceLifecycleMethods(
             return None
 
     def _governance_now(self) -> datetime:
-        now_provider = _governance_root_export("trading_now", trading_now)
-        return now_provider(
-            account_label=getattr(self._pipeline, "account_label", None)
-        )
+        return trading_now(account_label=getattr(self._pipeline, "account_label", None))
 
     def _trigger_emergency_stop(
         self,
@@ -705,10 +694,7 @@ class _TradingSchedulerGovernanceLifecycleMethods(
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
         with self._pipeline.session_factory() as session:
-            continuity_check = _governance_root_export(
-                "evaluate_evidence_continuity", evaluate_evidence_continuity
-            )
-            report = continuity_check(
+            report = evaluate_evidence_continuity(
                 session,
                 run_limit=settings.trading_evidence_continuity_run_limit,
             )

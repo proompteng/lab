@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, cast
@@ -122,15 +121,8 @@ def _strategy_name_from_strategy_id(strategy_id: str) -> str:
     return base.replace("_", "-") if base else ""
 
 
-def _strategy_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("scripts.run_strategy_autoresearch_loop")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
-
-
 def _hypothesis_manifest_rows() -> list[dict[str, str]]:
-    repo_root = Path(_strategy_root_export("_REPO_ROOT", _REPO_ROOT))
+    repo_root = Path(_REPO_ROOT)
     hypothesis_dir = repo_root / "services/torghut/config/trading/hypotheses"
     rows: list[dict[str, str]] = []
     if not hypothesis_dir.exists():

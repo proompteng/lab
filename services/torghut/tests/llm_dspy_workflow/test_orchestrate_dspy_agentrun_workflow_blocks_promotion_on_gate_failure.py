@@ -62,11 +62,11 @@ class TestOrchestrateDspyAgentrunWorkflowBlocksPromotionOnGateFailure(
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with self.assertRaisesRegex(
@@ -162,11 +162,11 @@ class TestOrchestrateDspyAgentrunWorkflowBlocksPromotionOnGateFailure(
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with Session(self.engine) as session:
@@ -247,11 +247,11 @@ class TestOrchestrateDspyAgentrunWorkflowBlocksPromotionOnGateFailure(
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with self.assertRaisesRegex(
@@ -324,11 +324,11 @@ class TestOrchestrateDspyAgentrunWorkflowBlocksPromotionOnGateFailure(
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with self.assertRaisesRegex(
@@ -408,11 +408,11 @@ class TestOrchestrateDspyAgentrunWorkflowBlocksPromotionOnGateFailure(
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with self.assertRaisesRegex(
@@ -489,11 +489,11 @@ class TestOrchestrateDspyAgentrunWorkflowBlocksPromotionOnGateFailure(
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with self.assertRaisesRegex(
@@ -587,11 +587,11 @@ class TestOrchestrateDspyAgentrunWorkflowBlocksPromotionOnGateFailure(
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with self.assertRaisesRegex(
@@ -668,11 +668,11 @@ class TestOrchestrateDspyAgentrunWorkflowBlocksPromotionOnGateFailure(
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with self.assertRaisesRegex(

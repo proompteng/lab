@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, cast
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -143,13 +142,6 @@ _runtime_ledger_ref_matches_expected_bucket = getattr(
 )
 
 
-def _tigerbeetle_reconcile_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.tigerbeetle_reconcile")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
-
-
 def latest_tigerbeetle_reconciliation_status_payload(
     session: Session,
     *,
@@ -252,13 +244,7 @@ def reconcile_tigerbeetle_transfers(
     tb_client: TigerBeetleClientProtocol | None = None
     try:
         if refs:
-            client_factory = _tigerbeetle_reconcile_root_export(
-                "create_tigerbeetle_client",
-                create_tigerbeetle_client,
-            )
-            tb_client = client or client_factory(settings_obj)
-            if tb_client is None:
-                raise RuntimeError("tigerbeetle_client_unavailable")
+            tb_client = client or create_tigerbeetle_client(settings_obj)
             looked_up = tb_client.lookup_transfers(
                 [int(ref.transfer_id) for ref in refs]
             )

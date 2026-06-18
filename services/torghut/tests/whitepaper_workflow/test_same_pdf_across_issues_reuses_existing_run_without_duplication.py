@@ -150,7 +150,9 @@ class TestSamePdfAcrossIssuesReusesExistingRunWithoutDuplication(
         self.assertEqual(session.commit_calls, 1)
         self.assertEqual(session.rollback_calls, 1)
 
-    @patch("app.whitepapers.workflow._http_request_bytes")
+    @patch(
+        "app.whitepapers.workflow.whitepaper_workflow_api_methods._http_request_bytes"
+    )
     def test_download_pdf_requests_redirect_following(
         self, mock_http_request: Any
     ) -> None:

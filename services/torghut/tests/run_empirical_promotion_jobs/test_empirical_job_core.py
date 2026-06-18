@@ -703,14 +703,12 @@ class TestRunEmpiricalPromotionJobsCore(RunEmpiricalPromotionJobsTestCase):
         )
 
         with (
-            patch.object(
-                renewal,
-                "_latest_autoresearch_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._latest_autoresearch_runtime_window_targets",
                 side_effect=AssertionError("autoresearch fallback should be skipped"),
             ),
-            patch.object(
-                renewal,
-                "_registry_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._registry_runtime_window_targets",
                 side_effect=AssertionError("registry fallback should be skipped"),
             ),
         ):
@@ -762,9 +760,8 @@ class TestRunEmpiricalPromotionJobsCore(RunEmpiricalPromotionJobsTestCase):
             runtime_window_source_kind="paper_runtime_observed",
         )
 
-        with patch.object(
-            renewal,
-            "_latest_autoresearch_runtime_window_targets",
+        with patch(
+            "scripts.empirical_promotion_renewal.runtime_window_targets._latest_autoresearch_runtime_window_targets",
             return_value=[fallback_target],
         ) as latest_autoresearch:
             targets = renewal._runtime_window_targets(args)
@@ -810,14 +807,12 @@ class TestRunEmpiricalPromotionJobsCore(RunEmpiricalPromotionJobsTestCase):
         )
 
         with (
-            patch.object(
-                renewal,
-                "_latest_autoresearch_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._latest_autoresearch_runtime_window_targets",
                 side_effect=AssertionError("autoresearch fallback should not run"),
             ),
-            patch.object(
-                renewal,
-                "_registry_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._registry_runtime_window_targets",
                 side_effect=AssertionError("registry fallback should not run"),
             ),
             self.assertRaisesRegex(

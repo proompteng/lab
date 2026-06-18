@@ -441,7 +441,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
             ]
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._iter_signal_rows",
                 return_value=iter(signal_rows),
             ):
                 stats, receipt = runner._maybe_materialize_run_replay_tape(
@@ -504,7 +504,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
             )
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.replay_mod._http_query",
+                "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._http_query",
                 side_effect=AssertionError("clickhouse should not be queried"),
             ):
                 stats = runner._maybe_write_signal_bundle(
@@ -564,7 +564,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
 
             with (
                 patch(
-                    "scripts.run_strategy_autoresearch_loop._select_effective_replay_tape_window",
+                    "scripts.strategy_autoresearch_loop.load_yaml._select_effective_replay_tape_window",
                     return_value=(
                         date(2026, 3, 23),
                         date(2026, 3, 23),
@@ -572,7 +572,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
                     ),
                 ) as select_window,
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._iter_signal_rows",
                     return_value=iter(signal_rows),
                 ),
             ):
@@ -670,7 +670,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
 
             with (
                 patch(
-                    "scripts.run_strategy_autoresearch_loop._select_effective_replay_tape_window",
+                    "scripts.strategy_autoresearch_loop.load_yaml._select_effective_replay_tape_window",
                     return_value=(
                         date(2026, 3, 2),
                         date(2026, 3, 27),
@@ -678,7 +678,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
                     ),
                 ) as select_window,
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._iter_signal_rows",
                     return_value=iter(signal_rows),
                 ),
             ):
@@ -770,7 +770,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
 
             with (
                 patch(
-                    "scripts.run_strategy_autoresearch_loop._select_effective_replay_tape_window",
+                    "scripts.strategy_autoresearch_loop.load_yaml._select_effective_replay_tape_window",
                     return_value=(
                         date(2026, 3, 2),
                         date(2026, 3, 27),
@@ -778,7 +778,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
                     ),
                 ) as select_window,
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._iter_signal_rows",
                     return_value=iter(signal_rows),
                 ),
             ):
@@ -837,7 +837,7 @@ class TestStrategyAutoresearchReplayMaterialization(StrategyAutoresearchTestCase
             ]
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._iter_signal_rows",
                 return_value=iter(signal_rows),
             ):
                 with self.assertRaisesRegex(

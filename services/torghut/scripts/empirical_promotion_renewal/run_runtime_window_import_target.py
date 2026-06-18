@@ -94,13 +94,6 @@ def run_captured_child(
         raise RuntimeError(f"{context}_failed: exit_code={exc.returncode}") from exc
 
 
-def _renewal_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("scripts.renew_latest_empirical_promotion_jobs")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
-
-
 def _run_runtime_window_import_target(
     *,
     args: argparse.Namespace,
@@ -113,22 +106,14 @@ def _run_runtime_window_import_target(
     now: datetime,
     allow_source_activity_window: bool = False,
 ) -> dict[str, Any]:
-    read_runtime_window_manifest = _renewal_root_export(
-        "_read_runtime_window_manifest",
-        _read_runtime_window_manifest,
-    )
-    runtime_manifest = read_runtime_window_manifest(target.source_manifest_ref)
+    runtime_manifest = _read_runtime_window_manifest(target.source_manifest_ref)
     window_selection = "explicit_or_default"
     target_plan_window = _runtime_window_target_plan_bounds(target)
     if target_plan_window is not None:
         window_start, window_end = target_plan_window
         window_selection = "target_plan_window"
     elif allow_source_activity_window:
-        latest_source_activity_window = _renewal_root_export(
-            "_latest_source_activity_window",
-            _latest_source_activity_window,
-        )
-        source_activity_window = latest_source_activity_window(
+        source_activity_window = _latest_source_activity_window(
             target=target,
             runtime_manifest=runtime_manifest,
         )

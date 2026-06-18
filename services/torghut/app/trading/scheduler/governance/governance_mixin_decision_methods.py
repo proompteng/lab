@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,13 +25,6 @@ from .shared_context import (
     resolve_autonomy_artifact_root as _resolve_autonomy_artifact_root,
     logger,
 )
-
-
-def _governance_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.scheduler.governance")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 if TYPE_CHECKING:
@@ -397,11 +389,7 @@ class _TradingSchedulerGovernanceDecisionMethods(
         query_start = batch.query_start or start
         query_end = batch.query_end or now
         try:
-            persist_no_signal_run = _governance_root_export(
-                "upsert_autonomy_no_signal_run",
-                upsert_autonomy_no_signal_run,
-            )
-            self.state.last_autonomy_run_id = persist_no_signal_run(
+            self.state.last_autonomy_run_id = upsert_autonomy_no_signal_run(
                 session_factory=self._pipeline.session_factory,
                 query_start=query_start,
                 query_end=query_end,
@@ -593,10 +581,7 @@ class _TradingSchedulerGovernanceDecisionMethods(
         if self._pipeline is None:
             raise RuntimeError("trading_pipeline_not_initialized")
         try:
-            lane_runner = _governance_root_export(
-                "run_autonomous_lane", run_autonomous_lane
-            )
-            return lane_runner(
+            return run_autonomous_lane(
                 signals_path=signals_path,
                 strategy_config_path=strategy_config_path,
                 gate_policy_path=gate_policy_path,

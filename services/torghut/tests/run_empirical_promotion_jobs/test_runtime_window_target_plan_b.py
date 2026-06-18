@@ -232,11 +232,12 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowTargetPlanB(
                 side_effect=[transient, transient],
             ) as urlopen,
             patch.object(renewal.wall_time, "sleep") as sleep,
-            patch.object(
-                renewal,
-                "_latest_autoresearch_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._latest_autoresearch_runtime_window_targets",
             ) as latest,
-            patch.object(renewal, "_registry_runtime_window_targets") as registry,
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._registry_runtime_window_targets",
+            ) as registry,
             self.assertRaisesRegex(
                 RuntimeError,
                 "runtime_window_target_plan_required_but_empty",
@@ -561,7 +562,10 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowTargetPlanB(
             runtime_window_strategy_name="",
         )
 
-        with patch.object(renewal, "SessionLocal", return_value=fake_session):
+        with patch(
+            "scripts.empirical_promotion_renewal.raise_if_runtime_window_target_plan_import.SessionLocal",
+            return_value=fake_session,
+        ):
             targets = renewal._latest_autoresearch_runtime_window_targets(args)
 
         self.assertIsNotNone(fake_session.statement)

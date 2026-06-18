@@ -137,7 +137,9 @@ class TestStrategyAutoresearchHelpers(StrategyAutoresearchTestCase):
     def test_runtime_window_plan_helpers_surface_missing_handoffs(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            with patch.object(runner, "_REPO_ROOT", root):
+            with patch(
+                "scripts.strategy_autoresearch_loop.write_results_tsv._REPO_ROOT", root
+            ):
                 self.assertEqual(runner._hypothesis_manifest_rows(), [])
 
             hypothesis_dir = root / "services/torghut/config/trading/hypotheses"
@@ -168,7 +170,9 @@ class TestStrategyAutoresearchHelpers(StrategyAutoresearchTestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(runner, "_REPO_ROOT", root):
+            with patch(
+                "scripts.strategy_autoresearch_loop.write_results_tsv._REPO_ROOT", root
+            ):
                 rows = runner._hypothesis_manifest_rows()
                 self.assertEqual(
                     [row["hypothesis_id"] for row in rows],
@@ -442,19 +446,19 @@ class TestStrategyAutoresearchHelpers(StrategyAutoresearchTestCase):
 
             with (
                 patch(
-                    "scripts.run_strategy_autoresearch_loop._write_portfolio_outputs",
+                    "scripts.strategy_autoresearch_loop.write_portfolio_outputs._write_portfolio_outputs",
                     return_value=(portfolio, portfolio_outputs),
                 ),
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.write_runtime_closure_bundle",
+                    "scripts.strategy_autoresearch_loop.write_portfolio_outputs.write_runtime_closure_bundle",
                     return_value=RuntimeSummary(),
                 ) as write_runtime_closure,
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.write_mlx_notebook_exports",
+                    "scripts.strategy_autoresearch_loop.write_portfolio_outputs.write_mlx_notebook_exports",
                     return_value={},
                 ),
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.write_autoresearch_notebooks",
+                    "scripts.strategy_autoresearch_loop.write_portfolio_outputs.write_autoresearch_notebooks",
                     return_value=[],
                 ),
             ):
@@ -606,19 +610,19 @@ class TestStrategyAutoresearchHelpers(StrategyAutoresearchTestCase):
 
             with (
                 patch(
-                    "scripts.run_strategy_autoresearch_loop._write_portfolio_outputs",
+                    "scripts.strategy_autoresearch_loop.write_portfolio_outputs._write_portfolio_outputs",
                     return_value=(None, {}),
                 ),
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.write_runtime_closure_bundle",
+                    "scripts.strategy_autoresearch_loop.write_portfolio_outputs.write_runtime_closure_bundle",
                     return_value=RuntimeSummary(),
                 ),
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.write_mlx_notebook_exports",
+                    "scripts.strategy_autoresearch_loop.write_portfolio_outputs.write_mlx_notebook_exports",
                     return_value={},
                 ),
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.write_autoresearch_notebooks",
+                    "scripts.strategy_autoresearch_loop.write_portfolio_outputs.write_autoresearch_notebooks",
                     return_value=[],
                 ),
             ):

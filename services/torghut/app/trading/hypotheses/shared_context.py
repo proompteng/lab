@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -467,13 +466,6 @@ def hypothesis_registry_requires_dependency_capability(
     return False
 
 
-def _hypotheses_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.hypotheses")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
-
-
 def resolve_hypothesis_dependency_quorum(
     registry: HypothesisRegistryLoadResult,
 ) -> JangarDependencyQuorumStatus:
@@ -483,15 +475,9 @@ def resolve_hypothesis_dependency_quorum(
         registry,
         "jangar_dependency_quorum",
     ):
-        from .runtime_ledger_row_rank import (
-            load_jangar_dependency_quorum as default_load_jangar_dependency_quorum,
-        )
+        from .runtime_ledger_row_rank import load_jangar_dependency_quorum
 
-        load_dependency_quorum = _hypotheses_root_export(
-            "load_jangar_dependency_quorum",
-            default_load_jangar_dependency_quorum,
-        )
-        return load_dependency_quorum()
+        return load_jangar_dependency_quorum()
     return JangarDependencyQuorumStatus(
         decision="allow",
         reasons=["torghut_dependency_quorum_not_required"],
@@ -840,7 +826,6 @@ __all__: tuple[str, ...] = (
     "_empty_payload_dict_list",
     "_extract_stage_trust",
     "_first_matching_reason",
-    "_hypotheses_root_export",
     "_is_dependency_required",
     "_normalize_dependency_capability",
     "_optional_bool",
@@ -882,7 +867,6 @@ __all__: tuple[str, ...] = (
     "sequence",
     "settings",
     "stable_string_list",
-    "sys",
     "timedelta",
     "timezone",
     "urlopen",

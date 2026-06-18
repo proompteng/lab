@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Mapping, Optional, cast
 
@@ -32,13 +31,6 @@ from .clickhouse_signal_ingestor_core_methods import (
 from .clickhouse_signal_ingestor_market_methods import (
     ClickHouseSignalIngestorMarketMethods as _ClickHouseSignalIngestorMarketMethods,
 )
-
-
-def _ingest_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.ingest")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 if TYPE_CHECKING:
@@ -90,8 +82,7 @@ class _ClickHouseSignalIngestorPersistenceMethods(
             if cursor_at.tzinfo is None:
                 cursor_at = cursor_at.replace(tzinfo=timezone.utc)
             if self.simulation_mode and cursor_at <= SIMULATION_CURSOR_BASELINE:
-                now_provider = _ingest_root_export("trading_now", trading_now)
-                return now_provider(account_label=self.account_label), None, None
+                return trading_now(account_label=self.account_label), None, None
             if self.simulation_mode:
                 normalized_cursor = normalize_simulation_cursor(cursor_at)
                 if normalized_cursor is not None and normalized_cursor != cursor_at:
@@ -99,8 +90,7 @@ class _ClickHouseSignalIngestorPersistenceMethods(
             return cursor_at, cursor_row.cursor_seq, cursor_row.cursor_symbol
 
         if self.simulation_mode:
-            now_provider = _ingest_root_export("trading_now", trading_now)
-            return now_provider(account_label=self.account_label), None, None
+            return trading_now(account_label=self.account_label), None, None
 
         lookback = timedelta(minutes=self.initial_lookback_minutes)
         return datetime.now(timezone.utc) - lookback, None, None

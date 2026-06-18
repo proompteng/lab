@@ -291,11 +291,11 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
 
             with (
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                    "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                     side_effect=responses,
                 ),
                 patch(
-                    "scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows",
+                    "scripts.strategy_autoresearch_loop.load_yaml.replay_mod._iter_signal_rows",
                     return_value=iter(signal_rows),
                 ),
             ):
@@ -506,7 +506,7 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
                 return response
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                 side_effect=_frontier_side_effect,
             ):
                 payload = runner.run_strategy_autoresearch_loop(args)
@@ -642,7 +642,7 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
             }
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                 side_effect=[
                     frontier_payload,
                     AssertionError("loop should stop after discarded objective hit"),
@@ -701,7 +701,7 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
             )
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                 side_effect=RuntimeError("frontier blew up"),
             ):
                 payload = runner.run_strategy_autoresearch_loop(args)
@@ -774,7 +774,7 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
             }
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                 return_value=frontier_payload,
             ) as mock_frontier:
                 payload = runner.run_strategy_autoresearch_loop(args)
@@ -872,7 +872,7 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
             ]
 
             with patch(
-                "scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
+                "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                 side_effect=frontier_responses,
             ):
                 payload = runner.run_strategy_autoresearch_loop(args)

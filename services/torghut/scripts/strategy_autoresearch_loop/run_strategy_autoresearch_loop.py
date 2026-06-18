@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, cast
@@ -75,13 +74,6 @@ from .write_portfolio_outputs import (
     _write_exact_replay_ledger_ranking,
     _write_exact_replay_ledger_remediation,
 )
-
-
-def _strategy_loop_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("scripts.run_strategy_autoresearch_loop")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
@@ -373,11 +365,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 summary.get("exact_replay_ledger_remediation")
             )
             try:
-                frontier_runner = _strategy_loop_root_export(
-                    "run_consistent_profitability_frontier",
-                    run_consistent_profitability_frontier,
-                )
-                frontier_payload = frontier_runner(
+                frontier_payload = run_consistent_profitability_frontier(
                     _frontier_args(
                         args=frontier_base_args,
                         program=program,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
 from collections.abc import Mapping
 from decimal import Decimal
@@ -68,13 +67,6 @@ from .order_executor_core_support import (
     unknown_position_sell_inventory_conflict as _unknown_position_sell_inventory_conflict,
     validate_pre_submit_request as _validate_pre_submit_request,
 )
-
-
-def _execution_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.execution")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 if TYPE_CHECKING:
@@ -459,8 +451,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                 order_response=order_payload,
             )
         )
-        sync_order = _execution_root_export("sync_order_to_db", sync_order_to_db)
-        return sync_order(
+        return sync_order_to_db(
             session,
             order_payload,
             trade_decision_id=str(decision_row.id),

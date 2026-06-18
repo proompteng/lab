@@ -387,7 +387,9 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
 
             alpaca_client = FakeAlpacaClient()
 
-            with patch("app.trading.execution.sync_order_to_db") as sync_mock:
+            with patch(
+                "app.trading.execution.order_executor_core_methods.sync_order_to_db"
+            ) as sync_mock:
                 sync_mock.side_effect = RuntimeError("db write failed")
                 with self.assertRaises(RuntimeError):
                     executor.submit_order(

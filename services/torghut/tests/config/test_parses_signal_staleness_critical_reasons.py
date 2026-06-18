@@ -112,7 +112,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             }
             return _MockFlagResponse({"enabled": values.get(key, False)})
 
-        with patch("app.config.urlopen", side_effect=_mock_urlopen):
+        with patch("app.config.common.urlopen", side_effect=_mock_urlopen):
             settings = Settings(
                 TRADING_ENABLED=True,
                 TRADING_EMERGENCY_STOP_ENABLED=False,
@@ -170,7 +170,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             )
             return _MockFlagResponse({"enabled": None})
 
-        with patch("app.config.urlopen", side_effect=_mock_urlopen):
+        with patch("app.config.common.urlopen", side_effect=_mock_urlopen):
             Settings(
                 TRADING_ENABLED=False,
                 TRADING_UNIVERSE_SOURCE="static",
@@ -191,7 +191,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             self.assertEqual(payload.get("context"), {})
 
     def test_feature_flag_failures_fallback_to_env_values(self) -> None:
-        with patch("app.config.urlopen", side_effect=RuntimeError("network")):
+        with patch("app.config.common.urlopen", side_effect=RuntimeError("network")):
             settings = Settings(
                 TRADING_ENABLED=False,
                 TRADING_EMERGENCY_STOP_ENABLED=False,
@@ -214,7 +214,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             call_count += 1
             raise RuntimeError("network")
 
-        with patch("app.config.urlopen", side_effect=_mock_urlopen):
+        with patch("app.config.common.urlopen", side_effect=_mock_urlopen):
             Settings(
                 TRADING_ENABLED=False,
                 TRADING_EMERGENCY_STOP_ENABLED=False,
@@ -249,7 +249,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             call_count += 1
             return _Response()
 
-        with patch("app.config.urlopen", side_effect=_mock_urlopen):
+        with patch("app.config.common.urlopen", side_effect=_mock_urlopen):
             Settings(
                 TRADING_ENABLED=False,
                 TRADING_EMERGENCY_STOP_ENABLED=False,

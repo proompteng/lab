@@ -86,7 +86,7 @@ class TestReconciliationPassesWhenPostgresRefsMatchTigerbeetle(
             client.transfers[1001] = _transfer()
 
             with patch(
-                "app.trading.tigerbeetle_reconcile.create_tigerbeetle_client",
+                "app.trading.tigerbeetle_reconcile.latest_tigerbeetle_reconciliation_status_p.create_tigerbeetle_client",
                 return_value=client,
             ):
                 payload = reconcile_tigerbeetle_transfers(

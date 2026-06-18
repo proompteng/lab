@@ -119,14 +119,16 @@ class TestLoggingConfig(TestCase):
 
         with (
             patch(
-                "app.whitepapers.workflow.whitepaper_workflow_enabled",
+                "app.whitepapers.workflow.whitepaper_workflow_service.whitepaper_workflow_enabled",
                 return_value=True,
             ),
             patch(
-                "app.whitepapers.workflow.whitepaper_kafka_enabled",
+                "app.whitepapers.workflow.whitepaper_workflow_service.whitepaper_kafka_enabled",
                 return_value=True,
             ),
-            patch("app.whitepapers.workflow.logger.info") as mock_info,
+            patch(
+                "app.whitepapers.workflow.whitepaper_workflow_service.logger.info"
+            ) as mock_info,
         ):
             counters = ingestor.ingest_once(cast(Any, session))
 

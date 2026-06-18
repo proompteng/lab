@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -26,13 +25,6 @@ from .shared_context import (
     simulation_fetch_window as _simulation_fetch_window,
     logger,
 )
-
-
-def _ingest_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.ingest")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 def _qualified_table_name(table: str) -> str:
@@ -178,8 +170,7 @@ class _ClickHouseSignalIngestorCoreMethods(_ClickHouseSignalIngestorCoreBase):
                 no_signal_reason="clickhouse_url_missing",
             )
 
-        now_provider = _ingest_root_export("trading_now", trading_now)
-        poll_started_at = now_provider(account_label=self.account_label)
+        poll_started_at = trading_now(account_label=self.account_label)
         query_window_start: datetime | None = None
         scoped_symbols = _normalized_signal_symbols(symbols)
         scoped_timeframes = _normalized_signal_timeframes(timeframes)

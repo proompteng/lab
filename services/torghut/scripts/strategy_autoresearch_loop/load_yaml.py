@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -46,13 +45,6 @@ from .shared_context import (
     _select_effective_replay_tape_window,
     _string,
 )
-
-
-def _strategy_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("scripts.run_strategy_autoresearch_loop")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -278,12 +270,8 @@ def _maybe_materialize_run_replay_tape(
                 ),
             }
         )
-        select_effective_replay_tape_window = _strategy_root_export(
-            "_select_effective_replay_tape_window",
-            _select_effective_replay_tape_window,
-        )
         selected_start, selected_end, latest_window_receipt = (
-            select_effective_replay_tape_window(
+            _select_effective_replay_tape_window(
                 args=window_args,
                 symbols=snapshot_symbols,
                 requested_start_date=_iso_date(full_window_start_date),

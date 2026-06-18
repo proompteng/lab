@@ -158,7 +158,7 @@ class TestRuntimeAndDocCompletionMatricesMatch(_TestCompletionTraceBase):
     def test_doc29_completion_status_all_satisfied_stays_status_only(self) -> None:
         with self.session_local() as session:
             with patch(
-                "app.trading.completion.load_doc29_completion_matrix",
+                "app.trading.completion.effective_row_status.load_doc29_completion_matrix",
                 return_value={
                     "doc_id": "doc29",
                     "design_doc_path": "docs/torghut/design-system/v6/29-completion-matrix-2026-03-07.yaml",
