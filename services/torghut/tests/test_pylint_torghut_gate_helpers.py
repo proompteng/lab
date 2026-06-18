@@ -4,7 +4,7 @@ import subprocess
 
 from scripts import run_pylint_torghut_file_length_gate as file_length_gate
 from scripts.run_pylint_torghut_file_length_gate import (
-    _TRANSITIONAL_EXTRACTED_SOURCE_MODULES,
+    _TRANSITIONAL_EXTRACTED_SOURCE_PATHS,
     _filter_legacy_extracted_messages,
 )
 from scripts.run_pylint_torghut_quality_diff_gate import _source_literal_lines
@@ -37,9 +37,7 @@ def test_file_length_filter_ignores_only_extracted_source_paths() -> None:
 
 
 def test_file_length_filter_carries_transitional_extracted_source_baseline() -> None:
-    assert (
-        "app/trading/research_sleeves.py" not in _TRANSITIONAL_EXTRACTED_SOURCE_MODULES
-    )
+    assert "app/trading/research_sleeves.py" not in _TRANSITIONAL_EXTRACTED_SOURCE_PATHS
 
     output = "\n".join(
         (
@@ -50,7 +48,7 @@ def test_file_length_filter_carries_transitional_extracted_source_baseline() -> 
 
     messages = _filter_legacy_extracted_messages(
         output,
-        extracted_paths=_TRANSITIONAL_EXTRACTED_SOURCE_MODULES,
+        extracted_paths=_TRANSITIONAL_EXTRACTED_SOURCE_PATHS,
     )
 
     assert messages == [

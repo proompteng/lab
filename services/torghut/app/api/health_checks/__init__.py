@@ -4,15 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import shared_context as _ledger_status
-from . import remember_alpaca_success as _alpaca_health
 from . import load_options_catalog_freshness_summary as _runtime_payloads
-
-_IMPLEMENTATION_MODULES: tuple[object, ...] = (
-    _ledger_status,
-    _alpaca_health,
-    _runtime_payloads,
-)
 
 _check_postgres: Any = getattr(_runtime_payloads, "_check_postgres")
 _check_tigerbeetle_protocol_health: Any = getattr(

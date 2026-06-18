@@ -1,4 +1,4 @@
-"""Profit-target oracle implementation modules."""
+"""Profit-target oracle exports."""
 
 from __future__ import annotations
 

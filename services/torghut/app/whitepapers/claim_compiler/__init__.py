@@ -1,4 +1,4 @@
-"""Whitepaper claim compiler implementation modules."""
+"""Whitepaper claim compiler exports."""
 
 from __future__ import annotations
 

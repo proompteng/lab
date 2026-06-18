@@ -1,4 +1,4 @@
-"""Paper-route probe implementation modules."""
+"""Paper-route probe exports."""
 
 from __future__ import annotations
 
