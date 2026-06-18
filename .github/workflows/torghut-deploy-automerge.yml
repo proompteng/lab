@@ -61,7 +61,9 @@ jobs:
         github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.draft == false
       }}
-    runs-on: ubuntu-latest
+    # The private registry is only reachable from the ARC runners on the lab network.
+    # This pull_request_target job does not check out pull request code.
+    runs-on: arc-arm64
     permissions:
       contents: write
       pull-requests: write

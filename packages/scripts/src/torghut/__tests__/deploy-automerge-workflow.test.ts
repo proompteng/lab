@@ -26,6 +26,13 @@ const hyperliquidFeedReleaseWorkflow = readFileSync(
 const countOccurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1
 
 describe('torghut-deploy-automerge workflow', () => {
+  test('runs registry digest validation where the private registry is reachable', () => {
+    expect(deployAutomergeWorkflow).toContain('runs-on: arc-arm64')
+    expect(deployAutomergeWorkflow).not.toContain('runs-on: ubuntu-latest')
+    expect(deployAutomergeWorkflow).toContain('This pull_request_target job does not check out pull request code.')
+    expect(deployAutomergeWorkflow).not.toContain('uses: actions/checkout')
+  })
+
   test('allowlists every hyperliquid runtime manifest promoted by torghut-release', () => {
     const promotedHyperliquidRuntimeManifests = [
       'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml',
