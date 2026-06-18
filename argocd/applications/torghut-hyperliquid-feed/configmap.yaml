@@ -14,9 +14,8 @@ data:
   HYPERLIQUID_MARKET_COVERAGE: "top-volume"
   HYPERLIQUID_TOP_MARKET_COUNT: "100"
   HYPERLIQUID_WS_CHANNELS: "allMids,trades,l2Book,bbo,candle,activeAssetCtx,allDexsAssetCtxs"
-  # Keep websocket subscription pressure below the documented 1000-subscription limit.
-  # Additional candle intervals are backfill/query scope, not always-on websocket scope.
-  HYPERLIQUID_CANDLE_INTERVALS: "1m"
+  # Five candle windows over the top 100 markets remain below the 1000-subscription cap.
+  HYPERLIQUID_CANDLE_INTERVALS: "1m,3m,5m,15m,1h"
   HYPERLIQUID_MAX_WS_CONNECTIONS: "8"
   HYPERLIQUID_MAX_SUBSCRIPTIONS_PER_CONNECTION: "125"
   HYPERLIQUID_MAX_TOTAL_SUBSCRIPTIONS: "1000"
@@ -57,3 +56,5 @@ data:
   CLICKHOUSE_USERNAME: "torghut"
   CLICKHOUSE_BATCH_SIZE: "250"
   CLICKHOUSE_FLUSH_MS: "1000"
+  CLICKHOUSE_READY_MAX_AGE_MS: "120000"
+  CLICKHOUSE_FAILURE_HOLD_MS: "60000"

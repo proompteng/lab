@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-hyperliquid-runtime
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    app: torghut-hyperliquid-runtime
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: torghut-hyperliquid-runtime
+  template:
+    metadata:
+      annotations:
+        proompteng.ai/config-revision: hyperliquid-runtime-v1-20260618a
+      labels:
+        app: torghut-hyperliquid-runtime
+    spec:
+      serviceAccountName: torghut-runtime
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: torghut-hyperliquid-runtime
+          image: registry.ide-newton.ts.net/lab/torghut:latest
+          imagePullPolicy: Always
+          command:
+            - uvicorn
+            - app.hyperliquid_runtime.api:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8182"
+          envFrom:
+            - configMapRef:
+                name: torghut-hyperliquid-runtime-config
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+            - name: HYPERLIQUID_RUNTIME_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-hyperliquid-testnet
+                  key: account-address
+                  optional: true
+            - name: HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-hyperliquid-testnet
+                  key: api-wallet-private-key
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 8182
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: tmp
+          emptyDir: {}

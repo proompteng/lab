@@ -42,6 +42,21 @@ class HyperliquidConfigTest {
   }
 
   @Test
+  fun `accepts clickhouse readiness freshness thresholds`() {
+    val config =
+      HyperliquidConfig.fromEnv(
+        mapOf(
+          "KAFKA_SASL_PASSWORD" to "secret",
+          "CLICKHOUSE_READY_MAX_AGE_MS" to "90000",
+          "CLICKHOUSE_FAILURE_HOLD_MS" to "45000",
+        ),
+      )
+
+    assertEquals(90_000, config.clickHouse.readyMaxAgeMs)
+    assertEquals(45_000, config.clickHouse.failureHoldMs)
+  }
+
+  @Test
   fun `rejects invalid top market count`() {
     val error =
       assertFailsWith<IllegalStateException> {

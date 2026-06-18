@@ -58,6 +58,8 @@ class HyperliquidFeedApp(
   private val wsReady = AtomicBoolean(false)
   private val kafkaReady = AtomicBoolean(false)
   private val clickHouseReady = AtomicBoolean(!config.clickHouse.enabled)
+  private val clickHouseLastSuccessMs = AtomicLong(if (config.clickHouse.enabled) 0 else nowMs())
+  private val clickHouseLastFailureMs = AtomicLong(0)
   private val catalogReady = AtomicBoolean(false)
   private val marketCount = AtomicInteger(0)
   private val subscriptionCount = AtomicInteger(0)
@@ -81,6 +83,12 @@ class HyperliquidFeedApp(
       val producer = producerFactory(config)
       val clickHouseSink =
         ClickHouseSink(config.clickHouse, httpClient, metrics, json) {
+          val observedAt = nowMs()
+          if (it) {
+            clickHouseLastSuccessMs.set(observedAt)
+          } else {
+            clickHouseLastFailureMs.set(observedAt)
+          }
           clickHouseReady.set(it)
           updateReady()
         }
@@ -137,6 +145,8 @@ class HyperliquidFeedApp(
       websocket = wsReady.get(),
       kafka = kafkaReady.get(),
       clickhouse = clickHouseReady.get(),
+      clickhouseLastSuccessLagMs = clickHouseLastSuccessLagMs(),
+      clickhouseLastFailureAgeMs = clickHouseLastFailureAgeMs(),
       catalog = catalogReady.get(),
       subscriptions = subscriptionCount.get(),
       markets = marketCount.get(),
@@ -281,8 +291,35 @@ class HyperliquidFeedApp(
   }
 
   private fun updateReady() {
-    val isReady = wsReady.get() && kafkaReady.get() && clickHouseReady.get() && catalogReady.get()
+    val isReady = wsReady.get() && kafkaReady.get() && clickHouseFresh() && catalogReady.get()
     markReady(isReady)
+  }
+
+  private fun clickHouseFresh(): Boolean {
+    val fresh = clickHouseFreshAt(nowMs())
+    metrics.setClickHouseReady(fresh)
+    return fresh
+  }
+
+  private fun clickHouseFreshAt(observedAt: Long): Boolean {
+    if (!config.clickHouse.enabled) return true
+    val lastSuccess = clickHouseLastSuccessMs.get()
+    val lastFailure = clickHouseLastFailureMs.get()
+    val successFresh = lastSuccess > 0 && observedAt - lastSuccess <= config.clickHouse.readyMaxAgeMs
+    val failureExpired = lastFailure == 0L || observedAt - lastFailure > config.clickHouse.failureHoldMs
+    return clickHouseReady.get() && successFresh && failureExpired
+  }
+
+  private fun clickHouseLastSuccessLagMs(): Long? {
+    val lastSuccess = clickHouseLastSuccessMs.get()
+    if (lastSuccess <= 0) return null
+    return nowMs() - lastSuccess
+  }
+
+  private fun clickHouseLastFailureAgeMs(): Long? {
+    val lastFailure = clickHouseLastFailureMs.get()
+    if (lastFailure <= 0) return null
+    return nowMs() - lastFailure
   }
 
   private fun markReady(value: Boolean) {
@@ -290,7 +327,7 @@ class HyperliquidFeedApp(
     metrics.setReady(value)
     metrics.setWsConnected(wsReady.get())
     metrics.setKafkaReady(kafkaReady.get())
-    metrics.setClickHouseReady(clickHouseReady.get())
+    metrics.setClickHouseReady(clickHouseFreshAt(nowMs()))
     if (!value && changed) notReadySinceMs.set(nowMs())
   }
 }

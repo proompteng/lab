@@ -1,0 +1,129 @@
+"""Strict risk gates for the Hyperliquid testnet runtime."""
+
+from __future__ import annotations
+
+import hashlib
+from decimal import Decimal, ROUND_DOWN
+
+from .config import HyperliquidRuntimeConfig
+from .models import FeatureSnapshot, OrderIntent, RiskState, RiskVerdict, Signal
+
+
+def evaluate_signal_risk(
+    signal: Signal,
+    state: RiskState,
+    config: HyperliquidRuntimeConfig,
+) -> RiskVerdict:
+    """Block anything that is stale, over cap, duplicate, or not actionable."""
+
+    blocked_reason = _blocked_reason(signal, state, config)
+    if blocked_reason is not None:
+        return _blocked(blocked_reason)
+    remaining_exposure = config.max_gross_exposure_usd - state.gross_exposure_usd
+    if remaining_exposure <= Decimal("0"):
+        return _blocked("gross_exposure_cap")
+    notional = min(config.max_order_notional_usd, remaining_exposure)
+    if notional <= Decimal("0"):
+        return _blocked("order_notional_zero")
+    return RiskVerdict("allowed", "allowed", notional)
+
+
+def build_order_intent(
+    *,
+    signal: Signal,
+    verdict: RiskVerdict,
+    config: HyperliquidRuntimeConfig,
+    decision_id: str,
+) -> OrderIntent:
+    """Create a deterministic IOC limit order intent from an allowed decision."""
+
+    if not verdict.allowed:
+        raise ValueError(f"risk_verdict_blocked:{verdict.reason}")
+    side = "buy" if signal.action == "buy" else "sell"
+    price = _limit_price(
+        signal.feature, side=side, max_slippage_bps=config.max_slippage_bps
+    )
+    size = _order_size(verdict.order_notional_usd, price, config.min_order_size)
+    return OrderIntent(
+        market_id=signal.market_id,
+        coin=signal.coin,
+        dex=signal.feature.dex,
+        side=side,
+        size=size,
+        limit_price=price,
+        notional_usd=(price * size).quantize(Decimal("0.000001")),
+        cloid=deterministic_cloid(
+            decision_id=decision_id, market_id=signal.market_id, side=side
+        ),
+        reduce_only=False,
+        decision_id=decision_id,
+    )
+
+
+def deterministic_cloid(
+    *,
+    decision_id: str,
+    market_id: str,
+    side: str,
+) -> str:
+    """Return a 128-bit client order id in Hyperliquid hex form."""
+
+    digest = hashlib.sha256(
+        f"{decision_id}\0{market_id}\0{side}".encode("utf-8")
+    ).hexdigest()
+    return f"0x{digest[:32]}"
+
+
+def _limit_price(
+    feature: FeatureSnapshot,
+    *,
+    side: str,
+    max_slippage_bps: Decimal,
+) -> Decimal:
+    multiplier = Decimal("1") + (max_slippage_bps / Decimal("10000"))
+    if side == "sell":
+        multiplier = Decimal("1") - (max_slippage_bps / Decimal("10000"))
+    return (feature.price * multiplier).quantize(Decimal("0.000001"))
+
+
+def _order_size(
+    notional: Decimal,
+    price: Decimal,
+    min_order_size: Decimal,
+) -> Decimal:
+    if price <= Decimal("0"):
+        raise ValueError("feature_price_must_be_positive")
+    size = (notional / price).quantize(min_order_size, rounding=ROUND_DOWN)
+    if size < min_order_size:
+        raise ValueError("order_size_below_minimum")
+    return size
+
+
+def _blocked(reason: str) -> RiskVerdict:
+    return RiskVerdict("blocked", reason, Decimal("0"))
+
+
+def _blocked_reason(
+    signal: Signal,
+    state: RiskState,
+    config: HyperliquidRuntimeConfig,
+) -> str | None:
+    config_errors = config.validation_errors()
+    dependency_blockers = sorted(
+        dependency.name for dependency in state.dependencies if not dependency.ready
+    )
+    checks = (
+        (bool(config_errors), ",".join(config_errors)),
+        (signal.action not in {"buy", "sell"}, f"signal_{signal.action}"),
+        (
+            signal.feature.source_lag_seconds > config.signal_staleness_seconds,
+            "signal_stale",
+        ),
+        (
+            bool(dependency_blockers),
+            f"dependency_not_ready:{','.join(dependency_blockers)}",
+        ),
+        (signal.market_id in state.open_order_markets, "open_order_exists_for_market"),
+        (state.daily_realized_pnl_usd <= -config.max_daily_loss_usd, "daily_loss_stop"),
+    )
+    return next((reason for blocked, reason in checks if blocked), None)

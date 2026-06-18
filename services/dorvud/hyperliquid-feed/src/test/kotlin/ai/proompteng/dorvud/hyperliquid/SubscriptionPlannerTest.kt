@@ -42,6 +42,24 @@ class SubscriptionPlannerTest {
     }
   }
 
+  @Test
+  fun `top one hundred markets with five candle intervals stays within subscription cap`() {
+    val config =
+      HyperliquidConfig.fromEnv(
+        mapOf(
+          "KAFKA_SASL_PASSWORD" to "secret",
+          "CLICKHOUSE_ENABLED" to "false",
+          "HYPERLIQUID_CANDLE_INTERVALS" to "1m,3m,5m,15m,1h",
+          "HYPERLIQUID_MAX_TOTAL_SUBSCRIPTIONS" to "1000",
+        ),
+      )
+    val markets = (1..100).map { index -> perp("TEST$index") }
+
+    val subscriptionCount = SubscriptionPlanner.plan(markets, config).sumOf { it.subscriptions.size }
+
+    assertEquals(902, subscriptionCount)
+  }
+
   private fun perp(coin: String): HyperliquidMarket =
     HyperliquidMarket(
       marketId = HyperliquidMarketIds.perp(coin, null),
