@@ -200,7 +200,7 @@ describe('Torghut manifest scheduling', () => {
     expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
   })
 
-  it('keeps Hyperliquid runtime shadow mode free of optional execution secret drift', () => {
+  it('keeps Hyperliquid runtime shadow mode wired to a gated execution secret', () => {
     const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
     const runtimeData = getAtPath(runtimeConfig, ['data'])
     expect(runtimeData.HYPERLIQUID_RUNTIME_TRADING_ENABLED).toBe('false')
@@ -233,7 +233,7 @@ describe('Torghut manifest scheduling', () => {
     const kustomization = parseManifest('argocd/applications/torghut-hyperliquid-runtime/kustomization.yaml')
     const resources = kustomization.resources
     expect(resources).toBeArray()
-    expect(resources).not.toContain('externalsecret.yaml')
+    expect(resources).toContain('externalsecret.yaml')
 
     const externalSecret = parseManifest('argocd/applications/torghut-hyperliquid-runtime/externalsecret.yaml')
     expect(externalSecret.kind).toBe('ExternalSecret')
@@ -262,7 +262,7 @@ describe('Torghut manifest scheduling', () => {
     )
   })
 
-  it('documents the Hyperliquid testnet credential check before enabling the ExternalSecret', () => {
+  it('documents the Hyperliquid testnet credential check before enabling trading', () => {
     const readme = readFileSync(join(repoRoot, 'argocd/applications/torghut-hyperliquid-runtime/README.md'), 'utf8')
     const bootstrapScript = readFileSync(
       join(repoRoot, 'scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh'),
@@ -274,7 +274,8 @@ describe('Torghut manifest scheduling', () => {
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh create')
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh reconcile')
     expect(readme).toContain('After `check` reports the 1Password item is present')
-    expect(readme).toContain('Keep the ExternalSecret out of steady-state')
+    expect(readme).toContain('keep `externalsecret.yaml` in `kustomization.yaml`')
+    expect(readme).toContain('Keep `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false`')
     expect(bootstrapScript).toContain('$0 check')
     expect(bootstrapScript).toContain('check_item()')
   })
