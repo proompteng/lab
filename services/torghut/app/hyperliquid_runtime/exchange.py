@@ -296,8 +296,16 @@ class HyperliquidSdkExchange:
         if self._execution_universe_cache_is_fresh():
             return
         by_dex: dict[str, frozenset[str]] = {}
+        loaded_any_metadata = False
         for dex in sorted({_sdk_dex(market.dex) for market in markets}):
-            meta: object = self._info().meta(dex=dex)
+            try:
+                meta: object = self._info().meta(dex=dex)
+            except Exception:
+                # Testnet can omit non-default dex metadata; treat those markets as unsupported.
+                if dex:
+                    by_dex[dex] = frozenset()
+                    continue
+                raise
             universe: object = (
                 cast(Mapping[str, object], meta).get("universe")
                 if isinstance(meta, dict)
@@ -313,6 +321,10 @@ class HyperliquidSdkExchange:
                     if name:
                         coins.add(name)
             by_dex[dex] = frozenset(coins)
+            loaded_any_metadata = True
+        if not loaded_any_metadata:
+            self._execution_universe_by_dex = by_dex
+            return
         observed_at = datetime.now(timezone.utc)
         self._execution_universe_by_dex = by_dex
         self._last_execution_universe_at = observed_at
