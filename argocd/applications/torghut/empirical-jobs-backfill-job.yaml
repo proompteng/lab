@@ -15,7 +15,7 @@ spec:
         kubernetes.io/arch: arm64
       containers:
         - name: backfill
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:c0ba1b34604c0299a7cb693fe461b03cdcb483be5606dcb80a5a840e70f629a5
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:af135e99777b18af631b5868270fbae4746b138bde6bdc4a81f29c60ad64f425
           imagePullPolicy: IfNotPresent
           command:
             - /bin/bash
