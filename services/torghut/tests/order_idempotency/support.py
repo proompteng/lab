@@ -93,6 +93,34 @@ class FakeAlpacaClient:
         return []
 
 
+class FilledAlpacaClient(FakeAlpacaClient):
+    def submit_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_type: str,
+        time_in_force: str,
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        extra_params: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        order = super().submit_order(
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            order_type=order_type,
+            time_in_force=time_in_force,
+            limit_price=limit_price,
+            stop_price=stop_price,
+            extra_params=extra_params,
+        )
+        order["filled_qty"] = str(qty)
+        order["filled_avg_price"] = "101"
+        order["status"] = "filled"
+        return order
+
+
 class ConflictingOrderClient(FakeAlpacaClient):
     def list_orders(self, status: str = "all") -> list[dict[str, str]]:
         if status != "open":
@@ -301,24 +329,6 @@ class _TestOrderIdempotencyBase(TestCase):
         settings.trading_mode = self._orig_trading_mode
 
 
-__all__ = (
-    "FakeAlpacaClient",
-    "ConflictingOrderClient",
-    "HeldInventoryClient",
-    "PositionLookupUnavailableClient",
-    "PositionLookupNoneClient",
-    "PositionLookupUnavailableHeldInventoryClient",
-    "PartiallyHeldInventoryClient",
-    "AccountShortingDisabledClient",
-    "SymbolNotShortableClient",
-    "SymbolNotEasyToBorrowClient",
-    "AccountMetadataUnavailableClient",
-    "AccountShortingUnknownClient",
-    "AssetMetadataUnavailableClient",
-    "AssetShortabilityUnknownClient",
-    "AccountMetadataUnavailableClientWithLongPosition",
-)
-
 __all__: tuple[str, ...] = (
     "AccountMetadataUnavailableClient",
     "AccountMetadataUnavailableClientWithLongPosition",
@@ -333,6 +343,7 @@ __all__: tuple[str, ...] = (
     "ExecutionOrderEvent",
     "ExecutionTCAMetric",
     "FakeAlpacaClient",
+    "FilledAlpacaClient",
     "HeldInventoryClient",
     "LeanExecutionAdapter",
     "OrderExecutor",
