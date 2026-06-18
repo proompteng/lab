@@ -4,6 +4,22 @@ metadata:
   name: turin-nvidia-device-plugin
   namespace: gpu-operator
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: turin-nvidia-device-plugin-config
+  namespace: gpu-operator
+data:
+  config.yaml: |
+    version: v1
+    sharing:
+      timeSlicing:
+        renameByDefault: false
+        failRequestsGreaterThanOne: true
+        resources:
+          - name: nvidia.com/gpu
+            replicas: 8
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -44,6 +60,8 @@ spec:
       app: turin-nvidia-device-plugin
   template:
     metadata:
+      annotations:
+        platform.proompteng.ai/gpu-sharing-config-version: turin-timeslicing-8
       labels:
         app: turin-nvidia-device-plugin
     spec:
@@ -88,9 +106,14 @@ spec:
               value: "true"
             - name: CDI_ANNOTATION_PREFIX
               value: cdi.k8s.io/
+            - name: CONFIG_FILE
+              value: /config/config.yaml
           securityContext:
             privileged: true
           volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
             - name: device-plugin
               mountPath: /var/lib/kubelet/device-plugins
             - name: driver-install-dir
@@ -103,6 +126,9 @@ spec:
             - name: cdi-root
               mountPath: /var/run/cdi
       volumes:
+        - name: config
+          configMap:
+            name: turin-nvidia-device-plugin-config
         - name: device-plugin
           hostPath:
             path: /var/lib/kubelet/device-plugins
