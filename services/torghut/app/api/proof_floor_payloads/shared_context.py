@@ -221,7 +221,6 @@ from ..common import (
 
 from ..common import main_runtime_value
 
-from ..proxy import capture_module_exports
 from .status_refs import (
     build_jangar_reliability_settlement_ref_payload as _build_jangar_reliability_settlement_ref,
     build_simple_lane_status_payload as _build_simple_lane_status_payload,
@@ -1202,7 +1201,6 @@ __all__: tuple[str, ...] = (
     "build_source_serving_repair_receipt_payload",
     "build_tca_gate_inputs",
     "build_torghut_consumer_evidence_receipt",
-    "capture_module_exports",
     "capture_posthog_event",
     "cast",
     "check_schema_current",

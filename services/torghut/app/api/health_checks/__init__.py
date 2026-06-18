@@ -7,7 +7,6 @@ from typing import Any
 from . import shared_context as _ledger_status
 from . import remember_alpaca_success as _alpaca_health
 from . import load_options_catalog_freshness_summary as _runtime_payloads
-from ..proxy import capture_module_exports
 
 _IMPLEMENTATION_MODULES: tuple[object, ...] = (
     _ledger_status,
@@ -204,5 +203,3 @@ __all__ = (
     "build_api_live_submission_gate_payload",
     "build_simple_lane_status_payload",
 )
-
-capture_module_exports(globals(), __all__)

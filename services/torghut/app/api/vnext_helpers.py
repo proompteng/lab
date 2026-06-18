@@ -31,7 +31,6 @@ from .common import (
     select,
 )
 from .health_checks import sqlalchemy_error_indicates_statement_timeout
-from .proxy import capture_module_exports
 
 _sqlalchemy_error_indicates_statement_timeout = (
     sqlalchemy_error_indicates_statement_timeout
@@ -486,4 +485,3 @@ __all__ = [
     "safe_float",
     "load_llm_evaluation",
 ]
-capture_module_exports(globals(), __all__)

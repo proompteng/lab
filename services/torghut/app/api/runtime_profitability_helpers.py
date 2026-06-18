@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     pass
 
 from .common import cast
-from .proxy import capture_module_exports
 from .vnext_helpers import (
     extract_gate_result as _extract_gate_result,
     load_json_artifact_payload as _load_json_artifact_payload,
@@ -172,4 +171,3 @@ __all__ = [
     "_load_runtime_profitability_gate_rollback_attribution",
     "load_runtime_profitability_gate_rollback_attribution",
 ]
-capture_module_exports(globals(), __all__)

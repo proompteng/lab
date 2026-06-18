@@ -39,7 +39,6 @@ from .shared_context import (
     bindparam,
     build_hypothesis_runtime_summary,
     build_live_submission_gate_payload as _raw_build_live_submission_gate_payload,
-    capture_module_exports,
     cast,
     datetime,
     func,
@@ -674,5 +673,3 @@ __all__ = [
     "build_hypothesis_runtime_payload",
     "build_live_submission_gate_payload",
 ]
-
-capture_module_exports(globals(), __all__)

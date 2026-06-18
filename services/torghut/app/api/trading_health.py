@@ -13,7 +13,6 @@ from .common import (
     jsonable_encoder,
 )
 from . import readiness_helpers
-from .proxy import capture_module_exports
 
 router = APIRouter()
 
@@ -29,4 +28,3 @@ def trading_health() -> JSONResponse:
 
 
 __all__ = ["trading_health"]
-capture_module_exports(globals(), __all__)
