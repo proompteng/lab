@@ -374,6 +374,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "7"
                 automation: auto
                 enabled: "true"
+              - name: torghut-hyperliquid-runtime
+                path: argocd/applications/torghut-hyperliquid-runtime
+                namespace: torghut
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "8"
+                automation: auto
+                enabled: "true"
               - name: bilig
                 path: argocd/applications/bilig
                 namespace: bilig

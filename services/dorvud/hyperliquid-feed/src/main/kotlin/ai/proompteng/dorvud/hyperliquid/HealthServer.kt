@@ -29,6 +29,8 @@ data class HyperliquidReadinessInfo(
   val websocket: Boolean,
   val kafka: Boolean,
   val clickhouse: Boolean,
+  val clickhouseLastSuccessLagMs: Long?,
+  val clickhouseLastFailureAgeMs: Long?,
   val catalog: Boolean,
   val subscriptions: Int,
   val markets: Int,

@@ -26,6 +26,8 @@ data class ClickHouseConfig(
   val password: String,
   val batchSize: Int,
   val flushMs: Long,
+  val readyMaxAgeMs: Long,
+  val failureHoldMs: Long,
 )
 
 data class HyperliquidConfig(
@@ -134,6 +136,8 @@ data class HyperliquidConfig(
           password = mergedEnv["CLICKHOUSE_PASSWORD"] ?: "",
           batchSize = intEnv(mergedEnv, "CLICKHOUSE_BATCH_SIZE", 250).coerceIn(1, 5000),
           flushMs = longEnv(mergedEnv, "CLICKHOUSE_FLUSH_MS", 1000).coerceAtLeast(250),
+          readyMaxAgeMs = longEnv(mergedEnv, "CLICKHOUSE_READY_MAX_AGE_MS", 120_000).coerceAtLeast(1_000),
+          failureHoldMs = longEnv(mergedEnv, "CLICKHOUSE_FAILURE_HOLD_MS", 60_000).coerceAtLeast(1_000),
         )
 
       return HyperliquidConfig(

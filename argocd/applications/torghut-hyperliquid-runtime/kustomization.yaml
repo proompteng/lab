@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: torghut
+resources:
+  - configmap.yaml
+  - externalsecret.yaml
+  - clickhouse-schema-configmap.yaml
+  - clickhouse-schema-job.yaml
+  - db-migrations-job.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml
