@@ -26,30 +26,28 @@ def _config(**overrides: object) -> HyperliquidRuntimeConfig:
     return HyperliquidRuntimeConfig.from_env(env)
 
 
-def _feature(**overrides: object) -> FeatureSnapshot:
-    values: dict[str, object] = {
-        "market_id": "hl:perp:cash:cash:AAPL",
-        "coin": "cash:AAPL",
-        "dex": "cash",
-        "event_ts": datetime(2026, 6, 18, tzinfo=timezone.utc),
-        "price": Decimal("200"),
-        "momentum_1m_bps": Decimal("3"),
-        "momentum_3m_bps": Decimal("7"),
-        "momentum_5m_bps": Decimal("12"),
-        "momentum_15m_bps": Decimal("20"),
-        "momentum_1h_bps": Decimal("45"),
-        "volatility_bps": Decimal("60"),
-        "vwap_distance_bps": Decimal("5"),
-        "spread_bps": Decimal("4"),
-        "book_imbalance": Decimal("0.10"),
-        "liquidity_usd": Decimal("500000"),
-        "funding_rate": Decimal("0.0001"),
-        "open_interest_usd": Decimal("1000000"),
-        "regime": "trend",
-        "source_lag_seconds": 10,
-    }
-    values.update(overrides)
-    return FeatureSnapshot(**values)  # type: ignore[arg-type]
+def _feature() -> FeatureSnapshot:
+    return FeatureSnapshot(
+        market_id="hl:perp:cash:cash:AAPL",
+        coin="cash:AAPL",
+        dex="cash",
+        event_ts=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        price=Decimal("200"),
+        momentum_1m_bps=Decimal("3"),
+        momentum_3m_bps=Decimal("7"),
+        momentum_5m_bps=Decimal("12"),
+        momentum_15m_bps=Decimal("20"),
+        momentum_1h_bps=Decimal("45"),
+        volatility_bps=Decimal("60"),
+        vwap_distance_bps=Decimal("5"),
+        spread_bps=Decimal("4"),
+        book_imbalance=Decimal("0.10"),
+        liquidity_usd=Decimal("500000"),
+        funding_rate=Decimal("0.0001"),
+        open_interest_usd=Decimal("1000000"),
+        regime="trend",
+        source_lag_seconds=10,
+    )
 
 
 def test_signal_and_risk_build_tiny_ioc_intent() -> None:

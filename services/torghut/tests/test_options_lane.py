@@ -6,11 +6,12 @@ import os
 import sys
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
-from typing import Iterator
+from typing import Iterator, Protocol, cast
 from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.options_lane.alpaca import (
     AlpacaOptionsClient,
@@ -81,8 +82,8 @@ class _FakeCountRepository(OptionsRepository):
         self.fake_session = session
 
     @contextmanager
-    def session(self) -> Iterator[_FakeCountSession]:  # type: ignore[override]
-        yield self.fake_session
+    def session(self) -> Iterator[Session]:
+        yield cast(Session, self.fake_session)
 
 
 class _NoCountRepository:
@@ -125,6 +126,29 @@ class _FakeProducer:
 class _FakeAlpacaClient:
     def __init__(self, **_: object) -> None:
         pass
+
+
+class _CatalogStatusServiceModule(Protocol):
+    def _publish_status(
+        self,
+        *,
+        status_value: str,
+        observed_at: datetime,
+        error_code: str | None = None,
+        error_detail: str | None = None,
+    ) -> None: ...
+
+
+class _EnricherStatusServiceModule(Protocol):
+    def _publish_status(
+        self,
+        *,
+        status_value: str,
+        observed_at: datetime,
+        error_code: str | None = None,
+        error_detail: str | None = None,
+        backlog: int | None = None,
+    ) -> None: ...
 
 
 class TestOptionsLaneSession(TestCase):
@@ -229,9 +253,12 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
             return importlib.import_module(module_name)
 
     def test_catalog_status_heartbeat_skips_contract_table_counts(self) -> None:
-        service = self._import_service("app.options_lane.catalog_service")
+        service = cast(
+            _CatalogStatusServiceModule,
+            self._import_service("app.options_lane.catalog_service"),
+        )
 
-        service._publish_status(  # type: ignore[attr-defined]
+        service._publish_status(
             status_value="ok",
             observed_at=datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc),
         )
@@ -245,9 +272,12 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         self.assertIsNone(payload["hot_contracts"])
 
     def test_enricher_status_heartbeat_skips_contract_table_counts(self) -> None:
-        service = self._import_service("app.options_lane.enricher_service")
+        service = cast(
+            _EnricherStatusServiceModule,
+            self._import_service("app.options_lane.enricher_service"),
+        )
 
-        service._publish_status(  # type: ignore[attr-defined]
+        service._publish_status(
             status_value="ok",
             observed_at=datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc),
             backlog=11,

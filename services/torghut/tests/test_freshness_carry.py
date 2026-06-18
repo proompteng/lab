@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -13,34 +14,55 @@ from app.trading.freshness_carry import (
 NOW = datetime(2026, 5, 13, 9, 15, tzinfo=timezone.utc)
 
 
-def _base_inputs() -> dict[str, object]:
-    return {
-        "account_label": "PA3SX7FYNUTF",
-        "window": "15m",
-        "source_serving_repair_receipt_ledger": {
+def _build(
+    *,
+    source_serving_repair_receipt_ledger: Mapping[str, Any] | None = None,
+    route_warrant_exchange: Mapping[str, Any] | None = None,
+    clickhouse_ta_status: Mapping[str, Any] | None = None,
+    tca_summary: Mapping[str, Any] | None = None,
+    empirical_jobs_status: Mapping[str, Any] | None = None,
+    market_context_status: Mapping[str, Any] | None = None,
+    quant_evidence: Mapping[str, Any] | None = None,
+    live_submission_gate: Mapping[str, Any] | None = None,
+    now: datetime | None = NOW,
+) -> dict[str, object]:
+    return build_freshness_carry_ledger(
+        account_label="PA3SX7FYNUTF",
+        window="15m",
+        source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger
+        if source_serving_repair_receipt_ledger is not None
+        else {
             "schema_version": "torghut.source-serving-repair-receipt-ledger.v1",
             "ledger_id": "source-serving:current",
             "source_serving_state": "converged",
             "generated_at": NOW.isoformat(),
             "reason_codes": [],
         },
-        "route_warrant_exchange": {
+        route_warrant_exchange=route_warrant_exchange
+        if route_warrant_exchange is not None
+        else {
             "schema_version": "torghut.route-warrant-exchange.v1",
             "warrant_id": "route-warrant:current",
             "warrant_state": "paper_candidate",
             "max_notional": "25",
         },
-        "clickhouse_ta_status": {
+        clickhouse_ta_status=clickhouse_ta_status
+        if clickhouse_ta_status is not None
+        else {
             "state": "current",
             "latest_signal_at": (NOW - timedelta(seconds=30)).isoformat(),
             "source_ref": "torghut.ta_signals",
         },
-        "tca_summary": {
+        tca_summary=tca_summary
+        if tca_summary is not None
+        else {
             "order_count": 24,
             "expected_shortfall_coverage": "0.75",
             "last_computed_at": (NOW - timedelta(minutes=5)).isoformat(),
         },
-        "empirical_jobs_status": {
+        empirical_jobs_status=empirical_jobs_status
+        if empirical_jobs_status is not None
+        else {
             "ready": True,
             "status": "healthy",
             "authority": "empirical",
@@ -48,7 +70,9 @@ def _base_inputs() -> dict[str, object]:
             "missing_jobs": [],
             "ineligible_jobs": [],
         },
-        "market_context_status": {
+        market_context_status=market_context_status
+        if market_context_status is not None
+        else {
             "last_checked_at": (NOW - timedelta(seconds=20)).isoformat(),
             "last_freshness_seconds": 20,
             "max_staleness_seconds": 900,
@@ -56,23 +80,21 @@ def _base_inputs() -> dict[str, object]:
             "alert_active": False,
             "last_symbol": "AAPL",
         },
-        "quant_evidence": {
+        quant_evidence=quant_evidence
+        if quant_evidence is not None
+        else {
             "ok": True,
             "required": True,
             "window": "15m",
         },
-        "live_submission_gate": {
+        live_submission_gate=live_submission_gate
+        if live_submission_gate is not None
+        else {
             "allowed": True,
             "reason": "ok",
         },
-        "now": NOW,
-    }
-
-
-def _build(**overrides: object) -> dict[str, object]:
-    payload = _base_inputs()
-    payload.update(overrides)
-    return build_freshness_carry_ledger(**payload)  # type: ignore[arg-type]
+        now=now,
+    )
 
 
 def _dimension(ledger: dict[str, object], dimension_id: str) -> dict[str, Any]:

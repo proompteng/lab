@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Literal
 from unittest import TestCase
 
 from app.trading.models import StrategyDecision
@@ -17,7 +18,7 @@ class TestSimpleRisk(TestCase):
     def _decision(
         self,
         *,
-        action: str = "buy",
+        action: Literal["buy", "sell"] = "buy",
         qty: str = "1",
         price: str = "100",
     ) -> StrategyDecision:
@@ -26,7 +27,7 @@ class TestSimpleRisk(TestCase):
             symbol="AAPL",
             event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
             timeframe="1Min",
-            action=action,  # type: ignore[arg-type]
+            action=action,
             qty=Decimal(qty),
             rationale="simple-risk-test",
             params={"price": price},

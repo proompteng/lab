@@ -256,7 +256,7 @@ class TestDbSchemaCurrent(TestCase):
             ),
             patch("app.db.MigrationContext") as mock_migration_context,
         ):
-            status = app_db.check_schema_current(fake_session)  # type: ignore[arg-type]
+            status = app_db.check_schema_current(fake_session)
 
         self.assertTrue(status["schema_current"])
         self.assertEqual(status["current_heads"], ["0011_demo_alpha", "0012_demo_beta"])
@@ -323,7 +323,7 @@ class TestDbSchemaCurrent(TestCase):
             ),
             patch("app.db.MigrationContext") as mock_migration_context,
         ):
-            status = app_db.check_schema_current(FakeSession())  # type: ignore[arg-type]
+            status = app_db.check_schema_current(FakeSession())
 
         self.assertEqual(status["current_heads"], [])
         self.assertEqual(status["schema_missing_heads"], ["0011_demo"])
