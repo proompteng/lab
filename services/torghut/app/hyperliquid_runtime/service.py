@@ -163,9 +163,12 @@ class HyperliquidRuntimeService:
             if execution_markets
             else []
         )
+        fresh_features = _fresh_features(
+            features, max_source_lag_seconds=self._config.signal_staleness_seconds
+        )
         feature_status = _feature_readiness_status(
             execution_markets=execution_markets,
-            features=features,
+            features=fresh_features,
             clickhouse_ready=clickhouse_status.ready,
         )
         market_id_by_coin = {
@@ -201,7 +204,7 @@ class HyperliquidRuntimeService:
             session=session,
             repository=repository,
             markets=execution_markets,
-            features=tuple(features),
+            features=tuple(fresh_features),
             dependencies=dependencies,
             risk_state=repository.risk_state(dependencies=dependencies),
             fill_count=fill_count,
@@ -387,14 +390,20 @@ def _feature_readiness_status(
         )
     feature_market_ids = {feature.market_id for feature in features}
     execution_market_ids = {market.market_id for market in execution_markets}
-    if features and feature_market_ids == execution_market_ids:
+    if features:
         newest = max(feature.event_ts for feature in features)
         observed_at = datetime.now(timezone.utc)
+        missing_count = len(execution_market_ids - feature_market_ids)
         return RuntimeDependencyStatus(
             name="hyperliquid_execution_features",
             ready=True,
             observed_at=newest,
             lag_seconds=max(0, int((observed_at - newest).total_seconds())),
+            reason=(
+                f"partial_feature_coverage_missing:{missing_count}"
+                if missing_count > 0
+                else None
+            ),
         )
     return RuntimeDependencyStatus(
         name="hyperliquid_execution_features",
@@ -405,6 +414,16 @@ def _feature_readiness_status(
             else "clickhouse_not_ready_for_execution_features"
         ),
     )
+
+
+def _fresh_features(
+    features: list[FeatureSnapshot], *, max_source_lag_seconds: int
+) -> list[FeatureSnapshot]:
+    return [
+        feature
+        for feature in features
+        if feature.source_lag_seconds <= max_source_lag_seconds
+    ]
 
 
 def _performance_reconciliation_status(context: _CycleContext) -> str:
