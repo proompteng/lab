@@ -154,6 +154,17 @@ class HyperliquidSdkExchange:
         self._execution_universe_by_dex: dict[str, frozenset[str]] = {}
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
+        if self._config.execution_network == "testnet" and _sdk_dex(intent.dex):
+            return OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={
+                    "reason": "unsupported_testnet_dex",
+                    "dex": intent.dex,
+                    "coin": intent.coin,
+                },
+                rejection_reason="unsupported_testnet_dex",
+            )
         exchange = self._exchange()
         cloid = self._cloid(intent.cloid)
         response = cast(
@@ -297,11 +308,13 @@ class HyperliquidSdkExchange:
             return
         by_dex: dict[str, frozenset[str]] = {}
         loaded_any_metadata = False
-        for dex in sorted({_sdk_dex(market.dex) for market in markets}):
+        for dex in _execution_metadata_dexes(
+            markets,
+            execution_network=self._config.execution_network,
+        ):
             try:
                 meta: object = self._info().meta(dex=dex)
             except Exception:
-                # Testnet can omit non-default dex metadata; treat those markets as unsupported.
                 if dex:
                     by_dex[dex] = frozenset()
                     continue
@@ -429,6 +442,17 @@ def _sdk_dex(dex: str) -> str:
     if cleaned in {"", "default"}:
         return ""
     return cleaned
+
+
+def _execution_metadata_dexes(
+    markets: tuple[HyperliquidMarket, ...],
+    *,
+    execution_network: str,
+) -> tuple[str, ...]:
+    dexes = {_sdk_dex(market.dex) for market in markets}
+    if execution_network == "testnet":
+        return ("",) if "" in dexes else ()
+    return tuple(sorted(dexes))
 
 
 def _decimal(value: object) -> Decimal:
