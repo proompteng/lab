@@ -127,16 +127,16 @@ describe('Torghut manifest scheduling', () => {
     const container = getAtPath(job, ['spec', 'template', 'spec', 'containers', 0])
     const args = Array.isArray(container.args) ? container.args.join('\n') : ''
 
-    expect(getAtPath(job, ['spec']).activeDeadlineSeconds).toBe(900)
+    expect(getAtPath(job, ['spec']).activeDeadlineSeconds).toBe(360)
     expect(args).toContain('set -euo pipefail')
     expect(args).toContain('--connect_timeout 5')
     expect(args).toContain('--send_timeout 30')
-    expect(args).toContain('--receive_timeout 120')
-    expect(args).toContain('"${CLICKHOUSE_CLIENT[@]}" --multiquery < /schema/schema.sql')
+    expect(args).toContain('--receive_timeout 60')
+    expect(args).toContain('timeout 240s "${CLICKHOUSE_CLIENT[@]}" --multiquery < /schema/schema.sql')
 
     const schema = parseManifest('argocd/applications/torghut-hyperliquid-feed/clickhouse-schema-configmap.yaml')
     const data = getAtPath(schema, ['data'])
-    expect(data['schema.sql']).toContain('SET distributed_ddl_task_timeout = 45;')
+    expect(data['schema.sql']).toContain('SET distributed_ddl_task_timeout = 10;')
     expect(data['schema.sql']).toContain("SET distributed_ddl_output_mode = 'null_status_on_timeout';")
   })
 

@@ -9,7 +9,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
   backoffLimit: 6
-  activeDeadlineSeconds: 900
+  activeDeadlineSeconds: 360
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -36,7 +36,7 @@ spec:
                 --password "${CLICKHOUSE_PASSWORD}"
                 --connect_timeout 5
                 --send_timeout 30
-                --receive_timeout 120
+                --receive_timeout 60
               )
               deadline=$((SECONDS + 300))
               until "${CLICKHOUSE_CLIENT[@]}" --query 'SELECT 1'; do
@@ -46,7 +46,7 @@ spec:
                 fi
                 sleep 5
               done
-              "${CLICKHOUSE_CLIENT[@]}" --multiquery < /schema/schema.sql
+              timeout 240s "${CLICKHOUSE_CLIENT[@]}" --multiquery < /schema/schema.sql
           env:
             - name: CLICKHOUSE_USERNAME
               value: torghut
