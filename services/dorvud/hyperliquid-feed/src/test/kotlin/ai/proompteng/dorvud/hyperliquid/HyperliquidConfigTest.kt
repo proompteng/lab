@@ -49,6 +49,8 @@ class HyperliquidConfigTest {
           "KAFKA_SASL_PASSWORD" to "secret",
           "CLICKHOUSE_READY_MAX_AGE_MS" to "90000",
           "CLICKHOUSE_FAILURE_HOLD_MS" to "45000",
+          "CLICKHOUSE_READY_TABLES" to "hyperliquid_raw,hyperliquid_candles,hyperliquid_bbo",
+          "CLICKHOUSE_FRESHNESS_CHECK_MS" to "5000",
           "HYPERLIQUID_READY_REQUIRED_CHANNELS" to "raw,candle",
           "HYPERLIQUID_READY_EVENT_MAX_AGE_MS" to "120000",
         ),
@@ -56,6 +58,8 @@ class HyperliquidConfigTest {
 
     assertEquals(90_000, config.clickHouse.readyMaxAgeMs)
     assertEquals(45_000, config.clickHouse.failureHoldMs)
+    assertEquals(setOf("hyperliquid_raw", "hyperliquid_candles", "hyperliquid_bbo"), config.clickHouse.readyTables)
+    assertEquals(5_000, config.clickHouse.freshnessCheckMs)
     assertEquals(setOf("raw", "candle"), config.readyRequiredChannels)
     assertEquals(120_000, config.readyEventMaxAgeMs)
   }
@@ -119,5 +123,20 @@ class HyperliquidConfigTest {
       }
 
     assertTrue(error.message.orEmpty().contains("Unsupported HYPERLIQUID_READY_REQUIRED_CHANNELS"))
+  }
+
+  @Test
+  fun `rejects unknown clickhouse readiness tables`() {
+    val error =
+      assertFailsWith<IllegalStateException> {
+        HyperliquidConfig.fromEnv(
+          mapOf(
+            "KAFKA_SASL_PASSWORD" to "secret",
+            "CLICKHOUSE_READY_TABLES" to "hyperliquid_raw,system_tables",
+          ),
+        )
+      }
+
+    assertTrue(error.message.orEmpty().contains("Unsupported CLICKHOUSE_READY_TABLES"))
   }
 }

@@ -28,6 +28,8 @@ data class ClickHouseConfig(
   val flushMs: Long,
   val readyMaxAgeMs: Long,
   val failureHoldMs: Long,
+  val readyTables: Set<String> = setOf("hyperliquid_raw", "hyperliquid_candles"),
+  val freshnessCheckMs: Long = 30_000,
 )
 
 data class HyperliquidConfig(
@@ -64,6 +66,17 @@ data class HyperliquidConfig(
     private val supportedIntervals =
       setOf("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d", "3d", "1w", "1M")
     private val supportedChannels = setOf("allMids", "trades", "l2Book", "bbo", "candle", "activeAssetCtx", "allDexsAssetCtxs")
+    private val supportedClickHouseReadyTables =
+      setOf(
+        "hyperliquid_raw",
+        "hyperliquid_trades",
+        "hyperliquid_l2_books",
+        "hyperliquid_bbo",
+        "hyperliquid_candles",
+        "hyperliquid_asset_contexts",
+        "hyperliquid_funding",
+        "hyperliquid_status",
+      )
 
     fun fromEnv(env: Map<String, String>? = null): HyperliquidConfig {
       val mergedEnv = env ?: mergeEnv()
@@ -150,6 +163,15 @@ data class HyperliquidConfig(
           flushMs = longEnv(mergedEnv, "CLICKHOUSE_FLUSH_MS", 1000).coerceAtLeast(250),
           readyMaxAgeMs = longEnv(mergedEnv, "CLICKHOUSE_READY_MAX_AGE_MS", 120_000).coerceAtLeast(1_000),
           failureHoldMs = longEnv(mergedEnv, "CLICKHOUSE_FAILURE_HOLD_MS", 60_000).coerceAtLeast(1_000),
+          readyTables =
+            csv(mergedEnv["CLICKHOUSE_READY_TABLES"] ?: "hyperliquid_raw,hyperliquid_candles")
+              .toSet()
+              .also { tables ->
+                if (tables.isEmpty()) error("CLICKHOUSE_READY_TABLES must include at least one table")
+                val unknown = tables.filterNot { it in supportedClickHouseReadyTables }
+                if (unknown.isNotEmpty()) error("Unsupported CLICKHOUSE_READY_TABLES: ${unknown.joinToString(",")}")
+              },
+          freshnessCheckMs = longEnv(mergedEnv, "CLICKHOUSE_FRESHNESS_CHECK_MS", 30_000).coerceAtLeast(1_000),
         )
 
       return HyperliquidConfig(
