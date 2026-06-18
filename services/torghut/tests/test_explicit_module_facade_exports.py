@@ -57,7 +57,7 @@ EXPLICIT_FACADE_MODULES = (
     "app.trading.reporting",
     "app.trading.reporting_modules",
     "app.trading.research_sleeves",
-    "app.trading.research_sleeves_modules",
+    "app.trading.research_sleeve_evaluators",
     "app.trading.runtime_authority_verifier",
     "app.trading.runtime_authority_verifier_modules",
     "app.trading.runtime_ledger",
