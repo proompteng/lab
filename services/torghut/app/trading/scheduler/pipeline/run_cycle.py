@@ -123,6 +123,10 @@ class TradingPipelineRunCycleMixin(TradingPipelineBase):
         self._session_context_warmup_day: date | None = None
         self._runtime_window_account_snapshot_day: date | None = None
 
+    def _commit_signal_cursor(self, batch: SignalBatch) -> None:
+        with self.session_factory() as cursor_session:
+            self.ingestor.commit_cursor(cursor_session, batch)
+
     def run_once(self) -> None:
         self._label_mature_rejected_signal_outcome_events()
         with self.session_factory() as session:
@@ -142,7 +146,7 @@ class TradingPipelineRunCycleMixin(TradingPipelineBase):
                     return
             context = self._build_run_context(session)
             if context is None:
-                self.ingestor.commit_cursor(session, batch)
+                self._commit_signal_cursor(batch)
                 return
             account_snapshot, account, positions, allowed_symbols = context
             quality_signals = self._quality_gate_signals(
@@ -167,7 +171,7 @@ class TradingPipelineRunCycleMixin(TradingPipelineBase):
                     allowed_symbols=allowed_symbols,
                 )
             )
-            self.ingestor.commit_cursor(session, batch)
+            self._commit_signal_cursor(batch)
 
     def _prepare_run_once(self, session: Session) -> list[Strategy]:
         self._ingest_order_feed(session)
