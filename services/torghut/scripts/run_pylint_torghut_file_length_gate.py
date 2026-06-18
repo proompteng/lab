@@ -26,7 +26,6 @@ _TRANSITIONAL_EXTRACTED_SOURCE_MODULES = {
     "app/trading/autonomy/lane.py",
     "app/trading/discovery/candidate_specs.py",
     "app/trading/research_sleeves.py",
-    "scripts/assemble_runtime_ledger_proof_packet.py",
     "scripts/import_hypothesis_runtime_windows.py",
     "scripts/run_whitepaper_autoresearch_profit_target.py",
     "scripts/search_consistent_profitability_frontier.py",
