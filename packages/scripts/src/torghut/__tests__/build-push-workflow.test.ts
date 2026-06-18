@@ -229,6 +229,8 @@ describe('torghut build-push workflow', () => {
     )
 
     expect(buildContractStep).toBeGreaterThan(releaseManifestJob)
+    expect(releaseManifestJobBody).toContain('runs-on: arc-arm64')
+    expect(releaseManifestJobBody).toContain('registry.ide-newton.ts.net, which is only')
     expect(releaseManifestJobBody).toContain('argocd/applications/torghut/knative-service.yaml')
     expect(releaseManifestJobBody).toContain('argocd/applications/torghut/ta/flinkdeployment.yaml')
     expect(releaseManifestJobBody).toContain('argocd/applications/torghut/ws/deployment.yaml')
