@@ -53,7 +53,13 @@ def _feature(**overrides: object) -> FeatureSnapshot:
 
 
 def test_signal_and_risk_build_tiny_ioc_intent() -> None:
-    config = _config()
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+    )
     signal = generate_signal(_feature(), parameter_version="test-v1")
     state = RiskState(
         gross_exposure_usd=Decimal("90"),
@@ -78,6 +84,25 @@ def test_signal_and_risk_build_tiny_ioc_intent() -> None:
     assert len(intent.cloid) == 34
 
 
+def test_risk_blocks_shadow_mode_before_order_path() -> None:
+    signal = generate_signal(_feature(), parameter_version="test-v1")
+    state = RiskState(
+        gross_exposure_usd=Decimal("0"),
+        daily_realized_pnl_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(
+            RuntimeDependencyStatus("clickhouse", True),
+            RuntimeDependencyStatus("exchange", True),
+        ),
+    )
+
+    verdict = evaluate_signal_risk(signal, state, _config())
+
+    assert not verdict.allowed
+    assert verdict.reason == "trading_disabled_shadow"
+    assert verdict.order_notional_usd == Decimal("0")
+
+
 def test_risk_blocks_mainnet_execution_config() -> None:
     signal = generate_signal(_feature(), parameter_version="test-v1")
     state = RiskState(
@@ -98,6 +123,13 @@ def test_risk_blocks_mainnet_execution_config() -> None:
 
 
 def test_risk_blocks_stale_dependency_and_duplicate_market() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+    )
     signal = generate_signal(_feature(), parameter_version="test-v1")
     state = RiskState(
         gross_exposure_usd=Decimal("0"),
@@ -106,7 +138,7 @@ def test_risk_blocks_stale_dependency_and_duplicate_market() -> None:
         dependencies=(RuntimeDependencyStatus("clickhouse", False, reason="stale"),),
     )
 
-    verdict = evaluate_signal_risk(signal, state, _config())
+    verdict = evaluate_signal_risk(signal, state, config)
 
     assert not verdict.allowed
     assert verdict.reason == "dependency_not_ready:clickhouse"

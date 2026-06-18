@@ -44,8 +44,12 @@ def test_shadow_exchange_never_requires_private_keys() -> None:
         )
     )
 
-    assert result.status == "submitted"
-    assert result.raw_response == {"shadow": True}
+    assert result.status == "rejected"
+    assert result.rejection_reason == "trading_disabled_shadow"
+    assert result.raw_response == {
+        "shadow": True,
+        "reason": "trading_disabled_shadow",
+    }
 
 
 def test_tigerbeetle_journal_transfer_ids_are_deterministic() -> None:

@@ -114,6 +114,7 @@ def _blocked_reason(
     )
     checks = (
         (bool(config_errors), ",".join(config_errors)),
+        (not config.trading_enabled, "trading_disabled_shadow"),
         (signal.action not in {"buy", "sell"}, f"signal_{signal.action}"),
         (
             signal.feature.source_lag_seconds > config.signal_staleness_seconds,
