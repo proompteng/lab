@@ -37,7 +37,7 @@ data:
     ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/hyperliquid_ta_features', '{replica}', ingest_ts)
     PARTITION BY toDate(event_ts)
     ORDER BY (network, market_id, interval, event_ts)
-    TTL event_ts + INTERVAL 90 DAY
+    TTL toDateTime(event_ts) + INTERVAL 90 DAY
     SETTINGS index_granularity = 8192;
 
     CREATE MATERIALIZED VIEW IF NOT EXISTS torghut.hyperliquid_ta_features_candle_mv ON CLUSTER default
