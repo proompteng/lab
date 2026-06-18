@@ -92,28 +92,52 @@ data:
     SELECT
       network,
       market_id,
-      argMax(coin, event_ts) AS coin,
-      argMax(dex, event_ts) AS dex,
-      max(event_ts) AS event_ts,
-      argMax(price, event_ts) AS price,
-      argMaxIf(momentum_1m_bps, event_ts, interval = '1m') AS momentum_1m_bps,
-      argMaxIf(momentum_3m_bps, event_ts, interval = '3m') AS momentum_3m_bps,
-      argMaxIf(momentum_5m_bps, event_ts, interval = '5m') AS momentum_5m_bps,
-      argMaxIf(momentum_15m_bps, event_ts, interval = '15m') AS momentum_15m_bps,
-      argMaxIf(momentum_1h_bps, event_ts, interval = '1h') AS momentum_1h_bps,
-      argMax(volatility_bps, event_ts) AS volatility_bps,
-      argMax(vwap_distance_bps, event_ts) AS vwap_distance_bps,
-      argMax(spread_bps, event_ts) AS spread_bps,
-      argMax(book_imbalance, event_ts) AS book_imbalance,
-      argMax(liquidity_usd, event_ts) AS liquidity_usd,
-      argMax(funding_rate, event_ts) AS funding_rate,
-      argMax(open_interest_usd, event_ts) AS open_interest_usd,
-      argMax(regime, event_ts) AS regime,
-      argMax(source_lag_seconds, event_ts) AS source_lag_seconds
+      coin,
+      dex,
+      latest_event_ts AS event_ts,
+      price,
+      momentum_1m_bps,
+      momentum_3m_bps,
+      momentum_5m_bps,
+      momentum_15m_bps,
+      momentum_1h_bps,
+      volatility_bps,
+      vwap_distance_bps,
+      spread_bps,
+      book_imbalance,
+      liquidity_usd,
+      funding_rate,
+      open_interest_usd,
+      regime,
+      source_lag_seconds
     FROM
     (
-      SELECT *
-      FROM torghut.hyperliquid_ta_features
-      WHERE event_ts >= now() - INTERVAL 2 HOUR
-    )
-    GROUP BY network, market_id;
+      SELECT
+        network,
+        market_id,
+        argMax(coin, event_ts) AS coin,
+        argMax(dex, event_ts) AS dex,
+        max(event_ts) AS latest_event_ts,
+        argMax(price, event_ts) AS price,
+        argMaxIf(momentum_1m_bps, event_ts, interval = '1m') AS momentum_1m_bps,
+        argMaxIf(momentum_3m_bps, event_ts, interval = '3m') AS momentum_3m_bps,
+        argMaxIf(momentum_5m_bps, event_ts, interval = '5m') AS momentum_5m_bps,
+        argMaxIf(momentum_15m_bps, event_ts, interval = '15m') AS momentum_15m_bps,
+        argMaxIf(momentum_1h_bps, event_ts, interval = '1h') AS momentum_1h_bps,
+        argMax(volatility_bps, event_ts) AS volatility_bps,
+        argMax(vwap_distance_bps, event_ts) AS vwap_distance_bps,
+        argMax(spread_bps, event_ts) AS spread_bps,
+        argMax(book_imbalance, event_ts) AS book_imbalance,
+        argMax(liquidity_usd, event_ts) AS liquidity_usd,
+        argMax(funding_rate, event_ts) AS funding_rate,
+        argMax(open_interest_usd, event_ts) AS open_interest_usd,
+        argMax(regime, event_ts) AS regime,
+        argMax(source_lag_seconds, event_ts) AS source_lag_seconds
+      FROM
+      (
+        SELECT *
+        FROM torghut.hyperliquid_ta_features
+        WHERE event_ts >= now() - INTERVAL 2 HOUR
+      )
+      GROUP BY network, market_id
+    );
