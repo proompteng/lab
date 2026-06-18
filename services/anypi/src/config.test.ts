@@ -290,7 +290,7 @@ describe('Anypi prompt contract', () => {
     )
   })
 
-  test('records validation sources and appends run commands', () => {
+  test('records validation sources and appends run commands (env appended, no inferred)', () => {
     const plan = resolveValidationPlan(
       {
         implementation: { text: 'Improve services/anypi prompt handling.' },
@@ -299,9 +299,11 @@ describe('Anypi prompt contract', () => {
       ['bun run --filter @proompteng/anypi lint'],
       'append',
     )
-    expect(plan.sources).toEqual(['inferred', 'run-spec', 'env'])
-    expect(plan.commands).toContain('bun run --filter @proompteng/anypi tsc')
+    // Run-spec commands are authoritative; env commands appended; inferred commands NOT included
+    expect(plan.sources).toEqual(['run-spec', 'env'])
+    expect(plan.commands).toContain('bun run --filter @proompteng/anypi test')
     expect(plan.commands).toContain('bun run --filter @proompteng/anypi lint')
+    expect(plan.commands).not.toContain('bun run --filter @proompteng/anypi tsc')
   })
 
   test('parses and summarizes GitHub check buckets', () => {
@@ -483,5 +485,152 @@ describe('Anypi prompt contract', () => {
         { status: ' M foo.ts', commitsAhead: 1, contentHash: 'same' },
       ),
     ).toBe(false)
+  })
+
+  describe('validation planning - regression tests', () => {
+    test('explicit run-spec validation commands are authoritative (append policy)', () => {
+      // Run with explicit validation commands and task text mentioning multiple unrelated areas
+      // Should only run the explicit commands, NOT inferred commands for those areas
+      const plan = resolveValidationPlan(
+        {
+          implementation: {
+            text: 'Improve services/torghut validation and services/anypi prompt handling and argocd/applications/agents manifests.',
+          },
+          parameters: {
+            validationCommands: 'echo specific validation command\ngit diff --check',
+          },
+        },
+        [],
+        'append',
+      )
+
+      // Should only have the explicit commands, NOT inferred commands
+      expect(plan.sources).toEqual(['run-spec'])
+      expect(plan.commands).toEqual(['echo specific validation command', 'git diff --check'])
+      expect(plan.commands).not.toContain('cd services/torghut && uv sync --frozen --extra dev')
+      expect(plan.commands).not.toContain('bun run --filter @proompteng/anypi tsc')
+      expect(plan.commands).not.toContain(
+        'kustomize build --enable-helm argocd/applications/agents >/tmp/anypi-agents.yaml',
+      )
+    })
+
+    test('inferred commands work as fallback when no explicit commands are provided', () => {
+      const plan = resolveValidationPlan(
+        {
+          implementation: { text: 'Improve services/anypi prompt handling.' },
+        },
+        [],
+        'append',
+      )
+
+      expect(plan.sources).toEqual(['inferred'])
+      expect(plan.commands).toContain('bun run --filter @proompteng/anypi tsc')
+      expect(plan.commands).toContain('bun run --filter @proompteng/anypi test')
+      expect(plan.commands).toContain('bun run --filter @proompteng/anypi lint')
+    })
+
+    test('env override still wins in override mode', () => {
+      const plan = resolveValidationPlan(
+        {
+          implementation: { text: 'Change something.' },
+          parameters: { validationCommands: 'run-spec command' },
+        },
+        ['env override command'],
+        'override',
+      )
+
+      expect(plan.sources).toEqual(['env'])
+      expect(plan.commands).toEqual(['env override command'])
+    })
+
+    test('validation source metadata is accurate for append policy with run-spec only', () => {
+      const plan = resolveValidationPlan(
+        {
+          implementation: { text: 'Improve services/anypi prompt handling.' },
+          parameters: { validationCommands: 'custom validation' },
+        },
+        [],
+        'append',
+      )
+
+      expect(plan.sources).toEqual(['run-spec'])
+      expect(plan.commands).toEqual(['custom validation'])
+    })
+
+    test('validation source metadata is accurate for append policy with run-spec and env', () => {
+      const plan = resolveValidationPlan(
+        {
+          implementation: { text: 'Improve services/anypi prompt handling.' },
+          parameters: { validationCommands: 'run-spec command' },
+        },
+        ['env command'],
+        'append',
+      )
+
+      // Env commands should be appended, but inferred should NOT be included
+      expect(plan.sources).toEqual(['run-spec', 'env'])
+      expect(plan.commands).toEqual(['run-spec command', 'env command'])
+    })
+
+    test('validation source metadata is accurate for append policy with env only', () => {
+      const plan = resolveValidationPlan(
+        {
+          implementation: { text: 'Change generic docs.' },
+        },
+        ['env only command'],
+        'append',
+      )
+
+      // Only env commands, no inferred
+      expect(plan.sources).toEqual(['env'])
+      expect(plan.commands).toEqual(['env only command'])
+    })
+
+    test('append policy with env does not add inferred commands', () => {
+      // Even though the task mentions torghut, inferred commands should NOT be added
+      // because env commands are provided
+      const plan = resolveValidationPlan(
+        {
+          implementation: { text: 'Improve services/torghut validation.' },
+        },
+        ['env command 1', 'env command 2'],
+        'append',
+      )
+
+      expect(plan.sources).toEqual(['env'])
+      expect(plan.commands).toEqual(['env command 1', 'env command 2'])
+      expect(plan.commands).not.toContain('cd services/torghut && uv sync --frozen --extra dev')
+    })
+
+    test('override policy still works correctly with env override', () => {
+      // When env commands are provided with override policy, they should be used exclusively
+      const plan = resolveValidationPlan(
+        {
+          implementation: { text: 'Improve services/torghut validation.' },
+          parameters: { validationCommands: 'run-spec command' },
+        },
+        ['env override command 1', 'env override command 2'],
+        'override',
+      )
+
+      expect(plan.sources).toEqual(['env'])
+      expect(plan.commands).toEqual(['env override command 1', 'env override command 2'])
+      expect(plan.commands).not.toContain('run-spec command')
+      expect(plan.commands).not.toContain('cd services/torghut && uv sync --frozen --extra dev')
+    })
+
+    test('override policy falls back to run-spec when no env commands', () => {
+      const plan = resolveValidationPlan(
+        {
+          implementation: { text: 'Improve services/anypi prompt handling.' },
+          parameters: { validationCommands: 'run-spec command 1\nrun-spec command 2' },
+        },
+        [],
+        'override',
+      )
+
+      expect(plan.sources).toEqual(['run-spec'])
+      expect(plan.commands).toEqual(['run-spec command 1', 'run-spec command 2'])
+    })
   })
 })

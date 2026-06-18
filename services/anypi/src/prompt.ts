@@ -100,10 +100,22 @@ export const resolveValidationPlan = (
       sources.push('inferred')
     }
   } else {
-    commands = dedupeCommands([...inferredCommands, ...runCommands, ...configuredCommands])
-    if (inferredCommands.length > 0) sources.push('inferred')
-    if (runCommands.length > 0) sources.push('run-spec')
-    if (configuredCommands.length > 0) sources.push('env')
+    // Append policy: explicit run-spec commands are authoritative
+    // inferred commands are only used as fallback when both run-spec and env commands are absent
+    if (runCommands.length > 0) {
+      // Run-spec commands are provided; append env commands without inferred
+      commands = dedupeCommands([...runCommands, ...configuredCommands])
+      sources.push('run-spec')
+      if (configuredCommands.length > 0) sources.push('env')
+    } else if (configuredCommands.length > 0) {
+      // Only env commands are provided; use those without inferred
+      commands = configuredCommands
+      sources.push('env')
+    } else {
+      // No run-spec and no env commands; fall back to inferred
+      commands = inferredCommands
+      sources.push('inferred')
+    }
   }
 
   if (commands.length <= 1 && commands[0] === 'git diff --check') {
