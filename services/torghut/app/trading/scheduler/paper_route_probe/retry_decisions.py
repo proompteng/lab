@@ -542,7 +542,13 @@ class SimplePipelinePaperRouteProbeRetryDecisionMixin(PaperRouteProbeRuntime):
         return decisions
 
     def _paper_route_probe_exit_scan_ready(self, now: datetime) -> bool:
-        if settings.trading_mode != "paper":
+        live_bounded_collection = (
+            settings.trading_mode == "live"
+            and settings.trading_simple_submit_enabled
+            and settings.trading_simple_paper_route_probe_enabled
+            and settings.trading_simple_paper_route_probe_allow_live_mode
+        )
+        if settings.trading_mode != "paper" and not live_bounded_collection:
             return False
         if not settings.trading_simple_paper_route_probe_enabled:
             return False

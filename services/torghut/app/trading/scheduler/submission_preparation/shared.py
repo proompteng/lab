@@ -46,6 +46,9 @@ class TradingSubmissionRequest:
     session: Session
     decision: StrategyDecision
     decision_row: TradeDecision
+    strategy: Strategy | None = None
+    account: dict[str, str] | None = None
+    positions: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)

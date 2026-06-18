@@ -613,6 +613,7 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
         session: Session,
         decision: StrategyDecision,
         decision_row: TradeDecision,
+        **_submission_context: Any,
     ) -> bool:
         if not settings.trading_enabled:
             self._block_decision_submission(

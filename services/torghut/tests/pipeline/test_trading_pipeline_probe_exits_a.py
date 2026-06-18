@@ -273,6 +273,88 @@ class TestTradingPipelineProbeExitsA(TradingPipelineTestCaseBase):
             ],
         )
 
+    def test_live_bounded_collection_scans_explicit_probe_exit_after_exit_minute(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_mode": config.settings.trading_mode,
+            "trading_simple_submit_enabled": (
+                config.settings.trading_simple_submit_enabled
+            ),
+            "trading_simple_paper_route_probe_enabled": (
+                config.settings.trading_simple_paper_route_probe_enabled
+            ),
+            "trading_simple_paper_route_probe_allow_live_mode": (
+                config.settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
+        }
+        config.settings.trading_mode = "live"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_allow_live_mode = True
+        self._seed_filled_paper_route_probe_entry(
+            source_decision_mode=BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+            profit_proof_eligible=True,
+            source_candidate_ids=("candidate-pairs-a",),
+            source_hypothesis_ids=("H-PAIRS-01",),
+            source_strategy_names=("microbar-cross-sectional-pairs-v1",),
+        )
+        try:
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True
+            with (
+                self.session_local() as session,
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    return_value=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+                ),
+            ):
+                decisions = pipeline._paper_route_probe_exit_decisions(session=session)
+
+            self.assertEqual(len(decisions), 1)
+            decision = decisions[0]
+            self.assertEqual(decision.action, "sell")
+            self.assertEqual(decision.qty, Decimal("2.00000000"))
+            exit_metadata = cast(
+                dict[str, Any],
+                decision.params["paper_route_probe_exit"],
+            )
+            self.assertEqual(exit_metadata["mode"], "paper_route_exit")
+            self.assertEqual(
+                exit_metadata["source"],
+                "filled_bounded_paper_route_collection_executions",
+            )
+            self.assertEqual(
+                exit_metadata["source_candidate_ids"],
+                ["candidate-pairs-a"],
+            )
+        finally:
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_enabled = original[
+                "trading_simple_paper_route_probe_enabled"
+            ]
+            config.settings.trading_simple_paper_route_probe_allow_live_mode = original[
+                "trading_simple_paper_route_probe_allow_live_mode"
+            ]
+
     def test_simple_pipeline_closes_short_paper_route_probe_with_buy_exit(
         self,
     ) -> None:
