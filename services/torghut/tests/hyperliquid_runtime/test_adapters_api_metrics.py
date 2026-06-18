@@ -39,14 +39,20 @@ def _config(**overrides: str) -> HyperliquidRuntimeConfig:
     return HyperliquidRuntimeConfig.from_env(env)
 
 
-def _intent() -> OrderIntent:
+def _intent(
+    *,
+    coin: str = "SPX",
+    dex: str = "default",
+    market_id: str = "hl:perp:default:SPX",
+    limit_price: Decimal = Decimal("5000"),
+) -> OrderIntent:
     return OrderIntent(
-        market_id="hl:perp:cash:cash:AAPL",
-        coin="cash:AAPL",
-        dex="cash",
+        market_id=market_id,
+        coin=coin,
+        dex=dex,
         side="buy",
         size=Decimal("0.1"),
-        limit_price=Decimal("200"),
+        limit_price=limit_price,
         notional_usd=Decimal("20"),
         cloid="0x1234567890abcdef1234567890abcdef",
         reduce_only=False,
@@ -86,6 +92,22 @@ def _cycle() -> CycleResult:
         dependency_statuses=(
             RuntimeDependencyStatus("clickhouse", True, lag_seconds=1),
         ),
+    )
+
+
+def test_execution_metadata_dexes_keeps_all_mainnet_dexes() -> None:
+    markets = (
+        _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
+        _market(),
+        _market(coin="xyz:NVDA", dex="xyz", market_id="hl:perp:xyz:xyz:NVDA"),
+    )
+
+    assert exchange_module._execution_metadata_dexes(
+        markets, execution_network="mainnet"
+    ) == (
+        "",
+        "cash",
+        "xyz",
     )
 
 
@@ -343,24 +365,40 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
             ),
         )
     )
-    cached_markets, cached_status = sdk_exchange.filter_supported_markets((_market(),))
+    default_market = _market(
+        coin="SPX",
+        dex="default",
+        market_id="hl:perp:default:SPX",
+    )
+    cached_markets, cached_status = sdk_exchange.filter_supported_markets(
+        (default_market,)
+    )
     empty_markets, empty_status = sdk_exchange.filter_supported_markets(())
     result = sdk_exchange.submit_ioc_limit(_intent())
+    rejected_non_default = sdk_exchange.submit_ioc_limit(
+        _intent(
+            coin="cash:AAPL",
+            dex="cash",
+            market_id="hl:perp:cash:cash:AAPL",
+            limit_price=Decimal("200"),
+        )
+    )
     fills = sdk_exchange.reconcile_fills({"cash:AAPL": "hl:perp:cash:cash:AAPL"})
     sdk_exchange.schedule_dead_man_cancel(seconds_from_now=30)
 
     assert supported_markets == (
-        _market(),
         _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
     )
     assert universe_status.ready
-    assert cached_markets == (_market(),)
+    assert cached_markets == (default_market,)
     assert cached_status.ready
     assert empty_markets == ()
     assert empty_status.ready
-    assert sdk_calls["meta_dexes"] == ["", "cash"]
+    assert sdk_calls["meta_dexes"] == [""]
     assert result.status == "accepted"
     assert result.exchange_order_id == "42"
+    assert rejected_non_default.status == "rejected"
+    assert rejected_non_default.rejection_reason == "unsupported_testnet_dex"
     assert sdk_calls["order"]  # SDK received a real order payload.
     assert fills[0].notional_usd == Decimal("20.0")
     assert fills[0].fee_usd == Decimal("0.02")
@@ -421,8 +459,7 @@ def test_sdk_execution_universe_skips_unsupported_non_default_testnet_dexes(
             meta_dexes = sdk_calls.setdefault("meta_dexes", [])
             assert isinstance(meta_dexes, list)
             meta_dexes.append(dex)
-            if dex:
-                raise RuntimeError(f"unsupported dex {dex}")
+            assert dex == ""
             return {"universe": [{"name": "SPX"}]}
 
     def fake_import(name: str) -> object:
@@ -451,7 +488,7 @@ def test_sdk_execution_universe_skips_unsupported_non_default_testnet_dexes(
         _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
     )
     assert status.ready
-    assert sdk_calls["meta_dexes"] == ["", "cash", "xyz"]
+    assert sdk_calls["meta_dexes"] == [""]
     assert sdk_exchange.dependency_status().ready
 
 
@@ -494,7 +531,7 @@ def test_sdk_execution_universe_reports_no_markets_when_only_non_default_dexes_f
     assert supported_markets == ()
     assert not status.ready
     assert status.reason == "no_execution_supported_markets"
-    assert sdk_calls["meta_dexes"] == ["cash", "xyz"]
+    assert sdk_calls.get("meta_dexes", []) == []
     assert not sdk_exchange.dependency_status().ready
     assert sdk_exchange.dependency_status().reason == "exchange_not_read"
 
