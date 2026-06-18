@@ -50,6 +50,7 @@ class HyperliquidConfigTest {
           "CLICKHOUSE_READY_MAX_AGE_MS" to "90000",
           "CLICKHOUSE_FAILURE_HOLD_MS" to "45000",
           "CLICKHOUSE_REQUEST_TIMEOUT_MS" to "7000",
+          "CLICKHOUSE_REQUIRED_FOR_READINESS" to "false",
           "CLICKHOUSE_ENABLED_TABLES" to "hyperliquid_raw,hyperliquid_candles,hyperliquid_bbo",
           "CLICKHOUSE_READY_TABLES" to "hyperliquid_raw,hyperliquid_candles,hyperliquid_bbo",
           "CLICKHOUSE_FRESHNESS_CHECK_MS" to "5000",
@@ -61,6 +62,7 @@ class HyperliquidConfigTest {
     assertEquals(90_000, config.clickHouse.readyMaxAgeMs)
     assertEquals(45_000, config.clickHouse.failureHoldMs)
     assertEquals(7_000, config.clickHouse.requestTimeoutMs)
+    assertFalse(config.clickHouse.requiredForReadiness)
     assertEquals(setOf("hyperliquid_raw", "hyperliquid_candles", "hyperliquid_bbo"), config.clickHouse.enabledTables)
     assertEquals(setOf("hyperliquid_raw", "hyperliquid_candles", "hyperliquid_bbo"), config.clickHouse.readyTables)
     assertEquals(5_000, config.clickHouse.freshnessCheckMs)

@@ -30,4 +30,32 @@ class HyperliquidFeedAppHealthTest {
     app.stop()
     assertFalse(app.isAlive())
   }
+
+  @Test
+  fun `optional clickhouse mirror does not block readiness when feed path is healthy`() {
+    assertTrue(
+      hyperliquidReadinessReady(
+        wsReady = true,
+        kafkaReady = true,
+        clickHouseFresh = false,
+        clickHouseRequiredForReadiness = false,
+        marketDataFresh = true,
+        catalogReady = true,
+      ),
+    )
+  }
+
+  @Test
+  fun `required clickhouse mirror blocks readiness when stale`() {
+    assertFalse(
+      hyperliquidReadinessReady(
+        wsReady = true,
+        kafkaReady = true,
+        clickHouseFresh = false,
+        clickHouseRequiredForReadiness = true,
+        marketDataFresh = true,
+        catalogReady = true,
+      ),
+    )
+  }
 }

@@ -34,6 +34,7 @@ class ClickHouseSinkTest {
           config =
             ClickHouseConfig(
               enabled = true,
+              requiredForReadiness = true,
               httpUrl = "http://clickhouse.local:8123",
               database = "torghut",
               username = "torghut",
@@ -378,6 +379,7 @@ class ClickHouseSinkTest {
   ): ClickHouseConfig =
     ClickHouseConfig(
       enabled = true,
+      requiredForReadiness = true,
       httpUrl = "http://clickhouse.local:8123",
       database = "torghut",
       username = "torghut",
