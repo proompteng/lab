@@ -6,6 +6,7 @@ namespace: external-secrets
 resources:
   - onepassword-sdk-token-sealedsecret.yaml
   - onepassword-infra-clustersecretstore.yaml
+  - onepassword-media-clustersecretstore.yaml
   - external-secrets-canary.yaml
 
 helmCharts:
