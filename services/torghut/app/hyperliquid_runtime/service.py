@@ -247,7 +247,15 @@ class HyperliquidRuntimeService:
                 ),
             ),
         )
-        result = self._exchange.submit_ioc_limit(intent)
+        try:
+            result = self._exchange.submit_ioc_limit(intent)
+        except Exception as exc:
+            result = OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={"error": type(exc).__name__},
+                rejection_reason=f"exchange_submit_failed:{type(exc).__name__}",
+            )
         context.repository.insert_order(intent, result)
         if result.status in {"rejected", "cancelled"}:
             self._journal.persist_refs(

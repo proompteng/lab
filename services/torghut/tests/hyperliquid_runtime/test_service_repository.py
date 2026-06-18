@@ -326,10 +326,17 @@ class _FakeClickHouse:
 
 
 class _FakeExchange:
-    def __init__(self, *, fills: bool = True, supports_markets: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        fills: bool = True,
+        supports_markets: bool = True,
+        fail_submit: bool = False,
+    ) -> None:
         self.submitted: list[OrderIntent] = []
         self._fills = fills
         self._supports_markets = supports_markets
+        self._fail_submit = fail_submit
 
     def filter_supported_markets(
         self,
@@ -361,6 +368,8 @@ class _FakeExchange:
         return RuntimeDependencyStatus("hyperliquid_exchange_shadow", True)
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
+        if self._fail_submit:
+            raise TimeoutError("exchange down")
         self.submitted.append(intent)
         return OrderResult(status="submitted", exchange_order_id=None, raw_response={})
 
@@ -475,6 +484,43 @@ def test_runtime_service_persists_guarded_optimizer_run() -> None:
         "hl-equity-momentum-v1-offline-v1"
     )
     assert optimizer_insert[0]["promoted"] is True
+
+
+def test_runtime_service_releases_hold_when_submit_raises(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    exchange = _FakeExchange(fills=False, fail_submit=True)
+    journal = _FakeJournal()
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+    service = HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        ),
+        clickhouse=_FakeClickHouse(),
+        exchange=exchange,
+        journal=journal,
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)
+
+    assert result.orders_submitted == 1
+    assert repository.orders[0][1].status == "rejected"
+    assert repository.orders[0][1].rejection_reason == (
+        "exchange_submit_failed:TimeoutError"
+    )
+    assert [event.transfer_kind for event in journal.persisted] == [
+        "order_submitted",
+        "order_rejected",
+    ]
+    assert session.committed
 
 
 def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(
