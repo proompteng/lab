@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -394,6 +395,33 @@ def test_api_run_one_cycle_success_and_failure(monkeypatch: pytest.MonkeyPatch) 
     assert failing_session.rolled_back
     assert failing_session.closed
     assert state.latest_error == "RuntimeError:cycle_failed"
+
+
+def test_runtime_loop_continues_after_cycle_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    state = SimpleNamespace(
+        config=_config(HYPERLIQUID_RUNTIME_POLL_INTERVAL_SECONDS="1")
+    )
+
+    async def fake_to_thread(_func: object) -> None:
+        calls.append("cycle")
+        if calls.count("cycle") == 1:
+            raise RuntimeError("cycle_failed")
+        raise asyncio.CancelledError
+
+    async def fake_sleep(_seconds: float) -> None:
+        calls.append("sleep")
+
+    monkeypatch.setattr(runtime_api, "runtime_state", state)
+    monkeypatch.setattr(runtime_api.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(runtime_api.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(runtime_api._runtime_loop())
+
+    assert calls == ["cycle", "sleep", "cycle"]
 
 
 def test_runtime_readiness_stale_cycle() -> None:
