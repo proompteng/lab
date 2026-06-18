@@ -133,4 +133,10 @@ export type AnypiStatus = {
   validationAttempts: number
   promptChars: number
   error?: string
+  // Timeout evidence fields (populated when prompt times out)
+  gitBranch?: string
+  gitHead?: string
+  gitStatusShort?: string
+  gitDiffStat?: string
+  timeoutPatchFile?: string
 }

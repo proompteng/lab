@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { applyRunnerArtifacts, loadRunnerSpec, loadRunSpec, resolveConfig, type AnypiConfig } from './config'
 import { createLogger } from './logger'
 import { runPiAgent } from './pi-session'
+import { TimeoutErrorWithEvidence } from './timeout-evidence'
 import {
   buildAgentPrompt,
   buildCiRepairPrompt,
@@ -453,6 +454,33 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     status.status = 'failed'
     status.finishedAt = timestampUtc()
     status.error = toErrorMessage(error)
+
+    // Check if this is a timeout error with evidence and merge it into status
+    if (error instanceof TimeoutErrorWithEvidence) {
+      const evidence = error.evidence
+      status.gitBranch = evidence.git.branch
+      status.gitHead = evidence.git.head
+      status.gitStatusShort = evidence.git.statusShort
+      status.gitDiffStat = evidence.git.diffStat
+      status.timeoutPatchFile = evidence.patchFile
+    } else if (error instanceof Error && (error as any).evidence?.git) {
+      // Fallback for errors with evidence property
+      const evidence = (error as any).evidence as {
+        git: {
+          branch: string
+          head: string
+          statusShort: string
+          diffStat?: string
+        }
+        patchFile?: string
+      }
+      status.gitBranch = evidence.git.branch
+      status.gitHead = evidence.git.head
+      status.gitStatusShort = evidence.git.statusShort
+      status.gitDiffStat = evidence.git.diffStat
+      status.timeoutPatchFile = evidence.patchFile
+    }
+
     await writeStatus(config.statusPath, status)
     await logger.error(status.error)
     throw error

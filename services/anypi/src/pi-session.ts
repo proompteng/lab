@@ -16,16 +16,12 @@ import {
 import type { AnypiConfig } from './config'
 import { writeModelsFile } from './config'
 import { buildSystemPrompt } from './prompt'
+import { captureTimeoutEvidence, TimeoutErrorWithEvidence, TIMEOUT_ERROR_PREFIX } from './timeout-evidence'
 
 export type PiRunResult = {
   text: string
   tools: string[]
   sessionFile?: string
-}
-
-export type PiRunOptions = {
-  sessionLabel?: string
-  systemPrompt?: string
 }
 
 export const isBenignAssistantContinuationError = (error: unknown) =>
@@ -68,18 +64,30 @@ const runPromptWithTimeout = async (
   session: Awaited<ReturnType<typeof createAgentSession>>['session'],
   prompt: string,
   timeoutSeconds: number,
-) => {
+  config: AnypiConfig,
+): Promise<void> => {
   let timedOut = false
   let timeout: ReturnType<typeof setTimeout> | undefined
   const promptPromise = session.prompt(prompt).catch((error: unknown) => {
     if (timedOut) return
     throw error
   })
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => {
+  const timeoutPromise = new Promise<never>(async (_, reject) => {
+    timeout = setTimeout(async () => {
       timedOut = true
+      let evidence: TimeoutErrorWithEvidence['evidence'] | null = null
+      try {
+        // Capture timeout evidence before disposing the session
+        evidence = await captureTimeoutEvidence(config.worktree, process.env)
+      } catch {
+        // Evidence capture failed, but we still need to fail clearly
+      }
       session.dispose()
-      reject(new Error(`Pi prompt exceeded ${timeoutSeconds}s timeout`))
+      if (evidence) {
+        reject(new TimeoutErrorWithEvidence(`Pi prompt exceeded ${timeoutSeconds}s timeout`, evidence))
+      } else {
+        reject(new Error(`Pi prompt exceeded ${timeoutSeconds}s timeout`))
+      }
     }, timeoutSeconds * 1000)
   })
 
@@ -94,14 +102,17 @@ export const runPiAgent = async (
   config: AnypiConfig,
   prompt: string,
   log: (message: string) => Promise<void>,
-  options: PiRunOptions = {},
+  options?: {
+    sessionLabel?: string
+    systemPrompt?: string
+  },
 ): Promise<PiRunResult> => {
   await mkdir(config.agentDir, { recursive: true })
   await mkdir(config.sessionDir, { recursive: true })
   await mkdir(dirname(config.authPath), { recursive: true })
   if (!existsSync(config.authPath)) await writeFile(config.authPath, '{}\n', 'utf8')
   await writeModelsFile(config)
-  const attemptSessionDir = resolveAttemptSessionDir(config.sessionDir, options.sessionLabel)
+  const attemptSessionDir = resolveAttemptSessionDir(config.sessionDir, options?.sessionLabel)
   await mkdir(attemptSessionDir, { recursive: true })
 
   const authStorage = AuthStorage.create(config.authPath)
@@ -109,7 +120,7 @@ export const runPiAgent = async (
   const model = modelRegistry.find(config.provider, config.model)
   if (!model) throw new Error(`Pi model not found: ${config.provider}/${config.model}`)
 
-  const systemPrompt = resolveEffectiveSystemPrompt(config, options.systemPrompt)
+  const systemPrompt = resolveEffectiveSystemPrompt(config, options?.systemPrompt)
   const resourceLoader = await createResourceLoader(config.worktree, systemPrompt)
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: true },
@@ -153,7 +164,7 @@ export const runPiAgent = async (
 
   try {
     try {
-      await runPromptWithTimeout(session, prompt, config.piPromptTimeoutSeconds)
+      await runPromptWithTimeout(session, prompt, config.piPromptTimeoutSeconds, config)
     } catch (error) {
       if (!text.trim() || !isBenignAssistantContinuationError(error)) throw error
       await log(`pi stopped after assistant final response: ${(error as Error).message}`)
