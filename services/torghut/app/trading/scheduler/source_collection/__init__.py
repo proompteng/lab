@@ -1,4 +1,4 @@
-"""Scheduler source-collection implementation modules."""
+"""Scheduler source-collection exports."""
 
 from __future__ import annotations
 

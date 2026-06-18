@@ -8,12 +8,6 @@ from . import shared_context as _consumer_evidence
 from . import trading_autonomy as _autonomy
 from . import trading_executions as _executions
 
-_IMPLEMENTATION_MODULES: tuple[object, ...] = (
-    _consumer_evidence,
-    _autonomy,
-    _executions,
-)
-
 router: Any = getattr(_executions, "router")
 _consumer_evidence_dependency_quorum: Any = getattr(
     _consumer_evidence, "consumer_evidence_dependency_quorum"

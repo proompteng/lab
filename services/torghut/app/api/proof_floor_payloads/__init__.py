@@ -9,10 +9,6 @@ from . import shared_context as _proof_floor
 from . import build_jangar_reliability_settlement_ref as _proof_refs
 from .paper_route_probe_targets import bounded_paper_route_probe_target_symbols
 
-_IMPLEMENTATION_MODULES: tuple[object, ...] = (
-    _proof_floor,
-    _proof_refs,
-)
 _build_simple_lane_status_payload: Any = getattr(
     _proof_floor, "_build_simple_lane_status_payload"
 )

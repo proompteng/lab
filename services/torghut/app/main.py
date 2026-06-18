@@ -24,7 +24,7 @@ create_app = app_bootstrap.create_app
 
 app = register_app(create_app())
 
-API_MODULES = (
+ROUTER_PROVIDERS = (
     common_api,
     status_helpers_api,
     readiness_helpers_api,
@@ -42,7 +42,7 @@ API_MODULES = (
     vnext_helpers_api,
 )
 
-for api_module in API_MODULES:
+for api_module in ROUTER_PROVIDERS:
     router = getattr(api_module, "router", None)
     if router is not None:
         app.include_router(router)

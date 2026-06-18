@@ -19,7 +19,7 @@ _PYLINT_FILE_LENGTH_RE = re.compile(
 )
 # PR 10945 turned these generated payloads into real modules. Later cleanup PRs
 # should split them; until then, keep the gate blocking every other long file.
-_TRANSITIONAL_EXTRACTED_SOURCE_MODULES = {
+_TRANSITIONAL_EXTRACTED_SOURCE_PATHS = {
     "app/trading/autonomy/lane.py",
     "app/trading/discovery/candidate_specs.py",
     "scripts/import_hypothesis_runtime_windows.py",
@@ -38,7 +38,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("files", nargs="+", help="Paths to pass to Pylint")
     args = parser.parse_args(argv)
 
-    extracted_paths = _TRANSITIONAL_EXTRACTED_SOURCE_MODULES
+    extracted_paths = _TRANSITIONAL_EXTRACTED_SOURCE_PATHS
     pylint_output = _run(
         [
             sys.executable,
