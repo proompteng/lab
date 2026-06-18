@@ -12,7 +12,7 @@
   "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
   "initial_state": "blocked",
   "market_regimes": ["R2", "R3", "R5"],
-  "evidence_universe_symbols": ["NVDA", "AVGO", "AMD", "MRVL", "MU", "COHR", "LITE", "WDC", "STX", "TSM"],
+  "evidence_universe_symbols": ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "TSM", "WDC"],
   "require_pair_balance": true,
   "required_feature_sets": ["microstructure", "cross_sectional_rank", "tca"],
   "required_dependency_capabilities": ["drift_governance", "feature_coverage", "signal_continuity"],

@@ -16,7 +16,9 @@ from tests.api.trading_api_support import (
 
 
 class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
-    def test_live_target_account_audit_stays_disabled_for_non_sim_target(self) -> None:
+    def test_live_target_account_audit_stays_disabled_for_unscoped_live_target(
+        self,
+    ) -> None:
         original_mode = settings.trading_mode
         try:
             settings.trading_mode = "disabled"
@@ -68,6 +70,52 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
                             "source_dsn_env": "SIM_DB_DSN",
                             "observed_stage": "paper",
                             "targets": [],
+                        }
+                    }
+                )
+            )
+
+            self.assertTrue(
+                proofs_api._paper_route_target_account_audit_available(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "source": "configured_simple_lane_paper_data_collection",
+                            "account_label": "PA3SX7FYNUTF",
+                            "source_account_label": "PA3SX7FYNUTF",
+                            "observed_stage": "paper",
+                            "targets": [
+                                {
+                                    "account_label": "PA3SX7FYNUTF",
+                                    "source_account_label": "PA3SX7FYNUTF",
+                                    "source_kind": (
+                                        "configured_simple_lane_paper_data_collection"
+                                    ),
+                                    "source_plan_ref": (
+                                        "configured-simple-lane-paper-data-collection"
+                                    ),
+                                }
+                            ],
+                        }
+                    }
+                )
+            )
+
+            self.assertTrue(
+                proofs_api._paper_route_target_account_audit_available(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "account_label": "PA3SX7FYNUTF",
+                            "source_account_label": "PA3SX7FYNUTF",
+                            "observed_stage": "paper",
+                            "targets": [
+                                {
+                                    "account_label": "PA3SX7FYNUTF",
+                                    "source_account_label": "PA3SX7FYNUTF",
+                                    "source_kind": (
+                                        "configured_simple_lane_paper_data_collection"
+                                    ),
+                                }
+                            ],
                         }
                     }
                 )

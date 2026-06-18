@@ -25,7 +25,7 @@ consistency_constraints:
   require_every_day_active: false
 strategy_overrides:
   universe_symbols:
-    - ['NVDA', 'AVGO', 'AMD', 'MRVL', 'MU', 'COHR', 'LITE', 'WDC', 'STX', 'TSM']
+    - ['NVDA', 'AVGO', 'AMD', 'MU', 'MRVL', 'CRDO', 'COHR', 'LITE', 'TSM', 'WDC']
   max_position_pct_equity:
     - '8.0'
     - '10.0'

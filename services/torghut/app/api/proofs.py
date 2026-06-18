@@ -348,6 +348,23 @@ def _paper_route_mapping_targets_sim_account(value: Mapping[str, Any]) -> bool:
     )
 
 
+def _paper_route_mapping_targets_configured_collection(
+    value: Mapping[str, Any],
+) -> bool:
+    if _normalized_paper_route_text(value.get("source_kind")) == (
+        "CONFIGURED_SIMPLE_LANE_PAPER_DATA_COLLECTION"
+    ):
+        return True
+    if _normalized_paper_route_text(value.get("source")) == (
+        "CONFIGURED_SIMPLE_LANE_PAPER_DATA_COLLECTION"
+    ):
+        return True
+    return (
+        _normalized_paper_route_text(value.get("source_plan_ref"))
+        == "CONFIGURED-SIMPLE-LANE-PAPER-DATA-COLLECTION"
+    )
+
+
 def _paper_route_target_account_audit_available(
     live_submission_gate: Mapping[str, Any],
 ) -> bool:
@@ -361,8 +378,11 @@ def _paper_route_target_account_audit_available(
     normalized_plan = cast(Mapping[str, Any], plan)
     if _paper_route_mapping_targets_sim_account(normalized_plan):
         return True
+    if _paper_route_mapping_targets_configured_collection(normalized_plan):
+        return True
     return any(
         _paper_route_mapping_targets_sim_account(target)
+        or _paper_route_mapping_targets_configured_collection(target)
         for target in shared_mapping_items(normalized_plan.get("targets"))
     )
 
