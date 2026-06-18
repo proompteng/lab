@@ -227,6 +227,11 @@ describe('Torghut manifest scheduling', () => {
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(String(runtimeContainer.image)).toMatch(/^registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:[0-9a-f]{64}$/)
     expect(String(runtimeContainer.image)).not.toContain(':latest')
+    expect(getAtPath(runtimeContainer, ['securityContext'])).toMatchObject({
+      allowPrivilegeEscalation: false,
+      readOnlyRootFilesystem: true,
+      seccompProfile: { type: 'Unconfined' },
+    })
     const runtimeEnv = runtimeContainer.env
     expect(runtimeEnv).toContainEqual(
       expect.objectContaining({
