@@ -183,10 +183,17 @@ class HyperliquidRuntimeService:
                 self._journal.persist_refs(session, self._journal.fill_events(fill))
         account_state = self._exchange.reconcile_account(market_id_by_coin)
         repository.upsert_account_state(account_state)
+        open_order_status = self._reconcile_closed_orders(
+            session=session,
+            repository=repository,
+            market_id_by_coin=market_id_by_coin,
+            journal_status=journal_status,
+        )
         exchange_status = self._exchange.dependency_status()
         dependencies = clickhouse_status.statuses + (
             execution_universe_status,
             feature_status,
+            open_order_status,
             journal_status,
             exchange_status,
         )
@@ -200,6 +207,48 @@ class HyperliquidRuntimeService:
             fill_count=fill_count,
             exchange_ready=exchange_status.ready,
             journal_ready=journal_status.ready,
+        )
+
+    def _reconcile_closed_orders(
+        self,
+        *,
+        session: RuntimeSession,
+        repository: HyperliquidRuntimeRepository,
+        market_id_by_coin: dict[str, str],
+        journal_status: RuntimeDependencyStatus,
+    ) -> RuntimeDependencyStatus:
+        status_name = "hyperliquid_open_order_reconciliation"
+        if not self._config.trading_enabled or not market_id_by_coin:
+            return RuntimeDependencyStatus(name=status_name, ready=True)
+        if not journal_status.ready:
+            return RuntimeDependencyStatus(
+                name=status_name,
+                ready=True,
+                reason="skipped_journal_not_ready",
+            )
+        try:
+            open_order_market_ids = self._exchange.reconcile_open_order_market_ids(
+                market_id_by_coin
+            )
+        except Exception as exc:
+            return RuntimeDependencyStatus(
+                name=status_name,
+                ready=False,
+                reason=f"open_order_reconciliation_failed:{type(exc).__name__}",
+            )
+        release_orders = repository.reconcile_closed_orders(
+            open_order_market_ids=open_order_market_ids
+        )
+        for intent, result in release_orders:
+            self._journal.persist_refs(
+                session,
+                self._journal.order_events(intent, result),
+            )
+        return RuntimeDependencyStatus(
+            name=status_name,
+            ready=True,
+            observed_at=datetime.now(timezone.utc),
+            lag_seconds=0,
         )
 
     def _process_feature(
