@@ -246,8 +246,6 @@ class _FakeReadSession:
         return _FakeResult(self._scalar_results.pop(0))
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "AUTHORITY_EXPLICIT_COSTS_BLOCKER",
     "AUTHORITY_OPEN_POSITIONS_BLOCKER",

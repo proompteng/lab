@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
 from typing import cast
 from unittest.mock import patch
 
@@ -222,13 +222,13 @@ def test_bucket_loader_applies_identity_and_window_filters() -> None:
     class FakeSession:
         statement = None
 
-        def scalars(self, statement):  # type: ignore[no-untyped-def]
+        def scalars(self, statement: object) -> FakeScalars:
             self.statement = statement
             return FakeScalars()
 
     session = FakeSession()
     rows = load_runtime_authority_rows(
-        session,  # type: ignore[arg-type]
+        cast(Session, session),
         observed_stage="paper",
         started_at=datetime(2026, 5, 1, 12, 0),
         ended_at=datetime(2026, 5, 2, 12, 0, tzinfo=timezone.utc),
@@ -246,14 +246,16 @@ def test_runtime_authority_row_instances_are_accepted() -> None:
     assert row_payload["row_refs"] == ["row-00"]
 
     row_data = _row(0)
+    bucket_started_at = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    bucket_ended_at = bucket_started_at + timedelta(hours=6)
     row = RuntimeAuthorityEvidenceRow(
         row_id=str(row_data["id"]),
         run_id=str(row_data["run_id"]),
         candidate_id=str(row_data["candidate_id"]),
         hypothesis_id=str(row_data["hypothesis_id"]),
         observed_stage=str(row_data["observed_stage"]),
-        bucket_started_at=row_data["bucket_started_at"],  # type: ignore[arg-type]
-        bucket_ended_at=row_data["bucket_ended_at"],  # type: ignore[arg-type]
+        bucket_started_at=bucket_started_at,
+        bucket_ended_at=bucket_ended_at,
         account_label=str(row_data["account_label"]),
         runtime_strategy_name=str(row_data["runtime_strategy_name"]),
         strategy_family=str(row_data["strategy_family"]),
@@ -276,7 +278,7 @@ def test_runtime_authority_row_instances_are_accepted() -> None:
         cost_model_hash_counts={"cost-hash": 20},
         lineage_hash_counts={"lineage-hash": 20},
         blockers=(),
-        payload=row_data["payload"],  # type: ignore[arg-type]
+        payload=_source_payload(0),
     )
     object_report = build_runtime_authority_report([row])
 
@@ -783,12 +785,19 @@ def test_output_is_stable_json() -> None:
     assert decoded["schema_version"] == "torghut.hpairs-runtime-authority-proof.v1"
 
 
-def test_cli_parses_window_filters_and_fail_on_blockers(capsys) -> None:  # type: ignore[no-untyped-def]
+def test_cli_parses_window_filters_and_fail_on_blockers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     class FakeSession:
         def __enter__(self) -> "FakeSession":
             return self
 
-        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
             return None
 
     with (
@@ -818,7 +827,9 @@ def test_cli_parses_window_filters_and_fail_on_blockers(capsys) -> None:  # type
     assert payload["final_authority_ok"] is False
 
 
-def test_cli_reports_database_read_errors(capsys) -> None:  # type: ignore[no-untyped-def]
+def test_cli_reports_database_read_errors(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     with patch.object(
         cli, "SessionLocal", side_effect=SQLAlchemyError("db unavailable")
     ):
@@ -830,12 +841,19 @@ def test_cli_reports_database_read_errors(capsys) -> None:  # type: ignore[no-un
     assert AUTHORITY_READ_ERROR_BLOCKER in payload["blockers"]
 
 
-def test_cli_emits_read_only_report_from_session_fixture(capsys) -> None:  # type: ignore[no-untyped-def]
+def test_cli_emits_read_only_report_from_session_fixture(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     class FakeSession:
         def __enter__(self) -> "FakeSession":
             return self
 
-        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
             return None
 
     with (
@@ -855,12 +873,19 @@ def test_cli_emits_read_only_report_from_session_fixture(capsys) -> None:  # typ
     assert payload["final_authority_ok"] is True
 
 
-def test_cli_parses_window_arguments_and_fails_on_blockers(capsys) -> None:  # type: ignore[no-untyped-def]
+def test_cli_parses_window_arguments_and_fails_on_blockers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     class FakeSession:
         def __enter__(self) -> "FakeSession":
             return self
 
-        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
             return None
 
     with (
@@ -886,12 +911,19 @@ def test_cli_parses_window_arguments_and_fails_on_blockers(capsys) -> None:  # t
     assert payload["window"]["ended_at"] == "2026-05-02T16:00:00Z"
 
 
-def test_cli_reports_read_error_as_blocker(capsys) -> None:  # type: ignore[no-untyped-def]
+def test_cli_reports_read_error_as_blocker(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     class FakeSession:
         def __enter__(self) -> "FakeSession":
             raise SQLAlchemyError("database unavailable")
 
-        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
             return None
 
     with patch.object(cli, "SessionLocal", return_value=FakeSession()):

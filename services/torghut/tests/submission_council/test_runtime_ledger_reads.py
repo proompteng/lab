@@ -216,7 +216,7 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
         fake_session = _FailingRuntimeLedgerStatusSession()
 
         summary = _load_latest_runtime_ledger_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             hypothesis_ids=["H-PAIRS-01"],
         )
 
@@ -238,7 +238,7 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
         fake_session = _FailingRuntimeLedgerStatusSession()
 
         evidence = _load_latest_certificate_evidence(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             hypothesis_ids=["H-PAIRS-01"],
         )
 
@@ -384,7 +384,7 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
         fake_session = _FailingRuntimeLedgerStatusSession()
 
         rows = _attach_lineage_refs(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             evaluated_rows=[
                 {
                     "candidate_id": "candidate-timeout",
@@ -407,7 +407,7 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
         fake_session = _FailingRuntimeLedgerStatusSession()
 
         summary = _load_persisted_profit_rejection_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             account_label="PA3SX7FYNUTF",
             now=datetime(2026, 6, 1, tzinfo=timezone.utc),
         )
@@ -427,13 +427,18 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
         fake_session = _RaisingBindRuntimeLedgerStatusSession()
 
         _maybe_set_runtime_ledger_status_statement_timeout(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
         )
 
         self.assertEqual(
             fake_session.calls,
             ["SET LOCAL statement_timeout = 2500"],
         )
+
+    def test_runtime_ledger_status_timeout_helper_ignores_non_executable_object(
+        self,
+    ) -> None:
+        _maybe_set_runtime_ledger_status_statement_timeout(object())
 
     def test_runtime_ledger_status_timeout_helper_uses_configured_timeout(
         self,
@@ -445,7 +450,7 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
             {"TORGHUT_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS": "3250"},
         ):
             _maybe_set_runtime_ledger_status_statement_timeout(
-                fake_session,  # type: ignore[arg-type]
+                fake_session,
             )
 
         self.assertEqual(
@@ -478,7 +483,7 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
         self,
     ) -> None:
         _rollback_runtime_ledger_status_session(
-            _NoRollbackRuntimeLedgerStatusSession(),  # type: ignore[arg-type]
+            _NoRollbackRuntimeLedgerStatusSession(),
         )
 
     def test_load_latest_runtime_ledger_summary_fails_closed_when_rollback_fails(
@@ -487,7 +492,7 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
         fake_session = _RollbackFailingRuntimeLedgerStatusSession()
 
         summary = _load_latest_runtime_ledger_summary(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             hypothesis_ids=["H-PAIRS-01"],
         )
 
@@ -509,7 +514,7 @@ class TestSubmissionCouncilRuntimeLedgerReads(SubmissionCouncilTestCase):
         fake_session = _FailingRuntimeLedgerStatusSession()
 
         candidates = _load_runtime_ledger_repair_candidates(
-            fake_session,  # type: ignore[arg-type]
+            fake_session,
             registry_items=[
                 {
                     "hypothesis_id": "H-PAIRS-01",

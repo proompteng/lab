@@ -12,6 +12,7 @@ from .common import (
     Mapping,
     ResearchCandidate,
     ResearchPromotion,
+    RuntimeLedgerReadSession,
     SQLAlchemyError,
     Sequence,
     Session,
@@ -300,7 +301,7 @@ def _build_profit_data_readiness_summary(
 
 
 def _load_persisted_profit_rejection_summary(
-    session: Session,
+    session: RuntimeLedgerReadSession,
     *,
     account_label: str | None,
     now: datetime,
