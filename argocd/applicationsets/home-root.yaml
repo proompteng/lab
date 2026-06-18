@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: home-root
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  destination:
+    namespace: argocd
+    server: https://kubernetes.default.svc
+  source:
+    repoURL: git@github.com:gregkonush/home.git
+    targetRevision: main
+    path: argocd
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+      refresh: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+      - ApplyOutOfSyncOnly=true
+      - PruneLast=true
+      - ClientSideApplyMigration=false
