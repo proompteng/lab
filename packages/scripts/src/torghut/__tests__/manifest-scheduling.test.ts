@@ -127,12 +127,19 @@ describe('Torghut manifest scheduling', () => {
     const container = getAtPath(job, ['spec', 'template', 'spec', 'containers', 0])
     const args = Array.isArray(container.args) ? container.args.join('\n') : ''
 
-    expect(getAtPath(job, ['spec']).activeDeadlineSeconds).toBe(360)
+    expect(getAtPath(job, ['spec']).backoffLimit).toBe(0)
+    expect(getAtPath(job, ['spec']).activeDeadlineSeconds).toBe(240)
+    expect(getAtPath(job, ['spec', 'template', 'spec']).restartPolicy).toBe('Never')
     expect(args).toContain('set -euo pipefail')
     expect(args).toContain('--connect_timeout 5')
     expect(args).toContain('--send_timeout 30')
     expect(args).toContain('--receive_timeout 60')
-    expect(args).toContain('timeout 240s "${CLICKHOUSE_CLIENT[@]}" --multiquery < /schema/schema.sql')
+    expect(args).toContain("SELECT DISTINCT host_name FROM system.clusters WHERE cluster='default' ORDER BY host_name")
+    expect(args).toContain("sed -E 's/ ON CLUSTER default//g' /schema/schema.sql > /tmp/schema-local.sql")
+    expect(args).toContain(
+      'timeout 90s "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --multiquery < /tmp/schema-local.sql',
+    )
+    expect(args).toContain('ClickHouse host ${host} has ${count}/${#REQUIRED_TABLES[@]} required Hyperliquid tables')
 
     const schema = parseManifest('argocd/applications/torghut-hyperliquid-feed/clickhouse-schema-configmap.yaml')
     const data = getAtPath(schema, ['data'])
