@@ -239,7 +239,7 @@ class SimpleTradingPipeline(
                 return
             context = self._build_run_context(session)
             if context is None:
-                self.ingestor.commit_cursor(session, batch)
+                self._commit_signal_cursor(batch)
                 return
             account_snapshot, account, positions, allowed_symbols = context
             self._process_paper_route_probe_exit_decisions(
@@ -271,7 +271,7 @@ class SimpleTradingPipeline(
                     "paper-route evidence collection owns account=%s",
                     self.account_label,
                 )
-                self.ingestor.commit_cursor(session, batch)
+                self._commit_signal_cursor(batch)
                 return
             quality_signals = self._quality_gate_signals(
                 signals=batch.signals,
@@ -300,7 +300,7 @@ class SimpleTradingPipeline(
                 positions=positions,
                 allowed_symbols=allowed_symbols,
             )
-            self.ingestor.commit_cursor(session, batch)
+            self._commit_signal_cursor(batch)
 
     def _fetch_signal_batch(
         self,
