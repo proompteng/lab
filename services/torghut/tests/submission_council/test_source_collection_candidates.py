@@ -27,6 +27,7 @@ from tests.submission_council.support import (
     datetime,
     patch,
     sessionmaker,
+    settings,
     timedelta,
     timezone,
 )
@@ -772,6 +773,11 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
     def test_live_gate_marks_source_collection_pending_without_probation(
         self,
     ) -> None:
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
+        settings.trading_simple_paper_route_probe_max_notional = 100
+        settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_activation_expires_at = "2999-01-01T20:05:00Z"
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -874,6 +880,39 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
                     promotion_certificate_evidence=[],
                     session=session,
                 )
+                waiting_gate = build_live_submission_gate_payload(
+                    SimpleNamespace(
+                        market_session_open=False,
+                        last_autonomy_promotion_eligible=False,
+                        last_autonomy_promotion_action=None,
+                        drift_live_promotion_eligible=False,
+                        last_market_context_freshness_seconds=45,
+                        metrics=SimpleNamespace(
+                            feature_batch_rows_total=9,
+                            feature_null_rate={"price": 0.0},
+                            feature_staleness_ms_p95=250,
+                            feature_duplicate_ratio=0.0,
+                            decision_state_total={},
+                        ),
+                    ),
+                    hypothesis_summary={
+                        "summary": {
+                            "promotion_eligible_total": 0,
+                            "capital_stage_totals": {"shadow": 1},
+                            "dependency_quorum": {
+                                "decision": "allow",
+                                "reasons": [],
+                                "message": "ready",
+                            },
+                        },
+                        "items": [],
+                    },
+                    empirical_jobs_status={"ready": True, "status": "healthy"},
+                    dspy_runtime_status={"mode": "inactive"},
+                    quant_health_status=self._healthy_quant_status(),
+                    promotion_certificate_evidence=[],
+                    session=session,
+                )
 
         self.assertEqual(gate["paper_probation_eligible_total"], 0)
         self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 0)
@@ -883,6 +922,28 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
         self.assertIn(
             "runtime_ledger_profit_target_source_collection_pending",
             gate["blocked_reasons"],
+        )
+        self.assertFalse(gate["allowed"])
+        collection_gate = gate["bounded_live_paper_collection_gate"]
+        self.assertTrue(collection_gate["allowed"])
+        self.assertTrue(collection_gate["active"])
+        self.assertEqual(
+            collection_gate["reason"],
+            "bounded_live_paper_collection_ready",
+        )
+        self.assertEqual(
+            collection_gate["authority_scope"], "bounded_evidence_collection_only"
+        )
+        self.assertFalse(collection_gate["capital_promotion_allowed"])
+        self.assertFalse(collection_gate["final_authority_ok"])
+        self.assertEqual(collection_gate["blocked_reasons"], [])
+        self.assertEqual(collection_gate["paper_route_probe_max_notional"], "100")
+        waiting_collection_gate = waiting_gate["bounded_live_paper_collection_gate"]
+        self.assertTrue(waiting_collection_gate["allowed"])
+        self.assertFalse(waiting_collection_gate["active"])
+        self.assertEqual(
+            waiting_collection_gate["reason"],
+            "bounded_live_paper_collection_waiting_for_session",
         )
         self.assertEqual(gate["runtime_ledger_source_collection_candidate_total"], 1)
         self.assertEqual(
