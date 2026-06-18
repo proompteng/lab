@@ -22,6 +22,7 @@ from app.hyperliquid_runtime.exchange import (
 from app.hyperliquid_runtime.metrics import HyperliquidRuntimeMetrics
 from app.hyperliquid_runtime.models import (
     CycleResult,
+    HyperliquidMarket,
     OrderIntent,
     RuntimeDependencyStatus,
 )
@@ -50,6 +51,27 @@ def _intent() -> OrderIntent:
         cloid="0x1234567890abcdef1234567890abcdef",
         reduce_only=False,
         decision_id="decision",
+    )
+
+
+def _market(
+    *,
+    coin: str = "cash:AAPL",
+    dex: str = "cash",
+    market_id: str = "hl:perp:cash:cash:AAPL",
+) -> HyperliquidMarket:
+    return HyperliquidMarket(
+        market_id=market_id,
+        coin=coin,
+        dex=dex,
+        asset_class="stocks",
+        network="mainnet",
+        day_notional_volume_usd=Decimal("500000"),
+        mark_price=Decimal("200"),
+        mid_price=None,
+        open_interest_usd=Decimal("1000000"),
+        max_leverage=3,
+        payload={},
     )
 
 
@@ -210,11 +232,19 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
 ) -> None:
     shadow = ShadowHyperliquidExchange()
     assert shadow.reconcile_fills({"cash:AAPL": "hl:perp:cash:cash:AAPL"}) == []
+    shadow_markets, shadow_status = shadow.filter_supported_markets((_market(),))
+    assert shadow_markets == (_market(),)
+    assert shadow_status.ready
     shadow.schedule_dead_man_cancel(seconds_from_now=30)
     assert shadow.dependency_status().ready
 
     unavailable = UnavailableHyperliquidExchange(["missing_secret"])
     assert not unavailable.dependency_status().ready
+    unavailable_markets, unavailable_status = unavailable.filter_supported_markets(
+        (_market(),)
+    )
+    assert unavailable_markets == ()
+    assert not unavailable_status.ready
     with pytest.raises(RuntimeError, match="hyperliquid_exchange_unavailable"):
         unavailable.submit_ioc_limit(_intent())
     unavailable.schedule_dead_man_cancel(seconds_from_now=30)
@@ -258,6 +288,25 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
                 {"coin": "BTC", "side": "A", "px": "1", "sz": "1", "time": 0},
             ]
 
+        def meta(self, dex: str = "") -> dict[str, object]:
+            meta_dexes = sdk_calls.setdefault("meta_dexes", [])
+            assert isinstance(meta_dexes, list)
+            meta_dexes.append(dex)
+            if dex == "":
+                return {
+                    "universe": [
+                        "malformed-asset",
+                        {"name": "SPX"},
+                    ]
+                }
+            return {
+                "universe": [
+                    "malformed-asset",
+                    {"name": "cash:AAPL"},
+                    {"name": "cash:TSLA"},
+                ]
+            }
+
     class FakeCloid:
         @staticmethod
         def from_str(raw: str) -> str:
@@ -280,10 +329,36 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
     )
     sdk_exchange = HyperliquidSdkExchange(config)
 
+    supported_markets, universe_status = sdk_exchange.filter_supported_markets(
+        (
+            _market(),
+            _market(
+                coin="SPX",
+                dex="default",
+                market_id="hl:perp:default:SPX",
+            ),
+            _market(
+                coin="cash:UNSUPPORTED",
+                market_id="hl:perp:cash:cash:UNSUPPORTED",
+            ),
+        )
+    )
+    cached_markets, cached_status = sdk_exchange.filter_supported_markets((_market(),))
+    empty_markets, empty_status = sdk_exchange.filter_supported_markets(())
     result = sdk_exchange.submit_ioc_limit(_intent())
     fills = sdk_exchange.reconcile_fills({"cash:AAPL": "hl:perp:cash:cash:AAPL"})
     sdk_exchange.schedule_dead_man_cancel(seconds_from_now=30)
 
+    assert supported_markets == (
+        _market(),
+        _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
+    )
+    assert universe_status.ready
+    assert cached_markets == (_market(),)
+    assert cached_status.ready
+    assert empty_markets == ()
+    assert empty_status.ready
+    assert sdk_calls["meta_dexes"] == ["", "cash"]
     assert result.status == "accepted"
     assert result.exchange_order_id == "42"
     assert sdk_calls["order"]  # SDK received a real order payload.
@@ -291,6 +366,38 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
     assert fills[0].fee_usd == Decimal("0.02")
     assert sdk_exchange.dependency_status().ready
     assert isinstance(exchange_from_config(config), HyperliquidSdkExchange)
+
+
+def test_sdk_execution_universe_reports_metadata_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeInfo:
+        def __init__(self, _url: str, *, skip_ws: bool) -> None:
+            assert skip_ws
+
+        def meta(self, dex: str = "") -> dict[str, object]:
+            _ = dex
+            raise TimeoutError("metadata unavailable")
+
+    def fake_import(name: str) -> object:
+        if name == "hyperliquid.info":
+            return SimpleNamespace(Info=FakeInfo)
+        raise AssertionError(f"unexpected import {name}")
+
+    monkeypatch.setattr(exchange_module.importlib, "import_module", fake_import)
+    sdk_exchange = HyperliquidSdkExchange(
+        _config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0xabc",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY="0xdef",
+        )
+    )
+
+    supported_markets, status = sdk_exchange.filter_supported_markets((_market(),))
+
+    assert supported_markets == ()
+    assert not status.ready
+    assert status.reason == "execution_market_metadata_unavailable:TimeoutError"
 
 
 def test_order_result_status_variants() -> None:

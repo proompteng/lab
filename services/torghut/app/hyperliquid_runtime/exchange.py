@@ -5,10 +5,20 @@ from __future__ import annotations
 import importlib
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Protocol, cast
+from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidRuntimeConfig
-from .models import Fill, OrderIntent, OrderResult, OrderStatus, RuntimeDependencyStatus
+from .models import (
+    Fill,
+    HyperliquidMarket,
+    OrderIntent,
+    OrderResult,
+    OrderStatus,
+    RuntimeDependencyStatus,
+)
+
+
+_EXECUTION_UNIVERSE_REFRESH_SECONDS = 300
 
 
 class HyperliquidExchange(Protocol):
@@ -20,6 +30,13 @@ class HyperliquidExchange(Protocol):
 
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
         """Read current account fills from the dedicated testnet account."""
+        ...
+
+    def filter_supported_markets(
+        self,
+        markets: tuple[HyperliquidMarket, ...],
+    ) -> tuple[tuple[HyperliquidMarket, ...], RuntimeDependencyStatus]:
+        """Return markets currently supported by the execution venue."""
         ...
 
     def dependency_status(self) -> RuntimeDependencyStatus:
@@ -51,6 +68,21 @@ class ShadowHyperliquidExchange:
         self._observed_at = datetime.now(timezone.utc)
         return []
 
+    def filter_supported_markets(
+        self,
+        markets: tuple[HyperliquidMarket, ...],
+    ) -> tuple[tuple[HyperliquidMarket, ...], RuntimeDependencyStatus]:
+        self._observed_at = datetime.now(timezone.utc)
+        return (
+            markets,
+            RuntimeDependencyStatus(
+                name="hyperliquid_execution_universe_shadow",
+                ready=True,
+                observed_at=self._observed_at,
+                lag_seconds=0,
+            ),
+        )
+
     def dependency_status(self) -> RuntimeDependencyStatus:
         return RuntimeDependencyStatus(
             name="hyperliquid_exchange_shadow",
@@ -80,6 +112,20 @@ class UnavailableHyperliquidExchange:
         _ = market_id_by_coin
         return []
 
+    def filter_supported_markets(
+        self,
+        markets: tuple[HyperliquidMarket, ...],
+    ) -> tuple[tuple[HyperliquidMarket, ...], RuntimeDependencyStatus]:
+        _ = markets
+        return (
+            (),
+            RuntimeDependencyStatus(
+                name="hyperliquid_execution_universe",
+                ready=False,
+                reason=",".join(self._reasons),
+            ),
+        )
+
     def dependency_status(self) -> RuntimeDependencyStatus:
         return RuntimeDependencyStatus(
             name="hyperliquid_exchange",
@@ -104,6 +150,8 @@ class HyperliquidSdkExchange:
         self._sdk_exchange: Any | None = None
         self._sdk_info: Any | None = None
         self._last_exchange_read_at: datetime | None = None
+        self._last_execution_universe_at: datetime | None = None
+        self._execution_universe_by_dex: dict[str, frozenset[str]] = {}
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
         exchange = self._exchange()
@@ -135,6 +183,56 @@ class HyperliquidSdkExchange:
             for fill in raw_fills
             if _fill_coin(fill) in market_id_by_coin
         ]
+
+    def filter_supported_markets(
+        self,
+        markets: tuple[HyperliquidMarket, ...],
+    ) -> tuple[tuple[HyperliquidMarket, ...], RuntimeDependencyStatus]:
+        if not markets:
+            return (
+                (),
+                RuntimeDependencyStatus(
+                    name="hyperliquid_execution_universe",
+                    ready=True,
+                    observed_at=datetime.now(timezone.utc),
+                    lag_seconds=0,
+                ),
+            )
+        try:
+            self._refresh_execution_universe(markets)
+        except Exception as exc:
+            if not self._execution_universe_cache_is_fresh():
+                return (
+                    (),
+                    RuntimeDependencyStatus(
+                        name="hyperliquid_execution_universe",
+                        ready=False,
+                        reason=f"execution_market_metadata_unavailable:{type(exc).__name__}",
+                    ),
+                )
+        supported = tuple(
+            market
+            for market in markets
+            if market.coin
+            in self._execution_universe_by_dex.get(_sdk_dex(market.dex), frozenset())
+        )
+        observed_at = self._last_execution_universe_at
+        lag_seconds = (
+            int((datetime.now(timezone.utc) - observed_at).total_seconds())
+            if observed_at is not None
+            else None
+        )
+        ready = bool(supported)
+        return (
+            supported,
+            RuntimeDependencyStatus(
+                name="hyperliquid_execution_universe",
+                ready=ready,
+                observed_at=observed_at,
+                lag_seconds=lag_seconds,
+                reason=None if ready else "no_execution_supported_markets",
+            ),
+        )
 
     def dependency_status(self) -> RuntimeDependencyStatus:
         if self._last_exchange_read_at is None:
@@ -190,6 +288,47 @@ class HyperliquidSdkExchange:
         if from_str is None:
             return raw
         return from_str(raw)
+
+    def _refresh_execution_universe(
+        self,
+        markets: tuple[HyperliquidMarket, ...],
+    ) -> None:
+        if self._execution_universe_cache_is_fresh():
+            return
+        by_dex: dict[str, frozenset[str]] = {}
+        for dex in sorted({_sdk_dex(market.dex) for market in markets}):
+            meta: object = self._info().meta(dex=dex)
+            universe: object = (
+                cast(Mapping[str, object], meta).get("universe")
+                if isinstance(meta, dict)
+                else None
+            )
+            coins: set[str] = set()
+            if isinstance(universe, list):
+                for asset in cast(list[object], universe):
+                    if not isinstance(asset, dict):
+                        continue
+                    asset_map = cast(Mapping[str, object], asset)
+                    name = str(asset_map.get("name") or "").strip()
+                    if name:
+                        coins.add(name)
+            by_dex[dex] = frozenset(coins)
+        observed_at = datetime.now(timezone.utc)
+        self._execution_universe_by_dex = by_dex
+        self._last_execution_universe_at = observed_at
+        self._last_exchange_read_at = observed_at
+
+    def _execution_universe_cache_is_fresh(self) -> bool:
+        if self._last_execution_universe_at is None:
+            return False
+        max_age_seconds = min(
+            _EXECUTION_UNIVERSE_REFRESH_SECONDS,
+            max(1, self._config.exchange_staleness_seconds),
+        )
+        age_seconds = (
+            datetime.now(timezone.utc) - self._last_execution_universe_at
+        ).total_seconds()
+        return age_seconds <= max_age_seconds
 
 
 def exchange_from_config(config: HyperliquidRuntimeConfig) -> HyperliquidExchange:
@@ -271,6 +410,13 @@ def _fill_from_payload(
 
 def _fill_coin(payload: dict[str, object]) -> str:
     return str(payload.get("coin") or "").strip()
+
+
+def _sdk_dex(dex: str) -> str:
+    cleaned = dex.strip()
+    if cleaned in {"", "default"}:
+        return ""
+    return cleaned
 
 
 def _decimal(value: object) -> Decimal:

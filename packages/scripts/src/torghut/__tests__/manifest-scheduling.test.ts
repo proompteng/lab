@@ -181,6 +181,32 @@ describe('Torghut manifest scheduling', () => {
     const resources = kustomization.resources
     expect(resources).toBeArray()
     expect(resources).not.toContain('externalsecret.yaml')
+
+    const externalSecret = parseManifest('argocd/applications/torghut-hyperliquid-runtime/externalsecret.yaml')
+    expect(externalSecret.kind).toBe('ExternalSecret')
+    expect(getAtPath(externalSecret, ['metadata']).name).toBe('torghut-hyperliquid-testnet')
+    expect(getAtPath(externalSecret, ['spec', 'secretStoreRef'])).toMatchObject({
+      kind: 'ClusterSecretStore',
+      name: 'onepassword-infra',
+    })
+    expect(getAtPath(externalSecret, ['spec', 'target'])).toMatchObject({
+      name: 'torghut-hyperliquid-testnet',
+      creationPolicy: 'Owner',
+      deletionPolicy: 'Retain',
+    })
+    const secretData = getAtPath(externalSecret, ['spec']).data
+    expect(secretData).toContainEqual(
+      expect.objectContaining({
+        secretKey: 'account-address',
+        remoteRef: expect.objectContaining({ key: 'hyperliquid-testnet/account-address' }),
+      }),
+    )
+    expect(secretData).toContainEqual(
+      expect.objectContaining({
+        secretKey: 'api-wallet-private-key',
+        remoteRef: expect.objectContaining({ key: 'hyperliquid-testnet/api-wallet-private-key' }),
+      }),
+    )
   })
 
   it('keeps options TA recoverable across transient Kafka source startup failures', () => {
