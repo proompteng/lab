@@ -140,26 +140,37 @@ describe('Torghut manifest scheduling', () => {
     expect(data['schema.sql']).toContain("SET distributed_ddl_output_mode = 'null_status_on_timeout';")
   })
 
-  it('keeps Hyperliquid ClickHouse persistence focused on runtime-critical tables', () => {
+  it('keeps Hyperliquid ClickHouse persistence enabled for the full public feed history', () => {
     const config = parseManifest('argocd/applications/torghut-hyperliquid-feed/configmap.yaml')
     const data = getAtPath(config, ['data'])
     const enabledTables = String(data.CLICKHOUSE_ENABLED_TABLES).split(',')
     const readyTables = String(data.CLICKHOUSE_READY_TABLES).split(',')
 
     expect(enabledTables).toEqual([
+      'hyperliquid_raw',
       'hyperliquid_market_catalog',
+      'hyperliquid_trades',
+      'hyperliquid_l2_books',
+      'hyperliquid_bbo',
       'hyperliquid_candles',
       'hyperliquid_asset_contexts',
       'hyperliquid_funding',
       'hyperliquid_status',
     ])
-    expect(readyTables).toEqual(['hyperliquid_candles'])
+    expect(readyTables).toEqual([
+      'hyperliquid_raw',
+      'hyperliquid_trades',
+      'hyperliquid_l2_books',
+      'hyperliquid_bbo',
+      'hyperliquid_candles',
+      'hyperliquid_asset_contexts',
+    ])
     expect(readyTables.every((table) => enabledTables.includes(table))).toBe(true)
 
     const deployment = parseManifest('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-critical-clickhouse-20260618b')
+    ).toBe('hyperliquid-feed-full-clickhouse-20260618c')
   })
 
   it('keeps Hyperliquid runtime shadow mode free of optional execution secret drift', () => {
