@@ -32,33 +32,67 @@ class ClickHouseRuntimeReader:
     def load_catalog_rows(self) -> list[dict[str, object]]:
         database = _identifier(self._config.clickhouse_database)
         network = _sql_string(self._config.market_data_network)
-        limit = max(1, self._config.max_markets_per_cycle * 4)
+        limit = max(1000, self._config.max_markets_per_cycle * 20)
         query = f"""
+        WITH
+          latest_catalog AS (
+            SELECT
+              *,
+              row_number() OVER (
+                PARTITION BY market_id
+                ORDER BY parseDateTimeBestEffort(event_ts) DESC, seq DESC
+              ) AS rn
+            FROM {database}.hyperliquid_market_catalog
+            WHERE network = {network}
+              AND market_type = 'perp'
+              AND market_id IS NOT NULL
+          ),
+          latest_context AS (
+            SELECT
+              *,
+              row_number() OVER (
+                PARTITION BY market_id
+                ORDER BY parseDateTimeBestEffort(event_ts) DESC, seq DESC
+              ) AS rn
+            FROM {database}.hyperliquid_asset_contexts
+            WHERE network = {network}
+              AND market_type = 'perp'
+              AND market_id IS NOT NULL
+          )
         SELECT
-          market_id,
-          coin,
-          dex,
-          network,
-          market_type,
-          payload,
-          JSONExtractString(payload, 'dayNtlVlm') AS dayNtlVlm,
-          JSONExtractString(payload, 'markPx') AS markPx,
-          JSONExtractString(payload, 'midPx') AS midPx,
-          JSONExtractString(payload, 'openInterest') AS openInterest,
-          JSONExtractInt(payload, 'maxLeverage') AS maxLeverage
-        FROM (
-          SELECT
-            *,
-            row_number() OVER (
-              PARTITION BY market_id
-              ORDER BY parseDateTimeBestEffort(event_ts) DESC, seq DESC
-            ) AS rn
-          FROM {database}.hyperliquid_market_catalog
-          WHERE network = {network}
-            AND market_type = 'perp'
-            AND market_id IS NOT NULL
-        )
-        WHERE rn = 1
+          c.market_id AS market_id,
+          c.coin AS coin,
+          c.dex AS dex,
+          c.network AS network,
+          c.market_type AS market_type,
+          c.payload AS payload,
+          COALESCE(
+            NULLIF(JSONExtractString(JSONExtractRaw(a.payload, 'ctx'), 'dayNtlVlm'), ''),
+            JSONExtractString(c.payload, 'dayNtlVlm')
+          ) AS dayNtlVlm,
+          COALESCE(
+            NULLIF(JSONExtractString(JSONExtractRaw(a.payload, 'ctx'), 'markPx'), ''),
+            JSONExtractString(c.payload, 'markPx')
+          ) AS markPx,
+          COALESCE(
+            NULLIF(JSONExtractString(JSONExtractRaw(a.payload, 'ctx'), 'midPx'), ''),
+            JSONExtractString(c.payload, 'midPx')
+          ) AS midPx,
+          COALESCE(
+            NULLIF(JSONExtractString(JSONExtractRaw(a.payload, 'ctx'), 'openInterest'), ''),
+            JSONExtractString(c.payload, 'openInterest')
+          ) AS openInterest,
+          if(
+            JSONExtractInt(c.payload, 'maxLeverage') != 0,
+            JSONExtractInt(c.payload, 'maxLeverage'),
+            JSONExtractInt(JSONExtractRaw(c.payload, 'raw'), 'maxLeverage')
+          ) AS maxLeverage
+        FROM latest_catalog AS c
+        LEFT JOIN latest_context AS a
+          ON c.market_id = a.market_id
+          AND a.rn = 1
+        WHERE c.rn = 1
+        ORDER BY toFloat64OrZero(dayNtlVlm) DESC
         LIMIT {limit}
         """
         return self.query_json_each_row(query)

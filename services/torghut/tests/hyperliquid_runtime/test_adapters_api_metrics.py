@@ -89,13 +89,17 @@ def test_clickhouse_reader_parses_queries_status_and_features(
                 '"liquidity_usd":"500000","funding_rate":"0.0001",'
                 '"open_interest_usd":"1000000","regime":"trend","source_lag_seconds":"7"}\n'
             )
-        return '{"market_id":"hl:perp:cash:cash:AAPL","coin":"cash:AAPL","payload":"{}"}\n\n'
+        return (
+            '{"market_id":"hl:perp:cash:cash:AAPL","coin":"cash:AAPL",'
+            '"payload":"{}","dayNtlVlm":"500000","markPx":"200"}\n\n'
+        )
 
     monkeypatch.setattr(clickhouse_module, "_request_clickhouse", fake_request)
     reader = ClickHouseRuntimeReader(_config())
 
     catalog = reader.load_catalog_rows()
     assert catalog[0]["coin"] == "cash:AAPL"
+    assert catalog[0]["dayNtlVlm"] == "500000"
     assert reader.load_feature_rows([]) == []
     features = reader.load_feature_rows(["hl:perp:cash:cash:AAPL"])
     status = reader.status()
@@ -107,6 +111,8 @@ def test_clickhouse_reader_parses_queries_status_and_features(
         "hyperliquid_candles",
         "hyperliquid_runtime_latest_features",
     }
+    assert any("hyperliquid_asset_contexts" in query for query in queries)
+    assert any("JSONExtractRaw(a.payload, 'ctx')" in query for query in queries)
     assert any("FORMAT JSONEachRow" in query for query in queries)
 
 
