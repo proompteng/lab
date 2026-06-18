@@ -438,12 +438,16 @@ class TradingPipelineTestCaseBase(TestCase):
             account_label="paper",
             session_factory=self.session_local,
         )
-        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
         with (
             patch.object(
                 SimpleTradingPipeline,
                 "_profitability_proof_floor",
                 return_value=floor,
+            ),
+            patch.object(
+                SimpleTradingPipeline,
+                "_is_market_session_open",
+                return_value=True,
             ),
             patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",

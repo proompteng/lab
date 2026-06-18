@@ -88,13 +88,13 @@ class TestSnapshotRuntimeCostCoverage(TestCase):
             )
             Base.metadata.create_all(engine)
             try:
-                with Session(engine) as session:
-                    original_commit = session.commit
-                    state = {"raced": False}
 
-                    def racing_commit() -> None:
-                        if not state["raced"]:
-                            state["raced"] = True
+                class RacingCommitSession(Session):
+                    _raced: bool = False
+
+                    def commit(self) -> None:
+                        if not self._raced:
+                            self._raced = True
                             with Session(engine) as competing_session:
                                 competing_session.add(
                                     Execution(
@@ -111,10 +111,9 @@ class TestSnapshotRuntimeCostCoverage(TestCase):
                                     )
                                 )
                                 competing_session.commit()
-                        original_commit()
+                        super().commit()
 
-                    session.commit = racing_commit  # type: ignore[method-assign]
-
+                with RacingCommitSession(engine) as session:
                     execution = sync_order_to_db(
                         session,
                         {

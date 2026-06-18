@@ -99,13 +99,11 @@ class TestConsistencyPenaltyMarksDaysBelowMinDailyNet(
             iter_parameter_candidates({"min_rank": {"value": "0.55"}})
 
     def test_iter_parameter_candidates_rejects_non_iterable_values(self) -> None:
-        invalid_grid = {"min_rank": 55}
+        invalid_grid: dict[str, object] = {"min_rank": 55}
         with self.assertRaisesRegex(
             ValueError, "parameter_values_not_iterable:min_rank"
         ):
-            iter_parameter_candidates(
-                invalid_grid,  # type: ignore[arg-type]
-            )
+            iter_parameter_candidates(invalid_grid)
 
     def test_iter_parameter_candidates_returns_single_empty_candidate_for_empty_grid(
         self,
