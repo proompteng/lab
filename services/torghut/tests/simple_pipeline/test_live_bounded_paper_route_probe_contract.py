@@ -234,6 +234,209 @@ def test_bounded_paper_route_target_uses_static_universe_without_promotion() -> 
         settings.trading_static_symbols_raw = static_symbols_before
 
 
+def test_live_source_collection_target_defaults_static_universe_and_current_session(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
+    submit_enabled_before = settings.trading_simple_submit_enabled
+    activation_expires_at_before = settings.trading_live_submit_activation_expires_at
+    probe_max_notional_before = settings.trading_simple_paper_route_probe_max_notional
+    static_symbols_before = settings.trading_static_symbols_raw
+    allow_shorts_before = settings.trading_allow_shorts
+    try:
+        settings.trading_mode = "live"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
+        settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_activation_expires_at = "2026-06-17T20:05:00Z"
+        settings.trading_simple_paper_route_probe_max_notional = 100
+        settings.trading_static_symbols_raw = "AAPL,AMZN,INTC,NVDA"
+        settings.trading_allow_shorts = True
+        now = datetime(2026, 6, 17, 17, 30, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            paper_route_probe_symbols=[],
+            target_symbols=[],
+            symbols=[],
+            source_kind="runtime_ledger_source_collection_candidate",
+            source_collection_authorized=True,
+            source_collection_authorization_scope=(
+                "source_window_evidence_collection_only"
+            ),
+            paper_route_probe_window_start="2026-05-13T17:00:00+00:00",
+            paper_route_probe_window_end="2026-05-13T17:30:00+00:00",
+            paper_route_probe_next_session_max_notional="100",
+            bounded_evidence_collection_max_notional="100",
+            target_notional="100",
+            canary_collection_authorized=False,
+            paper_route_target_account_audit_state={},
+            source_decision_readiness=None,
+        )
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "PA3SX7FYNUTF"
+        pipeline.price_fetcher = SimpleNamespace(
+            fetch_market_snapshot=lambda signal: MarketSnapshot(
+                symbol=signal.symbol,
+                as_of=signal.event_ts,
+                price=Decimal("50"),
+                spread=Decimal("0"),
+                source="fixture",
+                bid=Decimal("50"),
+                ask=Decimal("50"),
+            )
+        )
+        pipeline._is_market_session_open = lambda _now: True
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        normalized = pipeline._paper_route_target_with_local_probe_contract(
+            target,
+            strategies=[strategy],
+        )
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            set(normalized["paper_route_probe_symbols"]),
+            None,
+            [normalized],
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[strategy],
+            allowed_symbols={"AAPL", "AMZN", "INTC", "NVDA"},
+            positions=[],
+            session=None,
+        )
+
+        assert normalized["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+        assert normalized["paper_route_probe_window_defaulted"] is True
+        assert normalized["paper_route_probe_window_start"] == (
+            "2026-06-17T13:30:00+00:00"
+        )
+        assert normalized["paper_route_probe_window_end"] == (
+            "2026-06-17T20:00:00+00:00"
+        )
+        assert {decision.symbol for decision in decisions} == {"AAPL", "AMZN"}
+        for decision in decisions:
+            assert decision.params["source_decision_mode"] == (
+                "bounded_paper_route_collection"
+            )
+            assert decision.params["bounded_paper_route_submit_path"] == (
+                "bounded_paper_route_collection"
+            )
+            assert decision.params["profit_proof_eligible"] is True
+            metadata = decision.params["paper_route_target_plan_source_decision"]
+            assert metadata["bounded_live_paper_collection_authorized"] is True
+            assert metadata["paper_route_probe_window_start"] == (
+                "2026-06-17T13:30:00+00:00"
+            )
+            assert metadata["paper_route_probe_window_end"] == (
+                "2026-06-17T20:00:00+00:00"
+            )
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
+        )
+        settings.trading_simple_submit_enabled = submit_enabled_before
+        settings.trading_live_submit_activation_expires_at = (
+            activation_expires_at_before
+        )
+        settings.trading_simple_paper_route_probe_max_notional = (
+            probe_max_notional_before
+        )
+        settings.trading_static_symbols_raw = static_symbols_before
+        settings.trading_allow_shorts = allow_shorts_before
+
+
+def test_live_source_collection_records_blocker_when_targets_emit_no_decisions(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
+    submit_enabled_before = settings.trading_simple_submit_enabled
+    activation_expires_at_before = settings.trading_live_submit_activation_expires_at
+    probe_max_notional_before = settings.trading_simple_paper_route_probe_max_notional
+    allow_shorts_before = settings.trading_allow_shorts
+    try:
+        settings.trading_mode = "live"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
+        settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_activation_expires_at = "2026-06-17T20:05:00Z"
+        settings.trading_simple_paper_route_probe_max_notional = 100
+        settings.trading_allow_shorts = True
+        now = datetime(2026, 6, 17, 17, 30, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            strategy_name="missing-live-source-strategy",
+            runtime_strategy_name="missing-live-source-strategy",
+            strategy_lookup_names=["missing-live-source-strategy"],
+            source_kind="runtime_ledger_source_collection_candidate",
+            source_collection_authorized=True,
+            source_collection_authorization_scope=(
+                "source_window_evidence_collection_only"
+            ),
+            paper_route_probe_window_start="2026-06-17T13:30:00+00:00",
+            paper_route_probe_window_end="2026-06-17T20:00:00+00:00",
+            paper_route_probe_next_session_max_notional="100",
+            bounded_evidence_collection_max_notional="100",
+            target_notional="100",
+            canary_collection_authorized=False,
+            source_decision_readiness=None,
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "PA3SX7FYNUTF"
+        pipeline.state = SimpleNamespace()
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            {"AAPL", "AMZN"},
+            None,
+            [target],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[],
+            allowed_symbols={"AAPL", "AMZN"},
+            positions=[],
+            session=None,
+        )
+
+        assert decisions == []
+        blocker = pipeline.state.last_bounded_evidence_collection_blocker
+        assert blocker["reason"] == "paper_route_target_plan_source_decisions_missing"
+        assert blocker["target_symbols"] == ["AAPL", "AMZN"]
+        assert blocker["target_count"] == 1
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
+        )
+        settings.trading_simple_submit_enabled = submit_enabled_before
+        settings.trading_live_submit_activation_expires_at = (
+            activation_expires_at_before
+        )
+        settings.trading_simple_paper_route_probe_max_notional = (
+            probe_max_notional_before
+        )
+        settings.trading_allow_shorts = allow_shorts_before
+
+
 def test_bounded_paper_route_static_universe_does_not_override_promotion() -> None:
     static_symbols_before = settings.trading_static_symbols_raw
     try:

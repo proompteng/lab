@@ -129,7 +129,7 @@ spec:
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
               value: "true"
             - name: TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT
-              value: "2026-06-17T20:05:00Z"
+              value: "2026-06-18T20:05:00Z"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
