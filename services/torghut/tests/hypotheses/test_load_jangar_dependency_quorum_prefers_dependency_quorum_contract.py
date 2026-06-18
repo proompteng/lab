@@ -21,7 +21,7 @@ class TestLoadJangarDependencyQuorumPrefersDependencyQuorumContract(
         settings.trading_jangar_control_plane_cache_ttl_seconds = 0
         settings.trading_jangar_control_plane_timeout_seconds = 1.0
         with patch(
-            "app.trading.hypotheses.urlopen",
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen",
             return_value=_FakeHttpResponse(
                 {
                     "dependency_quorum": {
@@ -97,7 +97,7 @@ class TestLoadJangarDependencyQuorumPrefersDependencyQuorumContract(
             ],
         }
         with patch(
-            "app.trading.hypotheses.urlopen",
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen",
             return_value=_FakeHttpResponse(
                 {
                     "generated_at": "2026-05-14T16:10:00Z",
@@ -137,7 +137,7 @@ class TestLoadJangarDependencyQuorumPrefersDependencyQuorumContract(
             "fresh_until": "2026-05-14T16:30:00Z",
         }
         with patch(
-            "app.trading.hypotheses.urlopen",
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen",
             return_value=_FakeHttpResponse(
                 {
                     "generated_at": "2026-05-14T16:10:00Z",
@@ -169,7 +169,7 @@ class TestLoadJangarDependencyQuorumPrefersDependencyQuorumContract(
         )
         settings.trading_jangar_control_plane_cache_ttl_seconds = 0
         with patch(
-            "app.trading.hypotheses.urlopen",
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen",
             return_value=_FakeHttpResponse(
                 {
                     "dependency_quorum": {
@@ -199,7 +199,7 @@ class TestLoadJangarDependencyQuorumPrefersDependencyQuorumContract(
         )
         settings.trading_jangar_control_plane_cache_ttl_seconds = 30
         with patch(
-            "app.trading.hypotheses.urlopen",
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen",
             return_value=_FakeHttpResponse(
                 {
                     "dependency_quorum": {
@@ -229,7 +229,7 @@ class TestLoadJangarDependencyQuorumPrefersDependencyQuorumContract(
         )
         settings.trading_jangar_control_plane_cache_ttl_seconds = 0
         with patch(
-            "app.trading.hypotheses.urlopen",
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen",
             return_value=_FakeHttpResponse(
                 {
                     "workflows": {
@@ -263,7 +263,7 @@ class TestLoadJangarDependencyQuorumPrefersDependencyQuorumContract(
             "board_id": "verify-trust-foreclosure-board:ready-test",
         }
         with patch(
-            "app.trading.hypotheses.urlopen",
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen",
             return_value=_FakeHttpResponse(
                 {
                     "status": "ok",

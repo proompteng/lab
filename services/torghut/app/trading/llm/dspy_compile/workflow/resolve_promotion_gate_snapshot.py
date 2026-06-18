@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,13 +71,6 @@ _sanitize_idempotency_key = getattr(
 )
 _to_bool = getattr(_shared_context_private_33, "_to_bool")
 _to_float = getattr(_shared_context_private_33, "_to_float")
-
-
-def _workflow_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.llm.dspy_compile.workflow")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 def _resolve_promotion_gate_snapshot(
@@ -673,11 +665,7 @@ def _submit_and_persist_remote_dspy_lane(
     state: _DSPyWorkflowState,
     context: _DSPyLaneContext,
 ) -> None:
-    submit_agent_run = _workflow_root_export(
-        "submit_agents_agentrun",
-        submit_agents_agentrun,
-    )
-    response_payload = submit_agent_run(
+    response_payload = submit_agents_agentrun(
         base_url=request.base_url,
         payload=context.payload,
         idempotency_key=context.idempotency_key,
@@ -710,11 +698,7 @@ def _wait_for_dspy_lane_terminal_phase(
     request: _DSPyWorkflowRequest,
     response_payload: Mapping[str, Any],
 ) -> str:
-    wait_for_status = _workflow_root_export(
-        "wait_for_agents_agentrun_terminal_status",
-        wait_for_agents_agentrun_terminal_status,
-    )
-    return wait_for_status(
+    return wait_for_agents_agentrun_terminal_status(
         base_url=request.base_url,
         agent_run_id=_extract_submitted_agentrun_id(response_payload),
         namespace=request.namespace,

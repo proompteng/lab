@@ -297,7 +297,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
                     return_value=client,
                 ),
                 patch(
-                    "app.trading.tigerbeetle_reconcile.create_tigerbeetle_client",
+                    "app.trading.tigerbeetle_reconcile.latest_tigerbeetle_reconciliation_status_p.create_tigerbeetle_client",
                     return_value=client,
                 ),
             ):

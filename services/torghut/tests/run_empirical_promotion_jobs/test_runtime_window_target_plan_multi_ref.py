@@ -88,11 +88,12 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowTargetPlanMultiRef(
                 "urlopen",
                 side_effect=[_empty_proofs_response(), live_status_plan],
             ) as urlopen,
-            patch.object(
-                renewal,
-                "_latest_autoresearch_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._latest_autoresearch_runtime_window_targets",
             ) as latest,
-            patch.object(renewal, "_registry_runtime_window_targets") as registry,
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._registry_runtime_window_targets",
+            ) as registry,
         ):
             targets = renewal._runtime_window_targets(_runtime_window_plan_args())
 
@@ -114,11 +115,12 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowTargetPlanMultiRef(
                 "urlopen",
                 side_effect=[_empty_proofs_response(), _empty_proofs_response()],
             ) as urlopen,
-            patch.object(
-                renewal,
-                "_latest_autoresearch_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._latest_autoresearch_runtime_window_targets",
             ) as latest,
-            patch.object(renewal, "_registry_runtime_window_targets") as registry,
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._registry_runtime_window_targets",
+            ) as registry,
             self.assertRaisesRegex(
                 RuntimeError,
                 "runtime_window_target_plan_required_but_empty",

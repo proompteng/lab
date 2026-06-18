@@ -173,9 +173,8 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowImportB(
 
         with (
             patch.object(renewal.subprocess, "run", return_value=completed) as run_mock,
-            patch.object(
-                renewal,
-                "_latest_source_activity_window",
+            patch(
+                "scripts.empirical_promotion_renewal.run_runtime_window_import_target._latest_source_activity_window",
                 return_value=source_window,
             ) as source_window_mock,
         ):
@@ -245,9 +244,8 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowImportB(
 
         with (
             patch.object(renewal.subprocess, "run", return_value=completed),
-            patch.object(
-                renewal,
-                "_latest_source_activity_window",
+            patch(
+                "scripts.empirical_promotion_renewal.run_runtime_window_import_target._latest_source_activity_window",
                 return_value=(
                     datetime(2026, 5, 15, 13, 30, tzinfo=timezone.utc),
                     datetime(2026, 5, 15, 20, 0, tzinfo=timezone.utc),
@@ -329,9 +327,8 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowImportB(
 
         with (
             patch.object(renewal.subprocess, "run", return_value=completed) as run_mock,
-            patch.object(
-                renewal,
-                "_latest_source_activity_window",
+            patch(
+                "scripts.empirical_promotion_renewal.run_runtime_window_import_target._latest_source_activity_window",
                 return_value=(
                     datetime(2026, 5, 15, 13, 30, tzinfo=timezone.utc),
                     datetime(2026, 5, 15, 20, 0, tzinfo=timezone.utc),
@@ -429,14 +426,12 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowImportB(
                 "run",
                 side_effect=AssertionError("future target window should not import"),
             ),
-            patch.object(
-                renewal,
-                "_latest_autoresearch_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._latest_autoresearch_runtime_window_targets",
                 side_effect=AssertionError("autoresearch fallback should not run"),
             ),
-            patch.object(
-                renewal,
-                "_registry_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._registry_runtime_window_targets",
                 side_effect=AssertionError("registry fallback should not run"),
             ),
         ):
@@ -568,14 +563,12 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowImportB(
                 "run",
                 side_effect=AssertionError("future target window should not import"),
             ),
-            patch.object(
-                renewal,
-                "_latest_autoresearch_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._latest_autoresearch_runtime_window_targets",
                 side_effect=AssertionError("autoresearch fallback should not run"),
             ),
-            patch.object(
-                renewal,
-                "_registry_runtime_window_targets",
+            patch(
+                "scripts.empirical_promotion_renewal.runtime_window_targets._registry_runtime_window_targets",
                 side_effect=AssertionError("registry fallback should not run"),
             ),
         ):

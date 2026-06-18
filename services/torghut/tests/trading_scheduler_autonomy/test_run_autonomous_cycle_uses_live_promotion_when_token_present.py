@@ -37,7 +37,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
             )
             scheduler.state.drift_last_outcome_path = str(outcome_path)
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -53,7 +53,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -71,7 +71,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 approval_token="live-approve-token",
             )
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -89,7 +89,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -105,7 +105,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -127,7 +127,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -171,7 +171,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle(
@@ -202,7 +202,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -268,7 +268,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 },
             }
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -363,7 +363,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 },
             }
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -394,11 +394,11 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 no_signal_reason="cursor_ahead_of_stream",
             )
             with patch(
-                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ) as persist_no_signal:
                 with patch(
-                    "app.trading.scheduler.governance.run_autonomous_lane",
+                    "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                     side_effect=RuntimeError("should_not_run"),
                 ):
                     scheduler._run_autonomous_cycle()
@@ -449,15 +449,15 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
             with (
                 patch.object(settings, "trading_simulation_enabled", True),
                 patch(
-                    "app.trading.scheduler.governance.trading_now",
+                    "app.trading.scheduler.governance.governance_mixin_lifecycle_methods.trading_now",
                     return_value=simulation_now,
                 ),
                 patch(
-                    "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
+                    "app.trading.scheduler.governance.governance_mixin_decision_methods.upsert_autonomy_no_signal_run",
                     return_value="no-signal-run-id",
                 ) as persist_no_signal,
                 patch(
-                    "app.trading.scheduler.governance.run_autonomous_lane",
+                    "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                     side_effect=RuntimeError("should_not_run"),
                 ),
             ):
@@ -481,7 +481,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
             scheduler.state.last_ingest_reason = "stale-no-signal"
 
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -505,7 +505,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 no_signal_reason="cursor_ahead_of_stream",
             )
             with patch(
-                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ):
                 scheduler._run_autonomous_cycle()
@@ -521,7 +521,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
             )
 
             with patch(
-                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ):
                 scheduler._run_autonomous_cycle()
@@ -550,7 +550,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 no_signal_lag_seconds=61.2,
             )
             with patch(
-                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ):
                 scheduler._run_autonomous_cycle()
@@ -588,7 +588,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 market_session_open=False,
             )
             with patch(
-                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ):
                 scheduler._run_autonomous_cycle()
@@ -629,7 +629,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
             scheduler.state.last_autonomy_promotion_action = "promote"
             scheduler.state.last_autonomy_promotion_eligible = True
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=RuntimeError("lane_failed"),
             ):
                 scheduler._run_autonomous_cycle()
@@ -658,7 +658,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
             )
             settings.trading_evidence_continuity_run_limit = 3
             with patch(
-                "app.trading.scheduler.governance.evaluate_evidence_continuity"
+                "app.trading.scheduler.governance.governance_mixin_lifecycle_methods.evaluate_evidence_continuity"
             ) as mock_check:
                 mock_check.return_value = SimpleNamespace(
                     checked_at=datetime(2026, 2, 19, 1, 0, tzinfo=timezone.utc),

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time as wall_time
 import urllib.error
 import urllib.request
@@ -34,13 +33,6 @@ from .parse_runtime_window_target_spec import (
     read_runtime_window_target_plan as _read_runtime_window_target_plan,
     runtime_window_target_plan_from_payload as _runtime_window_target_plan_from_payload,
 )
-
-
-def _renewal_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("scripts.renew_latest_empirical_promotion_jobs")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 def _raise_if_runtime_window_target_plan_import_blocked(
@@ -651,8 +643,7 @@ def _latest_autoresearch_runtime_window_targets(
         int(getattr(args, "runtime_window_autoresearch_scan_limit", 20) or 20),
     )
     statuses = _runtime_window_autoresearch_statuses(args)
-    session_factory = _renewal_root_export("SessionLocal", SessionLocal)
-    with session_factory() as session:
+    with SessionLocal() as session:
         rows = (
             session.execute(
                 select(AutoresearchEpoch)
@@ -666,11 +657,7 @@ def _latest_autoresearch_runtime_window_targets(
             .scalars()
             .all()
         )
-    runtime_window_targets_from_autoresearch_epochs = _renewal_root_export(
-        "_runtime_window_targets_from_autoresearch_epochs",
-        _runtime_window_targets_from_autoresearch_epochs,
-    )
-    return runtime_window_targets_from_autoresearch_epochs(args=args, epochs=rows)
+    return _runtime_window_targets_from_autoresearch_epochs(args=args, epochs=rows)
 
 
 # Public aliases used by split-module consumers.

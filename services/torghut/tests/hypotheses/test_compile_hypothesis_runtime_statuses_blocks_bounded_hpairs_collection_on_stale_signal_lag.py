@@ -721,7 +721,9 @@ class TestCompileHypothesisRuntimeStatusesBlocksBoundedHpairsCollectionOnStaleSi
                 "jangar_dependency_quorum",
             )
         )
-        with patch("app.trading.hypotheses.urlopen") as urlopen_mock:
+        with patch(
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen"
+        ) as urlopen_mock:
             status = resolve_hypothesis_dependency_quorum(registry)
 
         urlopen_mock.assert_not_called()
@@ -771,7 +773,7 @@ class TestCompileHypothesisRuntimeStatusesBlocksBoundedHpairsCollectionOnStaleSi
             )
         )
         with patch(
-            "app.trading.hypotheses.urlopen",
+            "app.trading.hypotheses.runtime_ledger_row_rank.urlopen",
             return_value=_FakeHttpResponse(
                 {
                     "dependency_quorum": {

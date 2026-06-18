@@ -52,8 +52,9 @@ class TestExplicitLiveTargetDoesNotSuppressPaperPlanTarget(
             runtime_window_targets_from_registry=False,
         )
 
-        with patch.object(
-            renew, "_runtime_window_plan_targets", return_value=[paper_target]
+        with patch(
+            "scripts.empirical_promotion_renewal.runtime_window_targets._runtime_window_plan_targets",
+            return_value=[paper_target],
         ):
             targets = renew._runtime_window_targets(args)
 
@@ -561,9 +562,8 @@ class TestExplicitLiveTargetDoesNotSuppressPaperPlanTarget(
         args = argparse.Namespace(runtime_window_target_plan_settlement_seconds=0)
 
         with (
-            patch.object(
-                renew,
-                "_read_runtime_window_manifest",
+            patch(
+                "scripts.empirical_promotion_renewal.run_runtime_window_import_target._read_runtime_window_manifest",
                 return_value={"candidate_id": "c88421d619759b2cfaa6f4d0"},
             ),
             patch.object(renew.subprocess, "run") as run,

@@ -173,6 +173,18 @@ def test_owner_modules_do_not_patch_through_public_wrappers() -> None:
             assert token not in source, f"{relative_path} still contains {token}"
 
 
+def test_app_and_script_modules_do_not_use_public_root_backchannels() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    offenders = sorted(
+        str(path.relative_to(service_root))
+        for tree_name in ("app", "scripts")
+        for path in (service_root / tree_name).rglob("*.py")
+        if "sys.modules.get(" in path.read_text(encoding="utf-8")
+    )
+
+    assert offenders == []
+
+
 def test_generated_split_package_directories_are_absent() -> None:
     service_root = Path(__file__).resolve().parents[1]
     split_package_suffix = "_" + "modules"

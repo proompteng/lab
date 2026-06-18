@@ -322,7 +322,7 @@ class TestAppendRuntimeGovernanceIgnoresStaleRollbackEvidenceWhenNotTriggered(
             }
 
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=_fake_run_autonomous_lane_with_canary_failure,
             ):
                 with patch(

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, cast
 
@@ -78,13 +77,7 @@ def build_doc29_completion_status(
     current_git_revision: str | None,
     current_image_digest: str | None,
 ) -> dict[str, Any]:
-    completion_root = sys.modules.get('app.trading.completion')
-    matrix_loader = (
-        getattr(completion_root, 'load_doc29_completion_matrix', load_doc29_completion_matrix)
-        if completion_root is not None
-        else load_doc29_completion_matrix
-    )
-    matrix = matrix_loader()
+    matrix = load_doc29_completion_matrix()
     gate_definition_by_id = {str(gate['gate_id']): gate for gate in cast(list[dict[str, Any]], matrix['gates'])}
     latest_rows = _latest_completion_rows(session)
     empirical_jobs_status = build_empirical_jobs_status(

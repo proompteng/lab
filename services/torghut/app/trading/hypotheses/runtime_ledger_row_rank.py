@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -158,13 +157,6 @@ _runtime_text = getattr(_extract_stage_renewal_bonds_private_68, "_runtime_text"
 _weighted_decimal_average = getattr(
     _extract_stage_renewal_bonds_private_68, "_weighted_decimal_average"
 )
-
-
-def _hypotheses_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.trading.hypotheses")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
 
 
 def _runtime_ledger_row_rank(
@@ -627,8 +619,7 @@ def load_jangar_dependency_quorum(
         if omit_torghut_consumer_evidence:
             headers["x-torghut-consumer-evidence-mode"] = "omit"
         request = Request(status_url, method="GET", headers=headers)
-        open_url = _hypotheses_root_export("urlopen", urlopen)
-        with open_url(
+        with urlopen(
             request, timeout=settings.trading_jangar_control_plane_timeout_seconds
         ) as response:
             if response.status < 200 or response.status >= 300:

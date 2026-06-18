@@ -76,7 +76,11 @@ class TestSignalIngestTimeout(TestCase):
             with (
                 session_local() as session,
                 patch(
-                    "app.trading.ingest.trading_now",
+                    "app.trading.ingest.clickhouse_signal_ingestor_core_methods.trading_now",
+                    return_value=datetime(2026, 3, 6, 14, 30, 0, tzinfo=timezone.utc),
+                ),
+                patch(
+                    "app.trading.ingest.clickhouse_signal_ingestor_persistence_methods.trading_now",
                     return_value=datetime(2026, 3, 6, 14, 30, 0, tzinfo=timezone.utc),
                 ),
             ):

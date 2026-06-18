@@ -108,7 +108,10 @@ def test_fetch_signals_closes_cursor_transaction_before_clickhouse_query() -> No
 
     with (
         session_local() as session,
-        patch("app.trading.ingest.trading_now", return_value=now),
+        patch(
+            "app.trading.ingest.clickhouse_signal_ingestor_core_methods.trading_now",
+            return_value=now,
+        ),
     ):
         ingestor.session = session
         ingestor.fetch_signals(session)
@@ -146,7 +149,10 @@ def test_scoped_timeout_returns_only_non_authority_last_good_fallback() -> None:
 
     with (
         session_local() as session,
-        patch("app.trading.ingest.trading_now", return_value=now),
+        patch(
+            "app.trading.ingest.clickhouse_signal_ingestor_core_methods.trading_now",
+            return_value=now,
+        ),
     ):
         batch = ingestor.fetch_signals(
             session,

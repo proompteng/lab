@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -51,13 +50,6 @@ from .raise_if_runtime_window_target_plan_import import (
 )
 
 
-def _renewal_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("scripts.renew_latest_empirical_promotion_jobs")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
-
-
 def _run_runtime_window_import_target(*args: Any, **kwargs: Any) -> dict[str, Any]:
     from .run_runtime_window_import_target import (
         run_runtime_window_import_target,
@@ -90,11 +82,7 @@ def _runtime_window_targets(
     args: argparse.Namespace,
 ) -> list[RuntimeWindowImportTarget]:
     specs = [str(item) for item in getattr(args, "runtime_window_target", []) or []]
-    runtime_window_plan_targets = _renewal_root_export(
-        "_runtime_window_plan_targets",
-        _runtime_window_plan_targets,
-    )
-    plan_targets = runtime_window_plan_targets(args)
+    plan_targets = _runtime_window_plan_targets(args)
     plan_required = bool(getattr(args, "runtime_window_target_plan_required", False))
     if plan_required:
         plan_ref_count = _runtime_window_target_plan_ref_count(args)
@@ -104,18 +92,12 @@ def _runtime_window_targets(
             raise RuntimeError("runtime_window_target_plan_required_but_empty")
     plan_exclusive = bool(getattr(args, "runtime_window_target_plan_exclusive", False))
     fallback_enabled = not plan_exclusive
-    latest_autoresearch_runtime_window_targets = _renewal_root_export(
-        "_latest_autoresearch_runtime_window_targets",
-        _latest_autoresearch_runtime_window_targets,
-    )
-    registry_runtime_window_targets = _renewal_root_export(
-        "_registry_runtime_window_targets",
-        _registry_runtime_window_targets,
-    )
     autoresearch_targets = (
-        latest_autoresearch_runtime_window_targets(args) if fallback_enabled else []
+        _latest_autoresearch_runtime_window_targets(args) if fallback_enabled else []
     )
-    registry_targets = registry_runtime_window_targets(args) if fallback_enabled else []
+    registry_targets = (
+        _registry_runtime_window_targets(args) if fallback_enabled else []
+    )
     if (
         not specs
         and not plan_targets

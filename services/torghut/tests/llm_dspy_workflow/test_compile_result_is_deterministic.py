@@ -402,11 +402,11 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
             )
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded", "succeeded"],
                 ) as wait_mock:
                     with Session(self.engine) as session:
@@ -507,11 +507,11 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
             lane_overrides["promote"].pop("artifactHash", None)
 
             with patch(
-                "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                 side_effect=responses,
             ) as submit_mock:
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                     side_effect=["succeeded", "succeeded", "succeeded"],
                 ):
                     with Session(self.engine) as session:
@@ -597,11 +597,11 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
                 )
 
                 with patch(
-                    "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+                    "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
                     side_effect=responses,
                 ) as submit_mock:
                     with patch(
-                        "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                        "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                         side_effect=[
                             "succeeded",
                             "succeeded",
@@ -660,11 +660,11 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
         ]
 
         with patch(
-            "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+            "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
             side_effect=submit_side_effects,
         ) as submit_mock:
             with patch(
-                "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                 side_effect=["succeeded", "succeeded"],
             ) as wait_mock:
                 with self.assertRaisesRegex(RuntimeError, "submit_failed"):
@@ -741,11 +741,11 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
         ]
 
         with patch(
-            "app.trading.llm.dspy_compile.workflow.submit_agents_agentrun",
+            "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.submit_agents_agentrun",
             side_effect=responses,
         ) as submit_mock:
             with patch(
-                "app.trading.llm.dspy_compile.workflow.wait_for_agents_agentrun_terminal_status",
+                "app.trading.llm.dspy_compile.workflow.resolve_promotion_gate_snapshot.wait_for_agents_agentrun_terminal_status",
                 side_effect=["failed"],
             ) as wait_mock:
                 with self.assertRaisesRegex(

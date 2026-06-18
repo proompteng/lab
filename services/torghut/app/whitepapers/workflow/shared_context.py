@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import re
-import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -121,22 +120,6 @@ def _http_request_bytes(
     follow_redirects: bool = False,
     max_redirects: int = 5,
 ) -> tuple[int, dict[str, str], bytes]:
-    root_http_request_bytes = _whitepaper_root_export("_http_request_bytes", None)
-    if (
-        root_http_request_bytes is not None
-        and root_http_request_bytes is not _http_request_bytes
-    ):
-        return root_http_request_bytes(
-            url,
-            method=method,
-            headers=headers,
-            body=body,
-            timeout_seconds=timeout_seconds,
-            max_response_bytes=max_response_bytes,
-            follow_redirects=follow_redirects,
-            max_redirects=max_redirects,
-        )
-
     current_url = url
     current_method = method
     current_body = body
@@ -357,42 +340,16 @@ def _sorted_unique(values: list[str]) -> list[str]:
     return ordered
 
 
-def _whitepaper_root_export(name: str, fallback: Any) -> Any:
-    root_module = sys.modules.get("app.whitepapers.workflow")
-    if root_module is None:
-        return fallback
-    return getattr(root_module, name, fallback)
-
-
-def _whitepaper_root_flag(name: str, env_name: str, *, default: bool) -> bool:
-    root_value = _whitepaper_root_export(name, None)
-    if root_value is not None and root_value is not globals().get(name):
-        return bool(root_value())
-    return _bool_env(env_name, default=default)
-
-
 def whitepaper_workflow_enabled() -> bool:
-    return _whitepaper_root_flag(
-        "whitepaper_workflow_enabled",
-        "WHITEPAPER_WORKFLOW_ENABLED",
-        default=False,
-    )
+    return _bool_env("WHITEPAPER_WORKFLOW_ENABLED", default=False)
 
 
 def whitepaper_inngest_enabled() -> bool:
-    return _whitepaper_root_flag(
-        "whitepaper_inngest_enabled",
-        "WHITEPAPER_INNGEST_ENABLED",
-        default=False,
-    )
+    return _bool_env("WHITEPAPER_INNGEST_ENABLED", default=False)
 
 
 def whitepaper_kafka_enabled() -> bool:
-    return _whitepaper_root_flag(
-        "whitepaper_kafka_enabled",
-        "WHITEPAPER_KAFKA_ENABLED",
-        default=False,
-    )
+    return _bool_env("WHITEPAPER_KAFKA_ENABLED", default=False)
 
 
 def whitepaper_semantic_indexing_enabled() -> bool:
@@ -784,8 +741,6 @@ __all__: tuple[str, ...] = (
     "_sorted_unique",
     "_str_env",
     "_whitepaper_ceph_bucket_name",
-    "_whitepaper_root_export",
-    "_whitepaper_root_flag",
     "annotations",
     "asyncio",
     "bool_env",
@@ -836,7 +791,6 @@ __all__: tuple[str, ...] = (
     "select",
     "sorted_unique",
     "str_env",
-    "sys",
     "tempfile",
     "text",
     "timezone",

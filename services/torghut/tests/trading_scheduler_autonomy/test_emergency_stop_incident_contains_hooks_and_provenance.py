@@ -85,7 +85,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
                 "metrics": {"max_drawdown": "0.25"},
             }
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -241,7 +241,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
                 clear=False,
             ):
                 with patch(
-                    "app.trading.scheduler.governance.run_autonomous_lane",
+                    "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                     side_effect=self._fake_run_autonomous_lane(deps),
                 ):
                     scheduler._run_autonomous_cycle()
@@ -267,7 +267,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(_deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -638,7 +638,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
             }
 
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 with patch(
@@ -700,7 +700,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
             }
 
             with patch(
-                "app.trading.scheduler.governance.run_autonomous_lane",
+                "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 with patch(
