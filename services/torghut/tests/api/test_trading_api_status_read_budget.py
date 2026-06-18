@@ -204,6 +204,67 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
             payload["portfolio_runtime_ledger_summary"]["read_model_unavailable"]
         )
 
+    def test_trading_status_skips_expensive_reads_after_activation_expiry(
+        self,
+    ) -> None:
+        live_submission_gate_payload = {
+            "allowed": False,
+            "reason": "live_submit_activation_expired",
+            "blocked_reasons": ["live_submit_activation_expired"],
+            "read_model_unavailable": False,
+            "promotion_authority": False,
+            "final_authority_ok": False,
+            "final_promotion_allowed": False,
+        }
+
+        with (
+            patch(
+                "app.api.trading_status._load_clickhouse_ta_status",
+                return_value={
+                    "state": "current",
+                    "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    "source_ref": "clickhouse:ta_signals",
+                },
+            ),
+            patch(
+                "app.api.trading_status._load_trading_status_llm_evaluation",
+            ) as load_llm,
+            patch(
+                "app.api.trading_status._load_trading_status_tca_summary",
+            ) as load_tca,
+            patch(
+                "app.api.trading_status._load_trading_status_hypothesis_runtime",
+            ) as load_hypothesis,
+            patch(
+                "app.api.trading_status._build_live_submission_gate_payload",
+                return_value=live_submission_gate_payload,
+            ) as live_gate,
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        live_gate.assert_called_once()
+        load_llm.assert_not_called()
+        load_tca.assert_not_called()
+        load_hypothesis.assert_not_called()
+        payload = response.json()
+        skipped_reads = payload["status_read_budget"]["skipped_reads"]
+        self.assertIn("llm_evaluation", skipped_reads)
+        self.assertIn("tca_summary", skipped_reads)
+        self.assertIn("hypothesis_runtime", skipped_reads)
+        self.assertEqual(
+            payload["llm_evaluation"]["error"],
+            "llm_evaluation_live_submit_activation_expired",
+        )
+        self.assertIn(
+            "tca_summary_live_submit_activation_expired",
+            payload["tca"]["reason_codes"],
+        )
+        self.assertIn(
+            "hypothesis_runtime_live_submit_activation_expired",
+            payload["hypotheses"]["summary"]["reason_codes"],
+        )
+
     def test_trading_status_skips_live_gate_when_gate_dependencies_consume_budget(
         self,
     ) -> None:

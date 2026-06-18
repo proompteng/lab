@@ -269,6 +269,568 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             book["source_refs"]["target_plan_source"], "cached_live_submission_gate"
         )
 
+    def test_configured_paper_collection_plan_targets_enabled_strategy_universe(
+        self,
+    ) -> None:
+        original_mode = proofs_api.settings.trading_mode
+        original_static_symbols_raw = proofs_api.settings.trading_static_symbols_raw
+        try:
+            proofs_api.settings.trading_mode = "live"
+            proofs_api.settings.trading_static_symbols_raw = "AAPL,NVDA"
+            with self.session_local() as session:
+                session.add_all(
+                    [
+                        Strategy(
+                            name="enabled-paper-collector",
+                            description="configured paper collection",
+                            enabled=True,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=["AAPL", "MSFT", "NVDA"],
+                        ),
+                        Strategy(
+                            name="disabled-paper-collector",
+                            description="disabled paper collection",
+                            enabled=False,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=["AAPL"],
+                        ),
+                    ]
+                )
+                session.commit()
+
+                plan = proofs_api._configured_paper_collection_target_plan(
+                    session,
+                    simple_lane_status={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_allow_live_mode": True,
+                        "paper_route_probe_max_notional": "100",
+                    },
+                )
+        finally:
+            proofs_api.settings.trading_mode = original_mode
+            proofs_api.settings.trading_static_symbols_raw = original_static_symbols_raw
+
+        self.assertGreaterEqual(plan["target_count"], 1)
+        self.assertFalse(plan["promotion_allowed"])
+        self.assertFalse(plan["final_promotion_allowed"])
+        targets_by_name = {
+            target["strategy_name"]: target for target in plan["targets"]
+        }
+        self.assertIn("enabled-paper-collector", targets_by_name)
+        self.assertNotIn("disabled-paper-collector", targets_by_name)
+        target = targets_by_name["enabled-paper-collector"]
+        self.assertEqual(target["account_label"], "TORGHUT_SIM")
+        self.assertEqual(target["paper_route_probe_symbols"], ["AAPL", "NVDA"])
+        self.assertEqual(target["paper_route_probe_next_session_max_notional"], "100")
+        self.assertTrue(target["paper_data_collection_authorized"])
+        self.assertFalse(target["final_promotion_authorized"])
+
+    def test_configured_paper_collection_helpers_cover_empty_and_limit_branches(
+        self,
+    ) -> None:
+        original_static_symbols_raw = proofs_api.settings.trading_static_symbols_raw
+        try:
+            proofs_api.settings.trading_static_symbols_raw = ""
+            self.assertEqual(
+                proofs_api._strategy_universe_symbol_values(" aapl,,MSFT,AAPL "),
+                ["AAPL", "MSFT"],
+            )
+            self.assertEqual(proofs_api._strategy_universe_symbol_values(42), [])
+            self.assertEqual(
+                proofs_api._configured_strategy_paper_collection_symbols(
+                    Strategy(
+                        name="strategy-only-symbols",
+                        description="strategy-only-symbols",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["TSLA"],
+                    )
+                ),
+                ["TSLA"],
+            )
+
+            proofs_api.settings.trading_static_symbols_raw = "AAPL"
+            self.assertEqual(
+                proofs_api._configured_strategy_paper_collection_symbols(
+                    Strategy(
+                        name="static-fallback-symbols",
+                        description="static-fallback-symbols",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=[],
+                    )
+                ),
+                ["AAPL"],
+            )
+
+            proofs_api.settings.trading_static_symbols_raw = ""
+            with self.session_local() as session:
+                session.add_all(
+                    [
+                        Strategy(
+                            name="empty-symbols",
+                            description="empty symbols",
+                            enabled=True,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=[],
+                        ),
+                        Strategy(
+                            name=" ",
+                            description="blank name",
+                            enabled=True,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=["AAPL"],
+                        ),
+                        Strategy(
+                            name="limited-0",
+                            description="limited 0",
+                            enabled=True,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=["AAPL"],
+                        ),
+                        Strategy(
+                            name="limited-1",
+                            description="limited 1",
+                            enabled=True,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=["MSFT"],
+                        ),
+                        Strategy(
+                            name="limited-2",
+                            description="limited 2",
+                            enabled=True,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=["NVDA"],
+                        ),
+                    ]
+                )
+                session.commit()
+
+                with patch(
+                    "app.api.proofs_configured_collection.DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
+                    2,
+                ):
+                    targets = proofs_api._configured_strategy_paper_collection_targets(
+                        session,
+                        max_notional="100",
+                    )
+        finally:
+            proofs_api.settings.trading_static_symbols_raw = original_static_symbols_raw
+
+        target_names = [target["strategy_name"] for target in targets]
+        self.assertEqual(len(target_names), 2)
+        self.assertNotIn(" ", target_names)
+        self.assertNotIn("empty-symbols", target_names)
+        self.assertNotIn("limited-2", target_names)
+
+    def test_configured_paper_collection_plan_blocks_invalid_configs(
+        self,
+    ) -> None:
+        original_mode = proofs_api.settings.trading_mode
+        original_static_symbols_raw = proofs_api.settings.trading_static_symbols_raw
+        try:
+            proofs_api.settings.trading_mode = "paper"
+            with self.session_local() as session:
+                self.assertEqual(
+                    proofs_api._configured_paper_collection_target_plan(
+                        session,
+                        simple_lane_status={
+                            "paper_route_probe_enabled": True,
+                            "paper_route_probe_allow_live_mode": True,
+                            "paper_route_probe_max_notional": "100",
+                        },
+                    ),
+                    {},
+                )
+
+            proofs_api.settings.trading_mode = "live"
+            proofs_api.settings.trading_static_symbols_raw = ""
+            with self.session_local() as session:
+                self.assertEqual(
+                    proofs_api._configured_paper_collection_target_plan(
+                        session,
+                        simple_lane_status={
+                            "paper_route_probe_enabled": True,
+                            "paper_route_probe_allow_live_mode": True,
+                            "paper_route_probe_max_notional": "0",
+                        },
+                    ),
+                    {},
+                )
+                with patch(
+                    "app.api.proofs_configured_collection._decimal_to_string",
+                    return_value=None,
+                ):
+                    self.assertEqual(
+                        proofs_api._configured_paper_collection_target_plan(
+                            session,
+                            simple_lane_status={
+                                "paper_route_probe_enabled": True,
+                                "paper_route_probe_allow_live_mode": True,
+                                "paper_route_probe_max_notional": "100",
+                            },
+                        ),
+                        {},
+                    )
+                for strategy in session.execute(proofs_api.select(Strategy)).scalars():
+                    strategy.enabled = False
+                session.commit()
+                self.assertEqual(
+                    proofs_api._configured_paper_collection_target_plan(
+                        session,
+                        simple_lane_status={
+                            "paper_route_probe_enabled": True,
+                            "paper_route_probe_allow_live_mode": True,
+                            "paper_route_probe_max_notional": "100",
+                        },
+                    ),
+                    {},
+                )
+        finally:
+            proofs_api.settings.trading_mode = original_mode
+            proofs_api.settings.trading_static_symbols_raw = original_static_symbols_raw
+
+    def test_configured_paper_collection_fallback_upserts_only_when_plan_missing(
+        self,
+    ) -> None:
+        original_mode = proofs_api.settings.trading_mode
+        original_static_symbols_raw = proofs_api.settings.trading_static_symbols_raw
+        try:
+            proofs_api.settings.trading_mode = "live"
+            proofs_api.settings.trading_static_symbols_raw = "AAPL"
+            existing_payload = {
+                "runtime_ledger_paper_probation_import_plan": {
+                    "schema_version": (
+                        "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                    ),
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "existing",
+                            "account_label": "TORGHUT_SIM",
+                            "paper_route_probe_symbols": ["MSFT"],
+                        }
+                    ],
+                }
+            }
+            with self.session_local() as session:
+                self.assertEqual(
+                    proofs_api._with_configured_paper_collection_targets(
+                        existing_payload,
+                        simple_lane_status={
+                            "paper_route_probe_enabled": True,
+                            "paper_route_probe_allow_live_mode": True,
+                            "paper_route_probe_max_notional": "100",
+                        },
+                        session=session,
+                    ),
+                    existing_payload,
+                )
+                self.assertEqual(
+                    proofs_api._with_configured_paper_collection_targets(
+                        {},
+                        simple_lane_status={
+                            "paper_route_probe_enabled": False,
+                            "paper_route_probe_allow_live_mode": True,
+                            "paper_route_probe_max_notional": "100",
+                        },
+                        session=session,
+                    ),
+                    {},
+                )
+                session.add(
+                    Strategy(
+                        name="fallback-collector",
+                        description="fallback collector",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL"],
+                    )
+                )
+                session.commit()
+                payload = proofs_api._with_configured_paper_collection_targets(
+                    {},
+                    simple_lane_status={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_allow_live_mode": True,
+                        "paper_route_probe_max_notional": "100",
+                    },
+                    session=session,
+                )
+        finally:
+            proofs_api.settings.trading_mode = original_mode
+            proofs_api.settings.trading_static_symbols_raw = original_static_symbols_raw
+
+        self.assertEqual(
+            payload["paper_route_target_plan_source"],
+            "configured_simple_lane_paper_data_collection",
+        )
+        self.assertTrue(payload["paper_route_target_plan_fallback"])
+        self.assertEqual(
+            payload["paper_route_target_plan_fallback_reason"],
+            "configured_strategy_catalog_paper_collection",
+        )
+        target_names = {
+            target["strategy_name"]
+            for target in payload["runtime_ledger_paper_probation_import_plan"][
+                "targets"
+            ]
+        }
+        self.assertIn("fallback-collector", target_names)
+
+    def test_paper_route_probe_book_allows_live_mode_collection_when_activated(
+        self,
+    ) -> None:
+        original_mode = proofs_api.settings.trading_mode
+        try:
+            proofs_api.settings.trading_mode = "live"
+            with patch(
+                "app.api.proofs._live_submit_activation_status",
+                return_value={
+                    "configured": True,
+                    "valid": True,
+                    "expired": False,
+                    "expires_at": "2026-06-17T20:05:00+00:00",
+                    "reason": None,
+                },
+            ):
+                book = proofs_api._paper_route_probe_book_from_target_plan(
+                    {
+                        "paper_route_target_plan_source": "configured_strategy_catalog",
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": (
+                                "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                            ),
+                            "target_count": 1,
+                            "targets": [
+                                {
+                                    "candidate_id": "configured:collector",
+                                    "strategy_lookup_names": ["collector"],
+                                    "account_label": "TORGHUT_SIM",
+                                    "paper_route_probe_symbols": ["AAPL"],
+                                    "paper_route_probe_next_session_max_notional": "100",
+                                    "paper_data_collection_authorized": True,
+                                    "promotion_allowed": False,
+                                    "final_promotion_allowed": False,
+                                }
+                            ],
+                        },
+                    },
+                    simple_lane_status={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_allow_live_mode": True,
+                        "paper_route_probe_max_notional": "100",
+                    },
+                    state=SimpleNamespace(market_session_open=True),
+                )
+        finally:
+            proofs_api.settings.trading_mode = original_mode
+
+        self.assertIsNotNone(book)
+        assert book is not None
+        self.assertTrue(book["paper_route_probe"]["active"])
+        self.assertEqual(book["paper_route_probe"]["effective_max_notional"], "100")
+        self.assertEqual(book["paper_route_probe"]["active_symbols"], ["AAPL"])
+        self.assertEqual(book["paper_route_probe"]["capital_authority"], "none")
+        self.assertTrue(book["paper_route_probe"]["live_mode_collection_allowed"])
+
+    def test_paper_route_probe_book_blocks_live_mode_after_activation_expiry(
+        self,
+    ) -> None:
+        original_mode = proofs_api.settings.trading_mode
+        try:
+            proofs_api.settings.trading_mode = "live"
+            with patch(
+                "app.api.proofs._live_submit_activation_status",
+                return_value={
+                    "configured": True,
+                    "valid": True,
+                    "expired": True,
+                    "reason": "live_submit_activation_expired",
+                },
+            ):
+                book = proofs_api._paper_route_probe_book_from_target_plan(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": (
+                                "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                            ),
+                            "target_count": 1,
+                            "targets": [
+                                {
+                                    "candidate_id": "configured:collector",
+                                    "account_label": "TORGHUT_SIM",
+                                    "paper_route_probe_symbols": ["AAPL"],
+                                    "paper_route_probe_next_session_max_notional": "100",
+                                    "promotion_allowed": False,
+                                    "final_promotion_allowed": False,
+                                }
+                            ],
+                        },
+                    },
+                    simple_lane_status={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_allow_live_mode": True,
+                        "paper_route_probe_max_notional": "100",
+                    },
+                    state=SimpleNamespace(market_session_open=True),
+                )
+        finally:
+            proofs_api.settings.trading_mode = original_mode
+
+        self.assertIsNotNone(book)
+        assert book is not None
+        self.assertFalse(book["paper_route_probe"]["active"])
+        self.assertEqual(book["paper_route_probe"]["effective_max_notional"], "0")
+        self.assertIn(
+            "live_submit_activation_expired",
+            book["paper_route_probe"]["blocking_reasons"],
+        )
+
+    def test_paper_route_probe_book_blocks_live_mode_without_activation_contract(
+        self,
+    ) -> None:
+        original_mode = proofs_api.settings.trading_mode
+        try:
+            proofs_api.settings.trading_mode = "live"
+            with patch(
+                "app.api.proofs._live_submit_activation_status",
+                return_value={"configured": False},
+            ):
+                book = proofs_api._paper_route_probe_book_from_target_plan(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": (
+                                "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                            ),
+                            "target_count": 1,
+                            "targets": [
+                                {
+                                    "candidate_id": "configured:collector",
+                                    "account_label": "TORGHUT_SIM",
+                                    "paper_route_probe_symbols": ["AAPL"],
+                                    "paper_route_probe_next_session_max_notional": "100",
+                                    "promotion_allowed": False,
+                                    "final_promotion_allowed": False,
+                                }
+                            ],
+                        },
+                    },
+                    simple_lane_status={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_allow_live_mode": True,
+                        "paper_route_probe_max_notional": "100",
+                    },
+                    state=SimpleNamespace(market_session_open=True),
+                )
+        finally:
+            proofs_api.settings.trading_mode = original_mode
+
+        self.assertIsNotNone(book)
+        assert book is not None
+        self.assertIn(
+            "live_submit_activation_missing",
+            book["paper_route_probe"]["blocking_reasons"],
+        )
+
+    def test_paper_route_probe_book_blocks_live_mode_when_activation_invalid(
+        self,
+    ) -> None:
+        original_mode = proofs_api.settings.trading_mode
+        try:
+            proofs_api.settings.trading_mode = "live"
+            with patch(
+                "app.api.proofs._live_submit_activation_status",
+                return_value={"configured": True, "valid": False},
+            ):
+                book = proofs_api._paper_route_probe_book_from_target_plan(
+                    {
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": (
+                                "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                            ),
+                            "target_count": 1,
+                            "targets": [
+                                {
+                                    "candidate_id": "configured:collector",
+                                    "account_label": "TORGHUT_SIM",
+                                    "paper_route_probe_symbols": ["AAPL"],
+                                    "paper_route_probe_next_session_max_notional": "100",
+                                    "promotion_allowed": False,
+                                    "final_promotion_allowed": False,
+                                }
+                            ],
+                        },
+                    },
+                    simple_lane_status={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_allow_live_mode": True,
+                        "paper_route_probe_max_notional": "100",
+                    },
+                    state=SimpleNamespace(market_session_open=True),
+                )
+        finally:
+            proofs_api.settings.trading_mode = original_mode
+
+        self.assertIsNotNone(book)
+        assert book is not None
+        self.assertIn(
+            "live_submit_activation_invalid",
+            book["paper_route_probe"]["blocking_reasons"],
+        )
+
+    def test_paper_route_probe_book_blocks_live_mode_when_live_collection_disabled(
+        self,
+    ) -> None:
+        original_mode = proofs_api.settings.trading_mode
+        try:
+            proofs_api.settings.trading_mode = "live"
+            book = proofs_api._paper_route_probe_book_from_target_plan(
+                {
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                        ),
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "candidate_id": "configured:collector",
+                                "account_label": "TORGHUT_SIM",
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "paper_route_probe_next_session_max_notional": "100",
+                                "promotion_allowed": False,
+                                "final_promotion_allowed": False,
+                            }
+                        ],
+                    },
+                },
+                simple_lane_status={
+                    "paper_route_probe_enabled": True,
+                    "paper_route_probe_allow_live_mode": False,
+                    "paper_route_probe_max_notional": "100",
+                },
+                state=SimpleNamespace(market_session_open=True),
+            )
+        finally:
+            proofs_api.settings.trading_mode = original_mode
+
+        self.assertIsNotNone(book)
+        assert book is not None
+        self.assertIn(
+            "live_paper_route_probe_collection_disabled",
+            book["paper_route_probe"]["blocking_reasons"],
+        )
+
     def test_deferred_live_gate_payload_preserves_dependency_quorum_for_target_plan(
         self,
     ) -> None:

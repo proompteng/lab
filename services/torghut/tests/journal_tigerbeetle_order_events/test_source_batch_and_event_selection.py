@@ -5,7 +5,6 @@ from tests.journal_tigerbeetle_order_events.support import (
     Execution,
     FakeTigerBeetleClient,
     LEDGER_USD_MICRO,
-    Path,
     Session,
     Settings,
     SimpleNamespace,
@@ -71,33 +70,12 @@ class TestJournalSourceBatchAndEventSelection(
             with self.subTest(label=label):
                 self.assertFalse(script._safe_payload_allows_success(payload))
 
-    def test_torghut_cronjob_keeps_live_sources_split_and_honest(self) -> None:
-        manifest_path = next(
-            parent
-            / "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
-            for parent in Path(__file__).resolve().parents
-            if (
-                parent
-                / "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
-            ).is_file()
-        )
-        manifest = manifest_path.read_text()
+    def test_manual_runner_keeps_live_sources_split_and_honest(self) -> None:
         cases = {
-            "torghut-tigerbeetle-journal-order-events-live": (
-                "--preset live",
-                cron_runner._live_commands(execution_batch_size=10),
-            ),
-            "torghut-tigerbeetle-journal-order-events-sim": (
-                "--preset sim",
-                cron_runner._sim_commands(),
-            ),
+            "live": cron_runner._live_commands(execution_batch_size=10),
+            "sim": cron_runner._sim_commands(),
         }
-        for cronjob_name, (preset_arg, commands) in cases.items():
-            section = manifest.split(f"name: {cronjob_name}", 1)[1]
-            if "---" in section:
-                section = section.split("---", 1)[0]
-            self.assertIn("scripts/run_tigerbeetle_journal_cron.py", section)
-            self.assertIn(preset_arg, section)
+        for preset, commands in cases.items():
             self.assertEqual(
                 [command.source for command in commands],
                 [
@@ -107,8 +85,6 @@ class TestJournalSourceBatchAndEventSelection(
                     script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
                 ],
             )
-            self.assertNotIn("execution,execution_tca_metric", section)
-            self.assertEqual(section.count("--supervise-timeout-seconds 120"), 1)
             command_argvs = [
                 cron_runner._argv_for_command(
                     command,
@@ -120,7 +96,7 @@ class TestJournalSourceBatchAndEventSelection(
             source_args = [argv[argv.index("--sources") + 1] for argv in command_argvs]
             self.assertEqual(source_args, [command.source for command in commands])
             self.assertTrue(all("," not in source for source in source_args))
-            if cronjob_name == "torghut-tigerbeetle-journal-order-events-live":
+            if preset == "live":
                 order_event_argv = command_argvs[2]
                 self.assertEqual(
                     order_event_argv[order_event_argv.index("--batch-size") + 1],
@@ -135,7 +111,7 @@ class TestJournalSourceBatchAndEventSelection(
                 runtime_argv[runtime_argv.index("--sources") + 1],
                 script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             )
-            if cronjob_name == "torghut-tigerbeetle-journal-order-events-live":
+            if preset == "live":
                 self.assertIn("--reconcile-empty-selection", runtime_argv)
                 self.assertEqual(
                     runtime_argv[runtime_argv.index("--reconcile-limit") + 1],

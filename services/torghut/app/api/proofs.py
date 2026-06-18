@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from typing import Any, TYPE_CHECKING
 
+from app.trading.live_submit_activation import live_submit_activation_status
+
 if TYPE_CHECKING:
     pass
 
@@ -39,17 +41,14 @@ from .common import (
     datetime,
     deepcopy,
     get_session,
-    json,
     jsonable_encoder,
     load_quant_evidence_status,
     logger,
-    os,
     select,
     settings,
     shared_mapping_items,
     shared_paper_route_target_plan_from_payload,
     time,
-    urlsplit,
 )
 from .health_checks import (
     build_api_live_submission_gate_payload,
@@ -61,6 +60,27 @@ from .health_checks import (
 )
 from .proof_floor_payloads import (
     build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
+)
+from .proofs_configured_collection import (
+    configured_paper_collection_target_plan as _configured_paper_collection_target_plan,
+)
+from .proofs_configured_collection import (
+    configured_static_symbol_allowlist as _configured_static_symbol_allowlist,
+)
+from .proofs_configured_collection import (
+    configured_strategy_paper_collection_symbols as _configured_strategy_paper_collection_symbols,
+)
+from .proofs_configured_collection import (
+    configured_strategy_paper_collection_targets as _configured_strategy_paper_collection_targets,
+)
+from .proofs_configured_collection import (
+    strategy_universe_symbol_values as _strategy_universe_symbol_values,
+)
+from .proofs_external_target_fetch import (
+    fetch_paper_route_target_plan_url as _fetch_paper_route_target_plan_url_impl,
+)
+from .proofs_external_target_fetch import (
+    paper_route_target_plan_url_points_to_self as _paper_route_target_plan_url_points_to_self,
 )
 from .proxy import capture_module_exports
 from .runtime_profitability import aggregate_tca_rows as _aggregate_tca_rows
@@ -77,8 +97,26 @@ _deferred_hypothesis_payload_for_live_submission_gate = (
 )
 _empirical_jobs_status = empirical_jobs_status
 _load_tca_summary = load_tca_summary
+_live_submit_activation_status = live_submit_activation_status
 router = APIRouter()
 _paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
+
+
+def _fetch_paper_route_target_plan_url(
+    url: str,
+    *,
+    timeout_seconds: float,
+    attempts: int = 1,
+    retry_backoff_seconds: float = 0.25,
+) -> dict[str, Any]:
+    return _fetch_paper_route_target_plan_url_impl(
+        url,
+        timeout_seconds=timeout_seconds,
+        attempts=attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+        http_connection_class=HTTPConnection,
+        https_connection_class=HTTPSConnection,
+    )
 
 
 def _set_paper_route_target_plan_success_cache(
@@ -149,6 +187,11 @@ def _build_trading_proofs_payload(
     )
     simple_lane_status = _build_simple_lane_status_payload()
     with SessionLocal() as session:
+        live_submission_gate = _with_configured_paper_collection_targets(
+            cast(Mapping[str, Any], live_submission_gate),
+            simple_lane_status=cast(Mapping[str, Any], simple_lane_status),
+            session=session,
+        )
         route_reacquisition_book = _paper_route_probe_book_from_target_plan(
             live_submission_gate,
             simple_lane_status=simple_lane_status,
@@ -551,6 +594,33 @@ def _paper_route_probe_symbols_from_target_plan_strategies(
     return symbols
 
 
+def _with_configured_paper_collection_targets(
+    live_submission_gate: Mapping[str, Any],
+    *,
+    simple_lane_status: Mapping[str, Any],
+    session: Session,
+) -> dict[str, Any]:
+    payload = dict(live_submission_gate)
+    existing_plan = _paper_route_target_plan_from_payload(payload)
+    if _paper_route_target_plan_targets(existing_plan):
+        return payload
+
+    configured_plan = _configured_paper_collection_target_plan(
+        session,
+        simple_lane_status=simple_lane_status,
+    )
+    if not configured_plan:
+        return payload
+
+    payload["runtime_ledger_paper_probation_import_plan"] = configured_plan
+    payload["paper_route_target_plan_source"] = configured_plan["source"]
+    payload["paper_route_target_plan_fallback"] = True
+    payload["paper_route_target_plan_fallback_reason"] = (
+        "configured_strategy_catalog_paper_collection"
+    )
+    return payload
+
+
 def _paper_route_probe_book_from_target_plan(
     live_submission_gate: Mapping[str, Any],
     *,
@@ -582,7 +652,36 @@ def _paper_route_probe_book_from_target_plan(
         return None
     market_session_open = cast(bool | None, getattr(state, "market_session_open", None))
     blocking_reasons: list[str] = []
-    if settings.trading_mode != "paper":
+    live_mode_collection_allowed = bool(
+        simple_lane_status.get("paper_route_probe_allow_live_mode")
+    )
+    live_submit_activation: Mapping[str, Any] | None = None
+    if settings.trading_mode == "paper":
+        pass
+    elif settings.trading_mode == "live" and live_mode_collection_allowed:
+        live_submit_activation = cast(
+            Mapping[str, Any],
+            _live_submit_activation_status(),
+        )
+        if live_submit_activation.get("configured") is not True:
+            blocking_reasons.append("live_submit_activation_missing")
+        elif live_submit_activation.get("valid") is not True:
+            blocking_reasons.append(
+                str(
+                    live_submit_activation.get("reason")
+                    or "live_submit_activation_invalid"
+                )
+            )
+        elif live_submit_activation.get("expired") is True:
+            blocking_reasons.append(
+                str(
+                    live_submit_activation.get("reason")
+                    or "live_submit_activation_expired"
+                )
+            )
+    elif settings.trading_mode == "live":
+        blocking_reasons.append("live_paper_route_probe_collection_disabled")
+    else:
         blocking_reasons.append("not_paper_mode")
     if market_session_open is not True:
         blocking_reasons.append("market_session_closed")
@@ -610,6 +709,8 @@ def _paper_route_probe_book_from_target_plan(
             "active_symbols": active_symbols,
             "blocking_reasons": blocking_reasons,
             "capital_authority": "none",
+            "live_mode_collection_allowed": live_mode_collection_allowed,
+            "live_submit_activation": dict(live_submit_activation or {}),
         },
         "source_refs": {
             "target_plan_source": live_submission_gate.get(
@@ -630,128 +731,6 @@ def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, 
 
 def _paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return shared_paper_route_target_plan_from_payload(payload)
-
-
-def _fetch_paper_route_target_plan_url(
-    url: str,
-    *,
-    timeout_seconds: float,
-    attempts: int = 1,
-    retry_backoff_seconds: float = 0.25,
-) -> dict[str, Any]:
-    max_attempts = max(int(attempts), 1)
-    result: dict[str, Any] = {}
-    for attempt in range(1, max_attempts + 1):
-        parsed = urlsplit(url)
-        scheme = parsed.scheme.lower()
-        if scheme not in {"http", "https"}:
-            return {
-                "load_error": f"paper_route_target_plan_invalid_scheme:{scheme or 'missing'}"
-            }
-        if not parsed.hostname:
-            return {"load_error": "paper_route_target_plan_invalid_host"}
-        if _paper_route_target_plan_url_points_to_self(parsed):
-            return {"load_error": "paper_route_target_plan_self_reference"}
-
-        path = parsed.path or "/"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-        connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
-        connection = connection_class(
-            parsed.hostname,
-            parsed.port,
-            timeout=max(float(timeout_seconds), 0.1),
-        )
-        try:
-            host_header = parsed.netloc or parsed.hostname
-            connection.request(
-                "GET",
-                path,
-                headers={
-                    "Accept": "application/json",
-                    "Connection": "close",
-                    "Host": host_header,
-                },
-            )
-            response = connection.getresponse()
-            if response.status < 200 or response.status >= 300:
-                result = {
-                    "load_error": f"paper_route_target_plan_http_status:{response.status}"
-                }
-            else:
-                raw = response.read(5_000_001)
-                if len(raw) > 5_000_000:
-                    result = {
-                        "load_error": "paper_route_target_plan_response_too_large"
-                    }
-                else:
-                    try:
-                        payload = json.loads(raw.decode("utf-8"))
-                    except Exception as exc:
-                        result = {
-                            "load_error": f"paper_route_target_plan_invalid_json:{exc}"
-                        }
-                    else:
-                        if not isinstance(payload, Mapping):
-                            result = {
-                                "load_error": "paper_route_target_plan_invalid_payload"
-                            }
-                        else:
-                            plan = _paper_route_target_plan_from_payload(
-                                cast(Mapping[str, Any], payload)
-                            )
-                            if not plan:
-                                result = {
-                                    "load_error": "paper_route_target_plan_missing"
-                                }
-                            else:
-                                result = dict(plan)
-                                result.setdefault(
-                                    "source", "external_paper_route_target_plan"
-                                )
-        except Exception as exc:  # pragma: no cover - depends on network
-            result = {"load_error": f"paper_route_target_plan_fetch_failed:{exc}"}
-        finally:
-            connection.close()
-
-        if not str(result.get("load_error") or "").strip():
-            if attempt > 1:
-                result = dict(result)
-                result["fetch_attempts"] = attempt
-            return result
-        if attempt < max_attempts:
-            time.sleep(max(float(retry_backoff_seconds), 0.0))
-
-    if max_attempts > 1:
-        result = dict(result)
-        result["fetch_attempts"] = max_attempts
-    return result
-
-
-def _paper_route_target_plan_url_points_to_self(parsed: Any) -> bool:
-    path = str(getattr(parsed, "path", "") or "").rstrip("/")
-    if path not in {"/trading/paper-route-target-plan", "/trading/proofs"}:
-        return False
-    hostname = str(getattr(parsed, "hostname", "") or "").strip().lower()
-    if not hostname:
-        return False
-
-    self_hosts = {"localhost", "127.0.0.1", "::1"}
-    service_name = os.getenv("K_SERVICE", "").strip().lower()
-    namespace = os.getenv("POD_NAMESPACE", os.getenv("NAMESPACE", "")).strip().lower()
-    if service_name:
-        if not namespace and service_name in {"torghut", "torghut-sim"}:
-            namespace = "torghut"
-        self_hosts.add(service_name)
-        if namespace:
-            self_hosts.update(
-                {
-                    f"{service_name}.{namespace}",
-                    f"{service_name}.{namespace}.svc",
-                    f"{service_name}.{namespace}.svc.cluster.local",
-                }
-            )
-    return hostname in self_hosts
 
 
 def _load_external_paper_route_target_plan() -> dict[str, Any]:
@@ -972,6 +951,12 @@ __all__ = [
     "_paper_route_target_plan_cache_safe_for_live",
     "_paper_route_target_strategy_lookup_names",
     "_paper_route_probe_symbols_from_target_plan_strategies",
+    "_strategy_universe_symbol_values",
+    "_configured_static_symbol_allowlist",
+    "_configured_strategy_paper_collection_symbols",
+    "_configured_strategy_paper_collection_targets",
+    "_configured_paper_collection_target_plan",
+    "_with_configured_paper_collection_targets",
     "_paper_route_probe_book_from_target_plan",
     "_paper_route_target_plan_targets",
     "_paper_route_target_plan_from_payload",
