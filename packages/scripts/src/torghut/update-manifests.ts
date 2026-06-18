@@ -34,6 +34,9 @@ const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/pape
 const defaultWhitepaperSemanticBackfillManifestPath =
   'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
 const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
+const defaultHyperliquidRuntimeManifestPath = 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
+const defaultHyperliquidRuntimeMigrationManifestPath =
+  'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
 const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
 const defaultRequiredImagePlatforms = 'linux/amd64,linux/arm64'
@@ -64,6 +67,8 @@ type UpdateManifestsOptions = {
   paperAccountFlattenManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
+  hyperliquidRuntimeManifestPath?: string
+  hyperliquidRuntimeMigrationManifestPath?: string
   includeOptionsManifests?: boolean
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
@@ -95,6 +100,8 @@ type CliOptions = {
   paperAccountFlattenManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
+  hyperliquidRuntimeManifestPath?: string
+  hyperliquidRuntimeMigrationManifestPath?: string
   includeOptionsManifests?: boolean
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
@@ -371,6 +378,16 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.tigerBeetleSmokeManifestPath ?? defaultTigerBeetleSmokeManifestPath,
     'torghut-tigerbeetle-smoke image reference',
   )
+  const hyperliquidRuntime = updateImageOnlyManifest(
+    options,
+    options.hyperliquidRuntimeManifestPath ?? defaultHyperliquidRuntimeManifestPath,
+    'torghut-hyperliquid-runtime image reference',
+  )
+  const hyperliquidRuntimeMigration = updateImageOnlyManifest(
+    options,
+    options.hyperliquidRuntimeMigrationManifestPath ?? defaultHyperliquidRuntimeMigrationManifestPath,
+    'torghut-hyperliquid-runtime-db-migrations image reference',
+  )
   const includeOptionsManifests = options.includeOptionsManifests ?? true
   const optionalResults = includeOptionsManifests
     ? [
@@ -411,6 +428,8 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     paperAccountFlatten,
     whitepaperSemanticBackfill,
     tigerBeetleSmoke,
+    hyperliquidRuntime,
+    hyperliquidRuntimeMigration,
     ...optionalResults,
   ]
     .filter((entry) => entry.changed)
@@ -456,6 +475,8 @@ Options:
   --paper-account-flatten-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
+  --hyperliquid-runtime-manifest-path <path>
+  --hyperliquid-runtime-migration-manifest-path <path>
   --include-options-manifests
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
@@ -556,6 +577,12 @@ Options:
       case '--tigerbeetle-smoke-manifest-path':
         options.tigerBeetleSmokeManifestPath = value
         break
+      case '--hyperliquid-runtime-manifest-path':
+        options.hyperliquidRuntimeManifestPath = value
+        break
+      case '--hyperliquid-runtime-migration-manifest-path':
+        options.hyperliquidRuntimeMigrationManifestPath = value
+        break
       case '--include-options-manifests':
         options.includeOptionsManifests = true
         break
@@ -636,6 +663,10 @@ const main = (cliOptions?: CliOptions) => {
       parsed.whitepaperSemanticBackfillManifestPath ?? process.env.TORGHUT_WHITEPAPER_SEMANTIC_BACKFILL_MANIFEST_PATH,
     tigerBeetleSmokeManifestPath:
       parsed.tigerBeetleSmokeManifestPath ?? process.env.TORGHUT_TIGERBEETLE_SMOKE_MANIFEST_PATH,
+    hyperliquidRuntimeManifestPath:
+      parsed.hyperliquidRuntimeManifestPath ?? process.env.TORGHUT_HYPERLIQUID_RUNTIME_MANIFEST_PATH,
+    hyperliquidRuntimeMigrationManifestPath:
+      parsed.hyperliquidRuntimeMigrationManifestPath ?? process.env.TORGHUT_HYPERLIQUID_RUNTIME_MIGRATION_MANIFEST_PATH,
     includeOptionsManifests:
       parsed.includeOptionsManifests ?? parseOptionalBooleanEnv(process.env.TORGHUT_INCLUDE_OPTIONS_MANIFESTS),
     optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,

@@ -177,6 +177,31 @@ describe('Torghut manifest scheduling', () => {
     const runtimeData = getAtPath(runtimeConfig, ['data'])
     expect(runtimeData.HYPERLIQUID_RUNTIME_TRADING_ENABLED).toBe('false')
 
+    const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
+    const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
+    expect(String(runtimeContainer.image)).toMatch(/^registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:[0-9a-f]{64}$/)
+    expect(String(runtimeContainer.image)).not.toContain(':latest')
+    const runtimeEnv = runtimeContainer.env
+    expect(runtimeEnv).toContainEqual(
+      expect.objectContaining({
+        name: 'TORGHUT_COMMIT',
+        value: expect.stringMatching(/^[0-9a-f]{40}$/),
+      }),
+    )
+    expect(runtimeEnv).toContainEqual(
+      expect.objectContaining({
+        name: 'TORGHUT_IMAGE_DIGEST',
+        value: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      }),
+    )
+
+    const runtimeMigrationJob = parseManifest('argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml')
+    const migrationContainer = getAtPath(runtimeMigrationJob, ['spec', 'template', 'spec', 'containers', 0])
+    expect(String(migrationContainer.image)).toMatch(
+      /^registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:[0-9a-f]{64}$/,
+    )
+    expect(String(migrationContainer.image)).not.toContain(':latest')
+
     const kustomization = parseManifest('argocd/applications/torghut-hyperliquid-runtime/kustomization.yaml')
     const resources = kustomization.resources
     expect(resources).toBeArray()
