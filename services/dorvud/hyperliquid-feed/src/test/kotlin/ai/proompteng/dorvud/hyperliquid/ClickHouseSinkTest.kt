@@ -229,7 +229,7 @@ class ClickHouseSinkTest {
     }
 
   @Test
-  fun `keeps clickhouse ready and reports table freshness separately when inserts succeed but freshness is stale`() =
+  fun `marks clickhouse not ready when inserts succeed but freshness is stale`() =
     runBlocking {
       val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
       val client =
@@ -268,7 +268,7 @@ class ClickHouseSinkTest {
         }
       }
 
-      assertEquals(true, readySignals.last().ready)
+      assertEquals(false, readySignals.last().ready)
       assertEquals(false, readySignals.last().tableFreshnessReady)
       assertEquals(3_000, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
       job.cancelAndJoin()

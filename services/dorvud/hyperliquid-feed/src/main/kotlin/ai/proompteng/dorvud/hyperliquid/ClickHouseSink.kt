@@ -92,8 +92,8 @@ class ClickHouseSink(
         insertRows(table, body)
         refreshTableFreshnessIfDue()
       }.onSuccess {
-        metrics.setClickHouseReady(true)
-        emitReadiness(ready = true, tableFreshnessReady = it)
+        metrics.setClickHouseReady(it)
+        emitReadiness(ready = it, tableFreshnessReady = it)
       }.onFailure { error ->
         metrics.setClickHouseReady(false)
         emitReadiness(ready = false, tableFreshnessReady = false)
