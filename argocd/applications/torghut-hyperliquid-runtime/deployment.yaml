@@ -97,6 +97,8 @@ spec:
             - name: tmp
               mountPath: /tmp
           securityContext:
+            seccompProfile:
+              type: Unconfined
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
