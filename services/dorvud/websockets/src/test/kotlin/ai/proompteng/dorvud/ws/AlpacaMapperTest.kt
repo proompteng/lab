@@ -4,6 +4,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -123,5 +124,17 @@ class AlpacaMapperTest {
     assertEquals("AAPL", payload["underlying_symbol"]?.toString()?.trim('"'))
     assertEquals("2.84", payload["price"]?.toString())
     assertEquals("1.0", payload["size"]?.toString())
+  }
+
+  @Test
+  fun `drops malformed options status frame instead of throwing`() {
+    val msg =
+      """{"T":"s","S":"AAPL260618C00100000","statusCode":"error","statusMessage":"bad symbol","t":"[ERROR: (java.lang.IllegalStateException) 'gen' is expected to be a string]"}"""
+    val decoded = AlpacaMapper.decode(msg)
+    assertTrue(decoded is AlpacaStatus)
+
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.OPTIONS, "opra") { 1 }
+
+    assertNull(env)
   }
 }

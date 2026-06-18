@@ -138,10 +138,11 @@ object AlpacaMapper {
     feed: String,
     isFinal: Boolean,
     source: String = "ws",
-  ): Envelope<JsonElement> =
-    Envelope(
+  ): Envelope<JsonElement>? {
+    val parsedEventTs = runCatching { Instant.parse(eventTs) }.getOrNull() ?: return null
+    return Envelope(
       ingestTs = Instant.now(),
-      eventTs = Instant.parse(eventTs),
+      eventTs = parsedEventTs,
       feed = feed,
       channel = channel,
       symbol = symbol,
@@ -150,4 +151,5 @@ object AlpacaMapper {
       isFinal = isFinal,
       source = source,
     )
+  }
 }
