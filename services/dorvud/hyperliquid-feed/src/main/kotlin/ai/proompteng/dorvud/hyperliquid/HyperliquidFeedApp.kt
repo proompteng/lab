@@ -64,6 +64,10 @@ class HyperliquidFeedApp(
   private val marketCount = AtomicInteger(0)
   private val subscriptionCount = AtomicInteger(0)
   private val notReadySinceMs = AtomicLong(nowMs())
+
+  @Volatile
+  private var clickHouseTableIngestLagMs: Map<String, Long?> = config.clickHouse.readyTables.associateWith { null }
+
   private val httpClient =
     HttpClient(CIO) {
       install(WebSockets)
@@ -88,14 +92,15 @@ class HyperliquidFeedApp(
       }
       val producer = producerFactory(config)
       val clickHouseSink =
-        ClickHouseSink(config.clickHouse, httpClient, metrics, json) {
+        ClickHouseSink(config.clickHouse, httpClient, metrics, json, network = config.network) { update ->
           val observedAt = nowMs()
-          if (it) {
+          clickHouseTableIngestLagMs = update.tableIngestLagMs
+          if (update.ready) {
             clickHouseLastSuccessMs.set(observedAt)
           } else {
             clickHouseLastFailureMs.set(observedAt)
           }
-          clickHouseReady.set(it)
+          clickHouseReady.set(update.ready)
           updateReady()
         }
       val clickHouseJob = clickHouseSink.start(this)
@@ -154,6 +159,7 @@ class HyperliquidFeedApp(
       clickhouse = clickHouseReady.get(),
       clickhouseLastSuccessLagMs = clickHouseLastSuccessLagMs(),
       clickhouseLastFailureAgeMs = clickHouseLastFailureAgeMs(),
+      clickhouseTableIngestLagMs = clickHouseTableIngestLagMs,
       marketDataFresh = freshness.fresh,
       marketDataLastSeenLagMs = freshness.lastSeenLagMs,
       marketDataMaxAgeMs = config.readyEventMaxAgeMs,

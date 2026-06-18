@@ -19,19 +19,37 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import mu.KotlinLogging
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 private val clickHouseLogger = KotlinLogging.logger {}
+private val clickHouseIdentifierPattern = Regex("[A-Za-z_][A-Za-z0-9_]*")
+
+data class ClickHouseReadinessUpdate(
+  val ready: Boolean,
+  val tableIngestLagMs: Map<String, Long?>,
+)
 
 class ClickHouseSink(
   private val config: ClickHouseConfig,
   private val httpClient: HttpClient,
   private val metrics: HyperliquidMetrics,
   private val json: Json,
-  private val onReady: (Boolean) -> Unit = {},
+  private val network: String = "mainnet",
+  private val nowMs: () -> Long = { System.currentTimeMillis() },
+  private val onReady: (ClickHouseReadinessUpdate) -> Unit = {},
 ) {
   private val channel = Channel<RoutedEnvelope>(capacity = 10_000)
+  private val lastFreshnessCheckMs = AtomicLong(0)
+  private val tableFreshnessReady = AtomicBoolean(!config.enabled)
+
+  @Volatile
+  private var latestTableIngestLagMs: Map<String, Long?> = config.readyTables.associateWith { null }
 
   suspend fun enqueue(record: RoutedEnvelope) {
     if (!config.enabled) return
@@ -42,7 +60,7 @@ class ClickHouseSink(
     scope.launch(Dispatchers.IO) {
       if (!config.enabled) {
         metrics.setClickHouseReady(true)
-        onReady(true)
+        emitReadiness(true)
         return@launch
       }
       val batch = mutableListOf<RoutedEnvelope>()
@@ -68,12 +86,13 @@ class ClickHouseSink(
       val body = tableRecords.joinToString("\n") { json.encodeToString(rowFor(it)) }
       runCatching {
         insertRows(table, body)
+        refreshTableFreshnessIfDue()
       }.onSuccess {
-        metrics.setClickHouseReady(true)
-        onReady(true)
+        metrics.setClickHouseReady(it)
+        emitReadiness(it)
       }.onFailure { error ->
         metrics.setClickHouseReady(false)
-        onReady(false)
+        emitReadiness(false)
         metrics.recordClickHouseError(table)
         clickHouseLogger.warn(error) { "clickhouse insert failed table=$table records=${tableRecords.size}" }
       }
@@ -85,16 +104,83 @@ class ClickHouseSink(
     body: String,
   ) {
     val query = "INSERT INTO ${config.database}.$table FORMAT JSONEachRow"
+    executeClickHouse(query, body)
+  }
+
+  private suspend fun executeClickHouse(
+    query: String,
+    body: String? = null,
+  ): String {
     val response =
       httpClient.post("${config.httpUrl.trimEnd('/')}?query=${java.net.URLEncoder.encode(query, Charsets.UTF_8)}") {
         if (config.password.isNotEmpty()) basicAuth(config.username, config.password)
-        contentType(ContentType.Application.Json)
-        setBody(body)
+        if (body != null) {
+          contentType(ContentType.Application.Json)
+          setBody(body)
+        }
       }
+    val responseBody = response.bodyAsText()
     if (!response.status.isSuccess()) {
-      val responseBody = response.bodyAsText().take(256)
-      error("clickhouse_http_${response.status.value}:$responseBody")
+      error("clickhouse_http_${response.status.value}:${responseBody.take(256)}")
     }
+    return responseBody
+  }
+
+  private suspend fun refreshTableFreshnessIfDue(): Boolean {
+    if (!config.enabled) return true
+    val observedAt = nowMs()
+    val lastCheck = lastFreshnessCheckMs.get()
+    if (lastCheck > 0 && observedAt - lastCheck < config.freshnessCheckMs) return tableFreshnessReady.get()
+
+    return runCatching {
+      queryTableFreshness(observedAt)
+    }.fold(
+      onSuccess = { lags ->
+        latestTableIngestLagMs = lags
+        lags.forEach { (table, lagMs) -> metrics.setClickHouseTableIngestLagMs(table, lagMs) }
+        val fresh = lags.values.all { lagMs -> lagMs != null && lagMs in 0L..config.readyMaxAgeMs }
+        tableFreshnessReady.set(fresh)
+        lastFreshnessCheckMs.set(observedAt)
+        if (!fresh) clickHouseLogger.warn { "clickhouse table freshness stale lags_ms=$lags" }
+        fresh
+      },
+      onFailure = { error ->
+        tableFreshnessReady.set(false)
+        lastFreshnessCheckMs.set(observedAt)
+        clickHouseLogger.warn(error) { "clickhouse table freshness query failed" }
+        false
+      },
+    )
+  }
+
+  private suspend fun queryTableFreshness(observedAt: Long): Map<String, Long?> {
+    val database = clickHouseIdentifier(config.database)
+    val tables = config.readyTables.sorted().map(::clickHouseIdentifier)
+    val union =
+      tables.joinToString("\nUNION ALL\n") { table ->
+        "SELECT '$table' AS table, max(parseDateTimeBestEffort(ingest_ts)) AS latest_ingest " +
+          "FROM $database.$table WHERE network = ${sqlString(network)}"
+      }
+    val query =
+      """
+      SELECT table, if(isNull(latest_ingest), NULL, toUnixTimestamp64Milli(toDateTime64(latest_ingest, 3))) AS latest_ingest_ms
+      FROM (
+      $union
+      )
+      FORMAT JSONEachRow
+      """.trimIndent()
+    val observedRows = mutableMapOf<String, Long?>()
+    executeClickHouse(query)
+      .lineSequence()
+      .map { it.trim() }
+      .filter { it.isNotEmpty() }
+      .forEach { line ->
+        val row = json.decodeFromString<JsonObject>(line)
+        val table = row["table"]?.jsonPrimitive?.contentOrNull
+        val latestIngestMs = row["latest_ingest_ms"]?.jsonPrimitive?.longOrNull
+        if (table != null) observedRows[table] = latestIngestMs?.takeIf { it > 0 }?.let { observedAt - it }
+      }
+    return tables.associateWith { observedRows[it] }
   }
 
   private fun rowFor(record: RoutedEnvelope): JsonObject =
@@ -131,4 +217,15 @@ class ClickHouseSink(
       topic.endsWith(".status.v1") -> "hyperliquid_status"
       else -> "hyperliquid_raw"
     }
+
+  private fun emitReadiness(ready: Boolean) {
+    onReady(ClickHouseReadinessUpdate(ready = ready, tableIngestLagMs = latestTableIngestLagMs))
+  }
+
+  private fun clickHouseIdentifier(value: String): String {
+    require(clickHouseIdentifierPattern.matches(value)) { "Invalid ClickHouse identifier: $value" }
+    return value
+  }
+
+  private fun sqlString(value: String): String = "'${value.replace("\\", "\\\\").replace("'", "\\'")}'"
 }
