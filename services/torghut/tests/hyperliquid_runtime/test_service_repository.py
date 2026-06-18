@@ -255,9 +255,28 @@ class _FakeClickHouse:
 
 
 class _FakeExchange:
-    def __init__(self, *, fills: bool = True) -> None:
+    def __init__(self, *, fills: bool = True, supports_markets: bool = True) -> None:
         self.submitted: list[OrderIntent] = []
         self._fills = fills
+        self._supports_markets = supports_markets
+
+    def filter_supported_markets(
+        self,
+        markets: tuple[HyperliquidMarket, ...],
+    ) -> tuple[tuple[HyperliquidMarket, ...], RuntimeDependencyStatus]:
+        if self._supports_markets:
+            return (
+                markets,
+                RuntimeDependencyStatus("hyperliquid_execution_universe", True),
+            )
+        return (
+            (),
+            RuntimeDependencyStatus(
+                "hyperliquid_execution_universe",
+                False,
+                reason="no_execution_supported_markets",
+            ),
+        )
 
     def reconcile_fills(self, _market_id_by_coin: dict[str, str]) -> list[Fill]:
         if not self._fills:
@@ -352,6 +371,47 @@ def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(
     assert result.orders_submitted == 0
     assert result.blocked_decisions == 1
     assert repository.decision.reason == "trading_disabled_shadow"
+    assert exchange.submitted == []
+    assert repository.orders == []
+    assert journal.persisted == []
+
+
+def test_runtime_service_blocks_when_no_testnet_execution_markets(
+    monkeypatch: Any,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    exchange = _FakeExchange(fills=False, supports_markets=False)
+    journal = _FakeJournal()
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+    service = HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        ),
+        clickhouse=_FakeClickHouse(),  # type: ignore[arg-type]
+        exchange=exchange,
+        journal=journal,  # type: ignore[arg-type]
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)  # type: ignore[arg-type]
+
+    assert session.committed
+    assert result.markets_seen == 0
+    assert result.signals_written == 0
+    assert result.decisions_written == 0
+    assert result.orders_submitted == 0
+    assert any(
+        dependency.name == "hyperliquid_execution_universe"
+        and not dependency.ready
+        and dependency.reason == "no_execution_supported_markets"
+        for dependency in result.dependency_statuses
+    )
     assert exchange.submitted == []
     assert repository.orders == []
     assert journal.persisted == []

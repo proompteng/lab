@@ -3,6 +3,7 @@ set -euo pipefail
 
 VAULT="${HYPERLIQUID_TESTNET_1PASSWORD_VAULT:-infra}"
 ITEM="${HYPERLIQUID_TESTNET_1PASSWORD_ITEM:-hyperliquid-testnet}"
+EXTERNALSECRET_MANIFEST="argocd/applications/torghut-hyperliquid-runtime/externalsecret.yaml"
 
 usage() {
   cat <<EOF
@@ -215,6 +216,14 @@ PY
 reconcile_external_secret() {
   check_item
   require_command kubectl
+  if ! kubectl -n torghut get externalsecret torghut-hyperliquid-testnet >/dev/null 2>&1; then
+    cat >&2 <<EOF
+ExternalSecret is not live yet.
+Add ${EXTERNALSECRET_MANIFEST} to argocd/applications/torghut-hyperliquid-runtime/kustomization.yaml,
+merge the GitOps PR, wait for Argo to sync, then rerun '$0 reconcile'.
+EOF
+    exit 1
+  fi
   kubectl -n torghut annotate externalsecret torghut-hyperliquid-testnet \
     "force-sync=$(date +%s)" \
     --overwrite

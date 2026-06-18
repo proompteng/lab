@@ -8,6 +8,9 @@ V1 defaults to shadow mode:
 - Operational state is written to the Hyperliquid-specific Postgres tables from migration `0054`.
 - TigerBeetle transfer refs are planned deterministically for submitted holds, fills, fees, realized PnL, and releases.
 - Mainnet execution is blocked in config validation and code.
+- When trading is enabled, the runtime filters the selected mainnet market-data universe through Hyperliquid testnet
+  perp metadata before any feature can produce an order. If testnet metadata is stale, unavailable, or has no matching
+  equity-like markets, readiness fails and no orders are submitted.
 
 To enable tiny testnet orders, create and authorize a Hyperliquid testnet API/agent wallet for the dedicated testnet account. Store the main account address and authorized API wallet private key in the 1Password item `hyperliquid-testnet` in the `infra` vault with fields:
 
@@ -29,10 +32,12 @@ Shadow mode does not require Hyperliquid execution credentials. Keep the Externa
 GitOps while `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false`; otherwise a missing optional 1Password item degrades the
 Argo app even though the runtime is correctly serving read-only readiness.
 
-After `reconcile` reports the bootstrap as ready, open a GitOps PR that adds the `torghut-hyperliquid-testnet`
-ExternalSecret to `kustomization.yaml` and sets `HYPERLIQUID_RUNTIME_TRADING_ENABLED` to `true` in
-`configmap.yaml`. Keep the default caps unless a separate rollout approves a larger envelope. The runtime must
-continue to report `execution_network=testnet`; mainnet execution is rejected by config validation.
+After `check` reports the 1Password item is present, open a GitOps PR that adds `externalsecret.yaml` to
+`kustomization.yaml` while keeping `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false`. Merge and wait for Argo to sync, then
+run `scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh reconcile`. After `reconcile` reports the Kubernetes
+Secret as ready, open the trading-enable PR that sets `HYPERLIQUID_RUNTIME_TRADING_ENABLED=true` in `configmap.yaml`.
+Keep the default caps unless a separate rollout approves a larger envelope. The runtime must continue to report
+`execution_network=testnet`; mainnet execution is rejected by config validation.
 
 Acceptance checks:
 

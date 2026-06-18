@@ -80,21 +80,31 @@ class HyperliquidRuntimeService:
             max_markets=self._config.max_markets_per_cycle,
         )
         repository.upsert_markets(markets)
-        features = self._clickhouse.load_feature_rows(
-            [market.market_id for market in markets]
+        execution_markets, execution_universe_status = (
+            self._exchange.filter_supported_markets(tuple(markets))
+        )
+        features = (
+            self._clickhouse.load_feature_rows(
+                [market.market_id for market in execution_markets]
+            )
+            if execution_markets
+            else []
         )
         fills = self._exchange.reconcile_fills(
-            {market.coin: market.market_id for market in markets}
+            {market.coin: market.market_id for market in execution_markets}
         )
         fill_count = repository.upsert_fills(fills)
         for fill in fills:
             self._journal.persist_refs(session, self._journal.fill_events(fill))
         exchange_status = self._exchange.dependency_status()
-        dependencies = clickhouse_status.statuses + (exchange_status,)
+        dependencies = clickhouse_status.statuses + (
+            execution_universe_status,
+            exchange_status,
+        )
         return _CycleContext(
             session=session,
             repository=repository,
-            markets=tuple(markets),
+            markets=execution_markets,
             features=tuple(features),
             dependencies=dependencies,
             risk_state=repository.risk_state(dependencies=dependencies),
