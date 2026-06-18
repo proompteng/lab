@@ -16,6 +16,7 @@ from tests.whitepaper_workflow.support import (
     _FakeKafkaSession,
     _FakeKafkaWorkflowService,
     _TestWhitepaperWorkflowBase,
+    _TestWhitepaperWorkflowService,
     cast,
     json,
     os,
@@ -30,9 +31,10 @@ class TestSamePdfAcrossIssuesReusesExistingRunWithoutDuplication(
     def test_same_pdf_across_issues_reuses_existing_run_without_duplication(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService(
+            download_pdf_handler=lambda _url: b"%PDF-1.7 identical-content",
+        )
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 identical-content"  # type: ignore[method-assign]
 
         submit_attempts = {"count": 0}
 
@@ -51,7 +53,7 @@ class TestSamePdfAcrossIssuesReusesExistingRunWithoutDuplication(
                 },
             }
 
-        service._submit_agents_agentrun = _fake_submit  # type: ignore[method-assign]
+        service.submit_agents_agentrun_handler = _fake_submit
 
         with Session(self.engine) as session:
             first = service.ingest_github_issue_event(
@@ -117,7 +119,7 @@ class TestSamePdfAcrossIssuesReusesExistingRunWithoutDuplication(
         ingestor._consumer = consumer
         session = _FakeKafkaSession()
 
-        counters = ingestor.ingest_once(session)  # type: ignore[arg-type]
+        counters = ingestor.ingest_once(session)
         self.assertEqual(counters["messages_total"], 2)
         self.assertEqual(counters["accepted_total"], 1)
         self.assertEqual(counters["failed_total"], 1)
@@ -139,7 +141,7 @@ class TestSamePdfAcrossIssuesReusesExistingRunWithoutDuplication(
         ingestor._consumer = consumer
         session = _FakeKafkaSession()
 
-        counters = ingestor.ingest_once(session)  # type: ignore[arg-type]
+        counters = ingestor.ingest_once(session)
         self.assertEqual(counters["messages_total"], 2)
         self.assertEqual(counters["accepted_total"], 1)
         self.assertEqual(counters["ignored_total"], 1)
@@ -166,9 +168,8 @@ class TestSamePdfAcrossIssuesReusesExistingRunWithoutDuplication(
         self.assertTrue(kwargs["follow_redirects"])
 
     def test_comment_requeue_reuses_existing_run_without_duplication(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
 
         submit_attempts = {"count": 0}
 
@@ -187,7 +188,7 @@ class TestSamePdfAcrossIssuesReusesExistingRunWithoutDuplication(
                 }
             }
 
-        service._submit_agents_agentrun = _fake_submit  # type: ignore[method-assign]
+        service.submit_agents_agentrun_handler = _fake_submit
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -223,9 +224,8 @@ class TestSamePdfAcrossIssuesReusesExistingRunWithoutDuplication(
             self.assertEqual(len(agentruns), 2)
 
     def test_inngest_requeue_uses_new_enqueue_key_per_attempt(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_INNGEST_ENABLED"] = "true"
         fake_inngest = _FakeInngestClient()
         service.set_inngest_client(cast(Any, fake_inngest))

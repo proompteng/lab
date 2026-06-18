@@ -9,9 +9,9 @@ from tests.whitepaper_workflow.support import (
     WhitepaperEngineeringTrigger,
     WhitepaperRolloutTransition,
     WhitepaperViabilityVerdict,
-    WhitepaperWorkflowService,
     _FakeCephClient,
     _TestWhitepaperWorkflowBase,
+    _TestWhitepaperWorkflowService,
     cast,
     os,
     patch,
@@ -25,9 +25,8 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
     def test_persist_semantic_chunks_does_not_delete_until_embeddings_ready(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -56,13 +55,11 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
                 return _DummyResult()
 
             with patch.object(session, "execute", side_effect=_fake_execute):
-                service._embed_texts = (  # type: ignore[method-assign]
-                    lambda _texts: (_ for _ in ()).throw(
-                        RuntimeError("embedding service unavailable")
-                    )
+                service.embed_texts_handler = lambda _texts: (_ for _ in ()).throw(
+                    RuntimeError("embedding service unavailable")
                 )
                 with self.assertRaises(RuntimeError):
-                    service._persist_semantic_chunks_and_embeddings(
+                    service.persist_semantic_chunks_and_embeddings(
                         session,
                         run=run_row,
                         source_scope="synthesis",
@@ -72,18 +69,8 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
             self.assertEqual(statement_log, [])
 
     def test_finalize_merges_dspy_eval_report_into_verdict_gating(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "ok": True,
-                "resource": {
-                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
-                    "status": {"phase": "Pending"},
-                },
-            }
-        )
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -129,23 +116,20 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
     def test_finalize_auto_dispatches_engineering_candidate_and_scales_live(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
         os.environ["WHITEPAPER_ENGINEERING_ROLLOUT_PROFILE"] = "automatic"
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "resource": {
-                    "metadata": {
-                        "name": f"engineering-{idempotency_key}",
-                        "uid": "uid-eng",
-                    },
-                    "status": {"phase": "Pending"},
-                }
+        service.submit_agents_agentrun_handler = lambda _payload, *, idempotency_key: {
+            "resource": {
+                "metadata": {
+                    "name": f"engineering-{idempotency_key}",
+                    "uid": "uid-eng",
+                },
+                "status": {"phase": "Pending"},
             }
-        )
+        }
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -218,9 +202,8 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
     def test_finalize_uses_persisted_verdict_fields_for_deterministic_reason_codes(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
 
@@ -304,9 +287,8 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
             self.assertEqual(trigger_row.decision, "suppressed")
 
     def test_finalize_retry_preserves_existing_engineering_dispatch(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
         os.environ["WHITEPAPER_ENGINEERING_ROLLOUT_PROFILE"] = "automatic"
@@ -327,7 +309,7 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
                 }
             }
 
-        service._submit_agents_agentrun = _fake_submit  # type: ignore[method-assign]
+        service.submit_agents_agentrun_handler = _fake_submit
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -397,22 +379,19 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
     def test_manual_approval_dispatches_non_eligible_run_with_audit_fields(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "resource": {
-                    "metadata": {
-                        "name": f"manual-{idempotency_key}",
-                        "uid": "uid-manual",
-                    },
-                    "status": {"phase": "Pending"},
-                }
+        service.submit_agents_agentrun_handler = lambda _payload, *, idempotency_key: {
+            "resource": {
+                "metadata": {
+                    "name": f"manual-{idempotency_key}",
+                    "uid": "uid-manual",
+                },
+                "status": {"phase": "Pending"},
             }
-        )
+        }
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -492,22 +471,19 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
     def test_manual_approval_automatic_rollout_blocks_and_rolls_back_on_gate_failure(
         self,
     ) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
         os.environ["WHITEPAPER_ENGINEERING_AUTO_DISPATCH_ENABLED"] = "true"
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "resource": {
-                    "metadata": {
-                        "name": f"manual-{idempotency_key}",
-                        "uid": "uid-manual",
-                    },
-                    "status": {"phase": "Pending"},
-                }
+        service.submit_agents_agentrun_handler = lambda _payload, *, idempotency_key: {
+            "resource": {
+                "metadata": {
+                    "name": f"manual-{idempotency_key}",
+                    "uid": "uid-manual",
+                },
+                "status": {"phase": "Pending"},
             }
-        )
+        }
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -579,18 +555,8 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
             self.assertTrue(any(row.status == "halted" for row in rollout_rows))
 
     def test_build_whitepaper_prompt_requires_implementation_plan_md(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "ok": True,
-                "resource": {
-                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
-                    "status": {"phase": "Pending"},
-                },
-            }
-        )
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -605,9 +571,8 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
             self.assertIn("implementation_plan_md", agentrun_row.prompt_text or "")
 
     def test_marker_subject_tags_and_analysis_mode_are_persisted(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
 
         with Session(self.engine) as session:
@@ -649,18 +614,8 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
             )
 
     def test_analysis_only_prompt_omits_pr_requirement(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
-        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
-        service._submit_agents_agentrun = (  # type: ignore[method-assign]
-            lambda _payload, *, idempotency_key: {
-                "ok": True,
-                "resource": {
-                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
-                    "status": {"phase": "Pending"},
-                },
-            }
-        )
 
         with Session(self.engine) as session:
             kickoff = service.ingest_github_issue_event(
@@ -683,12 +638,12 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
             self.assertNotIn("Open a PR from a codex/* branch", prompt_text)
 
     def test_failed_run_replay_is_idempotent_without_duplicate_rows(self) -> None:
-        service = WhitepaperWorkflowService()
+        service = _TestWhitepaperWorkflowService()
         os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
 
         with Session(self.engine) as session:
             service.ceph_client = None
-            service._download_pdf = lambda _url: b"%PDF-1.7 first"  # type: ignore[method-assign]
+            service.download_pdf_handler = lambda _url: b"%PDF-1.7 first"
             first = service.ingest_github_issue_event(
                 session,
                 self._issue_payload(),
@@ -700,7 +655,7 @@ class TestPersistSemanticChunksDoesNotDeleteUntilEmbeddingsReady(
             session.commit()
 
             service.ceph_client = _FakeCephClient()
-            service._download_pdf = lambda _url: b"%PDF-1.7 retry"  # type: ignore[method-assign]
+            service.download_pdf_handler = lambda _url: b"%PDF-1.7 retry"
             replay = service.ingest_github_issue_event(
                 session,
                 self._issue_payload(),
