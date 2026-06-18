@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 
 export type Logger = {
   info: (message: string) => Promise<void>
+  warn: (message: string) => Promise<void>
   error: (message: string) => Promise<void>
 }
 
@@ -10,7 +11,7 @@ const timestampUtc = () => new Date().toISOString()
 
 export const createLogger = async (logPath: string): Promise<Logger> => {
   await mkdir(dirname(logPath), { recursive: true })
-  const write = async (level: 'info' | 'error', message: string) => {
+  const write = async (level: 'info' | 'warn' | 'error', message: string) => {
     const line = `${timestampUtc()} ${level.toUpperCase()} ${message}\n`
     if (level === 'error') {
       process.stderr.write(line)
@@ -21,6 +22,7 @@ export const createLogger = async (logPath: string): Promise<Logger> => {
   }
   return {
     info: (message) => write('info', message),
+    warn: (message) => write('warn', message),
     error: (message) => write('error', message),
   }
 }

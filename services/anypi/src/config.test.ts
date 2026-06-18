@@ -39,7 +39,10 @@ import {
   hasWorktreeProgress,
   normalizeConventionalSummary,
   renderPullRequestBody,
+  detectCompletionLoop,
+  createCompletionLoopState,
 } from './run'
+import type { CompletionLoopEvidence, CompletionLoopState } from './types'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -483,5 +486,138 @@ describe('Anypi prompt contract', () => {
         { status: ' M foo.ts', commitsAhead: 1, contentHash: 'same' },
       ),
     ).toBe(false)
+  })
+
+  test('detects completion loop from repeated finish calls and no worktree progress', () => {
+    const state = createCompletionLoopState()
+    // First attempt: finish called with some commands, no worktree change
+    const result1 = {
+      text: 'done',
+      tools: ['read', 'edit'],
+      sessionFile: '/tmp/session1',
+      finishCalled: true,
+      commandCount: 3,
+      worktreeChanges: 0,
+    }
+    const loop1 = detectCompletionLoop(state, result1, '')
+    expect(loop1.loopDetected).toBe(false)
+    expect(state.finishCalledCount).toBe(1)
+    expect(state.consecutiveNoOpCount).toBe(0)
+
+    // Second attempt: finish called again with no worktree change
+    const result2 = {
+      text: 'finalized',
+      tools: ['finish'],
+      sessionFile: '/tmp/session2',
+      finishCalled: true,
+      commandCount: 0,
+      worktreeChanges: 0,
+    }
+    const loop2 = detectCompletionLoop(state, result2, '')
+    expect(loop2.loopDetected).toBe(true)
+    expect(loop2.evidence?.finishCalledCount).toBe(2)
+    expect(loop2.evidence?.commandCount).toBe(0)
+    expect(state.consecutiveNoOpCount).toBe(1)
+  })
+
+  test('detects completion loop from repeated no-op cycles', () => {
+    const state = createCompletionLoopState()
+    // First attempt: no finish, no worktree change
+    const result1 = {
+      text: 'analysis',
+      tools: ['read'],
+      sessionFile: '/tmp/session1',
+      finishCalled: false,
+      commandCount: 0,
+      worktreeChanges: 0,
+    }
+    const loop1 = detectCompletionLoop(state, result1, '')
+    expect(loop1.loopDetected).toBe(false) // First check is skipped
+
+    // Second attempt: still no worktree change
+    const result2 = {
+      text: 'more analysis',
+      tools: ['read'],
+      sessionFile: '/tmp/session2',
+      finishCalled: false,
+      commandCount: 0,
+      worktreeChanges: 0,
+    }
+    const loop2 = detectCompletionLoop(state, result2, '')
+    // After two consecutive no-op checks (first skipped, second counted = 1),
+    // we need one more to reach count >= 2 for loop detection
+    expect(loop2.loopDetected).toBe(false)
+    expect(state.consecutiveNoOpCount).toBe(1)
+
+    // Third attempt: still no worktree change
+    const result3 = {
+      text: 'still analysis',
+      tools: ['read'],
+      sessionFile: '/tmp/session3',
+      finishCalled: false,
+      commandCount: 0,
+      worktreeChanges: 0,
+    }
+    const loop3 = detectCompletionLoop(state, result3, '')
+    expect(loop3.loopDetected).toBe(true) // Now count = 2 >= 2
+    expect(loop3.evidence?.finishCalledCount).toBe(0)
+    expect(state.consecutiveNoOpCount).toBe(2)
+  })
+
+  test('detects completion loop when finish tool and no-op worktree alternate', () => {
+    const state = createCompletionLoopState()
+    // First attempt: finish called, no worktree change
+    const result1 = {
+      text: 'done',
+      tools: ['finish'],
+      sessionFile: '/tmp/session1',
+      finishCalled: true,
+      commandCount: 0,
+      worktreeChanges: 0,
+    }
+    const loop1 = detectCompletionLoop(state, result1, ' M file.ts')
+    expect(loop1.loopDetected).toBe(false)
+
+    // Second attempt: finish called again, still no worktree change
+    const result2 = {
+      text: 'finalized',
+      tools: ['finish'],
+      sessionFile: '/tmp/session2',
+      finishCalled: true,
+      commandCount: 0,
+      worktreeChanges: 0,
+    }
+    const loop2 = detectCompletionLoop(state, result2, ' M file.ts')
+    expect(loop2.loopDetected).toBe(true)
+    expect(state.consecutiveNoOpCount).toBe(1)
+  })
+
+  test('resets no-op count when worktree changes', () => {
+    const state = createCompletionLoopState()
+    // First attempt: no worktree change
+    const result1 = {
+      text: 'analysis',
+      tools: ['read'],
+      sessionFile: '/tmp/session1',
+      finishCalled: false,
+      commandCount: 0,
+      worktreeChanges: 0,
+    }
+    const loop1 = detectCompletionLoop(state, result1, '')
+    expect(loop1.loopDetected).toBe(false) // First check is skipped
+    expect(state.consecutiveNoOpCount).toBe(0)
+
+    // Second attempt: worktree changes
+    const result2 = {
+      text: 'done',
+      tools: ['edit'],
+      sessionFile: '/tmp/session2',
+      finishCalled: false,
+      commandCount: 1,
+      worktreeChanges: 1,
+    }
+    const loop2 = detectCompletionLoop(state, result2, ' M new.ts')
+    expect(loop2.loopDetected).toBe(false)
+    expect(state.consecutiveNoOpCount).toBe(0) // Reset because worktree changed
   })
 })

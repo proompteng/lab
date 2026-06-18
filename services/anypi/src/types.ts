@@ -104,6 +104,20 @@ export type CiWaitResult = {
   summary: string
 }
 
+export type CompletionLoopState = {
+  finishCalledCount: number
+  commandSequence: string[]
+  lastWorktreeStatus: string
+  consecutiveNoOpCount: number
+  isFirstCheck?: boolean
+}
+
+export type CompletionLoopEvidence = {
+  finishCalledCount: number
+  commandCount: number
+  lastCommands: string[]
+}
+
 export type AnypiStatus = {
   provider: string
   status: 'running' | 'succeeded' | 'failed'
@@ -133,4 +147,12 @@ export type AnypiStatus = {
   validationAttempts: number
   promptChars: number
   error?: string
+  completionLoopDetected?: boolean
+  loopEvidence?: {
+    finishCalledCount: number
+    commandCount: number
+    lastCommands: string[]
+    worktreeStatus: string
+    elapsedSeconds: number
+  }
 }

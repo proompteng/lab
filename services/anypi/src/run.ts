@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 
 import { applyRunnerArtifacts, loadRunnerSpec, loadRunSpec, resolveConfig, type AnypiConfig } from './config'
 import { createLogger } from './logger'
-import { runPiAgent } from './pi-session'
+import { runPiAgent, type PiRunResult, isCompletionLoopTool } from './pi-session'
 import {
   buildAgentPrompt,
   buildCiRepairPrompt,
@@ -30,6 +30,8 @@ import type {
   AgentRunSpecPayload,
   AnypiStatus,
   CiWaitResult,
+  CompletionLoopEvidence,
+  CompletionLoopState,
   PullRequestResult,
   ValidationPlan,
   ValidationResult,
@@ -198,6 +200,62 @@ const getWorktreeProgress = async (git: GitContext | null, worktree: string): Pr
   contentHash: git ? await gitWorktreeContentHash(worktree, git.env) : '',
 })
 
+// Completion loop detection state and helpers
+export const createCompletionLoopState = (): CompletionLoopState => ({
+  finishCalledCount: 0,
+  commandSequence: [],
+  lastWorktreeStatus: '',
+  consecutiveNoOpCount: 0,
+  isFirstCheck: true,
+})
+
+export const detectCompletionLoop = (
+  state: CompletionLoopState,
+  result: PiRunResult,
+  currentWorktreeStatus: string,
+): { loopDetected: boolean; evidence?: CompletionLoopEvidence } => {
+  // Track finish/finalization tool calls
+  if (result.finishCalled) {
+    state.finishCalledCount += 1
+  }
+
+  // Track command sequence (last 3 commands)
+  const commands = state.commandSequence.slice(-2)
+  if (result.commandCount > 0) {
+    commands.push(`executed ${result.commandCount} commands`)
+  }
+  state.commandSequence = commands
+
+  // Detect worktree no-op (no changes since last check)
+  // Skip the first check since we haven't had a chance to make progress yet
+  if (!state.isFirstCheck && state.lastWorktreeStatus === currentWorktreeStatus) {
+    state.consecutiveNoOpCount += 1
+  } else {
+    state.consecutiveNoOpCount = 0
+  }
+  state.isFirstCheck = false
+  state.lastWorktreeStatus = currentWorktreeStatus
+
+  // Loop detected if:
+  // - Multiple finish calls AND consecutive no-op worktree, OR
+  // - Repeated no-op cycles without progress
+  const loopDetected =
+    (state.finishCalledCount >= 2 && state.consecutiveNoOpCount >= 1) || state.consecutiveNoOpCount >= 2
+
+  if (loopDetected) {
+    return {
+      loopDetected: true,
+      evidence: {
+        finishCalledCount: state.finishCalledCount,
+        commandCount: result.commandCount,
+        lastCommands: state.commandSequence,
+      },
+    }
+  }
+
+  return { loopDetected: false }
+}
+
 const formatValidationError = (result: ValidationResult) =>
   `validation failed (${result.exitCode}): ${[result.command, ...result.args].join(' ')}`
 
@@ -295,6 +353,9 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       }
     }
 
+    // Completion loop detection state
+    let completionLoopState = createCompletionLoopState()
+
     for (let attempt = 0; attempt <= config.noChangeRepairAttempts; attempt += 1) {
       const nextPrompt =
         attempt === 0
@@ -304,18 +365,42 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
               maxAttempts: config.noChangeRepairAttempts,
               worktree: config.worktree,
             })
-      await recordPiResult(
-        await runPiAgent(config, nextPrompt, logger.info, {
-          sessionLabel: attempt === 0 ? 'initial' : `no-change-repair-${attempt}`,
-          systemPrompt,
-        }),
-        attempt === 0 ? undefined : `No-change repair ${attempt}`,
-      )
+      const piResult = await runPiAgent(config, nextPrompt, logger.info, {
+        sessionLabel: attempt === 0 ? 'initial' : `no-change-repair-${attempt}`,
+        systemPrompt,
+      })
+      await recordPiResult(piResult, attempt === 0 ? undefined : `No-change repair ${attempt}`)
       status.agentAttempts = attempt + 1
       await writeStatus(config.statusPath, status)
 
       const changed = await gitStatusShort(config.worktree, git?.env)
       const commitsAhead = git ? await countCommitsAhead(git) : 0
+
+      // Detect completion loop
+      const loopResult = detectCompletionLoop(completionLoopState, piResult, changed)
+      if (loopResult.loopDetected) {
+        status.completionLoopDetected = true
+        status.loopEvidence = {
+          finishCalledCount: loopResult.evidence?.finishCalledCount ?? 0,
+          commandCount: loopResult.evidence?.commandCount ?? 0,
+          lastCommands: loopResult.evidence?.lastCommands ?? [],
+          worktreeStatus: changed,
+          elapsedSeconds: Math.round((Date.now() - Date.parse(status.startedAt)) / 1000),
+        }
+        await logger.warn(`completion loop detected after ${status.agentAttempts} attempts`)
+        await logger.warn(`loop evidence: ${JSON.stringify(status.loopEvidence)}`)
+        // If worktree has changes despite loop, proceed to validation
+        if (changed || (git && commitsAhead > 0)) {
+          await logger.info(`completion loop detected but worktree has changes; proceeding to validation`)
+          break
+        }
+        // No changes, exit with loop detection
+        throw new Error(
+          `completion loop detected: model repeatedly signaled completion without making worktree changes ` +
+            `(finishCalled=${loopResult.evidence?.finishCalledCount}, consecutiveNoOp=${completionLoopState.consecutiveNoOpCount})`,
+        )
+      }
+
       if (changed || !git || commitsAhead > 0) break
       if (attempt >= config.noChangeRepairAttempts) {
         throw new Error('Anypi completed without leaving code changes in the worktree')
@@ -327,6 +412,8 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
 
     const validationCommands = status.validationPlan.commands
     let validationResults: ValidationResult[] = []
+    // Completion loop detection for validation repair
+    let validationLoopState = createCompletionLoopState()
     for (let attempt = 0; attempt <= config.validationRepairAttempts; attempt += 1) {
       validationResults = await runValidationPass(validationCommands, git, runSpec, config.worktree, logger.info)
       status.validationAttempts = attempt + 1
@@ -361,6 +448,29 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       }
       const afterRepair = await getWorktreeProgress(git, config.worktree)
       if (!hasWorktreeProgress(beforeRepair, afterRepair)) {
+        // Check for completion loop
+        const loopResult = detectCompletionLoop(validationLoopState, repairResult, afterRepair.status)
+        if (loopResult.loopDetected) {
+          status.completionLoopDetected = true
+          status.loopEvidence = {
+            finishCalledCount: loopResult.evidence?.finishCalledCount ?? 0,
+            commandCount: loopResult.evidence?.commandCount ?? 0,
+            lastCommands: loopResult.evidence?.lastCommands ?? [],
+            worktreeStatus: afterRepair.status,
+            elapsedSeconds: Math.round((Date.now() - Date.parse(status.startedAt)) / 1000),
+          }
+          await logger.warn(`validation repair completion loop detected after ${status.agentAttempts} attempts`)
+          await logger.warn(`loop evidence: ${JSON.stringify(status.loopEvidence)}`)
+          // If worktree has changes despite loop, proceed to validation
+          if (afterRepair.status || (git && afterRepair.commitsAhead > 0)) {
+            await logger.info(`validation loop detected but worktree has changes; proceeding to validation`)
+            break
+          }
+          throw new Error(
+            `validation repair completion loop detected: model repeatedly made no meaningful progress ` +
+              `(finishCalled=${loopResult.evidence?.finishCalledCount}, consecutiveNoOp=${validationLoopState.consecutiveNoOpCount})`,
+          )
+        }
         throw new Error(
           `${formatValidationError(failed)}; validation repair ${attempt + 1} produced no worktree changes`,
         )
@@ -381,6 +491,8 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       await writeStatus(config.statusPath, status)
 
       if (pullRequest.enabled) {
+        // Completion loop detection for CI repair
+        let ciLoopState = createCompletionLoopState()
         for (let attempt = 0; attempt <= config.ciRepairAttempts; attempt += 1) {
           const ci = await waitForPullRequestChecks(
             git,
@@ -424,7 +536,34 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
 
           const previousCommit: string | undefined = status.commit
           const repairedCommit = await commitIfNeeded(git, buildCommitMessage(runSpec))
-          if (!repairedCommit || repairedCommit === previousCommit) throw new Error('CI repair produced no new commit')
+
+          // Check for completion loop - no new commit after repair
+          if (!repairedCommit || repairedCommit === previousCommit) {
+            const currentWorktreeStatus = await gitStatusShort(config.worktree, git?.env)
+            const loopResult = detectCompletionLoop(ciLoopState, repairResult, currentWorktreeStatus)
+            if (loopResult.loopDetected) {
+              status.completionLoopDetected = true
+              status.loopEvidence = {
+                finishCalledCount: loopResult.evidence?.finishCalledCount ?? 0,
+                commandCount: loopResult.evidence?.commandCount ?? 0,
+                lastCommands: loopResult.evidence?.lastCommands ?? [],
+                worktreeStatus: currentWorktreeStatus,
+                elapsedSeconds: Math.round((Date.now() - Date.parse(status.startedAt)) / 1000),
+              }
+              await logger.warn(`CI repair completion loop detected after ${status.agentAttempts} attempts`)
+              await logger.warn(`loop evidence: ${JSON.stringify(status.loopEvidence)}`)
+              // If worktree has changes despite loop, proceed
+              if (currentWorktreeStatus || (git && (await countCommitsAhead(git)) > 0)) {
+                await logger.info(`CI loop detected but worktree has changes; proceeding`)
+              } else {
+                throw new Error(
+                  `CI repair completion loop detected: model repeatedly made no meaningful progress ` +
+                    `(finishCalled=${loopResult.evidence?.finishCalledCount}, consecutiveNoOp=${ciLoopState.consecutiveNoOpCount})`,
+                )
+              }
+            }
+            throw new Error('CI repair produced no new commit')
+          }
           status.commit = repairedCommit
           await pushBranch(git)
           pullRequest = await createOrUpdatePullRequest(git, {

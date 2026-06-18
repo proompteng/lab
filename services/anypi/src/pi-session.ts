@@ -21,6 +21,9 @@ export type PiRunResult = {
   text: string
   tools: string[]
   sessionFile?: string
+  finishCalled: boolean
+  commandCount: number
+  worktreeChanges: number
 }
 
 export type PiRunOptions = {
@@ -30,6 +33,35 @@ export type PiRunOptions = {
 
 export const isBenignAssistantContinuationError = (error: unknown) =>
   error instanceof Error && error.message.includes('Cannot continue from message role: assistant')
+
+export type CompletionLoopState = {
+  finishCalledCount: number
+  lastCommand: string | null
+  commandSequence: string[]
+  worktreeSnapshot: string
+}
+
+export const isCompletionLoopTool = (toolName: string): boolean => {
+  const finishTools = ['finish', 'finalization', 'finalize', 'complete']
+  return finishTools.some((t) => toolName.toLowerCase().includes(t))
+}
+
+export const isBenignCommand = (command: string): boolean => {
+  const benignPatterns = [
+    /^git (status|diff|log|rev-list|rev-parse)/i,
+    /^ls( -la)?$/i,
+    /^cat\s+/i,
+    /^head\s+/i,
+    /^tail\s+/i,
+    /^echo\s+/i,
+    /^pwd$/i,
+    /^date$/i,
+    /^whoami$/i,
+    /^uname( -a)?$/i,
+    /^ls\s/,
+  ]
+  return benignPatterns.some((pattern) => pattern.test(command.trim()))
+}
 
 export const resolveAttemptSessionDir = (sessionDir: string, sessionLabel = 'attempt') => {
   const safeLabel = sessionLabel
@@ -137,6 +169,9 @@ export const runPiAgent = async (
   await log(`pi active tools: ${session.getActiveToolNames().join(', ')}`)
 
   let text = ''
+  let finishCalled = false
+  let commandCount = 0
+  let lastCommand: string | null = null
   const unsubscribe = session.subscribe((event) => {
     if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
       const delta = event.assistantMessageEvent.delta
@@ -145,9 +180,22 @@ export const runPiAgent = async (
     }
     if (event.type === 'tool_execution_start') {
       void log(`tool start: ${event.toolName}`)
+      const toolName = event.toolName
+      if (isCompletionLoopTool(toolName)) {
+        finishCalled = true
+        void log(`finish tool detected: ${toolName}`)
+      } else if (toolName === 'bash') {
+        commandCount += 1
+      }
     }
     if (event.type === 'tool_execution_end') {
       void log(`tool end: ${event.toolName}`)
+      if (event.toolName === 'bash' && event.result && typeof event.result === 'object') {
+        const result = event.result as { stdout?: string; stderr?: string }
+        if (result.stdout) {
+          lastCommand = (result.stdout as string).trim()
+        }
+      }
     }
   })
 
@@ -162,6 +210,9 @@ export const runPiAgent = async (
       text,
       tools: session.getActiveToolNames(),
       sessionFile: session.sessionFile,
+      finishCalled,
+      commandCount,
+      worktreeChanges: 0,
     }
   } finally {
     unsubscribe()
