@@ -40,9 +40,10 @@ class ShadowHyperliquidExchange:
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
         _ = intent
         return OrderResult(
-            status="submitted",
+            status="rejected",
             exchange_order_id=None,
-            raw_response={"shadow": True},
+            raw_response={"shadow": True, "reason": "trading_disabled_shadow"},
+            rejection_reason="trading_disabled_shadow",
         )
 
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
