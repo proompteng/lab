@@ -62,12 +62,15 @@ Current rollout commands:
 
 ```bash
 cd services/torghut
+uv run --frozen python scripts/run_pylint_torghut_structural_gate.py
 uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
 uv run --frozen pylint app scripts --disable=all --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements --score=n
 ```
 
-The file-length command is blocking in CI. The design-complexity command is intentionally non-blocking inventory until
-the remaining findings are refactored without broad suppressions.
+The structural and file-length commands are blocking in CI. The structural gate rejects regenerated split filenames,
+dynamic module facades, wildcard imports, source-string execution, and broad Ruff/Pyright/type suppressions across the
+full Torghut Python surface. The design-complexity command is intentionally non-blocking inventory until the remaining
+findings are refactored without broad suppressions.
 
 ## Dead-code audit (Vulture)
 

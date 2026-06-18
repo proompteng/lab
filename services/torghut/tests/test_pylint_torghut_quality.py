@@ -28,6 +28,7 @@ PLUGIN_ENABLES = ",".join(
         "torghut-wildcard-import",
         "torghut-custom-module-class",
         "torghut-test-compat-wrapper",
+        "torghut-source-string-execution",
     )
 )
 
@@ -118,6 +119,7 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
                 "",
                 "__all__ = [name for name in globals() if name]",
                 "globals().update(other.__dict__)",
+                "exec(compile('__compat_source__ = 1', '<compat>', 'exec'))",
                 "_sys.modules[__name__] = other",
                 "_sys.modules[__name__].__class__ = Facade",
                 "",
@@ -146,10 +148,23 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
         "torghut-dynamic-all",
         "torghut-wildcard-import",
         "torghut-custom-module-class",
+        "torghut-source-string-execution",
     }
     output = result.output
     missing = sorted(symbol for symbol in expected_symbols if symbol not in output)
     assert not missing, output
+
+
+def test_torghut_pylint_quality_plugin_rejects_source_segment_names(
+    tmp_path: Path,
+) -> None:
+    module_path = tmp_path / "source_segment_001.py"
+    module_path.write_text("VALUE = 1\n", encoding="utf-8")
+
+    result = _run_quality_pylint(module_path)
+
+    assert result.returncode != 0
+    assert "torghut-generated-split-filename" in result.output
 
 
 def test_torghut_pylint_quality_plugin_rejects_test_compat_wrappers(
