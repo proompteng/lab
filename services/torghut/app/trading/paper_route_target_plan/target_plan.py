@@ -35,6 +35,10 @@ PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID = "H-PAIRS-01"
 
 PAPER_ROUTE_TARGET_NOTIONAL_SOURCE_DECISION_SEED_QTY = Decimal("1")
 
+CONFIGURED_SIMPLE_LANE_PAPER_COLLECTION_SOURCE_KIND = (
+    "configured_simple_lane_paper_data_collection"
+)
+
 
 @dataclass(frozen=True)
 class PaperRouteTargetPlanFetchClient:
@@ -113,6 +117,12 @@ def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
         symbol_values = ()
     symbols = [str(item).strip().upper() for item in symbol_values if str(item).strip()]
     actions = _to_str_map(identity.get("target_symbol_actions"))
+    if (
+        not actions
+        and _safe_text(identity.get("source_kind"))
+        == CONFIGURED_SIMPLE_LANE_PAPER_COLLECTION_SOURCE_KIND
+    ):
+        actions = {symbol: "buy" for symbol in symbols}
     quantities = _to_str_map(identity.get("target_symbol_quantities"))
     return {
         "hypothesis_id": identity.get("hypothesis_id"),
@@ -129,6 +139,8 @@ def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
         "source_plan_ref": identity.get("source_plan_ref"),
         "target_notional": identity.get("target_notional"),
         "source_decision_mode": identity.get("source_decision_mode"),
+        "target_symbol_actions": actions,
+        "target_symbol_quantities": quantities,
         "proof_target_authority": "trading_proofs",
         "bounded_collection_stage": "paper",
         "evidence_collection_stage": "paper",

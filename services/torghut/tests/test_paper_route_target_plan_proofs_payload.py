@@ -57,4 +57,9 @@ def test_proofs_payload_configured_collection_targets_keep_paper_stage() -> None
     assert target["observed_stage"] == "paper"
     assert target["source_plan_ref"] == "configured-simple-lane-paper-data-collection"
     assert target["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+    assert target["target_symbol_actions"] == {"AAPL": "buy", "AMZN": "buy"}
+    assert target["paper_route_probe_symbol_actions"] == {
+        "AAPL": "buy",
+        "AMZN": "buy",
+    }
     assert paper_route_target_plan_probe_symbols(plan) == {"AAPL", "AMZN"}

@@ -273,9 +273,11 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
         self,
     ) -> None:
         original_mode = proofs_api.settings.trading_mode
+        original_account_label = proofs_api.settings.trading_account_label
         original_static_symbols_raw = proofs_api.settings.trading_static_symbols_raw
         try:
             proofs_api.settings.trading_mode = "live"
+            proofs_api.settings.trading_account_label = "PA3SX7FYNUTF"
             proofs_api.settings.trading_static_symbols_raw = "AAPL,NVDA"
             with self.session_local() as session:
                 session.add_all(
@@ -310,6 +312,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
                 )
         finally:
             proofs_api.settings.trading_mode = original_mode
+            proofs_api.settings.trading_account_label = original_account_label
             proofs_api.settings.trading_static_symbols_raw = original_static_symbols_raw
 
         self.assertGreaterEqual(plan["target_count"], 1)
@@ -321,12 +324,19 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
         self.assertIn("enabled-paper-collector", targets_by_name)
         self.assertNotIn("disabled-paper-collector", targets_by_name)
         target = targets_by_name["enabled-paper-collector"]
-        self.assertEqual(target["account_label"], "TORGHUT_SIM")
+        self.assertEqual(target["account_label"], "PA3SX7FYNUTF")
+        self.assertEqual(target["source_account_label"], "PA3SX7FYNUTF")
+        self.assertEqual(target["execution_account_label"], "PA3SX7FYNUTF")
+        self.assertEqual(target["bounded_collection_account_label"], "TORGHUT_SIM")
         self.assertEqual(
             target["hypothesis_id"],
             "configured-paper-collection:enabled-paper-collector",
         )
         self.assertEqual(target["paper_route_probe_symbols"], ["AAPL", "NVDA"])
+        self.assertEqual(
+            target["paper_route_probe_symbol_actions"],
+            {"AAPL": "buy", "NVDA": "buy"},
+        )
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "100")
         self.assertTrue(target["paper_data_collection_authorized"])
         self.assertFalse(target["final_promotion_authorized"])

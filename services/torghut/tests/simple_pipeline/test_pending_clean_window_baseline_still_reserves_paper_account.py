@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.trading.scheduler.target_plan_helpers import (
+    _target_requires_bounded_sim_collection_gate,
+)
 from tests.simple_pipeline.support import (
     Decimal,
     SimpleNamespace,
@@ -111,6 +114,26 @@ def test_configured_collection_target_reserves_account_with_source_plan_ref(
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+
+
+def test_configured_collection_runtime_account_still_uses_bounded_route() -> None:
+    target = _bounded_hpairs_target(
+        account_label="PA3SX7FYNUTF",
+        source_account_label="PA3SX7FYNUTF",
+        candidate_id="configured:breakout-continuation-long-v1",
+        hypothesis_id="configured-paper-collection:breakout-continuation-long-v1",
+        strategy_family="static",
+        strategy_name="breakout-continuation-long-v1",
+        runtime_strategy_name="breakout-continuation-long-v1",
+        source_kind="configured_simple_lane_paper_data_collection",
+        paper_route_probe_pair_balance_state="not_required",
+        paper_route_probe_symbols=["NVDA", "AVGO"],
+        paper_route_probe_symbol_actions={"NVDA": "buy", "AVGO": "buy"},
+        bounded_evidence_collection_authorized=True,
+        bounded_live_paper_collection_authorized=True,
+    )
+
+    assert _target_requires_bounded_sim_collection_gate(target)
 
 
 def test_target_runtime_account_and_window_helpers_cover_identity_edges() -> None:

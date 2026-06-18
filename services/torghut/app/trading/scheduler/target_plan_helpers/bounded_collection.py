@@ -11,9 +11,6 @@ from typing import Any, Literal, TypeAlias, cast
 from ...promotion_authority import target_capital_promotion_allowed
 from ...runtime_strategy_resolution import strategy_names_from_strategy_id
 
-
-logger = logging.getLogger(__name__)
-
 logger = logging.getLogger(__name__)
 
 _SIMPLE_ALLOWED_REJECT_REASONS = {
@@ -161,6 +158,7 @@ _BOUNDED_SIM_COLLECTION_RUNTIME_ACCOUNT_ALIAS_FIELDS = (
 _BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES = frozenset(
     {
         "bounded_paper_route_source_decision_collection_only",
+        "configured_strategy_catalog_evidence_collection_only",
         "source_window_evidence_collection_only",
     }
 )

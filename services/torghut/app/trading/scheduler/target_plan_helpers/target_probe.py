@@ -63,6 +63,16 @@ def _target_requires_bounded_sim_collection_gate(target: Mapping[str, Any]) -> b
     return (
         _target_owns_bounded_sim_collection_account(target)
         or account_label == _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
+        or (
+            _safe_text(target.get("source_kind"))
+            == "configured_simple_lane_paper_data_collection"
+            and (
+                _target_truthy(target.get("bounded_evidence_collection_authorized"))
+                or _target_truthy(
+                    target.get("bounded_live_paper_collection_authorized")
+                )
+            )
+        )
     )
 
 
