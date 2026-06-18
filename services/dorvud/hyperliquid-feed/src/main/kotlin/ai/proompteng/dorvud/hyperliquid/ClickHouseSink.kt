@@ -12,9 +12,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -65,16 +66,17 @@ class ClickHouseSink(
       }
       val batch = mutableListOf<RoutedEnvelope>()
       while (isActive) {
-        val first = channel.receiveCatching().getOrNull()
-        if (first != null) batch += first
-        val deadline = System.currentTimeMillis() + config.flushMs
-        while (batch.size < config.batchSize && System.currentTimeMillis() < deadline) {
-          val next = channel.tryReceive().getOrNull() ?: break
+        val first = channel.receiveCatching().getOrNull() ?: continue
+        batch += first
+        val deadline = nowMs() + config.flushMs
+        while (batch.size < config.batchSize) {
+          val remainingMs = deadline - nowMs()
+          if (remainingMs <= 0) break
+          val next =
+            withTimeoutOrNull(remainingMs) {
+              channel.receiveCatching().getOrNull()
+            } ?: break
           batch += next
-        }
-        if (batch.isEmpty()) {
-          delay(config.flushMs)
-          continue
         }
         flush(batch.toList())
         batch.clear()
@@ -111,18 +113,22 @@ class ClickHouseSink(
     query: String,
     body: String? = null,
   ): String {
-    val response =
-      httpClient.post("${config.httpUrl.trimEnd('/')}?query=${java.net.URLEncoder.encode(query, Charsets.UTF_8)}") {
-        if (config.password.isNotEmpty()) basicAuth(config.username, config.password)
-        if (body != null) {
-          contentType(ContentType.Application.Json)
-          setBody(body)
+    val responseBody =
+      withTimeout(config.requestTimeoutMs) {
+        val response =
+          httpClient.post("${config.httpUrl.trimEnd('/')}?query=${java.net.URLEncoder.encode(query, Charsets.UTF_8)}") {
+            if (config.password.isNotEmpty()) basicAuth(config.username, config.password)
+            if (body != null) {
+              contentType(ContentType.Application.Json)
+              setBody(body)
+            }
+          }
+        val responseBody = response.bodyAsText()
+        if (!response.status.isSuccess()) {
+          error("clickhouse_http_${response.status.value}:${responseBody.take(256)}")
         }
+        responseBody
       }
-    val responseBody = response.bodyAsText()
-    if (!response.status.isSuccess()) {
-      error("clickhouse_http_${response.status.value}:${responseBody.take(256)}")
-    }
     return responseBody
   }
 
