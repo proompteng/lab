@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.trading.research_sleeves_modules import (
+from app.trading.research_sleeve_evaluators import (
     SleeveSignalEvaluation,
     SleeveSignalResult,
     make_strategy_trace,
