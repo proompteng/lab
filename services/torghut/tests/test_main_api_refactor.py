@@ -7,7 +7,7 @@ from fastapi.routing import APIRoute
 from app import main as main_module
 from app.api import common as api_common
 from app.api import proofs as proofs_api
-from app.api.application import get_app
+from app.api.application import api_routers, get_app
 from app.trading.scheduler import TradingScheduler
 
 
@@ -52,6 +52,7 @@ def test_main_public_contract_is_entrypoint_only() -> None:
     assert get_app() is main_module.app
 
     removed_private_attrs = (
+        "ROUTER_PROVIDERS",
         "SessionLocal",
         "_TradingStatusReadBudget",
         "_build_live_submission_gate_payload",
@@ -64,6 +65,25 @@ def test_main_public_contract_is_entrypoint_only() -> None:
         name for name in removed_private_attrs if hasattr(main_module, name)
     ]
     assert leaked_attrs == []
+
+
+def test_api_application_mounts_concrete_routers() -> None:
+    route_paths = {
+        route.path
+        for router in api_routers()
+        for route in router.routes
+        if isinstance(route, APIRoute)
+    }
+
+    assert {
+        "/readyz",
+        "/trading/status",
+        "/trading/health",
+        "/trading/proofs",
+        "/trading/consumer-evidence",
+        "/trading/profitability/runtime",
+        "/whitepapers/status",
+    }.issubset(route_paths)
 
 
 def test_main_runtime_value_falls_back_to_common_default() -> None:
